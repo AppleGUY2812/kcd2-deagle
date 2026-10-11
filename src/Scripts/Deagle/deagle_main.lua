@@ -24,8 +24,13 @@ Deagle.cfg = {
 	dryTrigger = nil,
 	reloadTrigger = nil,
 	muzzleFx = "firearms.hand_cannon.frontParticleEmit", -- has its own LightSource
-	impactFx = nil,
-	bloodFx = nil,
+	bloodFx = "collisions.combat.hit_passed_bullet_fabric",
+	armorFx = "collisions.combat.hit_passed_bullet_plate",
+	headFx = "collisions.combat.blood_head",
+	bloodPaint = 0.45,        -- actor:AddBlood amount per hit on that body part
+	bleeding = true,          -- non-lethal hits apply the game's bleeding buff
+	bleedingBuff = "0c903899-fcc9-4cf2-9ee3-1130ac08b0fc",
+	armorFxThreshold = 0.5,   -- armor ratio above which hits spark instead of splash
 	flashRadius = 9,
 	flashIntensity = 6,
 	flashMs = 45,
@@ -145,6 +150,23 @@ end
 -- ---------------------------------------------------------------------------
 -- shooting
 -- ---------------------------------------------------------------------------
+-- Bullet impact effect for the surface the ray hit (Libs/Particles/collisions.xml, destructibles.bullet_*).
+local surfaceFx = {
+	{ "water", "mudwater" }, { "mud", "mud" }, { "stone", "stone" }, { "rock", "stone" }, { "brick", "stone" },
+	{ "wood", "wood" }, { "metal", "metal" }, { "iron", "metal" }, { "grass", "grass" }, { "plant", "grass" },
+	{ "veget", "grass" }, { "plaster", "plaster" }, { "straw", "straw" }, { "hay", "straw" }, { "cloth", "sack" },
+	{ "sack", "sack" }, { "fabric", "sack" }, { "ceram", "ceramics" }, { "pottery", "ceramics" }, { "clay", "ceramics" },
+}
+
+local function impactFxFor(hit)
+	local name = ""
+	pcall(function() name = string.lower(System.GetSurfaceTypeNameById(hit.surface) or "") end)
+	for _, pair in ipairs(surfaceFx) do
+		if string.find(name, pair[1], 1, true) then return "collisions.destructibles.bullet_" .. pair[2], name end
+	end
+	return "collisions.destructibles.bullet_soil", name
+end
+
 -- Body part from where the ray hit, relative to the target's feet and facing (human skeletons only).
 local function bodyPartFor(e, pos)
 	if not (e.actor and e.human) then return nil end
@@ -157,6 +179,24 @@ local function bodyPartFor(e, pos)
 	if h < 0.9 then return side >= 0 and "leg_right" or "leg_left" end
 	if math.abs(side) > 0.2 then return side >= 0 and "arm_right" or "arm_left" end
 	return "torso"
+end
+
+function Deagle:Bleed(e, hit, dir)
+	local c = self.cfg
+	local part = hit.bodyPart
+	local armored = false
+	pcall(function() armored = e.actor:GetArmor() / math.max(1, e.actor:GetMaxArmor()) > c.armorFxThreshold end)
+	-- spray goes out of the exit side, along the bullet
+	self:SpawnFx(armored and c.armorFx or c.bloodFx, hit.pos, dir)
+	if part == "head" then self:SpawnFx(c.headFx, hit.pos, dir) end
+	if part and c.bloodPaint > 0 then
+		try("paint blood", function() e.actor:AddBlood(c.bloodPaint, part) end)
+	end
+	local dead = false
+	pcall(function() dead = e.actor:IsDead() or e.actor:GetHealth() <= 0 end)
+	if c.bleeding and not dead then
+		try("bleeding", function() e.soul:AddBuff(c.bleedingBuff) end)
+	end
 end
 
 function Deagle:ApplyHit(hit, dir)
@@ -174,12 +214,14 @@ function Deagle:ApplyHit(hit, dir)
 			hit.bodyPart = part
 			try("DealDamage", function() e.soul:DealDamage(c.stamina, dmg, p.id, false, part) end)
 		end
-		self:SpawnFx(c.bloodFx, hit.pos, hit.normal)
+		self:Bleed(e, hit, dir)
 		local hp = "?"
 		pcall(function() hp = string.format("%.1f/%.1f", e.actor:GetHealth(), e.actor:GetMaxHealth()) end)
 		log("hit " .. tostring(e:GetName()) .. " mode " .. c.hitMode .. " part " .. tostring(hit.bodyPart) .. " dist " .. string.format("%.1f", hit.dist or -1) .. " hp " .. hp)
 	else
-		self:SpawnFx(c.impactFx, hit.pos, hit.normal)
+		local fx, surface = impactFxFor(hit)
+		self:SpawnFx(fx, hit.pos, hit.normal)
+		if self.state.logActions then log("impact " .. tostring(surface) .. " -> " .. fx) end
 	end
 	if e and e.AddImpulse and (not e.soul or (e.IsDead and e:IsDead())) then
 		try("impulse", function() e:AddImpulse(hit.partid or -1, hit.pos, dir, c.impulse, 1) end)
@@ -199,7 +241,7 @@ function Deagle:Fire()
 	if now - s.lastShot < c.interval then return end
 	if s.ammo <= 0 then
 		self:PlayTrigger(c.dryTrigger)
-		self:Reload()
+		self:ShowAmmo()
 		return
 	end
 	s.lastShot = now
@@ -220,7 +262,7 @@ function Deagle:Fire()
 	elseif not ok then
 		log("$4raycast failed: " .. tostring(n))
 	end
-	if s.ammo == 0 then self:ShowAmmo() end
+	self:ShowAmmo()
 end
 
 -- ---------------------------------------------------------------------------
@@ -256,8 +298,18 @@ function Deagle:Reload()
 		return
 	end
 	s.reloading = true
+	s.reloadEnd = System.GetCurrTime() + c.reloadTime
+	self:Notify("Desert Eagle  reloading...")
 	self:PlayTrigger(c.reloadTrigger)
-	Script.SetTimer(math.floor(c.reloadTime * 1000), function()
+	Script.SetTimer(math.floor(c.reloadTime * 1000) + 20, function() self:FinishReload() end)
+end
+
+-- Called by the timer and polled from input, so a reload never gets stuck if timers are cleared.
+function Deagle:FinishReload()
+	local s, c = self.state, self.cfg
+	if not s.reloading then return end
+	if System.GetCurrTime() < (s.reloadEnd or 0) then return end
+	do
 		s.reloading = false
 		local take = c.magSize - s.ammo
 		if c.useAmmoItems then
@@ -268,12 +320,18 @@ function Deagle:Reload()
 		end
 		s.ammo = s.ammo + take
 		self:ShowAmmo()
-	end)
+	end
 end
 
 function Deagle:ShowAmmo()
+	local s = self.state
+	if not s.drawn then
+		self:Notify("Desert Eagle  holstered")
+		return
+	end
 	local spare = self.cfg.useAmmoItems and string.format("   (%d spare)", self:CountOf(self.cfg.ammoId)) or ""
-	self:Notify(string.format("Desert Eagle  %d / %d%s", self.state.ammo, self.cfg.magSize, spare))
+	local tail = s.ammo == 0 and "   EMPTY - press R" or ""
+	self:Notify(string.format("Desert Eagle  %d / %d%s%s", s.ammo, self.cfg.magSize, spare, tail))
 end
 
 function Deagle:SetAim(on)
@@ -312,6 +370,7 @@ end
 function Deagle:OnAction(action, activation)
 	local s = self.state
 	if not self.inputLoaded then self:EnsureInit() end
+	if s.reloading then self:FinishReload() end
 	if s.logActions then log("action " .. tostring(action) .. " " .. tostring(activation)) end
 	if action == "deagle_toggle" then
 		if activation == "press" then self:Toggle() end
@@ -378,6 +437,8 @@ end
 -- plus the first player action as a fallback.
 function Deagle:OnGameplayStarted()
 	log("gameplay started")
+	local s = self.state
+	s.reloading, s.drawn, s.aiming, s.lastShot, s.ammo = false, false, false, -100, self.cfg.magSize
 	self.inputLoaded = false
 	self:EnsureInit()
 end
@@ -492,4 +553,4 @@ if not Deagle.listening then
 	end)
 end
 
-log("loaded v0.5")
+log("loaded v0.7")
