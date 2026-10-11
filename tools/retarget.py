@@ -7,7 +7,17 @@ from mathutils import Matrix, Vector, Quaternion
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 SKIN, FBX, NAME, OUTDIR, RC, GUN_GLTF, PREVIEW = argv[:7]
-RANGE = (int(argv[7]), int(argv[8])) if len(argv) > 8 else None
+RANGE = None
+OPTS = {}
+for a in argv[7:]:
+    if "=" in a:
+        k, v = a.split("=", 1); OPTS[k] = float(v)
+    elif RANGE is None:
+        RANGE = ()
+if OPTS.get("first") is not None:
+    RANGE = (int(OPTS["first"]), int(OPTS["last"]))
+# FPS framing: right wrist target relative to the Head bone, in Henry's character frame (metres)
+FRAME_FWD, FRAME_RIGHT, FRAME_UP = OPTS.get("fwd"), OPTS.get("right", 0.06), OPTS.get("up", -0.30)
 
 ARM_BONES = []
 for side in ("Left", "Right"):
@@ -104,6 +114,59 @@ for out_frame, f in enumerate(frames):
         pb.location = (0, 0, 0)
     for name in ARM_BONES:
         tgt.pose.bones[name].keyframe_insert("rotation_quaternion", frame=out_frame)
+# ---- FPS framing: move both wrists by one offset (keeps the two-hand grip), re-solve elbows with 2-bone IK,
+# keep the hands' world rotation so the gun still points where the mocap pointed it.
+def set_world_rot(pb, world_rot):
+    bpy.context.view_layer.update()
+    head = pb.matrix.translation.copy()
+    pb.matrix = Matrix.LocRotScale(head, (inv_tgt_world @ world_rot).to_quaternion(), None)
+    bpy.context.view_layer.update()
+
+def joint(name):
+    return tgt.matrix_world @ tgt.pose.bones[name].head
+
+def solve_arm(side, wrist_target):
+    up_b, fore_b, hand_b = f"{side}Arm", f"{side}ForeArm", f"{side}Hand"
+    S, E, W = joint(up_b), joint(fore_b), joint(hand_b)
+    a, b = (E - S).length, (W - E).length
+    d_vec = wrist_target - S
+    d = min(d_vec.length, a + b - 1e-4)
+    n = d_vec.normalized()
+    cos_a = max(-1.0, min(1.0, (a * a + d * d - b * b) / (2 * a * d)))
+    pole = (E - S) - n * (E - S).dot(n)          # keep the elbow on the side the mocap had it, biased down
+    pole = (pole.normalized() + Vector((0, 0, -0.6))).normalized()
+    m = (pole - n * pole.dot(n)).normalized()
+    E2 = S + a * (cos_a * n + math.sqrt(max(0.0, 1 - cos_a * cos_a)) * m)
+    W2 = S + n * d
+    hand_world = rot(tgt.matrix_world @ tgt.pose.bones[hand_b].matrix)
+    # upper arm: swing so the elbow lands on E2
+    pb = tgt.pose.bones[up_b]
+    cur = rot(tgt.matrix_world @ pb.matrix)
+    set_world_rot(pb, (E - S).normalized().rotation_difference((E2 - S).normalized()).to_matrix() @ cur)
+    # forearm: measured after the parent moved
+    E, W = joint(fore_b), joint(hand_b)
+    pb = tgt.pose.bones[fore_b]
+    cur = rot(tgt.matrix_world @ pb.matrix)
+    set_world_rot(pb, (W - E).normalized().rotation_difference((W2 - E).normalized()).to_matrix() @ cur)
+    # hand keeps its world orientation so the gun keeps pointing forward
+    set_world_rot(tgt.pose.bones[hand_b], hand_world)
+
+if FRAME_FWD is not None:
+    Bt_rest = basis_from(tgt, rest_world)
+    fwd_v, right_v, up_v = Bt_rest.col[1], Bt_rest.col[0], Bt_rest.col[2]
+    head_pos = (tgt.matrix_world @ tgt.pose.bones["Head"].matrix).translation
+    target_rw = head_pos + fwd_v * FRAME_FWD + right_v * FRAME_RIGHT + up_v * FRAME_UP
+    scene.frame_set(0)
+    offset = target_rw - (tgt.matrix_world @ tgt.pose.bones["RightHand"].head)
+    print("FRAMING offset", tuple(round(v, 3) for v in offset))
+    for out_frame in range(len(frames)):
+        scene.frame_set(out_frame)
+        for side in ("Right", "Left"):
+            W = tgt.matrix_world @ tgt.pose.bones[f"{side}Hand"].head
+            solve_arm(side, W + offset)
+        for name in (f"{s}{b}" for s in ("Left", "Right") for b in ("Arm", "ForeArm", "Hand")):
+            tgt.pose.bones[name].keyframe_insert("rotation_quaternion", frame=out_frame)
+
 bpy.ops.object.mode_set(mode="OBJECT")
 n_frames = len(frames)
 # debug: hand/forearm positions relative to the chest, in each rig's character frame, at the first frame
@@ -125,8 +188,8 @@ eye_bone = tgt.pose.bones["Head"]
 head_m = tgt.matrix_world @ eye_bone.matrix
 fwd = basis_from(tgt, rest_world).col[1]
 cam = bpy.data.objects.new("eye", bpy.data.cameras.new("eye")); scene.collection.objects.link(cam); scene.camera = cam
-cam.data.lens = 18
-cam.location = head_m.translation + Vector((0, 0, 0.08)) + fwd * 0.1
+cam.data.sensor_fit = "VERTICAL"; cam.data.angle = 1.1011  # game camera fov (rad, measured)
+cam.location = head_m.translation + fwd * 0.148  # measured in game: camera 0.148 m ahead of the Head bone
 cam.rotation_euler = (fwd).to_track_quat("-Z", "Y").to_euler()
 clay = bpy.data.materials.new("clay"); clay.diffuse_color = (0.75, 0.62, 0.52, 1)
 for o in scene.objects:

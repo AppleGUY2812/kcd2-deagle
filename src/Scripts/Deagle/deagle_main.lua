@@ -31,6 +31,10 @@ Deagle.cfg = {
 	bleeding = true,          -- non-lethal hits apply the game's bleeding buff
 	bleedingBuff = "0c903899-fcc9-4cf2-9ee3-1130ac08b0fc",
 	armorFxThreshold = 0.5,   -- armor ratio above which hits spark instead of splash
+	splatMaterials = { "Materials/particles/blood_decalshoot", "Materials/particles/blood_decalgun", "Materials/particles/blood_decal" },
+	splatRange = 3.0,         -- how far behind the target blood can land
+	splatSize = { 0.45, 0.9 },
+	splatLife = 180,
 	flashRadius = 9,
 	flashIntensity = 6,
 	flashMs = 45,
@@ -200,6 +204,25 @@ local function bodyPartFor(e, pos)
 	return "torso"
 end
 
+-- Blood on whatever is behind the target (wall, floor) plus a pool under the hit point.
+function Deagle:Splatter(e, hit, dir)
+	local c = self.cfg
+	local function decal(pos, normal, scale)
+		local size = (c.splatSize[1] + math.random() * (c.splatSize[2] - c.splatSize[1])) * (scale or 1)
+		for _, mat in ipairs(c.splatMaterials) do
+			local ok = pcall(Particle.CreateMatDecal, vadd(pos, vscale(normal, 0.01)), normal, size, c.splatLife, mat)
+			if ok then return end
+		end
+	end
+	local from = vadd(hit.pos, vscale(dir, 0.15))
+	local hits = {}
+	local ok, n = pcall(Physics.RayWorldIntersection, from, vscale(dir, c.splatRange), 1, ent_all, e.id, self:Player().id, hits)
+	if ok and n and n > 0 and hits[1] then decal(hits[1].pos, hits[1].normal, 1) end
+	hits = {}
+	ok, n = pcall(Physics.RayWorldIntersection, hit.pos, { x = dir.x * 0.4, y = dir.y * 0.4, z = -2.5 }, 1, ent_static + ent_terrain, e.id, nil, hits)
+	if ok and n and n > 0 and hits[1] then decal(hits[1].pos, hits[1].normal, 0.6) end
+end
+
 function Deagle:Bleed(e, hit, dir)
 	local c = self.cfg
 	local part = hit.bodyPart
@@ -207,7 +230,9 @@ function Deagle:Bleed(e, hit, dir)
 	pcall(function() armored = e.actor:GetArmor() / math.max(1, e.actor:GetMaxArmor()) > c.armorFxThreshold end)
 	-- spray goes out of the exit side, along the bullet
 	self:SpawnFx(armored and c.armorFx or c.bloodFx, hit.pos, dir)
+	self:SpawnFx(c.bloodFx, vadd(hit.pos, vscale(dir, 0.25)), dir, 1.3)  -- exit wound
 	if part == "head" then self:SpawnFx(c.headFx, hit.pos, dir) end
+	self:Splatter(e, hit, dir)
 	if part and c.bloodPaint > 0 then
 		try("paint blood", function() e.actor:AddBlood(c.bloodPaint, part) end)
 	end
@@ -222,7 +247,13 @@ function Deagle:ApplyHit(hit, dir)
 	local c = self.cfg
 	local e = hit.entity
 	local p = self:Player()
-	if e and e.soul and e ~= p then
+	local dead = false
+	if e and e.actor then pcall(function() dead = e.actor:IsDead() end) end
+	if e and e ~= p and (dead or (e.class and string.find(string.lower(e.class), "dead"))) then
+		hit.bodyPart = bodyPartFor(e, hit.pos)
+		self:Bleed(e, hit, dir)
+		log("corpse hit " .. tostring(e:GetName()))
+	elseif e and e.soul and e ~= p then
 		if c.hitMode == "hit" then
 			try("CreateHit", function()
 				g_gameRules:CreateHit(e.id, p.id, p.id, c.damage, 0, nil, hit.partid or -1, c.hitType, hit.pos, dir, hit.normal)
