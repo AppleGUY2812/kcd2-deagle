@@ -13,7 +13,7 @@ tmpw='C:\Users\<user>\AppData\Local\Temp\kcd2re'
 tmpl=/mnt/c/Users/<user>/AppData/Local/Temp/kcd2re
 scratch="$here/assets/build/anim"; mkdir -p "$scratch"
 
-powershell.exe -NoProfile -Command "\$env:DOTNET_ROOT='E:\\Tools\\dotnet9'; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$blender' -b --factory-startup -P '$(wslpath -w "$here/tools/retarget.py")' -- '$skin' '$(wslpath -w "$fbx")' '$name' '$outdir' '$rc' none '$(wslpath -w "$here/assets/renders")' $* 2>&1 | Select-String 'RETARGET|FRAMING|DAE EXPORTED|Traceback|Error' | % Line" || true  # blender exits 1 after background scripts
+powershell.exe -NoProfile -Command "\$env:DOTNET_ROOT='E:\\Tools\\dotnet9'; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$blender' -b --factory-startup -P '$(wslpath -w "$here/tools/retarget.py")' -- '$skin' '$(wslpath -w "$fbx")' '$name' '$outdir' '$rc' '$(wslpath -w "$here/assets/source/deagle_gltf/scene.gltf")' '$(wslpath -w "$here/assets/renders")' $* 2>&1 | Select-String 'RETARGET|FRAMING|HANDOFFSET|DAE EXPORTED|Traceback|Error' | % Line" || true  # blender exits 1 after background scripts
 powershell.exe -NoProfile -Command "Copy-Item '$outdir\\$name.dae' '$tmpw\\$name.dae' -Force"
 python3 "$here/tools/filter_dae.py" "$tmpl/$name.dae" "$tmpl/${name}_arms.dae"
 printf '{\n\t"build": {\n\t\t"skeletonAlias": "Human_Male",\n\t\t"additive": false\n\t}\n}\n' > "$tmpl/$name.animsettings"

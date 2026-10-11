@@ -78,12 +78,23 @@ def child_of(name):
 def limb_dir(obj, name, world_fn):
     return (world_fn(obj, child_of(name)).translation - world_fn(obj, name).translation).normalized()
 
-# per-bone rest correction: swing Henry's rest bone so its limb direction matches the aligned Mixamo rest direction
+# per-bone rest correction: rotate Henry's rest bone so both its limb direction AND its twist (measured against the
+# across-the-palm vector index->pinky knuckles) match the aligned Mixamo rest bone. Swing-only left fingers/forearms rolled.
+def palm_ref(obj, side, world_fn):
+    return (world_fn(obj, f"{side}HandIndex1").translation - world_fn(obj, f"{side}HandPinky1").translation).normalized()
+
+def frame_of(direction, ref):
+    x = direction.normalized()
+    y = (ref - x * ref.dot(x)).normalized()
+    return Matrix((x, y, x.cross(y))).transposed()
+
 corrected_rest = {}
 for name in ARM_BONES:
+    side = "Left" if name.startswith("Left") else "Right"
     t_rest = rot(rest_world(tgt, name))
-    swing = limb_dir(tgt, name, rest_world).rotation_difference(A @ limb_dir(src, name, rest_world)).to_matrix()
-    corrected_rest[name] = swing @ t_rest
+    f_t = frame_of(limb_dir(tgt, name, rest_world), palm_ref(tgt, side, rest_world))
+    f_s = frame_of(A @ limb_dir(src, name, rest_world), A @ palm_ref(src, side, rest_world))
+    corrected_rest[name] = f_s @ f_t.inverted() @ t_rest
 
 # chest-relative transfer: target chest stays at rest (in game the native animation drives it)
 Cs_rest = rot(rest_world(src, SRC_CHEST))
@@ -167,6 +178,34 @@ if FRAME_FWD is not None:
         for name in (f"{s}{b}" for s in ("Left", "Right") for b in ("Arm", "ForeArm", "Hand")):
             tgt.pose.bones[name].keyframe_insert("rotation_quaternion", frame=out_frame)
 
+# Twist bones: upper-arm rolls follow the upper arm; forearm rolls blend from the forearm towards the hand
+# (1/3, 2/3) so wrist twist spreads along the forearm; palm/slot/glove helpers follow their parent.
+TWIST = {"ArmRoll": ("Arm", "Arm", 0.0), "ArmRoll1": ("Arm", "ForeArm", 0.5),
+         "ForeArmRoll": ("ForeArm", "Hand", 0.0), "ForeArmRoll1": ("ForeArm", "Hand", 0.33), "ForeArmRoll2": ("ForeArm", "Hand", 0.66)}
+HELPERS = ["Hand_Glove", "InHandPinky", "InHandRing", "HandSlot"]
+TWIST_BONES = [f"{s}{b}" for s in ("Left", "Right") for b in list(TWIST) + HELPERS]
+
+def carried(bone, driver):
+    """world rotation the bone would have if rigidly carried by driver from rest"""
+    return rot(tgt.matrix_world @ tgt.pose.bones[driver].matrix) @ rot(rest_world(tgt, driver)).inverted() @ rot(rest_world(tgt, bone))
+
+for out_frame in range(len(frames)):
+    scene.frame_set(out_frame)
+    for side in ("Left", "Right"):
+        for b, (d0, d1, k) in TWIST.items():
+            name = f"{side}{b}"
+            if name not in tgt.pose.bones:
+                continue
+            q0, q1 = carried(name, f"{side}{d0}").to_quaternion(), carried(name, f"{side}{d1}").to_quaternion()
+            set_world_rot(tgt.pose.bones[name], q0.slerp(q1, k).to_matrix())
+        for h in HELPERS:
+            name = f"{side}{h}"
+            if name in tgt.pose.bones:
+                tgt.pose.bones[name].rotation_quaternion = (1, 0, 0, 0)
+    for name in TWIST_BONES:
+        if name in tgt.pose.bones:
+            tgt.pose.bones[name].keyframe_insert("rotation_quaternion", frame=out_frame)
+
 bpy.ops.object.mode_set(mode="OBJECT")
 n_frames = len(frames)
 # debug: hand/forearm positions relative to the chest, in each rig's character frame, at the first frame
@@ -200,8 +239,54 @@ scene.render.resolution_x, scene.render.resolution_y = 960, 540
 world = bpy.data.worlds.new("w"); world.color = (0.35, 0.38, 0.42); scene.world = world
 sun = bpy.data.objects.new("sun", bpy.data.lights.new("sun", "SUN")); sun.data.energy = 4
 sun.rotation_euler = (math.radians(40), 0, math.radians(30)); scene.collection.objects.link(sun)
+# Deagle in the preview: grip pivot (same as build_model.py) placed on RightHandSlot, muzzle along the camera's
+# forward, upright. The slot-relative transform is what the Lua attachment offset (handPos/handAng) must be.
+if GUN_GLTF and GUN_GLTF != "none":
+    before = set(scene.objects)
+    bpy.ops.import_scene.gltf(filepath=GUN_GLTF)
+    gun_meshes = [o for o in scene.objects if o not in before and o.type == "MESH"]
+    for o in gun_meshes:
+        mw = o.matrix_world.copy(); o.parent = None; o.matrix_world = mw
+    for o in [o for o in scene.objects if o not in before and o.type == "EMPTY"]:
+        bpy.data.objects.remove(o)
+    def bb(objs):
+        pts = [o.matrix_world @ Vector(c) for o in objs for c in o.bound_box]
+        return (Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))),
+                Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts))))
+    grip = [o for o in gun_meshes if o.name.startswith("Grip_low")]
+    barrel = [o for o in gun_meshes if o.name.startswith("Barrel_low")]
+    gmn, gmx = bb(grip); bmn, bmx = bb(barrel)
+    pivot = Vector(((gmn.x + gmx.x) / 2, (gmn.y + gmx.y) / 2, gmx.z - (gmx.z - gmn.z) / 3))
+    muzzle_sign = 1 if (bmx.y - pivot.y) > (pivot.y - bmn.y) else -1
+    to_model = Matrix.Scale(0.01, 4) @ (Matrix.Identity(4) if muzzle_sign > 0 else Matrix.Rotation(math.pi, 4, "Z")) @ Matrix.Translation(-pivot)
+    for o in gun_meshes:
+        o.data.transform(o.matrix_world); o.matrix_world = Matrix.Identity(4)
+        o.data.transform(to_model)
+    gun = bpy.data.objects.new("deagle_preview", None); scene.collection.objects.link(gun)
+    for o in gun_meshes:
+        o.parent = gun
+    scene.frame_set(0)
+    slot = tgt.matrix_world @ tgt.pose.bones["RightHandSlot"].matrix
+    gun_rot = Matrix((basis_from(tgt, rest_world).col[0], fwd, Vector((0, 0, 1)))).transposed()  # x right, y fwd, z up
+    grip_adjust = Vector((0, 0, OPTS.get("gun_up", 0.022))) + fwd * OPTS.get("gun_fwd", 0.005)  # fist on the grip, not the frame
+    gun.matrix_world = Matrix.LocRotScale(slot.translation + grip_adjust, gun_rot.to_quaternion(), None)
+    rel = slot.inverted() @ gun.matrix_world
+    e = rel.to_euler("XYZ")
+    print("HANDOFFSET pos", tuple(round(v, 4) for v in rel.translation), "ang_deg", tuple(round(math.degrees(a), 1) for a in e))
 for label, frame in (("fp_start", 0), ("fp_mid", n_frames // 2)):
     scene.frame_set(frame)
+    scene.render.filepath = f"{PREVIEW}/{NAME}_{label}.png"
+    bpy.ops.render.render(write_still=True)
+# close-ups of the grip from the right and from above-left
+scene.frame_set(0)
+slot_pos = (tgt.matrix_world @ tgt.pose.bones["RightHandSlot"].matrix).translation
+right_v = basis_from(tgt, rest_world).col[0]
+for label, offset in (("grip_right", right_v * 0.45 + Vector((0, 0, 0.05))), ("grip_left", -right_v * 0.4 + Vector((0, 0, 0.25)) + fwd * 0.1)):
+    c = bpy.data.objects.new(label, bpy.data.cameras.new(label)); scene.collection.objects.link(c)
+    c.location = slot_pos + offset
+    c.rotation_euler = (slot_pos - c.location).to_track_quat("-Z", "Y").to_euler()
+    c.data.lens = 50
+    scene.camera = c
     scene.render.filepath = f"{PREVIEW}/{NAME}_{label}.png"
     bpy.ops.render.render(write_still=True)
 side_cam = bpy.data.objects.new("side", bpy.data.cameras.new("side")); scene.collection.objects.link(side_cam)

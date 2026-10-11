@@ -43,8 +43,9 @@ Deagle.cfg = {
 	kickYaw = 0.8,
 	lightSlot = 15,
 	modelDir = "objects/manmade/weapons/deagle/",
-	handPos = { x = 0, y = 0, z = 0 },     -- frame offset/rotation in the hand, tuned live
-	handAng = { x = 0, y = 0, z = 0 },     -- degrees
+	-- pistol relative to RightHandSlot, computed in Blender against the deagle_idle grip (tools/retarget.py HANDOFFSET)
+	handPos = { x = 0.0206, y = -0.009, z = -0.0017 },
+	handAng = { x = 110.0, y = -52.1, z = 60.8 },     -- degrees, XYZ
 	slideTravel = 0.035,                    -- metres the slide moves back per shot
 	slideMs = { 0, 45, 95 },                -- back, half way, home
 	ejectPort = { x = 0.014, y = 0.06, z = 0.06 }, -- in frame space (muzzle +Y, up +Z)
@@ -783,4 +784,4 @@ if not Deagle.listening then
 	end)
 end
 
-log("loaded v1.0")
+log("loaded v1.2")

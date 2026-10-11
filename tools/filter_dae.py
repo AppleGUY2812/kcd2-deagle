@@ -9,6 +9,8 @@ keep = set()
 for side in ("Left", "Right"):
     keep |= {f"{side}Shoulder", f"{side}Arm", f"{side}ForeArm", f"{side}Hand"}
     keep |= {f"{side}Hand{f}{i}" for f in ("Thumb", "Index", "Middle", "Ring", "Pinky") for i in (1, 2, 3)}
+    keep |= {f"{side}{b}" for b in ("ArmRoll", "ArmRoll1", "ForeArmRoll", "ForeArmRoll1", "ForeArmRoll2",
+                                     "Hand_Glove", "InHandPinky", "InHandRing", "HandSlot")}
 
 ns = "http://www.collada.org/2005/11/COLLADASchema"
 ET.register_namespace("", ns)
