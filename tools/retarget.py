@@ -134,6 +134,16 @@ for out_frame, f in enumerate(frames):
         pb.location = (0, 0, 0)
     for name in ARM_BONES:
         tgt.pose.bones[name].keyframe_insert("rotation_quaternion", frame=out_frame)
+# optional: save Henry posed at the first retargeted frame (used by gun_fit.py)
+if OPTS.get("save_blend_only"):
+    scene.frame_set(0)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    src.animation_data_clear()
+    bpy.data.objects.remove(src)
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(OUTDIR, NAME + "_pose.blend"))
+    print("SAVED BLEND", os.path.join(OUTDIR, NAME + "_pose.blend"))
+    sys.exit(0)
+
 # ---- FPS framing: move both wrists by one offset (keeps the two-hand grip), re-solve elbows with 2-bone IK,
 # keep the hands' world rotation so the gun still points where the mocap pointed it.
 def set_world_rot(pb, world_rot):
