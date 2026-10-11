@@ -438,6 +438,7 @@ function Deagle:ShowInHand()
 	end)
 	if not ok then log("$4show in hand failed: " .. tostring(err)) end
 	self:PlayHold()
+	self:StartWatchdog()
 end
 
 function Deagle:ApplyHandOffset()
@@ -497,6 +498,27 @@ function Deagle:PlayHold()
 	if c.holdFragment and c.holdFragment ~= "" then
 		try("hold pose", function() self:Player().human:PlayAnim(c.holdFragment, c.holdTags or "") end)
 	end
+end
+
+-- Stance changes (crouch, jump, sprint...) restart the character's animation and drop our layer,
+-- so while the pistol is out a watchdog re-applies the hold as soon as it stops running.
+function Deagle:HoldWatchdog(token)
+	if token ~= self.watchToken or not self.state.drawn then return end
+	local p, c = self:Player(), self.cfg
+	if p and c.holdAnim and c.holdAnim ~= "" then
+		local ok, running = pcall(p.IsAnimationRunning, p, 0, c.animLayer)
+		if ok and not running then
+			pcall(p.StartAnimation, p, 0, c.holdAnim, c.animLayer, 0.2, 1.0, true)
+			self.reapplied = (self.reapplied or 0) + 1
+		end
+	end
+	Script.SetTimer(250, function() Deagle:HoldWatchdog(token) end)
+end
+
+function Deagle:StartWatchdog()
+	self.watchToken = (self.watchToken or 0) + 1
+	local token = self.watchToken
+	Script.SetTimer(250, function() Deagle:HoldWatchdog(token) end)
 end
 
 function Deagle:HideInHand()
