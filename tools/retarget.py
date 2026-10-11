@@ -36,9 +36,14 @@ from io_KCD2_Blender_Toolkit.bcry_exporter.configuration import Configuration
 Configuration.rc_path = RC
 scene = bpy.context.scene
 
-bpy.ops.import_scene.kcd2_skin(filepath=SKIN)
-tgt = next(o for o in scene.objects if o.type == "ARMATURE")
-tgt.name = "Henry"
+# exact-frame rig (see henry_rig.py): bone axes == the game's joint axes, so exported rotations mean the same in game
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import henry_rig
+body_dir = os.path.dirname(SKIN)
+tgt = henry_rig.import_henry([os.path.join(body_dir, f) for f in ("male_body.glb", "male_body_arms.glb", "male_body_hands.glb")])
+for o in [o for o in scene.objects if o.type == "MESH" and o.name.startswith("Icosphere")]:
+    bpy.data.objects.remove(o)
 bpy.ops.import_scene.fbx(filepath=FBX)
 src = next(o for o in scene.objects if o.type == "ARMATURE" and o is not tgt)
 for b in src.pose.bones:
@@ -185,7 +190,7 @@ if FRAME_FWD is not None or SLOT_TARGET is not None:
     fwd_v, right_v, up_v = Bt_rest.col[1], Bt_rest.col[0], Bt_rest.col[2]
     head_pos = (tgt.matrix_world @ tgt.pose.bones["Head"].matrix).translation
     scene.frame_set(0)
-    turn = Matrix.Rotation(-PITCH, 3, right_v)  # positive pitch = looking up (rotate forward towards up)
+    turn = Matrix.Rotation(PITCH, 3, right_v)  # positive pitch = looking up (verified in game by pitch sweep)
     if SLOT_TARGET is not None:
         cam_pos = head_pos + fwd_v * 0.148
         sf, sr, su = SLOT_TARGET
@@ -230,6 +235,11 @@ for out_frame in range(len(frames)):
     for name in TWIST_BONES:
         if name in tgt.pose.bones:
             tgt.pose.bones[name].keyframe_insert("rotation_quaternion", frame=out_frame)
+
+import keep_channels
+for out_frame in range(len(frames)):
+    scene.frame_set(out_frame)
+    keep_channels.nudge_identity(tgt.pose.bones, ARM_BONES + TWIST_BONES, out_frame)
 
 bpy.ops.object.mode_set(mode="OBJECT")
 n_frames = len(frames)
