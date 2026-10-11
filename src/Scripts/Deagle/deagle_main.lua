@@ -55,7 +55,8 @@ Deagle.state = Deagle.state or {
 
 -- Console %line / %1 substitutions arrive wrapped in double quotes.
 local function unquote(str)
-	return (string.gsub(str or "", '"', ""))
+	str = string.gsub(str or "", '^%s*"', "")
+	return (string.gsub(str, '"%s*$', ""))
 end
 
 local function log(msg)
@@ -601,6 +602,26 @@ System.AddCCommand("deagle_status", "Deagle:EnsureInit() Deagle:Status()", "Prin
 System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give()", "Add the Desert Eagle (if missing) and 49 cartridges")
 System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give([[%1]])", "deagle_give_ammo <n>: add n cartridges")
 System.AddCCommand("deagle_pose", "Deagle:Pose([[%line]])", "deagle_pose <fragment> [tags]: try a hold animation, e.g. deagle_pose Pointing r_noweapon")
+-- Dev hot reload: re-runs this script from a loose file so changes apply without restarting the game.
+Deagle.devPath = Deagle.devPath or "E:/Tools/deagle-dev/deagle_main.lua"
+function Deagle:DevReload()
+	local ok, err = pcall(function()
+		local chunk, perr = loadfile(self.devPath)
+		if not chunk then error(perr) end
+		chunk()
+	end)
+	log(ok and ("dev reload ok: " .. self.devPath) or ("$4dev reload failed: " .. tostring(err)))
+end
+
+function Deagle:DevLua(line)
+	local chunk, err = loadstring(unquote(line))
+	if not chunk then log("$4lua: " .. tostring(err)) return end
+	local ok, res = pcall(chunk)
+	log("lua -> " .. tostring(ok) .. " " .. tostring(res))
+end
+
+System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")
+System.AddCCommand("deagle_lua", "Deagle:DevLua([==[%line]==])", "deagle_lua <code>: run Lua (dev)")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 
