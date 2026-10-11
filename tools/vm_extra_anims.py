@@ -56,10 +56,12 @@ dg = bpy.context.evaluated_depsgraph_get()
 gun = next(o for o in scene.objects if o.type == "MESH" and o.name.startswith("deagle"))
 gi = {g.index: g.name for g in gun.vertex_groups}
 me = gun.evaluated_get(dg).to_mesh()
-slide = []
+slide, body = [], []
 for v in gun.data.vertices:
-    if any(gi[g.group] == "j_slide" and g.weight > 0.5 for g in v.groups):
-        slide.append(gun.matrix_world @ me.vertices[v.index].co)
+    names = [gi[g.group] for g in v.groups if g.weight > 0.5]
+    w = gun.matrix_world @ me.vertices[v.index].co
+    if "j_slide" in names: slide.append(w)
+    if any(n in ("j_slide", "j_gun", "tag_pistol_offset") for n in names): body.append(w)   # slide + barrel/frame
 gun.evaluated_get(dg).to_mesh_clear()
 cen = sum(slide, Vector()) / len(slide)
 # principal axis of the slide = bore direction, pointing toward the muzzle (tag_flash)
@@ -78,8 +80,22 @@ if (flash - cen).dot(ax) < 0:
 up0 = Vector((0, 0, 1)); up0 = (up0 - ax * up0.dot(ax)).normalized()
 ts = [(p - cen).dot(ax) for p in slide]
 tmin, tmax = min(ts), max(ts)
-rear = max((p for p, t in zip(slide, ts) if t < tmin + 0.03), key=lambda p: p.dot(up0))
-front = max((p for p, t in zip(slide, ts) if t > tmax - 0.02), key=lambda p: p.dot(up0))
+# sights on the slide's centreline: lateral = midpoint of the slide's left/right extent (the rear sight has two ears
+# with the notch between them), height = top of the region, position along the bore = middle of the region
+side = up0.cross(ax).normalized()
+def sight(region, src=None):
+    src = src or slide
+    pts = [p for p in src if region((p - cen).dot(ax))]
+    top = max(p.dot(up0) for p in pts)
+    upper = [p for p in pts if p.dot(up0) > top - 0.004]            # the sight blade / ears
+    lat = (min(p.dot(side) for p in pts) + max(p.dot(side) for p in pts)) / 2
+    along = sum(p.dot(ax) for p in upper) / len(upper)
+    return ax * along + side * lat + up0 * top
+rear = sight(lambda t: t < tmin + 0.03)
+# the Deagle's front sight is on the barrel (not the slide): search the whole gun body's front 2.5 cm
+tb = [(p - cen).dot(ax) for p in body]
+front = sight(lambda t: t > max(tb) - 0.025, body)
+print("BODY verts", len(body), "front of gun at", round(max(tb), 3), "front of slide at", round(tmax, 3))
 sight = (front - rear).normalized()
 print("SIGHTS rear", [round(v, 3) for v in rear], "front", [round(v, 3) for v in front], "slide len", round(tmax - tmin, 3))
 # rigid transform: sight line -> +X through the eye, gun upright, rear sight at RELIEF
@@ -129,7 +145,10 @@ root.matrix = arm.matrix_world.inverted() @ T @ (arm.matrix_world @ root.matrix)
 bpy.context.view_layer.update()
 mw = arm.matrix_world
 rs = (mw @ PB["tag_flash"].head)
-print("ADS check: muzzle off the eye axis by", round(math.hypot(rs.y, rs.z) * 1000, 1), "mm at", round(rs.x, 3), "m")
+for nm, p in (("rear", T @ rear), ("front", T @ front)):
+    ang_r = math.degrees(math.atan2(-p.y, p.x)); ang_u = math.degrees(math.atan2(p.z, p.x))
+    print(f"ADS {nm} sight: {p.x:.3f} m ahead, {ang_r:+.3f} deg right, {ang_u:+.3f} deg up "
+          f"(= {ang_r / math.degrees(1.1011) * 1080:+.1f} px, {ang_u / math.degrees(1.1011) * 1080:+.1f} px at 1080p)")
 bake_pose("@ads", 1, 2)
 print("MADE @ads")
 bpy.ops.wm.save_as_mainfile(filepath=OUT)
