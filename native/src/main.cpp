@@ -192,7 +192,10 @@ static void Command(const char* line) {
 	if (sscanf_s(line, "%31s", cmd, (unsigned)sizeof(cmd)) != 1) return;
 	const char* rest = line + strlen(cmd);
 	while (*rest == ' ') rest++;
-	if (!strcmp(cmd, "hello")) { g_pendingConsole = "deagle_native_ok"; Log("hello from Lua"); }
+	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
+		g_follow = false; g_vmId = 0; mo.aiming = false;
+		g_pendingConsole = "deagle_native_ok"; Log("hello from Lua");
+	}
 	else if (!strcmp(cmd, "vm")) {
 		unsigned long long id = 0;
 		const char* hex = strstr(rest, "0x"); hex = hex ? hex + 2 : rest;
