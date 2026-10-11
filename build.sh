@@ -15,6 +15,15 @@ with zipfile.ZipFile(dst, "w", zipfile.ZIP_STORED) as z:
             z.write(full, os.path.relpath(full, src).replace(os.sep, "/"))
 print("packed", dst, len(zipfile.ZipFile(dst).namelist()), "files")
 PY
+mkdir -p "$out/Localization"
+python3 - "$here/loc/english" "$out/Localization/english_xml.pak" <<'PY'
+import os, sys, zipfile
+src, dst = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(dst, "w", zipfile.ZIP_STORED) as z:
+    for f in sorted(os.listdir(src)):
+        z.write(os.path.join(src, f), f)
+print("packed", dst)
+PY
 if [[ "${1:-}" == "--install" ]]; then
   game='E:\SteamLibrary\steamapps\common\KingdomComeDeliverance2'
   if powershell.exe -NoProfile -Command "if(Get-Process KingdomCome -ErrorAction SilentlyContinue){exit 1}"; then :; else

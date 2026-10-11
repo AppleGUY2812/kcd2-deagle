@@ -4,6 +4,8 @@
 Deagle = Deagle or {}
 
 Deagle.cfg = {
+	itemId = "d81561f0-5635-4197-84c2-7f2b1a92f013",   -- deagle_pistol (Libs/Tables/item/item__deagle.xml)
+	ammoId = "214b29af-66a9-42be-882a-d63562010b7b",   -- deagle_ammo
 	magSize = 7,
 	interval = 0.22,          -- seconds between shots (semi-auto cap)
 	reloadTime = 2.1,
@@ -33,7 +35,7 @@ Deagle.cfg = {
 }
 
 Deagle.state = Deagle.state or {
-	ammo = 7,
+	ammo = 0,
 	drawn = false,
 	aiming = false,
 	reloading = false,
@@ -187,6 +189,11 @@ function Deagle:Fire()
 	local s, c = self.state, self.cfg
 	local p = self:Player()
 	if not p or s.reloading then return end
+	if not self:Owns() then
+		s.drawn = false
+		self:SetAim(false)
+		return
+	end
 	local now = System.GetCurrTime()
 	if now - s.lastShot < c.interval then return end
 	if s.ammo <= 0 then
@@ -215,20 +222,53 @@ function Deagle:Fire()
 	if s.ammo == 0 then self:ShowAmmo() end
 end
 
+-- ---------------------------------------------------------------------------
+-- inventory: the pistol and its cartridges are real items
+-- ---------------------------------------------------------------------------
+function Deagle:CountOf(id)
+	local p = self:Player()
+	local ok, n = pcall(function() return p.inventory:GetCountOfClass(id) end)
+	return ok and (n or 0) or 0
+end
+
+function Deagle:Owns()
+	return self:CountOf(self.cfg.itemId) > 0
+end
+
+function Deagle:Notify(text)
+	try("info text", Game.SendInfoText, text, false)
+end
+
+function Deagle:Give(line)
+	local p = self:Player()
+	local rounds = tonumber(line) or 49
+	if not self:Owns() then try("give pistol", ItemUtils.CreateInvItem, p, self.cfg.itemId, 1) end
+	if rounds > 0 then try("give ammo", ItemUtils.CreateInvItem, p, self.cfg.ammoId, rounds) end
+	log("give: pistol " .. self:CountOf(self.cfg.itemId) .. ", cartridges " .. self:CountOf(self.cfg.ammoId))
+end
+
 function Deagle:Reload()
 	local s, c = self.state, self.cfg
 	if s.reloading or s.ammo >= c.magSize then return end
+	if self:CountOf(c.ammoId) <= 0 then
+		self:Notify("No .50 AE cartridges")
+		return
+	end
 	s.reloading = true
 	self:PlayTrigger(c.reloadTrigger)
 	Script.SetTimer(math.floor(c.reloadTime * 1000), function()
-		s.ammo = c.magSize
 		s.reloading = false
+		local take = math.min(c.magSize - s.ammo, self:CountOf(c.ammoId))
+		if take > 0 then
+			try("use ammo", function() self:Player().inventory:DeleteItemOfClass(c.ammoId, take) end)
+			s.ammo = s.ammo + take
+		end
 		self:ShowAmmo()
 	end)
 end
 
 function Deagle:ShowAmmo()
-	try("ammo text", Game.SendInfoText, "Desert Eagle  " .. self.state.ammo .. " / " .. self.cfg.magSize, false)
+	self:Notify(string.format("Desert Eagle  %d / %d   (%d spare)", self.state.ammo, self.cfg.magSize, self:CountOf(self.cfg.ammoId)))
 end
 
 function Deagle:SetAim(on)
@@ -247,7 +287,15 @@ end
 
 function Deagle:Toggle()
 	local s = self.state
+	if not s.drawn and not self:Owns() then
+		self:Notify("You don't have a Desert Eagle")
+		return
+	end
 	s.drawn = not s.drawn
+	if s.drawn then
+		local h = self:Player().human
+		try("holster weapon", function() if h:IsWeaponDrawn() then h:HolsterWeapon() end end)
+	end
 	if not s.drawn then self:SetAim(false) end
 	log(s.drawn and "drawn" or "holstered")
 	self:ShowAmmo()
@@ -426,6 +474,7 @@ System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key 
 System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.state.logActions", "Toggle logging of every input action")
 System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting live")
 System.AddCCommand("deagle_status", "Deagle:EnsureInit() Deagle:Status()", "Print hook / input / ammo state")
+System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give([[%1]])", "deagle_give [cartridges=49]: add the pistol (if missing) and cartridges")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 
@@ -437,4 +486,4 @@ if not Deagle.listening then
 	end)
 end
 
-log("loaded v0.3")
+log("loaded v0.5")
