@@ -665,6 +665,7 @@ function Deagle:OnGameplayStarted()
 	local s = self.state
 	s.reloading, s.drawn, s.aiming, s.lastShot, s.ammo = false, false, false, -100, self.cfg.magSize
 	self.handEnt, self.slideEnt, self.magEnt = nil, nil, nil
+	self.attached = false
 	self.inputLoaded = false
 	self:EnsureInit()
 end
