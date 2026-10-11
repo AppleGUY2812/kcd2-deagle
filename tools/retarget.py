@@ -18,6 +18,10 @@ if OPTS.get("first") is not None:
     RANGE = (int(OPTS["first"]), int(OPTS["last"]))
 # FPS framing: right wrist target relative to the Head bone, in Henry's character frame (metres)
 FRAME_FWD, FRAME_RIGHT, FRAME_UP = OPTS.get("fwd"), OPTS.get("right", 0.06), OPTS.get("up", -0.30)
+# Pitch variant: the game's chest does not follow view pitch, so each variant tilts the grip target (given in
+# camera space as slot_fwd/right/up, relative to the camera at Head + 0.148 m) and the hands by the view pitch.
+PITCH = math.radians(OPTS.get("pitch", 0.0))
+SLOT_TARGET = (OPTS["slot_fwd"], OPTS.get("slot_right", 0.05), OPTS.get("slot_up", -0.11)) if "slot_fwd" in OPTS else None
 
 ARM_BONES = []
 for side in ("Left", "Right"):
@@ -136,12 +140,23 @@ def set_world_rot(pb, world_rot):
 def joint(name):
     return tgt.matrix_world @ tgt.pose.bones[name].head
 
-def solve_arm(side, wrist_target):
+def rest_joint(name):
+    return (tgt.matrix_world @ tgt.data.bones[name].matrix_local).translation
+
+def hinge_frame(direction, hinge):
+    x = direction.normalized()
+    z = (hinge - x * hinge.dot(x)).normalized()
+    return Matrix((x, z.cross(x), z)).transposed()
+
+def solve_arm(side, wrist_target, hand_turn=None):
+    """2-bone IK that also fixes each segment's roll: the elbow hinge axis (taken from Henry's rest pose, where the
+    elbow is slightly bent) is aligned with the normal of the new shoulder-elbow-wrist plane, so the elbow creases
+    the right way instead of folding sideways."""
     up_b, fore_b, hand_b = f"{side}Arm", f"{side}ForeArm", f"{side}Hand"
     S, E, W = joint(up_b), joint(fore_b), joint(hand_b)
     a, b = (E - S).length, (W - E).length
     d_vec = wrist_target - S
-    d = min(d_vec.length, a + b - 1e-4)
+    d = min(d_vec.length, a + b - 1e-3)
     n = d_vec.normalized()
     cos_a = max(-1.0, min(1.0, (a * a + d * d - b * b) / (2 * a * d)))
     pole = (E - S) - n * (E - S).dot(n)          # keep the elbow on the side the mocap had it, biased down
@@ -150,31 +165,41 @@ def solve_arm(side, wrist_target):
     E2 = S + a * (cos_a * n + math.sqrt(max(0.0, 1 - cos_a * cos_a)) * m)
     W2 = S + n * d
     hand_world = rot(tgt.matrix_world @ tgt.pose.bones[hand_b].matrix)
-    # upper arm: swing so the elbow lands on E2
-    pb = tgt.pose.bones[up_b]
-    cur = rot(tgt.matrix_world @ pb.matrix)
-    set_world_rot(pb, (E - S).normalized().rotation_difference((E2 - S).normalized()).to_matrix() @ cur)
-    # forearm: measured after the parent moved
-    E, W = joint(fore_b), joint(hand_b)
-    pb = tgt.pose.bones[fore_b]
-    cur = rot(tgt.matrix_world @ pb.matrix)
-    set_world_rot(pb, (W - E).normalized().rotation_difference((W2 - E).normalized()).to_matrix() @ cur)
-    # hand keeps its world orientation so the gun keeps pointing forward
+    if hand_turn is not None:
+        hand_world = hand_turn @ hand_world
+    # rest hinge: normal of the rest arm plane
+    rS, rE, rW = rest_joint(up_b), rest_joint(fore_b), rest_joint(hand_b)
+    hinge_rest = (rE - rS).cross(rW - rE)
+    hinge_new = (E2 - S).cross(W2 - E2)
+    if hinge_new.length < 1e-6:  # straight arm: keep the previous hinge
+        hinge_new = (E - S).cross(W - E)
+    for bone, r0, r1, p0, p1 in ((up_b, rS, rE, S, E2), (fore_b, rE, rW, E2, W2)):
+        rest_rot = rot(rest_world(tgt, bone))
+        new_rot = hinge_frame(p1 - p0, hinge_new) @ hinge_frame(r1 - r0, hinge_rest).inverted() @ rest_rot
+        set_world_rot(tgt.pose.bones[bone], new_rot)
+    # hand keeps its (pitched) world orientation so the gun keeps pointing where the camera looks
     set_world_rot(tgt.pose.bones[hand_b], hand_world)
 
-if FRAME_FWD is not None:
+if FRAME_FWD is not None or SLOT_TARGET is not None:
     Bt_rest = basis_from(tgt, rest_world)
     fwd_v, right_v, up_v = Bt_rest.col[1], Bt_rest.col[0], Bt_rest.col[2]
     head_pos = (tgt.matrix_world @ tgt.pose.bones["Head"].matrix).translation
-    target_rw = head_pos + fwd_v * FRAME_FWD + right_v * FRAME_RIGHT + up_v * FRAME_UP
     scene.frame_set(0)
-    offset = target_rw - (tgt.matrix_world @ tgt.pose.bones["RightHand"].head)
+    turn = Matrix.Rotation(-PITCH, 3, right_v)  # positive pitch = looking up (rotate forward towards up)
+    if SLOT_TARGET is not None:
+        cam_pos = head_pos + fwd_v * 0.148
+        sf, sr, su = SLOT_TARGET
+        target_slot = cam_pos + turn @ (fwd_v * sf + right_v * sr + up_v * su)
+        offset = target_slot - (tgt.matrix_world @ tgt.pose.bones["RightHandSlot"].head)
+    else:
+        target_rw = head_pos + fwd_v * FRAME_FWD + right_v * FRAME_RIGHT + up_v * FRAME_UP
+        offset = target_rw - (tgt.matrix_world @ tgt.pose.bones["RightHand"].head)
     print("FRAMING offset", tuple(round(v, 3) for v in offset))
     for out_frame in range(len(frames)):
         scene.frame_set(out_frame)
         for side in ("Right", "Left"):
             W = tgt.matrix_world @ tgt.pose.bones[f"{side}Hand"].head
-            solve_arm(side, W + offset)
+            solve_arm(side, W + offset, turn if PITCH else None)
         for name in (f"{s}{b}" for s in ("Left", "Right") for b in ("Arm", "ForeArm", "Hand")):
             tgt.pose.bones[name].keyframe_insert("rotation_quaternion", frame=out_frame)
 
@@ -288,6 +313,15 @@ for label, offset in (("grip_right", right_v * 0.45 + Vector((0, 0, 0.05))), ("g
     c.data.lens = 50
     scene.camera = c
     scene.render.filepath = f"{PREVIEW}/{NAME}_{label}.png"
+    bpy.ops.render.render(write_still=True)
+# elbow close-ups (outside of each arm, slightly below)
+for side_name, sgn in (("Right", 1), ("Left", -1)):
+    el = (tgt.matrix_world @ tgt.pose.bones[f"{side_name}ForeArm"].matrix).translation
+    c = bpy.data.objects.new(f"elbow{side_name}", bpy.data.cameras.new("e")); scene.collection.objects.link(c)
+    c.location = el + right_v * (0.5 * sgn) + Vector((0, 0, -0.15)) - fwd * 0.1
+    c.rotation_euler = (el - c.location).to_track_quat("-Z", "Y").to_euler(); c.data.lens = 40
+    scene.camera = c
+    scene.render.filepath = f"{PREVIEW}/{NAME}_elbow_{side_name.lower()}.png"
     bpy.ops.render.render(write_still=True)
 side_cam = bpy.data.objects.new("side", bpy.data.cameras.new("side")); scene.collection.objects.link(side_cam)
 right = basis_from(tgt, rest_world).col[0]
