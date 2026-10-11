@@ -15,7 +15,7 @@ Deagle.cfg = {
 	spreadAim = 0.25,
 	aimFovScale = 0.8,
 	hitMode = "hit",          -- "hit" = game hit pipeline (reactions), "soul" = direct soul damage
-	hitType = "normal",
+	hitType = "bullet",       -- probe: bullet=10, normal=8
 	shotTrigger = "c_f_firearm_shot",
 	dryTrigger = nil,
 	reloadTrigger = nil,
@@ -26,6 +26,8 @@ Deagle.cfg = {
 	flashIntensity = 6,
 	flashMs = 45,
 	recoil = 1.0,
+	kickPitch = 2.6,          -- degrees of muzzle climb per shot
+	kickYaw = 0.8,
 	lightSlot = 15,
 }
 
@@ -122,6 +124,14 @@ end
 function Deagle:Recoil()
 	local p = self:Player()
 	local k = self.cfg.recoil
+	try("view kick", function()
+		local d = System.GetViewCameraDir()
+		local pitch = math.asin(math.max(-1, math.min(1, d.z)))
+		local yaw = math.atan2(-d.x, d.y)
+		local up = math.rad(self.cfg.kickPitch) * k * (self.state.aiming and 0.7 or 1)
+		local side = math.rad(self.cfg.kickYaw) * k * (math.random() * 2 - 1)
+		p.actor:PlayerSetViewAngles({ x = pitch + up, y = 0, z = yaw + side })
+	end)
 	try("recoil", function()
 		p.actor:SetViewShake({ x = math.rad(2.2) * k, y = math.rad(0.6) * k, z = math.rad(0.4) * k },
 			{ x = 0.004 * k, y = 0.02 * k, z = 0.006 * k }, 0.16, 1 / 30, 0.2)
@@ -198,7 +208,7 @@ function Deagle:Reload()
 end
 
 function Deagle:ShowAmmo()
-	try("ammo text", Game.SendInfoText, "Desert Eagle  " .. self.state.ammo .. " / " .. self.cfg.magSize, false, nil, 1.5)
+	try("ammo text", Game.SendInfoText, "Desert Eagle  " .. self.state.ammo .. " / " .. self.cfg.magSize, false)
 end
 
 function Deagle:SetAim(on)
@@ -247,22 +257,29 @@ function Deagle:OnAction(action, activation)
 	return false
 end
 
-function Deagle:HookActions()
-	if not (g_gameRules and g_gameRules.Client) then return false end
-	local client = g_gameRules.Client
-	if client.OnActorAction and client.OnActorAction == self.actionWrapper then return true end
-	local orig = client.OnActorAction
-	self.actionWrapper = function(gr, actor, action, activation, value)
+local function wrapOnAction(tbl, label)
+	local orig = rawget(tbl, "OnAction")
+	if not orig or orig == Deagle.wrapped[label] then return false end
+	local wrapper = function(selfEnt, action, activation, value)
 		local consumed = false
 		local ok, err = pcall(function() consumed = Deagle:OnAction(action, activation) end)
 		if not ok then log("$4OnAction error: " .. tostring(err)) end
-		if consumed then return false end
-		if orig then return orig(gr, actor, action, activation, value) end
-		return true
+		if consumed then return end
+		return orig(selfEnt, action, activation, value)
 	end
-	client.OnActorAction = self.actionWrapper
-	log("action hook installed")
+	tbl.OnAction = wrapper
+	Deagle.wrapped[label] = wrapper
+	log("action hook installed on " .. label)
 	return true
+end
+
+-- KCD2 delivers input actions to the player entity's OnAction (Scripts/Entities/actor/player.lua)
+function Deagle:HookActions()
+	self.wrapped = self.wrapped or {}
+	if type(Player) == "table" then wrapOnAction(Player, "Player") end
+	local p = self:Player()
+	if p then wrapOnAction(p, "instance") end
+	return self.wrapped.Player ~= nil or self.wrapped.instance ~= nil
 end
 
 function Deagle:LoadInput()
@@ -360,6 +377,13 @@ function Deagle:FxTest(name)
 	self:SpawnFx(name, vadd(System.GetViewCameraPos(), vscale(dir, 3)), dir, 1)
 end
 
+function Deagle:Status()
+	local s = self.state
+	log(string.format("status hookPlayer=%s hookInstance=%s input=%s drawn=%s ammo=%d reloading=%s",
+		tostring(self.wrapped and self.wrapped.Player ~= nil), tostring(self.wrapped and self.wrapped.instance ~= nil),
+		tostring(self.inputLoaded), tostring(s.drawn), s.ammo, tostring(s.reloading)))
+end
+
 function Deagle:Cfg()
 	local keys = {}
 	for k in pairs(self.cfg) do keys[#keys + 1] = k end
@@ -374,6 +398,7 @@ System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")
 System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key bindings")
 System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.state.logActions", "Toggle logging of every input action")
 System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting live")
+System.AddCCommand("deagle_status", "Deagle:Status()", "Print hook / input / ammo state")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 
