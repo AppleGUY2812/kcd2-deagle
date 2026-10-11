@@ -994,3 +994,169 @@ function Deagle:EjectCase()
 		Script.SetTimer(c.caseLifeMs, function() pcall(System.RemoveEntity, id) end)
 	end)
 end
+
+-- ---- head-locked follow (fixes the 1-frame lag of per-frame camera placement): the viewmodel entity rides a
+-- bone attachment on Henry's Head, which updates in the same frame as the first-person camera.
+-- VmAttachHead() attaches with zero offset; VmCalibrate() (a frame later) solves the offset that puts the
+-- viewmodel's origin on the camera, looking along it.
+local function anglesToMat(a)   -- CryEngine Matrix33::CreateRotationXYZ = Rz * Ry * Rx (rows)
+	local cx, sx, cy, sy, cz, sz = math.cos(a.x), math.sin(a.x), math.cos(a.y), math.sin(a.y), math.cos(a.z), math.sin(a.z)
+	return { { cy * cz, sx * sy * cz - cx * sz, cx * sy * cz + sx * sz },
+	         { cy * sz, sx * sy * sz + cx * cz, cx * sy * sz - sx * cz },
+	         { -sy, sx * cy, cx * cy } }
+end
+local function matToAngles(m)
+	return { x = math.atan2(m[3][2], m[3][3]), y = math.asin(math.max(-1, math.min(1, -m[3][1]))), z = math.atan2(m[2][1], m[1][1]) }
+end
+local function mtm(a, b)        -- a^T * b
+	local r = {}
+	for i = 1, 3 do r[i] = {} for j = 1, 3 do r[i][j] = a[1][i] * b[1][j] + a[2][i] * b[2][j] + a[3][i] * b[3][j] end end
+	return r
+end
+local function mtv(a, v)        -- a^T * v
+	return { x = a[1][1] * v.x + a[2][1] * v.y + a[3][1] * v.z, y = a[1][2] * v.x + a[2][2] * v.y + a[3][2] * v.z,
+	         z = a[1][3] * v.x + a[2][3] * v.y + a[3][3] * v.z }
+end
+local function camMat()
+	local f = System.GetViewCameraDir()
+	local r = vnorm(vcross(f, { x = 0, y = 0, z = 1 }))
+	local u = vcross(r, f)
+	return { { r.x, f.x, u.x }, { r.y, f.y, u.y }, { r.z, f.z, u.z } }  -- columns: right, forward, up
+end
+
+Deagle.cfg.vm.follow = Deagle.cfg.vm.follow or "camera"   -- "camera" (per-frame) or "head" (bone attachment)
+Deagle.cfg.vm.attBone = "Head"
+
+function Deagle:VmAttachHead()
+	local p, vm = self:Player(), self:VmEntity()
+	if not (p and vm) then return end
+	pcall(p.DestroyAttachment, p, 0, "deagle_vm_att")
+	p:CreateBoneAttachment(0, self.cfg.vm.attBone, "deagle_vm_att")
+	p:SetAttachmentObject(0, "deagle_vm_att", vm.id, -1, 0)
+	local c = self.cfg.vm
+	p:SetAttachmentPos(0, "deagle_vm_att", c.attPos or { x = 0, y = 0, z = 0 })
+	p:SetAttachmentAngles(0, "deagle_vm_att", c.attAng or { x = 0, y = 0, z = 0 })
+	self.cfg.vm.follow = "head"
+	log("viewmodel attached to " .. c.attBone)
+end
+
+function Deagle:VmCalibrate()
+	local vm = System.GetEntity(self.vmId)
+	local P0, R0 = vm:GetWorldPos(), anglesToMat(vm:GetWorldAngles())
+	-- current attachment offset (T_old) is part of the measured pose: world = A * T_old, want A * T_new = camera
+	local c = self.cfg.vm
+	local To = anglesToMat(c.attAng or { x = 0, y = 0, z = 0 })
+	local po = c.attPos or { x = 0, y = 0, z = 0 }
+	-- attachment frame A: rotation RA = R0 * To^T, origin PA = P0 - RA * po
+	local RA = {}
+	for i = 1, 3 do RA[i] = {} for j = 1, 3 do RA[i][j] = R0[i][1] * To[j][1] + R0[i][2] * To[j][2] + R0[i][3] * To[j][3] end end
+	local PA = { x = P0.x - (RA[1][1] * po.x + RA[1][2] * po.y + RA[1][3] * po.z),
+	             y = P0.y - (RA[2][1] * po.x + RA[2][2] * po.y + RA[2][3] * po.z),
+	             z = P0.z - (RA[3][1] * po.x + RA[3][2] * po.y + RA[3][3] * po.z) }
+	local Pc, Rc = System.GetViewCameraPos(), camMat()
+	c.attPos = mtv(RA, vadd(Pc, vscale(PA, -1)))
+	c.attAng = matToAngles(mtm(RA, Rc))
+	local p = self:Player()
+	p:SetAttachmentPos(0, "deagle_vm_att", c.attPos)
+	p:SetAttachmentAngles(0, "deagle_vm_att", c.attAng)
+	log(string.format("viewmodel calibrated: pos %.4f %.4f %.4f ang %.2f %.2f %.2f (deg)", c.attPos.x, c.attPos.y, c.attPos.z,
+		math.deg(c.attAng.x), math.deg(c.attAng.y), math.deg(c.attAng.z)))
+end
+
+-- error of the viewmodel origin vs the camera (mm, deg): logged to judge drift while moving
+function Deagle:VmError()
+	local vm = System.GetEntity(self.vmId)
+	local d = vadd(vm:GetWorldPos(), vscale(System.GetViewCameraPos(), -1))
+	local R = anglesToMat(vm:GetWorldAngles())
+	local f = System.GetViewCameraDir()
+	local dot = R[1][2] * f.x + R[2][2] * f.y + R[3][2] * f.z
+	return vlen(d) * 1000, math.deg(math.acos(math.max(-1, math.min(1, dot))))
+end
+
+local baseVmPlace = Deagle.VmPlace
+function Deagle:VmPlace()
+	if self.cfg.vm.follow == "head" then return end
+	baseVmPlace(self)
+end
+
+-- ---- v2 viewmodel playback: every one-shot clip schedules its own return to idle (the 0 ms tick timer is not a
+-- reliable per-frame loop), and replaying the clip that is already queued goes through idle first (CryEngine ignores
+-- a start of the clip it is already playing, which blocked inspect -> inspect).
+function Deagle:VmPlay(key, loop)
+	local vm, c = self:VmEntity(), self.cfg.vm
+	if not vm then return 0 end
+	local a = c.anims[key]
+	if key == "shoot" then
+		self.vmShot = (self.vmShot or 0) + 1
+		a = a[(self.vmShot - 1) % #a + 1]
+	end
+	local name, frames = a[1], a[2]
+	if self.vmAnim and self.vmAnim.name == name and key ~= "idle" then
+		pcall(vm.StartAnimation, vm, 0, c.anims.idle[1], c.layer, 0, 1.0, true)
+	end
+	local ok, started = pcall(vm.StartAnimation, vm, 0, name, c.layer, c.blend, 1.0, loop and true or false)
+	if not (ok and started) and self.vmLastFail ~= name then
+		self.vmLastFail = name
+		log("$4viewmodel anim did not start: " .. name .. " " .. tostring(started))
+	end
+	local len = frames / c.fps
+	self.vmAnimToken = (self.vmAnimToken or 0) + 1
+	local tok = self.vmAnimToken
+	self.vmAnim = { key = key, name = name, loop = loop, ends = System.GetCurrTime() + len }
+	if not loop then
+		Script.SetTimer(math.max(1, math.floor(len * 1000) - 30), function()
+			if Deagle.vmAnimToken == tok and Deagle.vmShown then Deagle:VmPlay("idle", true) end
+		end)
+	end
+	return len
+end
+
+-- casings: random cone, speed and spin so no two take the same path
+function Deagle:EjectCase()
+	local port = self:VmBone("tag_brass")
+	if not port then return baseEjectCase(self) end
+	local c = self.cfg
+	try("eject case", function()
+		local _, f, r, u = camBasis()
+		local case = spawnModel("deagle_case_" .. tostring(math.random(1, 1e9)), c.modelDir .. "deagle_case.cgf", true, 0.02)
+		case:SetWorldPos(port)
+		local jr, ju, jf = 0.75 + math.random() * 0.5, 0.5 + math.random() * 0.7, -0.45 + math.random() * 0.5
+		local dir = vnorm(vadd(vscale(r, jr), vadd(vscale(u, ju), vscale(f, jf))))
+		local spinAt = vadd(port, { x = (math.random() - 0.5) * 0.02, y = (math.random() - 0.5) * 0.02, z = (math.random() - 0.5) * 0.02 })
+		case:AddImpulse(-1, spinAt, dir, c.ejectImpulse * (0.8 + math.random() * 0.45), 1)
+		local id = case.id
+		Script.SetTimer(c.caseLifeMs, function() pcall(System.RemoveEntity, id) end)
+	end)
+end
+
+-- Henry's own body is hidden in first person while the viewmodel is out (his shadow stays)
+Deagle.cfg.vm.hideBody = true
+function Deagle:SetBodyHidden(hide)
+	if not self.cfg.vm.hideBody and hide then return end
+	local p = self:Player()
+	if not p or self.bodyHidden == hide then return end
+	pcall(p.HideAllAttachments, p, 0, hide, false)
+	pcall(p.HideAttachmentMaster, p, 0, hide)
+	self.bodyHidden = hide
+	log("body " .. (hide and "hidden" or "shown"))
+end
+
+-- viewmodel scale about the camera: identical image, but everything sits closer, so it clips into walls far less
+Deagle.cfg.vm.scale = Deagle.cfg.vm.scale or 1.0
+function Deagle:VmApplyScale()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if vm then local s = self.cfg.vm.scale pcall(vm.SetScale, vm, { x = s, y = s, z = s }) end
+end
+
+local baseVmShow, baseVmHide = Deagle.VmShow, Deagle.VmHide
+function Deagle:VmShow()
+	baseVmShow(self)
+	self:VmApplyScale()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if vm then pcall(vm.SetFlags, vm, ENTITY_FLAG_CASTSHADOW, 2) end   -- no floating-arm shadow; Henry's shadow stays
+	self:SetBodyHidden(true)
+end
+function Deagle:VmHide()
+	baseVmHide(self)
+	self:SetBodyHidden(false)
+end
