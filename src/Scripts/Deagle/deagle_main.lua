@@ -1309,7 +1309,7 @@ end
 -- in step with the first-person camera). KCD2 places attached entities at a constant offset from the bone (measured:
 -- 1.624 m down, 0.123 m back), so the character inside the entity is shifted by the measured camera pose (slot 0 local
 -- transform), self-calibrated over 15 frames.
-Deagle.cfg.vm.follow = "bone"
+Deagle.cfg.vm.follow = "camera"   -- "bone" tested: KCD2 places attached entities at the character origin, not on the bone
 function Deagle:VmBoneFollow(on)
 	local p, vm = self:Player(), self:VmEntity()
 	if not (p and vm) then return end

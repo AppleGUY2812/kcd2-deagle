@@ -11,17 +11,35 @@ scene = bpy.context.scene
 arm = next(o for o in scene.objects if o.type == "ARMATURE")
 PB = arm.pose.bones; H = "RightHand"; D2R = math.pi / 180
 bpy.context.view_layer.update()
+BN = arm.data.bones
+FINGER_BONES = [f"{H}{f}{i}" for f in ("Thumb", "Index", "Middle", "Ring", "Pinky") for i in (1, 2, 3, 4)]
+def eff_basis(pb):
+    rest_rel = pb.parent.bone.matrix_local.inverted() @ pb.bone.matrix_local
+    return (rest_rel.inverted() @ pb.parent.matrix.inverted() @ pb.matrix).to_quaternion()
+baked = {n: eff_basis(PB[n]) for n in FINGER_BONES}
+for pb in PB:
+    if pb.name in FINGER_BONES or pb.name.startswith("TIP "):
+        for c in list(pb.constraints):
+            pb.constraints.remove(c)
+if arm.animation_data:
+    for fc in [fc for fc in arm.animation_data.drivers if any(f'"{n}"' in fc.data_path for n in FINGER_BONES)]:
+        arm.animation_data.drivers.remove(fc)
+for n, q in baked.items():
+    PB[n].rotation_mode = "QUATERNION"; PB[n].rotation_quaternion = q
+bpy.context.view_layer.update()
+before_pose = {n: (arm.matrix_world @ PB[n].head).copy() for n in FINGER_BONES}
 def jw(n): return arm.matrix_world @ PB[n].head
 
 def add_slider(name, val, lo, hi, desc):
     arm[name] = round(float(val), 1)
     arm.id_properties_ui(name).update(min=lo, max=hi, soft_min=lo, soft_max=hi, description=desc, step=100, precision=1)
-def drive(pb, comp, name, k):
+def drive(pb, comp, name, k, base=None, v0=0.0):
+    """rotation_euler[comp] = v*k, or base + (v - v0)*k for a joint coupled to another joint's slider"""
     fc = pb.driver_add("rotation_euler", comp)
     d = fc.driver; d.type = "SCRIPTED"
     v = d.variables.new(); v.name = "v"; v.type = "SINGLE_PROP"
     v.targets[0].id_type = "OBJECT"; v.targets[0].id = arm; v.targets[0].data_path = f'["{name}"]'
-    d.expression = f"v*{k:.7f}"
+    d.expression = f"v*{k:.7f}" if base is None else f"{base:.7f}+(v-{v0:.4f})*{k:.7f}"
     return d
 
 def euler_of(n):
@@ -49,12 +67,20 @@ CONTROLS.append(("53 Thumb base twist", math.degrees(e1.x), -90, 90, [(t1, 0, 1.
 CONTROLS.append(("54 Thumb curl", -math.degrees(e2.z), -30, 100, [(t2, 2, -1.0), (t3, 2, -0.8)], "curl"))
 
 for n in {b for c in CONTROLS for b, _, _ in c[4]}:
+    e = euler_of(n)
     PB[n].rotation_mode = "XYZ"
-    PB[n].rotation_euler = (0, 0, 0)
+    PB[n].rotation_euler = e          # exact pose; slider-driven components are overwritten by drivers
 drivers = {}
 for name, val, lo, hi, targets, test in CONTROLS:
     add_slider(name, val, lo, hi, name)
-    drivers[name] = [(drive(PB[b], comp, name, f * D2R), f) for b, comp, f in targets]
+    lst = []
+    for i, (b, comp, f) in enumerate(targets):
+        if i == 0:
+            lst.append((drive(PB[b], comp, name, f * D2R), f, None, None))
+        else:   # coupled joint: keeps its own current angle, follows the slider's changes
+            base = PB[b].rotation_euler[comp]
+            lst.append((drive(PB[b], comp, name, f * D2R, base, arm[name]), f, base, arm[name]))
+    drivers[name] = lst
 bpy.context.view_layer.update()
 
 # self-test signs: +8 deg must move the finger the named way. Curl: the bend angle grows (sign comes from the
@@ -84,14 +110,18 @@ for name, val, lo, hi, targets, test in CONTROLS:
         continue
     if test == "curl":
         bad.append(name); continue
-    for d, f in drivers[name]:
-        d.expression = f"v*{-f * D2R:.7f}"
-    arm[name] = -arm[name]; arm.update_tag(); bpy.context.view_layer.update(); flipped.append(name)
+    arm[name] = -arm[name]
+    for d, f, base, v0 in drivers[name]:
+        d.expression = f"v*{-f * D2R:.7f}" if base is None else f"{base:.7f}+(v-{arm[name]:.4f})*{-f * D2R:.7f}"
+    arm.update_tag(); bpy.context.view_layer.update(); flipped.append(name)
     a = measure(name, test); bump(name, 8); b = measure(name, test); bump(name, -8)
     if b <= a:
         bad.append(name)
 print("SIGN FLIPPED", flipped)
 print("SIGN CHECK bad", bad)
+bpy.context.view_layer.update()
+shift = max((arm.matrix_world @ PB[n].head - before_pose[n]).length for n in FINGER_BONES)
+print("POSE KEPT max joint shift mm", round(shift * 1000, 3))
 for b in arm.data.bones:
     b.hide = True
 bpy.ops.wm.save_as_mainfile(filepath=OUT)
