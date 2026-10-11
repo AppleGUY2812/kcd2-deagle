@@ -6,6 +6,7 @@ Deagle = Deagle or {}
 Deagle.cfg = {
 	itemId = "d81561f0-5635-4197-84c2-7f2b1a92f013",   -- deagle_pistol (Libs/Tables/item/item__deagle.xml)
 	ammoId = "214b29af-66a9-42be-882a-d63562010b7b",   -- deagle_ammo
+	useAmmoItems = false,     -- cartridge items stack as one count in KCD2; unlimited reserve until that is solved
 	magSize = 7,
 	interval = 0.22,          -- seconds between shots (semi-auto cap)
 	reloadTime = 2.1,
@@ -35,7 +36,7 @@ Deagle.cfg = {
 }
 
 Deagle.state = Deagle.state or {
-	ammo = 0,
+	ammo = 7,
 	drawn = false,
 	aiming = false,
 	reloading = false,
@@ -241,7 +242,7 @@ end
 
 function Deagle:Give(line)
 	local p = self:Player()
-	local rounds = tonumber(line) or 49
+	local rounds = tonumber(line) or (self.cfg.useAmmoItems and 49 or 0)
 	if not self:Owns() then try("give pistol", ItemUtils.CreateInvItem, p, self.cfg.itemId, 1) end
 	if rounds > 0 then try("give ammo", ItemUtils.CreateInvItem, p, self.cfg.ammoId, rounds) end
 	log("give: pistol " .. self:CountOf(self.cfg.itemId) .. ", cartridges " .. self:CountOf(self.cfg.ammoId))
@@ -250,7 +251,7 @@ end
 function Deagle:Reload()
 	local s, c = self.state, self.cfg
 	if s.reloading or s.ammo >= c.magSize then return end
-	if self:CountOf(c.ammoId) <= 0 then
+	if c.useAmmoItems and self:CountOf(c.ammoId) <= 0 then
 		self:Notify("No .50 AE cartridges")
 		return
 	end
@@ -258,17 +259,21 @@ function Deagle:Reload()
 	self:PlayTrigger(c.reloadTrigger)
 	Script.SetTimer(math.floor(c.reloadTime * 1000), function()
 		s.reloading = false
-		local take = math.min(c.magSize - s.ammo, self:CountOf(c.ammoId))
-		if take > 0 then
-			try("use ammo", function() self:Player().inventory:DeleteItemOfClass(c.ammoId, take) end)
-			s.ammo = s.ammo + take
+		local take = c.magSize - s.ammo
+		if c.useAmmoItems then
+			take = math.min(take, self:CountOf(c.ammoId))
+			if take > 0 then
+				try("use ammo", function() self:Player().inventory:DeleteItemOfClass(c.ammoId, take) end)
+			end
 		end
+		s.ammo = s.ammo + take
 		self:ShowAmmo()
 	end)
 end
 
 function Deagle:ShowAmmo()
-	self:Notify(string.format("Desert Eagle  %d / %d   (%d spare)", self.state.ammo, self.cfg.magSize, self:CountOf(self.cfg.ammoId)))
+	local spare = self.cfg.useAmmoItems and string.format("   (%d spare)", self:CountOf(self.cfg.ammoId)) or ""
+	self:Notify(string.format("Desert Eagle  %d / %d%s", self.state.ammo, self.cfg.magSize, spare))
 end
 
 function Deagle:SetAim(on)
