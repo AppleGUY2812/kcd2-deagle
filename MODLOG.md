@@ -89,3 +89,30 @@ Current installed build: v1.3 + posetest anim; hold anim disabled via dev reload
   joints set by sliders must stay outside the IK chain. grip_polish.py (min-change de-clip) exists; user preferred their look.
 - How TACZ fits: TACZ gives per-frame gun pose (Deagle bone) + left-hand locator + gun parts; grip gives hand-on-gun;
   arm IK places Henry's arm. Next: left support-hand shape(s), TACZ->CAF converter with camera-view previews, in-game test.
+
+## 2026-10-11 ~05:00 — MWII viewmodel + native plugin (state for the next session)
+**Viewmodel (in game, works):** GameBanana 532396 (CS:S, IS Deagle on MWII anims; private use only). SourceIO 5.5.4
+(E:\Tools\blender-user\addons\SourceIO; import_include_animations=True path; old path patched) -> mwii_vm.blend ->
+tools/vm_export.py (rotate +90 Z: view +Y; fill_unkeyed: gun bones a clip leaves unkeyed get donor poses — fixed the
+idle slide + stray round) -> tools/vm_extra_anims.py (@idle_empty, @holster = draw reversed, @ads = j_mainroot moved
+rigidly so rear+front sight sit on the eye axis at 0.24 m) -> tools/vm_anims.ps1 (rc, skeleton alias DeagleVM in
+animroot SkeletonList, *_add.animsettings additive) -> merge_img. 14 CAFs in Animations/deagle_vm. Textures:
+tools/vm_vtf_dump.py + tools/vm_textures.py. deagle_vm.cdf/.chrparams/.mtl hand-written. Spawned as BasicEntity,
+LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDir (1-frame lag = slight jitter).
+- Tried and failed for jitter: prediction (amplifies sway), head-bone attach (KCD2 ignores attachment offsets for entity
+  attachments), "camera" bone attach (camera == camera bone, but attached entities sit at the character origin),
+  SetSlotHud3D (no effect on jitter). DOF off while up (r_DepthOfField 2 -> 0). Body hidden (HideAllAttachments +
+  HideAttachmentMaster), worn items hidden by proximity. FP guard: camera > 0.35 m from Head = not first person.
+**Native plugin (native/, MSVC + MinHook 1.3.3, Ultimate ASI Loader 9.7.4 as dinput8.dll in Bin\Win64MasterMasterSteamPGO):**
+- gEnv: static struct @RVA 0x492D800 (lea pattern unique). +0x08 3DEngine, +0x28 ScriptSystem, +0x80 Timer, +0xA0
+  EntitySystem, +0xA8 Console, +0xC0 System, +0xE0 Log, +0x108 Renderer.
+- Camera: hook CCamera::UpdateFrustumPlanes (TPVCamera patterns); game view = *(cam-0xE8) has RTTI .?AVCView@@;
+  camera Matrix34 row-major at cam+0, FOV cam+0x30.
+- IEntitySystem vt+0x70 GetEntity(id), +0x80 FindEntityByName. IEntity vt+0xF0 SetWorldTM(const Matrix34&, int),
+  +0x168 SetPosRotScale. IConsole vt+0x118 ExecuteString(cmd, silent, deferred), +0x108 AddCommand, +0xB8 GetCVar.
+- Lua->native: hook the System.LogAlways handler (RVA 0x39A996C, pattern in native/src/main.cpp), string via
+  GetParam<const char*> (0x41DC20); "[DN] ..." lines are swallowed. native->Lua: ExecuteString("deagle_native_ok").
+- v1 commands: hello, vm 0x<id>, follow 0|1, off r f u, snd <rel wav> <vol>, vol <x>. Sounds: own FMOD core system
+  from the game's fmod.dll 2.02.21, files in Mods\deagle\sounds (loose, build.sh copies assets/build/sounds).
+- Log: Bin\Win64MasterMasterSteamPGO\deagle_native.log. Uninstall: native/install.ps1 -Remove.
+- INSTALLED 04:49 but NOT YET RUN in game (user asleep). First launch: check deagle_native.log + kcd.log "native plugin linked".
