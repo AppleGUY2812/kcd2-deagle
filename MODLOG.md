@@ -66,3 +66,15 @@ In progress:
 Next after grip: native aim system for camera-lock (hand cannon aimposes are loose CAFs: Animations/humans/male/aimposes/rifle_aimposes_aim_upperbody_player.caf), TACZ-driven hands (right hand = TACZ Deagle bone, left = mag_and_lefthand group).
 User rules: don't restart the game (ask); put every visual check in Desktop\Deagle Progress; game window capture: um win shot --exe KingdomCome.exe.
 Current installed build: v1.3 + posetest anim; hold anim disabled via dev reload (holdAnim = "").
+
+## 2026-10-11 ~03:00 — live hand capture works; automated gun-in-fist fit is not converging
+- FACT: `Entity:GetBoneLocal(bone, t)` returns (a.t, X.t, c.t) for the joint's orthonormal WORLD frame [a X c] (X = GetBoneDir).
+  In Henry's glTF-local axes (glb inverse bind matrices) the joint frame is [-a, c, X] -> GetBoneDir = glTF-local Z
+  (= -Y of the henry_rig Blender bone). Verified: child joints predicted from parent frame + bind offset, mean 0.08 mm.
+  Old captures with only GetBoneDir still give full frames (dir + child offset), <= 0.17 deg. tools/hand_frames.py.
+- Captured sword grip (tag sword, assets/build/grip/cap_sword.txt): right fingers curled 56-84 deg at MCP. Rebuilt on the
+  exact rig by tools/grip_pose.py, hand-relative joint error 0.16 mm. Sword handle centre: 54 mm toward knuckles,
+  20 mm palmar of RightHand, axis along the knuckle line.
+- tools/sword_grip_fit.py (numpy LBS = Blender deform to 0.0 mm; gun SDF with 6-ray enclosure inside test) — 4 attempts,
+  coordinate descent stalls (fingers open/hyperextend, web far from beavertail). fit2 (hand-frame init) looked closest.
+  Circuit breaker hit -> asked user whether to pose by hand in Blender (prepared .blend) vs deterministic close-until-contact.
