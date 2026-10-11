@@ -1672,3 +1672,24 @@ function Deagle:Notify(text)
 	baseNotify7(self, text)
 end
 System.AddCCommand("deagle_hud", "Deagle.cfg.hud.enabled = (([[%1]]):find('0') == nil) Deagle.hudOk = nil", "deagle_hud 1|0: ammo HUD on/off")
+
+-- ---- arm look: "mw" (original sleeves + knuckle gloves) or "medieval" (KCD2 linen sleeves + old leather gloves,
+-- tiled from the game's own Textures/cloth set)
+Deagle.cfg.vm.arms = Deagle.cfg.vm.arms or "mw"   -- try: deagle_arms medieval
+function Deagle:VmApplyArms()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm then return end
+	local mtl = "objects/manmade/weapons/deagle/vm/" .. (self.cfg.vm.arms == "mw" and "deagle_vm" or "deagle_vm_medieval")
+	local ok = pcall(vm.ChangeAttachmentMaterial, vm, "vm_mesh", mtl)
+	log("arms look " .. self.cfg.vm.arms .. " (" .. tostring(ok) .. ")")
+end
+local baseVmShow8 = Deagle.VmShow
+function Deagle:VmShow()
+	baseVmShow8(self)
+	local key = tostring(self.vmId) .. self.cfg.vm.arms
+	if self.vmArmsApplied ~= key then
+		self.vmArmsApplied = key
+		self:VmApplyArms()
+	end
+end
+System.AddCCommand("deagle_arms", "Deagle.cfg.vm.arms = (([[%1]]):find('mw') and 'mw' or 'medieval') Deagle.vmArmsApplied = nil Deagle:VmApplyArms()", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
