@@ -262,7 +262,7 @@ function Deagle:Fire()
 	elseif not ok then
 		log("$4raycast failed: " .. tostring(n))
 	end
-	self:ShowAmmo()
+	if s.ammo == 0 then self:ShowAmmo() end
 end
 
 -- ---------------------------------------------------------------------------
@@ -278,7 +278,9 @@ function Deagle:Owns()
 	return self:CountOf(self.cfg.itemId) > 0
 end
 
+-- SendInfoText queues messages, so clear the current one first and only call this on state changes.
 function Deagle:Notify(text)
+	pcall(Game.HideInfoText)
 	try("info text", Game.SendInfoText, text, false)
 end
 
