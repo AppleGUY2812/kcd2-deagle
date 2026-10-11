@@ -10,3 +10,4 @@ src/Objects/**/*.skin
 native/dist/
 native/third_party/asi-loader-dl/
 native/build/
+tools/__pycache__/
