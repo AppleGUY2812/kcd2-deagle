@@ -1,37 +1,32 @@
-# Deagle mod — what's left (updated 2026-10-11 03:50)
+# Deagle mod — status (updated 2026-10-11 05:10)
 
-Legend: [live] = no game restart needed · [restart] = needs a restart (batched together)
+## Built tonight, installed, NOT yet tested in game (first launch checks all of it)
+- Native plugin v1.1 (dinput8.dll + deagle_native.asi in Bin\Win64MasterMasterSteamPGO): zero-jitter viewmodel
+  (placed inside the camera update), Lua channel, MWII sounds via the game's fmod.dll, procedural bob / turn sway /
+  sprint pose / landing spring. Log: Bin\Win64MasterMasterSteamPGO\deagle_native.log
+- MWII sounds: 8 random shot variants + every draw / reload / empty reload / inspect cue timed to the animation
+- Slide / mag / stray-round fix (unkeyed gun bones), ADS pose (right click; sights on the crosshair), additive recoil
+  while aiming, slide locked back when empty (idle_empty), holster animation
+- Own muzzle VFX (deagle.muzzle: MW19 flash bloom / front burst / flame tongues / sparks + smoke + barrel wisp),
+  ejection-port smoke; hand-cannon effect and its gunshot no longer used
+- Ammo HUD (bottom right, System.DrawText), falls back to info text
+- Arms look switch: deagle_arms medieval | mw (default mw)
+- Mock-engine tests: luajit tests/run_flows.lua, luajit tests/run_fallback.lua (0 errors)
 
-## Now (in progress)
-- [live] Jitter when turning: ride Henry's Head bone instead of placing per frame (calibration needs ~10 s in game, focused)
-- [live] Hide Henry's own body while the Deagle is out, keep his shadow (option A) — test
-- [live] Shrink the viewmodel toward the camera so it doesn't clip into walls (same image) — test scale
-- [live] Inspect (Y) can be replayed — fixed, verify
-- [live] Casings take different paths — fixed, verify
+## First launch checklist
+1. Launch, load, press H: arms appear, draw sound plays, no jitter when turning/standing
+2. Shoot: MW shot sound, new muzzle flash, casing + port smoke; 7th shot locks the slide back
+3. R: reload sounds in sync; right click: ADS (sights on centre); shoot while aiming stays aimed; Y: inspect
+4. Walk / sprint / jump: bob, lowered sprint pose, landing dip (deagle_motion 0 turns it off, 0.5 halves it)
+5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
-## Next restart batch
-- [restart] Slide out of place at idle + stray bullet in reload: bones a clip doesn't animate fall back to a wrong
-  default pose; fill them with the model's real default pose and re-export
-- [restart] Sounds: MWII shot (8 variants) + reload / empty reload / inspect / draw foley, timed to the animations
-  (KCD2 plays FMOD banks: build a bank, load it)
-- [restart] ADS: generated "arms extended, sights on centre" pose (Blender IK from idle) + additive recoil so shooting
-  while aimed stays aimed; right click blends in/out (~0.15 s) with the existing zoom
-- [restart] Own muzzle flash + smoke (replace the hand cannon effect), light flash already works
+## Next
+- Tune from the first test (offsets, motion strength, flash size, HUD position, sound volume)
+- Own bullets: projectile travel + drop, tracers (native or Lua per-frame)
+- Option B proper: Henry's own hand/sleeve meshes on the viewmodel skeleton (medieval material is the quick version)
+- Real Henry arms (native skeleton post-process callback) — big, later
+- .50 cal casing model from the MW19 pack; clean up old hold/grip code; clean-install test; knowledge-base note
 
-## After that
-- Ammo HUD (non-janky, KCD2 style)
-- Holster animation (draw reversed), slide locked back on empty, walk/sprint bob, small sway
-- Option B: viewmodel sleeves/gloves retextured to a medieval look (match Henry)
-- World model in Henry's hand for 3rd person / NPCs seeing it (optional)
-- Remove the old Henry-arm hold code (grip kit / TACZ path kept as tools only)
-- Clean install test from a fresh save, then final MODLOG + knowledge-base note
-
-## Done
-- Gameplay: fire, damage, hit reactions, blood + decals, recoil, reload, item, status text
-- MWII viewmodel converted (model, 8 animations, textures) and playing in game, camera-locked
-
-## Native plugin (decided 2026-10-11): deagle_native.asi via Ultimate ASI Loader (dinput8.dll) in Bin\Win64MasterMasterSteamPGO
-- v0 (built, ships next restart): finds gEnv, hooks the camera frustum update (final first-person camera), logs to deagle_native.log
-- v1: place the viewmodel inside the camera hook (zero jitter) — needs IEntity move + entity lookup from WHGame.dll (RE in progress)
-- v2: Lua <-> native channel; MWII sounds played through the game's own fmod.dll; own bullets (projectiles, drop, tracers); HUD
-- Uninstall: native/install.ps1 -Remove (or delete dinput8.dll + deagle_native.asi)
+## Done earlier
+- Gameplay: fire, damage, hit reactions, blood + decals, recoil, reload, item, status
+- MWII viewmodel converted and playing in game, camera-locked; DOF off while up; body + worn gear hidden; FP guard
