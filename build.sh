@@ -15,6 +15,10 @@ with zipfile.ZipFile(dst, "w", zipfile.ZIP_STORED) as z:
             z.write(full, os.path.relpath(full, src).replace(os.sep, "/"))
 print("packed", dst, len(zipfile.ZipFile(dst).namelist()), "files")
 PY
+# loose sound files for the native plugin (Mods/deagle/sounds); private-use MWII audio, not in git
+if [[ -d "$here/assets/build/sounds" ]]; then
+  mkdir -p "$out/sounds" && cp -r "$here/assets/build/sounds/." "$out/sounds/"
+fi
 mkdir -p "$out/Localization"
 python3 - "$here/loc/english" "$out/Localization/english_xml.pak" <<'PY'
 import os, sys, zipfile
