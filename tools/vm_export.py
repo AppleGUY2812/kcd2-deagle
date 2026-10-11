@@ -53,7 +53,8 @@ def fill_unkeyed():
             added.append(f"{bn}<-{dname}:{df}")
         print("FILLED", act.name, added)
 fill_unkeyed()
-bpy.ops.wm.save_as_mainfile(filepath=os.path.join(os.path.dirname(BLEND), 'mwii_vm_filled.blend'), copy=True)
+if not BLEND.endswith('_extra.blend'):
+    bpy.ops.wm.save_as_mainfile(filepath=os.path.join(os.path.dirname(BLEND), 'mwii_vm_filled.blend'), copy=True)
 
 # ---- orientation: Source/CoD view looks +X, Z up -> CryEngine +Y forward
 R = Matrix.Rotation(math.radians(90), 4, "Z")
@@ -127,5 +128,13 @@ for act in [a for a in bpy.data.actions if a.name.startswith("@")]:
                                         range_type="Values", node_start=f0, node_end=f1)
     bpy.ops.bcry.export_animations("EXEC_DEFAULT", filepath=os.path.join(ANIM, f"{name}.dae"), disable_rc=True, save_dae=True)
     print("ANIM", name, f0, f1)
+    if act.name in ("@shoot1", "@shoot2", "@shoot_empty"):   # additive copy (recoil on top of hip or ADS)
+        for c in [c for c in bpy.data.collections if c.name.endswith(".i_caf")]:
+            bpy.data.collections.remove(c)
+        bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); bpy.context.view_layer.objects.active = arm
+        bpy.ops.bcry.add_cry_animation_node("EXEC_DEFAULT", node_type="i_caf", node_name=name + "_add", mode="Manual",
+                                            range_type="Values", node_start=f0, node_end=f1)
+        bpy.ops.bcry.export_animations("EXEC_DEFAULT", filepath=os.path.join(ANIM, f"{name}_add.dae"), disable_rc=True, save_dae=True)
+        print("ANIM", name + "_add", f0, f1)
 print("COLLECTIONS", [c.name for c in bpy.data.collections])
 print("VM EXPORT DONE")
