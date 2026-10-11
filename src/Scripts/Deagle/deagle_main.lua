@@ -38,9 +38,9 @@ Deagle.cfg = {
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
 	lightSlot = 15,
-	handModel = "manmade/weapons/firearms/hand_cannon_b.cdf", -- placeholder until the Deagle model is compiled
-	holdFragment = "HoldItemRight",
-	holdTags = "r_light",
+	handModel = "objects/manmade/weapons/firearms/hand_cannon_b.cdf", -- placeholder until the Deagle model is compiled
+	holdFragment = "",        -- e.g. HoldItemRight / r_light; PlayAnim currently breaks crouch, off until our own anims exist
+	holdTags = "",
 }
 
 Deagle.state = Deagle.state or {
@@ -52,6 +52,11 @@ Deagle.state = Deagle.state or {
 	logActions = false,
 	baseFov = nil,
 }
+
+-- Console %line / %1 substitutions arrive wrapped in double quotes.
+local function unquote(str)
+	return (string.gsub(str or "", '"', ""))
+end
 
 local function log(msg)
 	System.LogAlways("$5[Deagle] " .. tostring(msg))
@@ -290,7 +295,7 @@ end
 
 function Deagle:Give(line)
 	local p = self:Player()
-	local rounds = tonumber(line) or (self.cfg.useAmmoItems and 49 or 0)
+	local rounds = tonumber(unquote(line)) or (self.cfg.useAmmoItems and 49 or 0)
 	if not self:Owns() then try("give pistol", ItemUtils.CreateInvItem, p, self.cfg.itemId, 1) end
 	if rounds > 0 then try("give ammo", ItemUtils.CreateInvItem, p, self.cfg.ammoId, rounds) end
 	log("give: pistol " .. self:CountOf(self.cfg.itemId) .. ", cartridges " .. self:CountOf(self.cfg.ammoId))
@@ -390,7 +395,7 @@ function Deagle:HideInHand()
 end
 
 function Deagle:Pose(line)
-	local frag, tags = string.match(line or "", "^%s*(%S+)%s*(%S*)")
+	local frag, tags = string.match(unquote(line), "^%s*(%S+)%s*(%S*)")
 	self.cfg.holdFragment, self.cfg.holdTags = frag, tags
 	log("pose " .. tostring(frag) .. " [" .. tostring(tags) .. "]")
 	self:PlayHold()
@@ -549,7 +554,7 @@ end
 -- console commands
 -- ---------------------------------------------------------------------------
 function Deagle:Set(line)
-	local key, value = string.match(line or "", "^%s*(%S+)%s+(.-)%s*$")
+	local key, value = string.match(unquote(line), "^%s*(%S+)%s+(.-)%s*$")
 	if not key then
 		log("usage: deagle_set <key> <value>")
 		return
@@ -566,6 +571,7 @@ function Deagle:Set(line)
 end
 
 function Deagle:FxTest(name)
+	name = unquote(name)
 	local dir = System.GetViewCameraDir()
 	self:SpawnFx(name, vadd(System.GetViewCameraPos(), vscale(dir, 3)), dir, 1)
 end
@@ -606,4 +612,4 @@ if not Deagle.listening then
 	end)
 end
 
-log("loaded v0.8")
+log("loaded v0.9")
