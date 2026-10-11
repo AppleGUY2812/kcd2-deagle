@@ -11,3 +11,4 @@ native/dist/
 native/third_party/asi-loader-dl/
 native/build/
 tools/__pycache__/
+src/Textures/**/*.dds*

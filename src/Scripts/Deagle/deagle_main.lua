@@ -1598,3 +1598,19 @@ function Deagle:EnsureInit()
 	if self.native == nil then self:NativeHello() end
 end
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
+
+-- ---- own muzzle effects (Libs/Particles/deagle.xml, preloaded via PreloadList.txt); port smoke at the ejection port
+Deagle.cfg.muzzleFx = "deagle.muzzle"
+Deagle.cfg.portFx = "deagle.port_smoke"
+Deagle.cfg.muzzleFxScale = 1.0
+local baseEjectCase5 = Deagle.EjectCase
+function Deagle:EjectCase()
+	baseEjectCase5(self)
+	local port = self:VmBone("tag_brass")
+	if port then self:SpawnFx(self.cfg.portFx, port, System.GetViewCameraUpDir(), 1.0) end
+end
+local baseSpawnFx5 = Deagle.SpawnFx
+function Deagle:SpawnFx(name, pos, normal, scale)
+	if name == self.cfg.muzzleFx then scale = self.cfg.muzzleFxScale end
+	return baseSpawnFx5(self, name, pos, normal, scale)
+end
