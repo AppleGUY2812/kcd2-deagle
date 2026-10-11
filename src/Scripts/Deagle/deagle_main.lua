@@ -38,7 +38,15 @@ Deagle.cfg = {
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
 	lightSlot = 15,
-	handModel = "objects/manmade/weapons/firearms/hand_cannon_b.cdf", -- placeholder until the Deagle model is compiled
+	modelDir = "objects/manmade/weapons/deagle/",
+	handPos = { x = 0, y = 0, z = 0 },     -- frame offset/rotation in the hand, tuned live
+	handAng = { x = 0, y = 0, z = 0 },     -- degrees
+	slideTravel = 0.035,                    -- metres the slide moves back per shot
+	slideMs = { 0, 45, 95 },                -- back, half way, home
+	ejectPort = { x = 0.014, y = 0.06, z = 0.06 }, -- in frame space (muzzle +Y, up +Z)
+	ejectImpulse = 0.06,
+	caseLifeMs = 20000,
+	muzzle = { x = 0, y = 0.22, z = 0.055 },
 	holdFragment = "",        -- e.g. HoldItemRight / r_light; PlayAnim currently breaks crouch, off until our own anims exist
 	holdTags = "",
 }
@@ -261,9 +269,11 @@ function Deagle:Fire()
 	local dir = coneDir(System.GetViewCameraDir(), s.aiming and c.spreadAim or c.spreadHip)
 
 	self:PlayTrigger(c.shotTrigger)
-	self:SpawnFx(c.muzzleFx, vadd(pos, vscale(dir, 0.7)), dir, 0.6)
+	self:SpawnFx(c.muzzleFx, self:MuzzlePos(), dir, 0.6)
 	self:Flash()
 	self:Recoil()
+	self:SlideCycle()
+	self:EjectCase()
 
 	local hits = {}
 	local ok, n = pcall(Physics.RayWorldIntersection, pos, vscale(dir, c.range), 1, ent_all, p.id, nil, hits)
@@ -363,20 +373,83 @@ end
 -- ---------------------------------------------------------------------------
 -- the pistol in Henry's right hand: a spawned entity attached with Human.AttachEntityToHand
 -- ---------------------------------------------------------------------------
-function Deagle:ShowInHand()
-	local p = self:Player()
-	self:HideInHand()
-	local ok, ent = pcall(System.SpawnEntity, {
-		class = "BasicEntity", name = "deagle_in_hand", position = p:GetWorldPos(),
-		properties = { object_Model = self.cfg.handModel, bPhysicalize = 0, bRigidBody = 0, bPushableByPlayers = 0 },
+local function spawnModel(name, file, physical, mass)
+	return System.SpawnEntity({
+		class = "BasicEntity", name = name, position = { x = 0, y = 0, z = -1000 },
+		properties = { object_Model = file, Physics = { bPhysicalize = physical, bRigidBody = physical, bPushableByPlayers = false, Density = -1, Mass = mass or -1 } },
 	})
-	if not ok or not ent then
-		log("$4spawn hand model failed: " .. tostring(ent))
-		return
-	end
-	self.handEnt = ent.id
-	try("attach to hand", function() p.human:AttachEntityToHand(ent.id, 1) end)
+end
+
+local function toWorld(ent, v)
+	local o = ent:GetWorldPos()
+	local x, y, z = ent:GetDirectionVector(0), ent:GetDirectionVector(1), ent:GetDirectionVector(2)
+	return vadd(o, vadd(vscale(x, v.x), vadd(vscale(y, v.y), vscale(z, v.z))))
+end
+
+function Deagle:ShowInHand()
+	local p, c = self:Player(), self.cfg
+	self:HideInHand()
+	local ok, err = pcall(function()
+		local frame = spawnModel("deagle_frame", c.modelDir .. "deagle_frame.cgf", false)
+		local slide = spawnModel("deagle_slide", c.modelDir .. "deagle_slide.cgf", false)
+		local mag = spawnModel("deagle_mag", c.modelDir .. "deagle_mag.cgf", false)
+		self.handEnt, self.slideEnt, self.magEnt = frame.id, slide.id, mag.id
+		frame:AttachChild(slide.id, 0)
+		frame:AttachChild(mag.id, 0)
+		slide:SetLocalPos({ x = 0, y = 0, z = 0 })
+		mag:SetLocalPos({ x = 0, y = 0, z = 0 })
+		p.human:AttachEntityToHand(frame.id, 1)
+		self:ApplyHandOffset()
+	end)
+	if not ok then log("$4show in hand failed: " .. tostring(err)) end
 	self:PlayHold()
+end
+
+function Deagle:ApplyHandOffset()
+	local frame = self.handEnt and System.GetEntity(self.handEnt)
+	if not frame then return end
+	local a = self.cfg.handAng
+	try("hand offset", function()
+		frame:SetLocalPos(self.cfg.handPos)
+		frame:SetLocalAngles({ x = math.rad(a.x), y = math.rad(a.y), z = math.rad(a.z) })
+	end)
+end
+
+function Deagle:SlideCycle()
+	local slide = self.slideEnt and System.GetEntity(self.slideEnt)
+	if not slide then return end
+	local c = self.cfg
+	local steps = { -c.slideTravel, -c.slideTravel * 0.45, 0 }
+	for i, ms in ipairs(c.slideMs) do
+		local y = steps[i]
+		local set = function() pcall(function() slide:SetLocalPos({ x = 0, y = y, z = 0 }) end) end
+		if ms <= 0 then set() else Script.SetTimer(ms, set) end
+	end
+end
+
+function Deagle:EjectCase()
+	local frame = self.handEnt and System.GetEntity(self.handEnt)
+	if not frame then return end
+	local c = self.cfg
+	try("eject case", function()
+		local pos = toWorld(frame, c.ejectPort)
+		local case = spawnModel("deagle_case_" .. tostring(math.random(1, 1e9)), c.modelDir .. "deagle_case.cgf", true, 0.02)
+		case:SetWorldPos(pos)
+		local right, up, fwd = frame:GetDirectionVector(0), frame:GetDirectionVector(2), frame:GetDirectionVector(1)
+		local dir = vnorm(vadd(vscale(right, 1.0), vadd(vscale(up, 0.7), vscale(fwd, -0.25 + math.random() * 0.2))))
+		case:AddImpulse(-1, pos, dir, c.ejectImpulse, 1)
+		local id = case.id
+		Script.SetTimer(c.caseLifeMs, function() pcall(System.RemoveEntity, id) end)
+	end)
+end
+
+function Deagle:MuzzlePos()
+	local frame = self.handEnt and System.GetEntity(self.handEnt)
+	if frame then
+		local ok, pos = pcall(toWorld, frame, self.cfg.muzzle)
+		if ok then return pos end
+	end
+	return vadd(System.GetViewCameraPos(), vscale(System.GetViewCameraDir(), 0.7))
 end
 
 function Deagle:PlayHold()
@@ -389,10 +462,12 @@ end
 function Deagle:HideInHand()
 	local p = self:Player()
 	if not self.handEnt then return end
-	try("stop hold pose", function() p.human:StopAnim() end)
+	if self.cfg.holdFragment ~= "" then try("stop hold pose", function() p.human:StopAnim() end) end
 	try("detach from hand", function() p.human:DetachFromHand(1) end)
-	try("remove hand model", System.RemoveEntity, self.handEnt)
-	self.handEnt = nil
+	for _, id in ipairs({ self.slideEnt, self.magEnt, self.handEnt }) do
+		if id then pcall(System.RemoveEntity, id) end
+	end
+	self.handEnt, self.slideEnt, self.magEnt = nil, nil, nil
 end
 
 function Deagle:Pose(line)
@@ -496,7 +571,7 @@ function Deagle:OnGameplayStarted()
 	log("gameplay started")
 	local s = self.state
 	s.reloading, s.drawn, s.aiming, s.lastShot, s.ammo = false, false, false, -100, self.cfg.magSize
-	self.handEnt = nil
+	self.handEnt, self.slideEnt, self.magEnt = nil, nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
 end
@@ -622,6 +697,16 @@ end
 
 System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")
 System.AddCCommand("deagle_lua", "Deagle:DevLua([==[%line]==])", "deagle_lua <code>: run Lua (dev)")
+function Deagle:Hand(line)
+	local n = {}
+	for v in string.gmatch(unquote(line), "%S+") do n[#n + 1] = tonumber(v) or 0 end
+	local c = self.cfg
+	c.handPos = { x = n[1] or 0, y = n[2] or 0, z = n[3] or 0 }
+	c.handAng = { x = n[4] or 0, y = n[5] or 0, z = n[6] or 0 }
+	log(string.format("hand pos %.3f %.3f %.3f ang %.0f %.0f %.0f", c.handPos.x, c.handPos.y, c.handPos.z, c.handAng.x, c.handAng.y, c.handAng.z))
+	self:ApplyHandOffset()
+end
+System.AddCCommand("deagle_hand", "Deagle:Hand([[%line]])", "deagle_hand x y z rx ry rz: offset (m) and rotation (deg) of the pistol in the hand")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 
@@ -633,4 +718,4 @@ if not Deagle.listening then
 	end)
 end
 
-log("loaded v0.9")
+log("loaded v1.0")
