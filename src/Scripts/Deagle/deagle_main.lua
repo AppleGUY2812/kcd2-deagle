@@ -1254,7 +1254,7 @@ function Deagle:VmPlace()
 	vm:SetWorldPos(vadd(pr.outP, vadd(vscale(f, o.fwd), vadd(vscale(r, o.right), vscale(u, o.up)))))
 	pcall(vm.SetDirectionVector, vm, f, u)
 end
-System.AddCCommand("deagle_predict", "Deagle.cfg.vm.predict = tonumber(([[%1]]):gsub('\"','')) or 1 Deagle.vmPred = nil System.LogAlways('[Deagle] predict ' .. Deagle.cfg.vm.predict)", "deagle_predict <0..1.5>: viewmodel lag compensation")
+System.AddCCommand("deagle_predict", "Deagle.cfg.vm.predict = tonumber((([[%1]]):gsub('\"',''))) or 1 Deagle.vmPred = nil System.LogAlways('[Deagle] predict ' .. Deagle.cfg.vm.predict)", "deagle_predict <0..1.5>: viewmodel lag compensation")
 
 -- ---- v4 placement: full camera orientation including roll (KCD2's head sway rolls the camera; ignoring it made
 -- the arms wobble against the view), no prediction.
@@ -1627,7 +1627,7 @@ function Deagle:NativeSyncVm()
 	baseNativeSyncVm6(self)
 	if self.native then self:Native(string.format("motion %.2f", self.cfg.vm.motion)) end
 end
-System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber(([[%1]]):gsub('\"','')) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
+System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber((([[%1]]):gsub('\"',''))) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
 
 -- ---- ammo HUD: drawn every frame with System.DrawText while the Deagle is up in first person (bottom right).
 -- If DrawText is unavailable it switches itself off and the old info-text messages come back.
@@ -1693,3 +1693,10 @@ function Deagle:VmShow()
 	end
 end
 System.AddCCommand("deagle_arms", "Deagle.cfg.vm.arms = (([[%1]]):find('mw') and 'mw' or 'medieval') Deagle.vmArmsApplied = nil Deagle:VmApplyArms()", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
+
+-- with the plugin's MWII shot sound, the game's own firearm shot trigger would double the gunshot
+local basePlayTrigger9 = Deagle.PlayTrigger
+function Deagle:PlayTrigger(name)
+	if self.native and name and name == self.cfg.shotTrigger then return end
+	return basePlayTrigger9(self, name)
+end
