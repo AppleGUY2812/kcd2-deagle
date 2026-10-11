@@ -1614,3 +1614,17 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 	if name == self.cfg.muzzleFx then scale = self.cfg.muzzleFxScale end
 	return baseSpawnFx5(self, name, pos, normal, scale)
 end
+
+-- procedural motion lives in the plugin (bob, turn sway, sprint pose, landing); it calms down while aiming
+Deagle.cfg.vm.motion = 1.0
+local baseSetAim6 = Deagle.SetAim
+function Deagle:SetAim(on)
+	baseSetAim6(self, on)
+	if self.native then self:Native("aim " .. (on and "1" or "0")) end
+end
+local baseNativeSyncVm6 = Deagle.NativeSyncVm
+function Deagle:NativeSyncVm()
+	baseNativeSyncVm6(self)
+	if self.native then self:Native(string.format("motion %.2f", self.cfg.vm.motion)) end
+end
+System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber(([[%1]]):gsub('\"','')) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
