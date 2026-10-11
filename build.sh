@@ -17,5 +17,8 @@ print("packed", dst, len(zipfile.ZipFile(dst).namelist()), "files")
 PY
 if [[ "${1:-}" == "--install" ]]; then
   game='E:\SteamLibrary\steamapps\common\KingdomComeDeliverance2'
+  if powershell.exe -NoProfile -Command "if(Get-Process KingdomCome -ErrorAction SilentlyContinue){exit 1}"; then :; else
+    echo "KCD2 is running: close the game first (its paks are locked)." >&2; exit 1
+  fi
   powershell.exe -NoProfile -Command "New-Item -ItemType Directory -Force '$game\Mods' | Out-Null; Remove-Item -Recurse -Force '$game\Mods\deagle' -ErrorAction SilentlyContinue; Copy-Item -Recurse '$(wslpath -w "$out")' '$game\Mods\deagle'; Get-ChildItem -Recurse '$game\Mods\deagle' | % FullName"
 fi
