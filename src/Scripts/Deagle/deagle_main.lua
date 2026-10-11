@@ -52,7 +52,7 @@ Deagle.cfg = {
 	ejectImpulse = 0.06,
 	caseLifeMs = 20000,
 	muzzle = { x = 0, y = 0.22, z = 0.055 },
-	holdAnim = "deagle_idle",            -- base name; pitch variants deagle_idle_m70 .. deagle_idle_p70 (10 deg steps)
+	holdAnim = "",                       -- off while the arm animations are rebuilt on the native aim system
 	pitchStep = 10, pitchMax = 70,
 	gunCam = { fwd = 0.36, right = 0.05, up = -0.11 },  -- where the hold animations put the hand slot, camera space
 	animLayer = 9,
@@ -519,7 +519,12 @@ function Deagle:PlayHold(blend)
 		local p = self:Player()
 		local name, bucket = self:HoldName()
 		local ok, started = pcall(p.StartAnimation, p, 0, name, c.animLayer, blend or 0.25, 1.0, true)
-		if ok and started then self.holdBucket = bucket else log("$4hold anim did not start: " .. name) end
+		if ok and started then
+			self.holdBucket = bucket
+		elseif self.lastHoldFail ~= name then
+			self.lastHoldFail = name  -- log each missing clip once; the watchdog retries every tick
+			log("$4hold anim did not start: " .. name)
+		end
 	end
 	if c.holdFragment and c.holdFragment ~= "" then
 		try("hold pose", function() self:Player().human:PlayAnim(c.holdFragment, c.holdTags or "") end)
