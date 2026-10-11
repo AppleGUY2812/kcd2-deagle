@@ -1183,7 +1183,7 @@ end
 -- ---- v3 placement: one-frame prediction (camera reads during entity update are a frame old), first-person guard,
 -- worn gear (sword, dagger, shield...) hidden with the body. Head-bone follow removed: KCD2 ignores attachment
 -- offsets on entity attachments and the head turns up to 15 deg against the camera.
-Deagle.cfg.vm.predict = 1.0      -- 0 = off, 1 = full one-frame extrapolation of camera motion
+Deagle.cfg.vm.predict = 0        -- one-frame extrapolation made it worse (amplifies camera sway); off
 Deagle.cfg.vm.follow = "camera"
 Deagle.cfg.vm.gearDist = 0.35    -- worn items: within this of the hips / spine
 local GEAR_BONES = { "Hips", "Spine", "Spine1", "Spine2", "Spine3", "Spine4", "LeftUpLeg", "RightUpLeg" }
@@ -1255,3 +1255,52 @@ function Deagle:VmPlace()
 	pcall(vm.SetDirectionVector, vm, f, u)
 end
 System.AddCCommand("deagle_predict", "Deagle.cfg.vm.predict = tonumber(([[%1]]):gsub('\"','')) or 1 Deagle.vmPred = nil System.LogAlways('[Deagle] predict ' .. Deagle.cfg.vm.predict)", "deagle_predict <0..1.5>: viewmodel lag compensation")
+
+-- ---- v4 placement: full camera orientation including roll (KCD2's head sway rolls the camera; ignoring it made
+-- the arms wobble against the view), no prediction.
+function Deagle:VmPlace()
+	local p = self:Player()
+	if not p or not self.vmShown then return end
+	local now = System.GetCurrTime()
+	local cp, f = System.GetViewCameraPos(), System.GetViewCameraDir()
+	if now ~= self.vmGuardT then
+		self.vmGuardT = now
+		local ok, hp = pcall(p.GetBonePos, p, "Head")
+		local fp = ok and hp and vlen(vadd(cp, vscale(hp, -1))) < self.cfg.vm.fpMaxDist
+		if fp ~= self.vmInFp then
+			self.vmInFp = fp
+			local vm = self.vmId and System.GetEntity(self.vmId)
+			if vm then pcall(vm.Hide, vm, fp and 0 or 1) end
+			self:SetBodyHidden(fp and true or false)
+			log("first person " .. tostring(fp))
+		end
+		if fp and (now - (self.gearScan or 0)) > 1.0 then self.gearScan = now; self:HideGear(true) end
+	end
+	if not self.vmInFp then return end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm then return end
+	local okU, up = pcall(System.GetViewCameraUpDir)
+	if not okU or not up then up = { x = 0, y = 0, z = 1 } end
+	local r = vnorm(vcross(f, up))
+	local u = vcross(r, f)
+	local o = self.cfg.vm.offset
+	vm:SetWorldPos(vadd(cp, vadd(vscale(f, o.fwd), vadd(vscale(r, o.right), vscale(u, o.up)))))
+	vm:SetWorldAngles(matToAngles({ { r.x, f.x, u.x }, { r.y, f.y, u.y }, { r.z, f.z, u.z } }))
+end
+
+-- ---- depth of field off while the viewmodel is up in first person (it focuses far and blurs the gun at 0.4 m);
+-- restored on holster and in dialogue/cutscene cameras, which use DOF on purpose
+local baseSetBodyHidden2 = Deagle.SetBodyHidden
+function Deagle:SetBodyHidden(hide)
+	baseSetBodyHidden2(self, hide)
+	if hide then
+		if self.savedDof == nil then
+			local ok, v = pcall(System.GetCVar, "r_DepthOfField")
+			self.savedDof = ok and v or 2
+		end
+		pcall(System.SetCVar, "r_DepthOfField", 0)
+	elseif self.savedDof ~= nil then
+		pcall(System.SetCVar, "r_DepthOfField", self.savedDof)
+		self.savedDof = nil
+	end
+end
