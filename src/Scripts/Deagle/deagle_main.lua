@@ -238,6 +238,7 @@ end
 -- ---------------------------------------------------------------------------
 function Deagle:OnAction(action, activation)
 	local s = self.state
+	if not self.inputLoaded then self:EnsureInit() end
 	if s.logActions then log("action " .. tostring(action) .. " " .. tostring(activation)) end
 	if action == "deagle_toggle" then
 		if activation == "press" then self:Toggle() end
@@ -294,12 +295,18 @@ function Deagle:LoadInput()
 	return ok
 end
 
--- keeps the hook alive across level loads / gamerules re-creation
-function Deagle:Tick()
+function Deagle:EnsureInit()
 	if self:HookActions() and not self.inputLoaded and self:Player() then
 		self:LoadInput()
 	end
-	Script.SetTimer(1000, function() Deagle:Tick() end)
+end
+
+-- Script timers are cleared when a save loads, so init is driven by gameplay events,
+-- plus the first player action as a fallback.
+function Deagle:OnGameplayStarted()
+	log("gameplay started")
+	self.inputLoaded = false
+	self:EnsureInit()
 end
 
 -- ---------------------------------------------------------------------------
@@ -392,19 +399,22 @@ function Deagle:Cfg()
 end
 
 System.AddCCommand("deagle_probe", "Deagle:Probe()", "Dump engine APIs used by the Deagle mod to the log")
-System.AddCCommand("deagle_toggle", "Deagle:Toggle()", "Draw / holster the Desert Eagle")
-System.AddCCommand("deagle_fire", "Deagle:Fire()", "Fire one shot")
+System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
+System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")
 System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")
 System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key bindings")
 System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.state.logActions", "Toggle logging of every input action")
 System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting live")
-System.AddCCommand("deagle_status", "Deagle:Status()", "Print hook / input / ammo state")
+System.AddCCommand("deagle_status", "Deagle:EnsureInit() Deagle:Status()", "Print hook / input / ammo state")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 
-if not Deagle.ticking then
-	Deagle.ticking = true
-	Deagle:Tick()
+Deagle:HookActions()
+if not Deagle.listening then
+	Deagle.listening = true
+	try("event listener", function()
+		UIAction.RegisterEventSystemListener(Deagle, "System", "OnGameplayStarted", "OnGameplayStarted")
+	end)
 end
 
-log("loaded v0.1")
+log("loaded v0.3")
