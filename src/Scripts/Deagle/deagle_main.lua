@@ -396,8 +396,10 @@ function Deagle:ShowInHand()
 		self.handEnt, self.slideEnt, self.magEnt = frame.id, slide.id, mag.id
 		frame:AttachChild(slide.id, 0)
 		frame:AttachChild(mag.id, 0)
-		slide:SetLocalPos({ x = 0, y = 0, z = 0 })
-		mag:SetLocalPos({ x = 0, y = 0, z = 0 })
+		for _, child in ipairs({ slide, mag }) do
+			child:SetLocalPos({ x = 0, y = 0, z = 0 })
+			child:SetLocalAngles({ x = 0, y = 0, z = 0 })
+		end
 		p.human:AttachEntityToHand(frame.id, 1)
 		self:ApplyHandOffset()
 	end)
@@ -491,6 +493,8 @@ function Deagle:Toggle()
 	else
 		self:HideInHand()
 	end
+	-- the native "combat" map turns left click into a fist attack; keep it off while the pistol is out
+	try("combat map", ActionMapManager.EnableActionMap, "combat", not s.drawn)
 	if not s.drawn then self:SetAim(false) end
 	log(s.drawn and "drawn" or "holstered")
 	self:ShowAmmo()
