@@ -8,13 +8,14 @@ Deagle.cfg = {
 	interval = 0.22,          -- seconds between shots (semi-auto cap)
 	reloadTime = 2.1,
 	range = 250,
-	damage = 120,
+	damage = 60,              -- health damage (game applies body_part coeff: head 1.5, limbs 0.7)
+	headshotMult = 3.0,       -- extra on top: .50 AE to the head should drop anyone
 	stamina = 40,
 	impulse = 220,            -- physics push on props and bodies
 	spreadHip = 1.6,          -- degrees
 	spreadAim = 0.25,
 	aimFovScale = 0.8,
-	hitMode = "hit",          -- "hit" = game hit pipeline (reactions), "soul" = direct soul damage
+	hitMode = "soul",         -- "soul" = soul:DealDamage with native hit reactions; "hit" = gamerules ServerHit (no effect on souls in KCD2)
 	hitType = "bullet",       -- probe: bullet=10, normal=8
 	shotTrigger = "c_f_firearm_shot",
 	dryTrigger = nil,
@@ -141,6 +142,20 @@ end
 -- ---------------------------------------------------------------------------
 -- shooting
 -- ---------------------------------------------------------------------------
+-- Body part from where the ray hit, relative to the target's feet and facing (human skeletons only).
+local function bodyPartFor(e, pos)
+	if not (e.actor and e.human) then return nil end
+	local base = e:GetWorldPos()
+	local h = pos.z - base.z
+	if h > 1.5 then return "head" end
+	local fwd = e:GetDirectionVector(1)
+	local right = vnorm(vcross(fwd, { x = 0, y = 0, z = 1 }))
+	local side = (pos.x - base.x) * right.x + (pos.y - base.y) * right.y
+	if h < 0.9 then return side >= 0 and "leg_right" or "leg_left" end
+	if math.abs(side) > 0.2 then return side >= 0 and "arm_right" or "arm_left" end
+	return "torso"
+end
+
 function Deagle:ApplyHit(hit, dir)
 	local c = self.cfg
 	local e = hit.entity
@@ -151,12 +166,15 @@ function Deagle:ApplyHit(hit, dir)
 				g_gameRules:CreateHit(e.id, p.id, p.id, c.damage, 0, nil, hit.partid or -1, c.hitType, hit.pos, dir, hit.normal)
 			end)
 		else
-			try("DealDamage", function() e.soul:DealDamage(c.damage, c.stamina, __null, true) end)
+			local part = bodyPartFor(e, hit.pos)
+			local dmg = c.damage * (part == "head" and c.headshotMult or 1)
+			hit.bodyPart = part
+			try("DealDamage", function() e.soul:DealDamage(c.stamina, dmg, p.id, false, part) end)
 		end
 		self:SpawnFx(c.bloodFx, hit.pos, hit.normal)
 		local hp = "?"
 		pcall(function() hp = string.format("%.1f/%.1f", e.actor:GetHealth(), e.actor:GetMaxHealth()) end)
-		log("hit " .. tostring(e:GetName()) .. " mode " .. c.hitMode .. " part " .. tostring(hit.partid or hit.partId) .. " dist " .. string.format("%.1f", hit.dist or -1) .. " hp " .. hp)
+		log("hit " .. tostring(e:GetName()) .. " mode " .. c.hitMode .. " part " .. tostring(hit.bodyPart) .. " dist " .. string.format("%.1f", hit.dist or -1) .. " hp " .. hp)
 	else
 		self:SpawnFx(c.impactFx, hit.pos, hit.normal)
 	end
