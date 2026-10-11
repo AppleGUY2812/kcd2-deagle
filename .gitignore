@@ -3,3 +3,4 @@ assets/build/
 assets/source/*.zip
 src/Objects/**/*.cgf
 src/Objects/**/*.dds*
+src/Animations/**/*.caf

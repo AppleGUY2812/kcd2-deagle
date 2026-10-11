@@ -47,6 +47,8 @@ Deagle.cfg = {
 	ejectImpulse = 0.06,
 	caseLifeMs = 20000,
 	muzzle = { x = 0, y = 0.22, z = 0.055 },
+	holdAnim = "deagle_idle",            -- our CAF (Animations/humans/male/deagle), upper-body layer
+	animLayer = 9,
 	holdFragment = "",        -- e.g. HoldItemRight / r_light; PlayAnim currently breaks crouch, off until our own anims exist
 	holdTags = "",
 }
@@ -456,6 +458,11 @@ end
 
 function Deagle:PlayHold()
 	local c = self.cfg
+	if c.holdAnim and c.holdAnim ~= "" then
+		local p = self:Player()
+		local ok, started = pcall(p.StartAnimation, p, 0, c.holdAnim, c.animLayer, 0.25, 1.0, true)
+		if not (ok and started) then log("$4hold anim did not start: " .. tostring(started)) end
+	end
 	if c.holdFragment and c.holdFragment ~= "" then
 		try("hold pose", function() self:Player().human:PlayAnim(c.holdFragment, c.holdTags or "") end)
 	end
@@ -465,6 +472,7 @@ function Deagle:HideInHand()
 	local p = self:Player()
 	if not self.handEnt then return end
 	if self.cfg.holdFragment ~= "" then try("stop hold pose", function() p.human:StopAnim() end) end
+	pcall(p.StopAnimation, p, 0, self.cfg.animLayer)
 	try("detach from hand", function() p.human:DetachFromHand(1) end)
 	for _, id in ipairs({ self.slideEnt, self.magEnt, self.handEnt }) do
 		if id then pcall(System.RemoveEntity, id) end
