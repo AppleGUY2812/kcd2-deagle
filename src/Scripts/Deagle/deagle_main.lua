@@ -1304,3 +1304,85 @@ function Deagle:SetBodyHidden(hide)
 		self.savedDof = nil
 	end
 end
+
+-- ---- camera-bone follow: the viewmodel entity rides an attachment on Henry's "camera" bone (updated with his skeleton,
+-- in step with the first-person camera). KCD2 places attached entities at a constant offset from the bone (measured:
+-- 1.624 m down, 0.123 m back), so the character inside the entity is shifted by the measured camera pose (slot 0 local
+-- transform), self-calibrated over 15 frames.
+Deagle.cfg.vm.follow = "bone"
+function Deagle:VmBoneFollow(on)
+	local p, vm = self:Player(), self:VmEntity()
+	if not (p and vm) then return end
+	pcall(p.DestroyAttachment, p, 0, "deagle_vm_att")
+	if not on then
+		pcall(vm.SetSlotPos, vm, 0, { x = 0, y = 0, z = 0 }); pcall(vm.SetSlotAngles, vm, 0, { x = 0, y = 0, z = 0 })
+		self.cfg.vm.follow = "camera"; self.vmBoneOk = false
+		log("viewmodel: camera follow")
+		return
+	end
+	p:CreateBoneAttachment(0, "camera", "deagle_vm_att")
+	p:SetAttachmentObject(0, "deagle_vm_att", vm.id, -1, 0)
+	pcall(vm.SetSlotPos, vm, 0, { x = 0, y = 0, z = 0 }); pcall(vm.SetSlotAngles, vm, 0, { x = 0, y = 0, z = 0 })
+	self.cfg.vm.follow = "bone"; self.vmBoneOk = false
+	self.vmCal = { n = 0, d = { 0, 0, 0 }, f = { 0, 0, 0 }, u = { 0, 0, 0 } }
+	log("viewmodel: camera bone follow, calibrating")
+end
+
+-- one calibration sample: the camera pose expressed in the viewmodel entity's frame
+function Deagle:VmBoneSample()
+	local vm = System.GetEntity(self.vmId)
+	local cal = self.vmCal
+	if not (vm and cal) then return end
+	local R = anglesToMat(vm:GetWorldAngles())
+	local P = vm:GetWorldPos()
+	local cp, f, u = System.GetViewCameraPos(), System.GetViewCameraDir(), System.GetViewCameraUpDir()
+	local d = mtv(R, vadd(cp, vscale(P, -1)))
+	local fl, ul = mtv(R, f), mtv(R, u)
+	cal.n = cal.n + 1
+	cal.d = { cal.d[1] + d.x, cal.d[2] + d.y, cal.d[3] + d.z }
+	cal.f = { cal.f[1] + fl.x, cal.f[2] + fl.y, cal.f[3] + fl.z }
+	cal.u = { cal.u[1] + ul.x, cal.u[2] + ul.y, cal.u[3] + ul.z }
+	if cal.n >= 15 then
+		local n = cal.n
+		local d0 = { x = cal.d[1] / n, y = cal.d[2] / n, z = cal.d[3] / n }
+		local f0 = vnorm({ x = cal.f[1], y = cal.f[2], z = cal.f[3] })
+		local u0 = vnorm({ x = cal.u[1], y = cal.u[2], z = cal.u[3] })
+		local r0 = vnorm(vcross(f0, u0)); u0 = vcross(r0, f0)
+		pcall(vm.SetSlotPos, vm, 0, d0)
+		pcall(vm.SetSlotAngles, vm, 0, matToAngles({ { r0.x, f0.x, u0.x }, { r0.y, f0.y, u0.y }, { r0.z, f0.z, u0.z } }))
+		self.cfg.vm.boneSlotPos, self.vmCal, self.vmBoneOk = d0, nil, true
+		log(string.format("viewmodel bone offset %.1f %.1f %.1f mm, forward %.3f %.3f %.3f", d0.x * 1000, d0.y * 1000, d0.z * 1000, f0.x, f0.y, f0.z))
+	end
+end
+
+-- per-frame: first-person guard always; placement only in camera-follow mode; calibration samples in bone mode
+local placeCamera = Deagle.VmPlace
+function Deagle:VmPlace()
+	if self.cfg.vm.follow == "bone" then
+		local p = self:Player()
+		if not p or not self.vmShown then return end
+		local cp = System.GetViewCameraPos()
+		local ok, hp = pcall(p.GetBonePos, p, "Head")
+		local fp = ok and hp and vlen(vadd(cp, vscale(hp, -1))) < self.cfg.vm.fpMaxDist
+		if fp ~= self.vmInFp then
+			self.vmInFp = fp
+			local vm = self.vmId and System.GetEntity(self.vmId)
+			if vm then pcall(vm.Hide, vm, fp and 0 or 1) end
+			self:SetBodyHidden(fp and true or false)
+			log("first person " .. tostring(fp))
+		end
+		local now = System.GetCurrTime()
+		if fp and (now - (self.gearScan or 0)) > 1.0 then self.gearScan = now; self:HideGear(true) end
+		if fp and self.vmCal then self:VmBoneSample() end
+		return
+	end
+	placeCamera(self)
+end
+
+local baseVmShow3 = Deagle.VmShow
+function Deagle:VmShow()
+	baseVmShow3(self)
+	if self.cfg.vm.follow == "bone" and not self.vmBoneOk then self:VmBoneFollow(true) end
+end
+
+System.AddCCommand("deagle_follow", "Deagle:VmBoneFollow(([[%1]]):find('bone') ~= nil)", "deagle_follow bone|camera: how the viewmodel follows the view")
