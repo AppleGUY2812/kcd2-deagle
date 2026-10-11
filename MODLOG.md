@@ -22,3 +22,10 @@ Keys (if LoadFromXML works): H draw, LMB fire, RMB aim, R reload.
 2. Does ActionMapManager.LoadFromXML add our map without breaking defaults?
 3. hitMode "hit" (CreateHit): do NPCs flinch/stagger/die/report crime? vs "soul".
 4. Light on player slot 15 visible? SetViewShake strength ok?
+
+## Asset research (2026-10-10)
+- Audio is FMOD Studio 2.02.21 (not Wwise). New sounds need a custom bank via KCD2ModLoader rom.audio.load_bank; vanilla paks can only reuse events (c_f_firearm_shot -> event:/combat/weapons/firearms/firearm_shot).
+- Muzzle particle: firearms.hand_cannon.frontParticleEmit (Libs/Particles/firearms.xml), emitters carry LightSource Radius=5.
+- Hand cannon model: hand_cannon_b.cdf -> hand_cannon.chr + hand_cannon_a.skin; attachment frontParticleEmit on hand_cannon_barrel bone.
+- Modding Tools (Steam app 2429020) NOT installed; needed for rc.exe. Blender exporter: Caseter/KCD2-Blender-Toolkit v0.2.10 (Blender 4.3).
+- Models: Sketchfab CC-BY Deagles (ELIZION cabde59f..., Minte 334462df..., LukaszKmak 80697a48...). TACZ assets CC BY-NC-ND: private use only; use its timings as reference (slide back 0.017-0.067s, return 0.183s).
