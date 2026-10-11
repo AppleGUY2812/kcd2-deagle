@@ -154,7 +154,9 @@ function Deagle:ApplyHit(hit, dir)
 			try("DealDamage", function() e.soul:DealDamage(c.damage, c.stamina, __null, true) end)
 		end
 		self:SpawnFx(c.bloodFx, hit.pos, hit.normal)
-		log("hit " .. tostring(e:GetName()) .. " part " .. tostring(hit.partid) .. " dist " .. string.format("%.1f", hit.dist or -1))
+		local hp = "?"
+		pcall(function() hp = string.format("%.1f/%.1f", e.actor:GetHealth(), e.actor:GetMaxHealth()) end)
+		log("hit " .. tostring(e:GetName()) .. " mode " .. c.hitMode .. " part " .. tostring(hit.partid or hit.partId) .. " dist " .. string.format("%.1f", hit.dist or -1) .. " hp " .. hp)
 	else
 		self:SpawnFx(c.impactFx, hit.pos, hit.normal)
 	end
