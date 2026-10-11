@@ -1386,3 +1386,14 @@ function Deagle:VmShow()
 end
 
 System.AddCCommand("deagle_follow", "Deagle:VmBoneFollow(([[%1]]):find('bone') ~= nil)", "deagle_follow bone|camera: how the viewmodel follows the view")
+
+-- rebuild the viewmodel entity from scratch (undo experiments on its render flags)
+function Deagle:VmRespawn(hud3d)
+	if self.vmId then pcall(System.RemoveEntity, self.vmId) end
+	self.vmId, self.vmInFp = nil, nil
+	local vm = self:VmEntity()
+	if vm and hud3d then pcall(vm.SetSlotHud3D, vm, 0) end
+	if self.vmShown then self.vmShown = false; self:VmShow() end
+	log("viewmodel respawned" .. (hud3d and " (HUD 3D)" or ""))
+end
+System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn(([[%1]]):find('hud') ~= nil)", "deagle_vm_respawn [hud]: rebuild the viewmodel (optionally as 3D HUD)")

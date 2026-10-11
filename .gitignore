@@ -7,3 +7,6 @@ src/Animations/**/*.caf
 src/Animations/*.img
 src/Objects/**/*.chr
 src/Objects/**/*.skin
+native/dist/
+native/third_party/asi-loader-dl/
+native/build/

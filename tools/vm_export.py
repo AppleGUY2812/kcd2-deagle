@@ -17,6 +17,44 @@ for o in [o for o in scene.objects if o.type not in ("ARMATURE", "MESH")]:
 if bpy.context.mode != "OBJECT":
     bpy.ops.object.mode_set(mode="OBJECT")
 
+# ---- bones a clip leaves unkeyed would sit at the import's bind pose (slide out of place in idle, a loose round
+# floating in reload). Each gets constant keys copied from a clip that does animate it, at a neutral moment.
+DONORS = [("@shoot1", "first"), ("@draw", "last"), ("@reload_empty", "last"), ("@inspect", "first")]
+GUN_BONES = ("j_slide", "j_mag1", "j_mag2", "j_ammo_01", "j_ammo_17", "j_safetylock", "j_slidestop", "j_hammer", "j_trigger")
+def keyed(act):
+    return {fc.data_path.split('"')[1] for fc in act.fcurves if fc.data_path.startswith("pose.bones")}
+def fill_unkeyed():
+    if not arm.animation_data:
+        arm.animation_data_create()
+    keyed_by = {a.name: keyed(a) for a in bpy.data.actions if a.name.startswith("@")}
+    donor_pose = {}
+    for bn in GUN_BONES:
+        for dname, which in DONORS:
+            if dname in keyed_by and bn in keyed_by[dname]:
+                act = bpy.data.actions[dname]
+                f = int(act.frame_range[0] if which == "first" else act.frame_range[1])
+                arm.animation_data.action = act
+                bpy.context.scene.frame_set(f)
+                pb = arm.pose.bones[bn]
+                donor_pose[bn] = (pb.location.copy(), pb.rotation_quaternion.copy(), dname, f)
+                break
+    for act in [a for a in bpy.data.actions if a.name.startswith("@")]:
+        f0, f1 = (int(v) for v in act.frame_range)
+        added = []
+        for bn, (loc, rot, dname, df) in donor_pose.items():
+            if bn in keyed_by[act.name]:
+                continue
+            for i in range(3):
+                fc = act.fcurves.new(f'pose.bones["{bn}"].location', index=i, action_group=bn)
+                fc.keyframe_points.insert(f0, loc[i]); fc.keyframe_points.insert(f1, loc[i])
+            for i in range(4):
+                fc = act.fcurves.new(f'pose.bones["{bn}"].rotation_quaternion', index=i, action_group=bn)
+                fc.keyframe_points.insert(f0, rot[i]); fc.keyframe_points.insert(f1, rot[i])
+            added.append(f"{bn}<-{dname}:{df}")
+        print("FILLED", act.name, added)
+fill_unkeyed()
+bpy.ops.wm.save_as_mainfile(filepath=os.path.join(os.path.dirname(BLEND), 'mwii_vm_filled.blend'), copy=True)
+
 # ---- orientation: Source/CoD view looks +X, Z up -> CryEngine +Y forward
 R = Matrix.Rotation(math.radians(90), 4, "Z")
 for o in [arm] + [m for m in meshes if m.parent is None]:

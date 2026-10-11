@@ -29,3 +29,9 @@ Legend: [live] = no game restart needed · [restart] = needs a restart (batched 
 ## Done
 - Gameplay: fire, damage, hit reactions, blood + decals, recoil, reload, item, status text
 - MWII viewmodel converted (model, 8 animations, textures) and playing in game, camera-locked
+
+## Native plugin (decided 2026-10-11): deagle_native.asi via Ultimate ASI Loader (dinput8.dll) in Bin\Win64MasterMasterSteamPGO
+- v0 (built, ships next restart): finds gEnv, hooks the camera frustum update (final first-person camera), logs to deagle_native.log
+- v1: place the viewmodel inside the camera hook (zero jitter) — needs IEntity move + entity lookup from WHGame.dll (RE in progress)
+- v2: Lua <-> native channel; MWII sounds played through the game's own fmod.dll; own bullets (projectiles, drop, tracers); HUD
+- Uninstall: native/install.ps1 -Remove (or delete dinput8.dll + deagle_native.asi)

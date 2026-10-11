@@ -24,7 +24,10 @@ with zipfile.ZipFile(dst, "w", zipfile.ZIP_STORED) as z:
         z.write(os.path.join(src, f), f)
 print("packed", dst)
 PY
-if [[ "${1:-}" == "--dev" ]]; then
+if [[ "" == "--install" && -f "/native/dist/deagle_native.asi" ]]; then
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "/native/install.ps1")" -Dist "$(wslpath -w "/native/dist")" || exit 1
+fi
+if [[ "" == "--dev" ]]; then
   # hot reload: copy the script to the dev path, then run deagle_dev_reload in the game console
   powershell.exe -NoProfile -Command "New-Item -ItemType Directory -Force 'E:\Tools\deagle-dev' | Out-Null; Copy-Item '$(wslpath -w "$here/src/Scripts/Deagle/deagle_main.lua")' 'E:\Tools\deagle-dev\deagle_main.lua' -Force"
   echo "dev script updated"
