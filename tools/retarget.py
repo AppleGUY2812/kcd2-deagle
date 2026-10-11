@@ -255,6 +255,7 @@ cam = bpy.data.objects.new("eye", bpy.data.cameras.new("eye")); scene.collection
 cam.data.sensor_fit = "VERTICAL"; cam.data.angle = 1.1011  # game camera fov (rad, measured)
 cam.location = head_m.translation + fwd * 0.148  # measured in game: camera 0.148 m ahead of the Head bone
 cam.rotation_euler = (fwd).to_track_quat("-Z", "Y").to_euler()
+RENDER = PREVIEW != "none"
 clay = bpy.data.materials.new("clay"); clay.diffuse_color = (0.75, 0.62, 0.52, 1)
 for o in scene.objects:
     if o.type == "MESH":
@@ -301,7 +302,7 @@ if GUN_GLTF and GUN_GLTF != "none":
 for label, frame in (("fp_start", 0), ("fp_mid", n_frames // 2)):
     scene.frame_set(frame)
     scene.render.filepath = f"{PREVIEW}/{NAME}_{label}.png"
-    bpy.ops.render.render(write_still=True)
+    RENDER and bpy.ops.render.render(write_still=True)
 # close-ups of the grip from the right and from above-left
 scene.frame_set(0)
 slot_pos = (tgt.matrix_world @ tgt.pose.bones["RightHandSlot"].matrix).translation
@@ -313,7 +314,7 @@ for label, offset in (("grip_right", right_v * 0.45 + Vector((0, 0, 0.05))), ("g
     c.data.lens = 50
     scene.camera = c
     scene.render.filepath = f"{PREVIEW}/{NAME}_{label}.png"
-    bpy.ops.render.render(write_still=True)
+    RENDER and bpy.ops.render.render(write_still=True)
 # elbow close-ups (outside of each arm, slightly below)
 for side_name, sgn in (("Right", 1), ("Left", -1)):
     el = (tgt.matrix_world @ tgt.pose.bones[f"{side_name}ForeArm"].matrix).translation
@@ -322,7 +323,7 @@ for side_name, sgn in (("Right", 1), ("Left", -1)):
     c.rotation_euler = (el - c.location).to_track_quat("-Z", "Y").to_euler(); c.data.lens = 40
     scene.camera = c
     scene.render.filepath = f"{PREVIEW}/{NAME}_elbow_{side_name.lower()}.png"
-    bpy.ops.render.render(write_still=True)
+    RENDER and bpy.ops.render.render(write_still=True)
 side_cam = bpy.data.objects.new("side", bpy.data.cameras.new("side")); scene.collection.objects.link(side_cam)
 right = basis_from(tgt, rest_world).col[0]
 side_cam.location = head_m.translation + right * 2.4 + fwd * 0.4 + Vector((0, 0, -0.2))
@@ -330,7 +331,7 @@ side_cam.rotation_euler = (head_m.translation + Vector((0, 0, -0.4)) - side_cam.
 scene.camera = side_cam
 scene.frame_set(0)
 scene.render.filepath = f"{PREVIEW}/{NAME}_side.png"
-bpy.ops.render.render(write_still=True)
+RENDER and bpy.ops.render.render(write_still=True)
 print("PREVIEW DONE")
 
 # export: i_caf node over the retargeted range; rc is run separately after filtering the DAE to arm bones only
