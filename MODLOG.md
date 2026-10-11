@@ -78,3 +78,14 @@ Current installed build: v1.3 + posetest anim; hold anim disabled via dev reload
 - tools/sword_grip_fit.py (numpy LBS = Blender deform to 0.0 mm; gun SDF with 6-ray enclosure inside test) — 4 attempts,
   coordinate descent stalls (fingers open/hyperextend, web far from beavertail). fit2 (hand-frame init) looked closest.
   Circuit breaker hit -> asked user whether to pose by hand in Blender (prepared .blend) vs deterministic close-until-contact.
+
+## 2026-10-11 ~03:00 — RIGHT-HAND GRIP DONE (user-posed)
+- User posed it in the kit (Desktop\Deagle Progress\DEAGLE GRIP - continue here.blend; copy: kcd2re\grip\grip_final.blend).
+  Measured (tools/read_grip.py -> assets/build/grip/grip_final.json): index pad on trigger 0.1 mm; skin-in-gun palm 7.6,
+  pinky 6.3, ring 5.9, thumb 4.3, middle 3.3, index 2.5 mm (mostly underside/palm; judge from the in-game camera).
+  JSON has gun_in_hand_blender (gun model space in RightHand Blender-bone space) + finger_basis (evaluated, exact rig).
+- Kit tooling: make_pose_kit -> kit_free_pose -> kit_sliders_on_henry -> kit_hybrid (fingertip IK spheres stuck 7 mm off
+  the gun + knuckle/thumb-base sliders + per-finger IK on/off). Blender IK ignores basis rotation on chain bones, so
+  joints set by sliders must stay outside the IK chain. grip_polish.py (min-change de-clip) exists; user preferred their look.
+- How TACZ fits: TACZ gives per-frame gun pose (Deagle bone) + left-hand locator + gun parts; grip gives hand-on-gun;
+  arm IK places Henry's arm. Next: left support-hand shape(s), TACZ->CAF converter with camera-view previews, in-game test.
