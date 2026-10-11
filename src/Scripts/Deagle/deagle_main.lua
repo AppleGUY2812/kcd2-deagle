@@ -38,6 +38,9 @@ Deagle.cfg = {
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
 	lightSlot = 15,
+	handModel = "manmade/weapons/firearms/hand_cannon_b.cdf", -- placeholder until the Deagle model is compiled
+	holdFragment = "HoldItemRight",
+	holdTags = "r_light",
 }
 
 Deagle.state = Deagle.state or {
@@ -235,6 +238,7 @@ function Deagle:Fire()
 	if not self:Owns() then
 		s.drawn = false
 		self:SetAim(false)
+		self:HideInHand()
 		return
 	end
 	local now = System.GetCurrTime()
@@ -350,6 +354,48 @@ function Deagle:SetAim(on)
 	end)
 end
 
+-- ---------------------------------------------------------------------------
+-- the pistol in Henry's right hand: a spawned entity attached with Human.AttachEntityToHand
+-- ---------------------------------------------------------------------------
+function Deagle:ShowInHand()
+	local p = self:Player()
+	self:HideInHand()
+	local ok, ent = pcall(System.SpawnEntity, {
+		class = "BasicEntity", name = "deagle_in_hand", position = p:GetWorldPos(),
+		properties = { object_Model = self.cfg.handModel, bPhysicalize = 0, bRigidBody = 0, bPushableByPlayers = 0 },
+	})
+	if not ok or not ent then
+		log("$4spawn hand model failed: " .. tostring(ent))
+		return
+	end
+	self.handEnt = ent.id
+	try("attach to hand", function() p.human:AttachEntityToHand(ent.id, 1) end)
+	self:PlayHold()
+end
+
+function Deagle:PlayHold()
+	local c = self.cfg
+	if c.holdFragment and c.holdFragment ~= "" then
+		try("hold pose", function() self:Player().human:PlayAnim(c.holdFragment, c.holdTags or "") end)
+	end
+end
+
+function Deagle:HideInHand()
+	local p = self:Player()
+	if not self.handEnt then return end
+	try("stop hold pose", function() p.human:StopAnim() end)
+	try("detach from hand", function() p.human:DetachFromHand(1) end)
+	try("remove hand model", System.RemoveEntity, self.handEnt)
+	self.handEnt = nil
+end
+
+function Deagle:Pose(line)
+	local frag, tags = string.match(line or "", "^%s*(%S+)%s*(%S*)")
+	self.cfg.holdFragment, self.cfg.holdTags = frag, tags
+	log("pose " .. tostring(frag) .. " [" .. tostring(tags) .. "]")
+	self:PlayHold()
+end
+
 function Deagle:Toggle()
 	local s = self.state
 	if not s.drawn and not self:Owns() then
@@ -360,6 +406,9 @@ function Deagle:Toggle()
 	if s.drawn then
 		local h = self:Player().human
 		try("holster weapon", function() if h:IsWeaponDrawn() then h:HolsterWeapon() end end)
+		self:ShowInHand()
+	else
+		self:HideInHand()
 	end
 	if not s.drawn then self:SetAim(false) end
 	log(s.drawn and "drawn" or "holstered")
@@ -441,6 +490,7 @@ function Deagle:OnGameplayStarted()
 	log("gameplay started")
 	local s = self.state
 	s.reloading, s.drawn, s.aiming, s.lastShot, s.ammo = false, false, false, -100, self.cfg.magSize
+	self.handEnt = nil
 	self.inputLoaded = false
 	self:EnsureInit()
 end
@@ -544,6 +594,7 @@ System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <val
 System.AddCCommand("deagle_status", "Deagle:EnsureInit() Deagle:Status()", "Print hook / input / ammo state")
 System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give()", "Add the Desert Eagle (if missing) and 49 cartridges")
 System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give([[%1]])", "deagle_give_ammo <n>: add n cartridges")
+System.AddCCommand("deagle_pose", "Deagle:Pose([[%line]])", "deagle_pose <fragment> [tags]: try a hold animation, e.g. deagle_pose Pointing r_noweapon")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 
@@ -555,4 +606,4 @@ if not Deagle.listening then
 	end)
 end
 
-log("loaded v0.7")
+log("loaded v0.8")
