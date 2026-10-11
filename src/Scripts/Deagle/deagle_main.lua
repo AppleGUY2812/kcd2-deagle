@@ -1160,3 +1160,98 @@ function Deagle:VmHide()
 	baseVmHide(self)
 	self:SetBodyHidden(false)
 end
+
+-- ---- first-person guard: in dialogue / cutscene cameras the viewmodel hides and Henry's body comes back
+Deagle.cfg.vm.fpMaxDist = 0.35   -- camera within this of the Head bone = first person
+local placeWithFollow = Deagle.VmPlace
+function Deagle:VmPlace()
+	local p = self:Player()
+	if not p or not self.vmShown then return end
+	local ok, hp = pcall(p.GetBonePos, p, "Head")
+	local cp = System.GetViewCameraPos()
+	local fp = ok and hp and vlen(vadd(cp, vscale(hp, -1))) < self.cfg.vm.fpMaxDist
+	if fp ~= self.vmInFp then
+		self.vmInFp = fp
+		local vm = self.vmId and System.GetEntity(self.vmId)
+		if vm then pcall(vm.Hide, vm, fp and 0 or 1) end
+		self:SetBodyHidden(fp and true or false)
+		log("first person " .. tostring(fp))
+	end
+	if fp then placeWithFollow(self) end
+end
+
+-- ---- v3 placement: one-frame prediction (camera reads during entity update are a frame old), first-person guard,
+-- worn gear (sword, dagger, shield...) hidden with the body. Head-bone follow removed: KCD2 ignores attachment
+-- offsets on entity attachments and the head turns up to 15 deg against the camera.
+Deagle.cfg.vm.predict = 1.0      -- 0 = off, 1 = full one-frame extrapolation of camera motion
+Deagle.cfg.vm.follow = "camera"
+Deagle.cfg.vm.gearDist = 0.35    -- worn items: within this of the hips / spine
+local GEAR_BONES = { "Hips", "Spine", "Spine1", "Spine2", "Spine3", "Spine4", "LeftUpLeg", "RightUpLeg" }
+
+function Deagle:HideGear(hide)
+	self.hiddenGear = self.hiddenGear or {}
+	if not hide then
+		for id in pairs(self.hiddenGear) do local e = System.GetEntity(id) if e then pcall(e.Hide, e, 0) end end
+		self.hiddenGear = {}
+		return
+	end
+	local p = self:Player()
+	if not p then return end
+	local pts = {}
+	for _, b in ipairs(GEAR_BONES) do local ok, v = pcall(p.GetBonePos, p, b) if ok and v then pts[#pts + 1] = v end end
+	local wp = p:GetWorldPos()
+	for _, e in ipairs(System.GetEntitiesInSphere({ x = wp.x, y = wp.y, z = wp.z + 1.0 }, 1.2) or {}) do
+		if e.class == "PickableItem" and not self.hiddenGear[e.id] then
+			local ep = e:GetWorldPos()
+			for _, v in ipairs(pts) do
+				if vlen(vadd(ep, vscale(v, -1))) < self.cfg.vm.gearDist then
+					pcall(e.Hide, e, 1); self.hiddenGear[e.id] = true
+					log("hid worn item " .. tostring(e:GetName()))
+					break
+				end
+			end
+		end
+	end
+end
+
+local baseSetBodyHidden = Deagle.SetBodyHidden
+function Deagle:SetBodyHidden(hide)
+	baseSetBodyHidden(self, hide)
+	self:HideGear(hide and self.cfg.vm.hideBody)
+end
+
+function Deagle:VmPlace()
+	local p = self:Player()
+	if not p or not self.vmShown then return end
+	local now = System.GetCurrTime()
+	local pr = self.vmPred
+	if not pr or now ~= pr.t then
+		local cp, f = System.GetViewCameraPos(), System.GetViewCameraDir()
+		local ok, hp = pcall(p.GetBonePos, p, "Head")
+		local fp = ok and hp and vlen(vadd(cp, vscale(hp, -1))) < self.cfg.vm.fpMaxDist
+		if fp ~= self.vmInFp then
+			self.vmInFp = fp
+			local vm = self.vmId and System.GetEntity(self.vmId)
+			if vm then pcall(vm.Hide, vm, fp and 0 or 1) end
+			self:SetBodyHidden(fp and true or false)
+			log("first person " .. tostring(fp))
+		end
+		if fp and (now - (self.gearScan or 0)) > 1.0 then self.gearScan = now; self:HideGear(true) end
+		local k, of, op = self.cfg.vm.predict, f, cp
+		if pr and pr.f and (now - pr.t) < 0.1 and k > 0 then
+			of = vnorm(vadd(f, vscale(vadd(f, vscale(pr.f, -1)), k)))
+			op = vadd(cp, vscale(vadd(cp, vscale(pr.p, -1)), k))
+		end
+		self.vmPred = { t = now, f = f, p = cp, outF = of, outP = op, fp = fp }
+		pr = self.vmPred
+	end
+	if not pr.fp then return end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm then return end
+	local o, f = self.cfg.vm.offset, pr.outF
+	local r = vnorm(vcross(f, { x = 0, y = 0, z = 1 }))
+	local u = vcross(r, f)
+	vm:SetWorldPos(vadd(pr.outP, vadd(vscale(f, o.fwd), vadd(vscale(r, o.right), vscale(u, o.up)))))
+	pcall(vm.SetDirectionVector, vm, f, u)
+end
+System.AddCCommand("deagle_predict", "Deagle.cfg.vm.predict = tonumber(([[%1]]):gsub('\"','')) or 1 Deagle.vmPred = nil System.LogAlways('[Deagle] predict ' .. Deagle.cfg.vm.predict)", "deagle_predict <0..1.5>: viewmodel lag compensation")
