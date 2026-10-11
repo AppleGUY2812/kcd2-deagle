@@ -1628,3 +1628,47 @@ function Deagle:NativeSyncVm()
 	if self.native then self:Native(string.format("motion %.2f", self.cfg.vm.motion)) end
 end
 System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber(([[%1]]):gsub('\"','')) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
+
+-- ---- ammo HUD: drawn every frame with System.DrawText while the Deagle is up in first person (bottom right).
+-- If DrawText is unavailable it switches itself off and the old info-text messages come back.
+Deagle.cfg.hud = { enabled = true, x = 0.885, y = 0.86, size = 2.6, font = "default",
+	col = { 1.0, 0.95, 0.86, 0.92 }, empty = { 0.95, 0.35, 0.3, 0.95 } }
+local function hudText(x, y, text, size, c)
+	return pcall(System.DrawText, x, y, text, Deagle.cfg.hud.font, size, 0, c[1], c[2], c[3], c[4])
+end
+function Deagle:DrawHud()
+	local h, s = self.cfg.hud, self.state
+	if not (h.enabled and self.hudOk ~= false and s.drawn and self.vmInFp) then return end
+	local ok, vx, vy, vw, vh = pcall(System.GetViewport)
+	local W = (ok and type(vw) == "number" and vw > 0) and vw or 1920
+	local H = (ok and type(vh) == "number" and vh > 0) and vh or 1080
+	local x, y = h.x * W, h.y * H
+	local col = s.ammo == 0 and h.empty or h.col
+	local good = hudText(x, y, tostring(s.ammo), h.size * 1.6, col)
+	if not good then
+		self.hudOk = false
+		log("$4HUD: System.DrawText unavailable, falling back to info text")
+		return
+	end
+	self.hudOk = true
+	hudText(x + 0.028 * W, y + 0.012 * H, "/ " .. self.cfg.magSize, h.size * 0.9, h.col)
+	local label = s.reloading and "RELOADING" or "DESERT EAGLE"
+	hudText(x - 0.004 * W, y + 0.05 * H, label, h.size * 0.55, { h.col[1], h.col[2], h.col[3], 0.7 })
+end
+local baseVmPlace7 = Deagle.VmPlace
+function Deagle:VmPlace()
+	baseVmPlace7(self)
+	local now = System.GetCurrTime()
+	if now ~= self.hudT then self.hudT = now; self:DrawHud() end
+end
+local baseShowAmmo7 = Deagle.ShowAmmo
+function Deagle:ShowAmmo()
+	if self.cfg.hud.enabled and self.hudOk then pcall(Game.HideInfoText) return end   -- the HUD shows it
+	baseShowAmmo7(self)
+end
+local baseNotify7 = Deagle.Notify
+function Deagle:Notify(text)
+	if self.cfg.hud.enabled and self.hudOk and type(text) == "string" and text:find("^Desert Eagle  reloading") then return end
+	baseNotify7(self, text)
+end
+System.AddCCommand("deagle_hud", "Deagle.cfg.hud.enabled = (([[%1]]):find('0') == nil) Deagle.hudOk = nil", "deagle_hud 1|0: ammo HUD on/off")
