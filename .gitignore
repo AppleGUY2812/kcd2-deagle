@@ -5,3 +5,5 @@ src/Objects/**/*.cgf
 src/Objects/**/*.dds*
 src/Animations/**/*.caf
 src/Animations/*.img
+src/Objects/**/*.chr
+src/Objects/**/*.skin

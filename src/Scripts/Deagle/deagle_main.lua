@@ -818,3 +818,179 @@ if not Deagle.listening then
 end
 
 log("loaded v1.3")
+
+-- ---------------------------------------------------------------------------
+-- first-person viewmodel: arms + Deagle + animations converted from the MWII Deagle (GameBanana 532396, private use).
+-- A separate character placed on the camera every frame (its camera bone tag_view is the model origin, +Y forward),
+-- so the arms never depend on Henry's body pose, pitch or strafing.
+-- ---------------------------------------------------------------------------
+Deagle.cfg.vm = {
+	enabled = true,
+	cdf = "objects/manmade/weapons/deagle/vm/deagle_vm.cdf",
+	chr = "objects/manmade/weapons/deagle/vm/deagle_vm.chr",
+	skin = "objects/manmade/weapons/deagle/vm/deagle_vm_skin.skin",
+	offset = { fwd = 0.0, right = 0.0, up = 0.0 },   -- camera-space nudge (m)
+	fps = 24, layer = 0, blend = 0.08,
+	anims = {   -- name, frame count (24 fps)
+		draw = { "deagle_vm_draw", 37 }, idle = { "deagle_vm_idle1", 2 },
+		shoot = { { "deagle_vm_shoot1", 35 }, { "deagle_vm_shoot2", 35 } }, shootEmpty = { "deagle_vm_shoot_empty", 13 },
+		reload = { "deagle_vm_reload", 65 }, reloadEmpty = { "deagle_vm_reload_empty", 68 }, inspect = { "deagle_vm_inspect", 153 },
+	},
+}
+
+function Deagle:VmEntity()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if vm then return vm end
+	local c = self.cfg.vm
+	vm = System.SpawnEntity({ class = "BasicEntity", name = "deagle_viewmodel", position = System.GetViewCameraPos(),
+		properties = { object_Model = "" } })
+	if not vm then log("$4viewmodel spawn failed") return nil end
+	local ok, slot = pcall(vm.LoadCharacter, vm, 0, c.cdf)
+	log("viewmodel character " .. c.cdf .. " -> " .. tostring(ok) .. " " .. tostring(slot))
+	if not ok or slot == nil or slot == false or slot == -1 then
+		local ok2, slot2 = pcall(vm.LoadCharacter, vm, 0, c.chr)
+		local ok3 = pcall(vm.CreateSkinAttachment, vm, 0, "vm_mesh", c.skin)
+		log("viewmodel fallback chr " .. tostring(ok2) .. " " .. tostring(slot2) .. " skin " .. tostring(ok3))
+	end
+	pcall(vm.SetViewDistRatio, vm, 255)
+	self.vmId = vm.id
+	vm.OnUpdate = function() Deagle:VmPlace() end    -- per-frame follow (entity update); timer fallback below
+	pcall(vm.Activate, vm, 1)
+	return vm
+end
+
+function Deagle:VmPlace()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm or not self.vmShown then return end
+	local o = self.cfg.vm.offset
+	local pos, f = System.GetViewCameraPos(), System.GetViewCameraDir()
+	local r = vnorm(vcross(f, { x = 0, y = 0, z = 1 }))
+	local u = vcross(r, f)
+	vm:SetWorldPos(vadd(pos, vadd(vscale(f, o.fwd), vadd(vscale(r, o.right), vscale(u, o.up)))))
+	pcall(vm.SetDirectionVector, vm, f, u)
+end
+
+function Deagle:VmTick(token)
+	if token ~= self.vmToken or not self.vmShown then return end
+	self:VmPlace()
+	local a = self.vmAnim
+	if a and not a.loop and System.GetCurrTime() >= a.ends then self:VmPlay("idle", true) end
+	Script.SetTimer(0, function() Deagle:VmTick(token) end)
+end
+
+function Deagle:VmPlay(key, loop)
+	local vm, c = self:VmEntity(), self.cfg.vm
+	if not vm then return 0 end
+	local a = c.anims[key]
+	if key == "shoot" then
+		self.vmShot = (self.vmShot or 0) + 1
+		a = a[(self.vmShot - 1) % #a + 1]
+	end
+	local name, frames = a[1], a[2]
+	local ok, started = pcall(vm.StartAnimation, vm, 0, name, c.layer, c.blend, 1.0, loop and true or false)
+	if not (ok and started) and self.vmLastFail ~= name then
+		self.vmLastFail = name
+		log("$4viewmodel anim did not start: " .. name .. " " .. tostring(started))
+	end
+	local len = frames / c.fps
+	self.vmAnim = { key = key, loop = loop, ends = System.GetCurrTime() + len }
+	return len
+end
+
+function Deagle:VmShow()
+	local vm = self:VmEntity()
+	if not vm then return end
+	self.vmShown = true
+	pcall(vm.Hide, vm, 0)
+	self:VmPlace()
+	self:VmPlay("draw", false)
+	self.vmToken = (self.vmToken or 0) + 1
+	local token = self.vmToken
+	Script.SetTimer(0, function() Deagle:VmTick(token) end)
+end
+
+function Deagle:VmHide()
+	self.vmShown = false
+	self.vmToken = (self.vmToken or 0) + 1
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if vm then pcall(vm.Hide, vm, 1) end
+end
+
+function Deagle:VmBone(name)
+	local vm = self.vmShown and self.vmId and System.GetEntity(self.vmId)
+	if not vm then return nil end
+	local ok, p = pcall(vm.GetBonePos, vm, name)
+	return ok and p or nil
+end
+
+function Deagle:Inspect()
+	local s = self.state
+	if not s.drawn or s.reloading or not self.cfg.vm.enabled then return end
+	self:VmPlay("inspect", false)
+end
+
+-- hooks into the existing draw / fire / reload flow
+local baseShowInHand, baseHideInHand = Deagle.ShowInHand, Deagle.HideInHand
+function Deagle:ShowInHand()
+	if self.cfg.vm.enabled then self:VmShow() return end
+	baseShowInHand(self)
+end
+function Deagle:HideInHand()
+	self:VmHide()
+	baseHideInHand(self)
+end
+local baseMuzzlePos = Deagle.MuzzlePos
+function Deagle:MuzzlePos()
+	return self:VmBone("tag_flash") or baseMuzzlePos(self)
+end
+local baseSlideCycle = Deagle.SlideCycle
+function Deagle:SlideCycle()
+	if self.cfg.vm.enabled then return end      -- the viewmodel animation moves its own slide
+	baseSlideCycle(self)
+end
+local baseFire = Deagle.Fire
+function Deagle:Fire()
+	local before, last = self.state.ammo, self.state.lastShot
+	baseFire(self)
+	if self.cfg.vm.enabled and self.state.lastShot ~= last then
+		self:VmPlay(before == 1 and "shootEmpty" or "shoot", false)
+	end
+end
+local baseReload = Deagle.Reload
+function Deagle:Reload()
+	local s, c = self.state, self.cfg
+	if c.vm.enabled and not s.reloading and s.ammo < c.magSize then
+		local a = c.vm.anims[s.ammo == 0 and "reloadEmpty" or "reload"]
+		c.reloadTime = a[2] / c.vm.fps
+		baseReload(self)
+		if s.reloading then self:VmPlay(s.ammo == 0 and "reloadEmpty" or "reload", false) end
+		return
+	end
+	baseReload(self)
+end
+local baseOnAction = Deagle.OnAction
+function Deagle:OnAction(action, activation)
+	if action == "deagle_inspect" and self.state.drawn then
+		if activation == "press" then self:Inspect() end
+		return true
+	end
+	return baseOnAction(self, action, activation)
+end
+
+System.AddCCommand("deagle_inspect", "Deagle:Inspect()", "Play the inspect animation")
+System.AddCCommand("deagle_vm", "Deagle:DevLua([==[%line]==])", "deagle_vm <lua>: alias of deagle_lua for viewmodel tweaks")
+local baseEjectCase = Deagle.EjectCase
+function Deagle:EjectCase()
+	local port = self:VmBone("tag_brass")
+	if not port then return baseEjectCase(self) end
+	local c = self.cfg
+	try("eject case", function()
+		local _, f, r, u = camBasis()
+		local case = spawnModel("deagle_case_" .. tostring(math.random(1, 1e9)), c.modelDir .. "deagle_case.cgf", true, 0.02)
+		case:SetWorldPos(port)
+		local dir = vnorm(vadd(vscale(r, 1.0), vadd(vscale(u, 0.8), vscale(f, -0.3 + math.random() * 0.2))))
+		case:AddImpulse(-1, port, dir, c.ejectImpulse, 1)
+		local id = case.id
+		Script.SetTimer(c.caseLifeMs, function() pcall(System.RemoveEntity, id) end)
+	end)
+end
