@@ -32,13 +32,14 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_zoom <n>` | debug zoom (F10 steps x4 / x10 / off) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
+On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list settings take numbers apart by commas.
 | Setting | Default | What it changes |
 |---|---|---|
 | `flashMode` | `gun` | `gun` = flash on the gun's muzzle (glued), `world` = left where it was fired |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
-| `cancelKeepsRounds` | `0` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
+| `cancelKeepsRounds` | `false` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
 | `recoil` | `1` | **master kick**: scales every recoil effect together (camera kick, sideways, gun model flip and push). `1.5` = 50 % harder for every gun |
 | `physics.kickExponent` | `0.67` | how much smaller guns are lifted toward the Deagle's kick: `1` = pure physics (Glock a third of the Deagle), `0.67` = Glock 0.49x (3.5 deg), `0` = every gun kicks like the Deagle |
 | `physics.loudnessSpan` | `0.25` | how much quieter small guns are than the Deagle: `0` = all as loud, `0.25` = Glock 0.83x, `0.5` = 0.69x, `1` = real difference |
@@ -68,13 +69,13 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `ricochetKeep` | `0.35` | energy a ricochet keeps |
 | `holeExitSize` | `0.09` | exit hole size in m |
 | `accuracy.scale` | `1` | CS2 guns: 1 = CS2's own accuracy (standing / crouched / moving / jumping / shots in a row), 0.5 = twice as tight, 0 = no spread |
-| `flashGrow` | `{0.7, 1, 1.1}` | the flash's size on each frame it's seen, then gone (same at any frame rate). More numbers = a longer flash |
+| `flashGrow` | `0.7,1,1.1` | the flash's size on each frame it's seen, then gone (same at any frame rate). More numbers = a longer flash: `deagle_set flashGrow 0.6,0.9,1.1,1.1` |
 | `impactVolume` | `1` | bullet impact / ricochet / armour sounds |
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |
 | `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
 
-Examples: `deagle_set physics.camPerFlip 0.3` (bigger kick for every gun), `deagle_set flashMode world`,
+Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `deagle_set flashMode world`,
 `deagle_set muzzleFxScale 0.5`.
 
 ## Reloads (how they work)

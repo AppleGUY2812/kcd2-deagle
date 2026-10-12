@@ -2281,9 +2281,27 @@ function Deagle:Set(line)
 	local t, k = self.cfg, key
 	for part, rest in string.gmatch(key, "([^.]+)%.(.+)") do t, k = t[part], rest end   -- one level of nesting
 	if type(t) ~= "table" then log("no setting " .. key) return end
-	local num = tonumber(value)
-	if value == "nil" then t[k] = nil elseif num then t[k] = num else t[k] = value end
-	log("cfg." .. key .. " = " .. tostring(t[k]))
+	-- the value takes the setting's own type: on / off settings read 1 / 0 / true / false / on / off, lists read
+	-- numbers apart by commas or spaces (flashGrow 0.7,1,1.1), numbers read numbers
+	local cur, low = t[k], string.lower(value)
+	if value == "nil" then t[k] = nil
+	elseif type(cur) == "boolean" then
+		if low == "1" or low == "true" or low == "on" or low == "yes" then t[k] = true
+		elseif low == "0" or low == "false" or low == "off" or low == "no" then t[k] = false
+		else log("$4" .. key .. " is on / off: use 1 or 0") return end
+	elseif type(cur) == "table" then
+		local list = {}
+		for v in string.gmatch(value, "[^,%s]+") do
+			local n = tonumber(v)
+			if not n then log("$4" .. key .. " is a list of numbers (e.g. 0.7,1,1.1)") return end
+			list[#list + 1] = n
+		end
+		t[k] = list
+	elseif tonumber(value) then t[k] = tonumber(value)
+	else t[k] = value end
+	if k == "flashGrow" or k == "slowmo" then self:NativeSyncVm() end   -- settings the plugin holds
+	local shown = type(t[k]) == "table" and table.concat(t[k], ", ") or tostring(t[k])
+	log("cfg." .. key .. " = " .. shown)
 end
 
 function Deagle:Cfg()

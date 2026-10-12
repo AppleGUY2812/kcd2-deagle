@@ -96,6 +96,14 @@ local z10 = M.fov
 Deagle:OnAction("deagle_zoom", "press"); M.advance(0.5)
 check(string.format("F10 zoom: x4 %.3f, x10 %.3f, off %.3f (game %.3f)", z4 or -1, z10 or -1, M.fov or -1, base),
 	z4 and math.abs(z4 - base / 4) < 1e-6 and math.abs(z10 - base / 10) < 1e-6 and math.abs(M.fov - base) < 1e-6, z4)
+-- deagle_set: on / off settings take 1 / 0, lists take comma-separated numbers, numbers stay numbers
+Deagle:Set("hitReactions 0"); local off = Deagle.cfg.hitReactions
+Deagle:Set("hitReactions on"); local on = Deagle.cfg.hitReactions
+Deagle:Set("flashGrow 0.6,0.9,1.1,1.1"); local grow = Deagle.cfg.flashGrow
+Deagle:Set("accuracy.scale 0.5"); local sc = Deagle.cfg.accuracy.scale
+check("deagle_set: hitReactions 0 -> false, on -> true; flashGrow list; accuracy.scale 0.5",
+	off == false and on == true and type(grow) == "table" and #grow == 4 and grow[1] == 0.6 and sc == 0.5, tostring(off))
+Deagle:Set("accuracy.scale 1"); Deagle:Set("flashGrow 0.7,1,1.1")
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("accuracy: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
