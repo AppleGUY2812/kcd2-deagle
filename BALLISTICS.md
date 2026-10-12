@@ -100,6 +100,14 @@ Arma 3 = weight -> inertia, resting / bipod cut recoil; Ready or Not = procedura
 - Ballistics: real projectiles (speed, drag, gravity scale), damage falloff, penetration by material depth / density,
   ricochet chance, armor-piercing, armor coverage / level, an ammo data table per caliber: same shape as our plan.
 
+## Ready or Not recoil values (read from the user's install 2026-10-12, docs/ron/)
+Per-shot camera kick (RecoilPattern pitch, deg; first shot x FirstShotRecoil; RecoilReturnPercentage = share that comes
+back by itself): G19 9 mm 2 / 1.5 (first x0.25, return 0); M9 9 mm 4.5-6 (x0.25, 0); USP 9 mm 6 (x0.35, 0.5); .45 1911s
+~3 (x0.35, 0); Python .357 5-6 (x1, 0); MP5 1, M4 1.5, HK416 2.5; shotguns 7 (870: return 1). Viewmodel spring:
+FireStrength 8 (first 5) for most pistols, 25 for the M1911 / MP5; sustained fire builds up to ~12 deg / 7 cm.
+Hand-tuned per gun (same-caliber pistols range 2-6 deg). Most pistols don't return the kick by itself: you pull down.
+Full table + every decoded property: docs/ron/ron_recoil_table.md, ron_recoil.json.
+
 ## Decided
 - **Ready or Not guns keep Ready or Not's feel** (user, 2026-10-12): our recoil model uses Ready or Not's parameter set
   (fire / first-shot strength, angle strength, pitch / yaw multipliers, buildup, damping, return percentage / rate /
