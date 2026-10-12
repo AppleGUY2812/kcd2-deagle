@@ -66,3 +66,14 @@ Video checks: drag an OBS clip onto `Desktop\Make Scrubbable.bat`, then step wit
 5. `tools/vm_anims.ps1` compiles the clips with the game's rc; `tools/merge_img.py` merges their headers into
    `Animations.img`
 6. `tools/vm_tracks_dump.py` + `tools/vm_transition_audit.py` check every transition for jumps
+
+## Importing a GameBanana CS weapon mod
+```
+tools/gb/gb_import.sh 447086          # mod id (or a local .zip/.rar/.7z), about 30 s
+```
+Downloads and extracts to `E:\Tools\deagle-work\guns\<slug>`, reads the viewmodel (sequences, fps, sound events,
+bones, attachments), the soundscripts and the weapon script, and writes a guessed **gun profile** to
+`guns/<slug>.json` (which clip is draw / shoot / reload..., which bones are slide / mag / rounds / muzzle / brass,
+magazine size, sound cues, gunshot sounds). Correct anything wrong in that file. A contact sheet of every clip lands
+on the Desktop (`Deagle Progress\<slug> clips.png`). Checks: `python3 tests/test_profile_guess.py`.
+Converting a profile into an in-game gun is the next step (TODO).
