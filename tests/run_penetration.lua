@@ -28,6 +28,7 @@ local function newNpc(y, outfit)
 	function n:GetDirectionVector() return vec(0, -1, 0) end
 	function n.soul:DealDamage(st, hp) n.damage = n.damage + hp; n.stamina = n.stamina + st; n.hits = (n.hits or 0) + 1 end
 	function n.soul:AddBuff() end
+	function n:GetMass() return self.mass or 80 end
 	function n.actor:IsDead() return n.damage >= 100 end
 	function n.actor:GetHealth() return 100 - n.damage end
 	function n.actor:GetMaxHealth() return 100 end
@@ -200,6 +201,42 @@ check(string.format("40 cm out: past the arm, into the wall behind (man %d hits,
 	(man.hits or 0) == 0 and hits[#hits] and hits[#hits].surface == "mat_rock", man.hits)
 part = zoneShot(0.10, 0.75)
 check("thigh height, 10 cm out -> leg_left (" .. tostring(part) .. ")", part == "leg_left", part)
+
+-- size: a 2.5 kg hare dies to one Glock round; a 500 kg horse takes less than a man (KCD2 gives all 100 HP)
+Deagle:UseGun("glock_17"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+local function sized(mass)
+	reset()
+	local a = newNpc(220)
+	a.mass = mass
+	fire()
+	return a.damage
+end
+local man, hare, horse = sized(80), sized(2.5), sized(500)
+check(string.format("Glock torso: man %.0f HP, hare %.0f (dead), horse %.0f", man, hare, horse), hare >= 100 and horse < man and horse > 0, hare)
+
+-- the AI hears every shot (gun_fired on the shooter, louder for the Deagle) and every impact (bullet_hit at the spot);
+-- the impact's sound plays from there, late by the distance (20 m: ~0.06 s)
+local function shotMult(id)
+	Deagle:UseGun(id); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+	reset()
+	world.slabs = { { y0 = 220, y1 = 221, surface = 1 } }   -- 20 m: inside a stone hit's hearing range (40 m)
+	M.aiSounds = {}
+	local n0 = #M.native
+	fire()
+	local shot, hit, snd
+	for _, a in ipairs(M.aiSounds) do
+		if a.kind == 14 then shot = a end
+		if a.kind == 16 then hit = a end
+	end
+	for i = n0 + 1, #M.native do snd = snd or M.native[i]:match("^%[DN%] snd3 (impacts/stone_%d+%.wav)") end
+	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+	return shot, hit, snd
+end
+local gShot, gHit, gSnd = shotMult("glock_17")
+local dShot = shotMult("deagle")
+check(string.format("AI hears the shots: Glock x%.1f, Deagle x%.1f (louder); the impact x%.2f", gShot and gShot.mult or -1, dShot and dShot.mult or -1, gHit and gHit.mult or -1),
+	gShot and dShot and gHit and gShot.wuid ~= nil and dShot.mult > gShot.mult and gHit.pos.y >= 220 - 1e-6, gShot)
+check("the stone wall's impact sound played from the wall (" .. tostring(gSnd) .. ")", gSnd ~= nil, gSnd)
 
 -- the armour math on its own: punch vs a layer's stab defense, condition, angle, glance
 local phys9 = Deagle:ShotPhysics(Deagle.guns.glock_17)

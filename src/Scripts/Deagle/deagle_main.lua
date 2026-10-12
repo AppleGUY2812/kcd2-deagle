@@ -68,6 +68,10 @@ Deagle.cfg = {
 	-- weaker worn one (132: 106) within ~12 m, a new one never; the Deagle (~200) through most plate at any range
 	armor = { punch = 104, conditionFloor = 0.6, glanceAngle = 70, bruise = 0.1, ricochetKeep = 0.3, scatter = 30 },
 	armorRicochetFx = "deagle_impacts.ricochet_metal",
+	impactVolume = 1.0,       -- bullet impact / ricochet / armour sounds (Ready or Not's), x their evened-out level
+	-- KCD2's AI hearing (XGenAIModule.ProduceSound*): shot = the gun_fired multiplier for a 9 mm (louder guns more;
+	-- GUESS ~80 m, calibrate live), hit = bullet_hit multiplier at an impact for a 9 mm
+	hearing = { on = true, shot = 3.2, hit = 1.0 },
 	exitEnergy = 20,          -- J: a round leaving the body with less stays in it (no exit wound)
 	bodyExit = 0.35,          -- m from the entry where a through-and-through round goes on
 	holeLife = 300,           -- s a bullet hole stays
@@ -113,6 +117,8 @@ Deagle.cfg = {
 		damageRef = 35,         -- HP a 9 mm 124 gr FMJ at 360 m/s takes from the torso (3 hits on a 100 HP NPC)
 		staminaRef = 20,        -- stamina a 9 mm's shove takes; others by momentum
 		headMult = 2.0,         -- on a head hit, on top of KCD2's own x1.5: a round through the skull kills
+		bodyMass = 80,          -- kg: the body the wound numbers are set on (KCD2's people); smaller bodies take more
+		sizeExponent = 0.5,     -- wound x (bodyMass / target mass)^this (a hare dies to anything, a horse takes ~2.5x hits)
 		punchPerMomentum = 25.6,-- physics push on bodies / props per kg m/s of bullet momentum (Deagle 8.6 -> 220)
 		largeFlashBlast = 1.5,  -- blast scale from which the flash burns longer (0.13 s instead of 0.1; Deagle 2.08)
 		loudnessSpan = 0.25,    -- share of the real loudness difference played (Deagle +6.5 dB over the Glock -> Glock 0.83x)
@@ -598,21 +604,24 @@ end
 -- horse-only colliders, designer blockers) and foliage, which a round flies through. Worn armour (plate / mail combos)
 -- sparks like metal and gets no hole (decals don't follow a moving body).
 local SURFACES = {}
-local function surfaces(fx, hole, names) for _, n in ipairs(names) do SURFACES[n] = { fx = fx, hole = hole } end end
-surfaces("metal", "metal", { "mat_metal", "mat_door_metal", "mat_metal_seethrough", "mat_bells", "mat_super_cool_sparkly_type" })
+local function surfaces(fx, hole, names, snd) for _, n in ipairs(names) do SURFACES[n] = { fx = fx, hole = hole, snd = snd or fx } end end
+surfaces("metal", "metal", { "mat_metal", "mat_super_cool_sparkly_type" })
+surfaces("metal", "metal", { "mat_door_metal", "mat_metal_seethrough" }, "metal_thin")
+surfaces("metal", "metal", { "mat_bells" }, "bell")
 surfaces("metal", nil, { "mat_plate", "mat_chainmail", "mat_chainmail_plate", "mat_fabric_plate", "mat_fabric_chainmail",
-	"mat_fabric_chainmail_plate", "mat_leather_chainmail" })
+	"mat_fabric_chainmail_plate", "mat_leather_chainmail" }, "armor")
 surfaces("stone", "stone", { "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_stairs_stone", "mat_default", "mat_invulnerable" })
-surfaces("stone", "ceramic", { "mat_ceramics" })
+surfaces("stone", "ceramic", { "mat_ceramics" }, "ceramic")
 surfaces("plaster", "plaster", { "mat_plaster" })
 surfaces("wood", "wood", { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood", "mat_railing_wood_seethrough" })
 surfaces("wood", "wood_soft", { "mat_wood_soft", "mat_wicker" })
-surfaces("soil", "soil", { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_gravel", "mat_forest", "mat_grass", "mat_grassdry", "mat_road", "mat_field" })
+surfaces("soil", "soil", { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_gravel", "mat_road", "mat_field" })
+surfaces("soil", "soil", { "mat_forest", "mat_grass", "mat_grassdry" }, "grass")
 surfaces("water", nil, { "mat_water", "mat_mudwater", "mat_slowwater", "mat_rockwater", "mat_puddle" })
 surfaces("straw", nil, { "mat_thatch", "mat_organic_stuff" })
 surfaces("cloth", "cloth", { "mat_sack", "mat_fabric_items", "mat_fabric", "mat_leather" })
 surfaces("glass", "glass", { "mat_glass" })
-surfaces("blood", nil, { "mat_flesh" })
+surfaces("blood", nil, { "mat_flesh" }, "flesh")
 surfaces("pass", nil, { "mat_none", "mat_window", "mat_player_collider", "mat_player_only", "mat_no_photomode", "mat_npc_only",
 	"mat_horse_only", "mat_horse_ignore", "mat_player_only_with_bark", "mat_level_barrier", "mat_deep_water_barrier",
 	"mat_cart_slowdown", "mat_corpses_barrier", "mat_prepadeni_roadTocamp_barrier", "mat_slope", "mat_barrier_navignore",
@@ -863,10 +872,45 @@ function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip)
 	return out
 end
 
+-- A hit's sound from where it happened (Ready or Not's, guns/impact_sounds.lua; plugin snd3: 3D around the camera),
+-- late by the time sound takes to get here (343 m/s); too far to hear = nothing. Louder for a bigger round (x the
+-- square root of its impact scale). KCD2's AI hears it too (enum_sound.bullet_hit at the spot).
+local SOUND_SPEED = 343
+function Deagle:HitSound(kind, pos, scale)
+	local c = self.cfg
+	local set = self.impactSounds and self.impactSounds[kind]
+	if not set or #set == 0 then return end
+	local range = self.impactRange and (self.impactRange[kind] or self.impactRange.default) or { min = 2, max = 40 }
+	local d = vlen(vsub(pos, System.GetViewCameraPos()))
+	if d <= range.max and self.native then
+		local file = set[math.random(#set)]
+		local gain = (self.impactGain and self.impactGain[file] or 1) * c.impactVolume * math.sqrt(scale or 1)
+		local cmd = string.format("snd3 %s %.3f %.2f %.2f %.2f %.1f %.1f", file, gain, pos.x, pos.y, pos.z, range.min, range.max)
+		local delay = math.floor(1000 * d / SOUND_SPEED)
+		if delay > 10 then Script.SetTimer(delay, function() Deagle:Native(cmd) end) else self:Native(cmd) end
+	end
+	if c.hearing.on then try("AI hears the hit", XGenAIModule.ProduceSound, enum_sound.bullet_hit, pos, c.hearing.hit * (scale or 1)) end
+end
+
+-- KCD2's AI hears the shot: its own gun_fired sound (rpg_sound.xml, the loudest a person makes; guards look around,
+-- come to investigate, panic up close; docs/kcd2_ai_hearing.md), on the shooter, louder for a louder gun (x the blast
+-- loudness over a 9 mm's, the same blast level the gunshot plays at)
+function Deagle:ShotHeard(phys)
+	local h = self.cfg.hearing
+	if not h.on then return end
+	local mult = h.shot
+	if phys then
+		local ref = self:ShotPhysics({ physics = { caliber = "9x19", mass = 0.9, barrel = 0.102, bore = 0.03, hold = "pistol" } })
+		mult = mult * 10 ^ ((20 / 3) * math.log10(phys.gasEnergy / ref.gasEnergy) / 20)
+	end
+	try("AI hears the shot", function() XGenAIModule.ProduceSoundWUID(enum_sound.gun_fired, self:Player().this.id, mult) end)
+end
+
 -- the mark a round leaves: the surface's effect, sized by the round, and a bullet hole that stays a while
 function Deagle:Mark(s, hit, dir, scale, size)
 	local c = self.cfg
 	if s.fx then self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale) end
+	if s.snd then self:HitSound(s.snd, hit.pos, scale) end
 	if s.hole then
 		size = (size or c.holeSize) * scale * (0.85 + 0.3 * math.random())
 		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
@@ -905,6 +949,8 @@ function Deagle:Impact(hit, dir, phys, r)
 			self:Mark(s, hit, dir, scale * 0.6)
 			local out = self:Deflect(r, hit.pos, hit.normal, dir, c.ricochetKeep, c.ricochetScatter)
 			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale)
+			local d = vlen(vsub(hit.pos, System.GetViewCameraPos()))
+			self:HitSound(d < 8 and "ricochet_close" or d > 40 and "ricochet_far" or "ricochet", hit.pos, scale)
 			if self.state.logActions then log(string.format("ricochet %s at %.0f deg", name, graze)) end
 			return true
 		end
@@ -925,6 +971,7 @@ function Deagle:Impact(hit, dir, phys, r)
 	local exitPos = vadd(hit.pos, vscale(dir, thick))
 	local exitNormal = far and vdot(far.normal, dir) > 0 and far.normal or dir
 	if EXIT_FX[s.fx] then self:SpawnFx("deagle_impacts." .. s.fx .. "_exit", exitPos, dir, scale) end
+	if s.fx == "glass" then self:HitSound("glass_break", exitPos, scale) end
 	if s.hole then
 		self:Mark({ hole = s.hole }, { pos = exitPos, normal = exitNormal, entity = hit.entity }, dir, scale, c.holeExitSize)
 	end
@@ -991,7 +1038,19 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 					through = out
 				end
 				if part == "head" then dmg = dmg * c.physics.headMult end
-				if hard then self:SpawnFx(c.armorFx, hit.pos, hit.normal or vscale(dir, -1), self:ImpactScale(phys, hit.dist, energy)) end
+				-- a wound means more to a small body: x (a man's mass / its mass)^sizeExponent (a 2.5 kg hare: x5.7, a 25 kg
+				-- dog x1.8, a 500 kg horse x0.4; KCD2 gives every creature 100 HP)
+				local mass = 0
+				pcall(function() mass = e:GetMass() end)
+				if mass and mass > 0 then
+					local k = (c.physics.bodyMass / mass) ^ c.physics.sizeExponent
+					dmg, stam = dmg * k, stam * k
+				end
+				if hard then
+					self:SpawnFx(c.armorFx, hit.pos, hit.normal or vscale(dir, -1), self:ImpactScale(phys, hit.dist, energy))
+					self:HitSound(part == "head" and "armor_helmet" or "armor_body", hit.pos, scale)
+				end
+				if not stopped then self:HitSound("flesh", hit.pos, scale) end
 				if stopped and hard and r then         -- turned by plate / mail: off it goes, sparks along its new way
 					local out = self:Deflect(r, hit.pos, hit.normal or vscale(dir, -1), dir, c.armor.ricochetKeep, c.armor.scatter, e.id)
 					self:SpawnFx(c.armorRicochetFx, hit.pos, out, self:ImpactScale(phys, hit.dist, energy))
@@ -1229,6 +1288,7 @@ function Deagle:Shoot(force)
 	s.heat = s.heat + c.heatPerShot
 
 	self:PlayTrigger(c.shotTrigger)
+	self:ShotHeard(self:ShotPhysics())
 	self:MuzzleFlash(System.GetViewCameraDir())
 	self:Recoil()
 	self:EjectCase()
@@ -2298,6 +2358,7 @@ function Deagle:LoadGuns()
 	pcall(load, "Scripts/Deagle/guns/penetration.lua")
 	pcall(load, "Scripts/Deagle/guns/armor.lua")
 	pcall(load, "Scripts/Deagle/guns/hitbones.lua")
+	pcall(load, "Scripts/Deagle/guns/impact_sounds.lua")
 	pcall(load, "Scripts/Deagle/guns/shot_gain.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end

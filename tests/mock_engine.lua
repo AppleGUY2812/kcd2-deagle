@@ -111,6 +111,7 @@ M.view = { pitch = 0, yaw = 0 }   -- the camera follows PlayerSetViewAngles (rec
 player.actor = { PlayerSetViewAngles = function(self, a) M.view.pitch, M.view.yaw = a.x or 0, a.z or 0 end,
 	SetViewShake = function() end, GetViewAngles = function() return vec(M.view.pitch, 0, M.view.yaw) end }
 player.soul = {}
+player.this = { id = player.id }
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }
 _G.ent_all = 0xFFFF
@@ -158,6 +159,13 @@ _G.UIAction = { RegisterEventSystemListener = function() end }
 _G.Sound = {}
 _G.AudioUtils = { LookupTriggerID = function() return 1 end, ExecuteAudioTrigger = function() M.gameShot = (M.gameShot or 0) + 1 end }
 _G.CryAction = {}
+-- KCD2's AI hearing (XGenAIModule.ProduceSound*): every call recorded
+M.aiSounds = {}
+_G.enum_sound = { gun_fired = 14, bullet_hit = 16 }
+_G.XGenAIModule = {
+	ProduceSound = function(kind, pos, mult) table.insert(M.aiSounds, { kind = kind, pos = pos, mult = mult }) end,
+	ProduceSoundWUID = function(kind, wuid, mult) table.insert(M.aiSounds, { kind = kind, wuid = wuid, mult = mult }) end,
+}
 -- a standing human's bones (m from its feet; facing -y, so its left is +x), for test NPCs: e.GetBonePos = M.skeleton
 M.bones = {
 	Hips = { 0, 0, 0.95 }, Spine = { 0, 0, 1.05 }, Spine3 = { 0, 0, 1.25 }, Neck = { 0, 0, 1.5 }, Head = { 0, 0, 1.6 },
