@@ -59,6 +59,22 @@ if g.anims.shootBurst then
 	burstCut = M.anims[a0 + 1] and (M.anims[a0 + 1].name .. "/" .. string.format("%.2f", M.anims[a0 + 1].blend or -1)) or "nothing"
 	M.advance(1.0)
 end
+-- cartridge recoil: one shot climbs the view by the physics kick, about returnPct of it settles back by itself
+local recoil
+local phys = Deagle:ShotPhysics()
+if phys then
+	while Deagle:FireMode() ~= "semi" do act("deagle_firemode"); M.advance(0.1) end
+	Deagle.state.ammo = g.magSize; M.advance(1.5)
+	local up = Deagle.cfg.physics.camPerFlip * phys.flip
+	local p0, n0 = M.view.pitch, #M.native
+	act("deagle_fire"); M.advance(0.1)
+	local peak = math.deg(M.view.pitch - p0)
+	M.advance(1.5)
+	local final = math.deg(M.view.pitch - p0)
+	local kicks = 0
+	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] kick ") then kicks = kicks + 1 end end
+	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = 1 - Deagle.cfg.physics.returnPct }
+end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
 
@@ -107,6 +123,10 @@ local w = g.cs2 and Deagle.cs2 and Deagle.cs2[g.cs2]
 if w then
 	check(string.format("CS2 %s: damage %g, %d rpm, head x%.1f", g.cs2, Deagle.cfg.damage, 60 / Deagle.cfg.interval, Deagle.cfg.headshotMult * 1.5),
 		Deagle.cfg.damage == w.damage and math.abs(Deagle.cfg.interval - ((Deagle.cfg.fireRate == "mod" and g.cycle) or w.cycle)) < 1e-6, Deagle.cfg.damage)
+end
+if recoil then
+	check(string.format("cartridge kick %.1f deg: climbs %.1f, settles at %.1f (keeps ~%d%%), gun kick sent %d", recoil.up, recoil.peak, recoil.final, recoil.keep * 100, recoil.kicks),
+		recoil.peak > 0.5 * recoil.up and recoil.peak < 1.2 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.2 * recoil.up and recoil.kicks == 1, recoil.peak)
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))

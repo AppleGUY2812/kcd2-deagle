@@ -41,7 +41,7 @@ Deagle.cfg = {
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
 	cancelKeepsRounds = false,
-	muzzleFxScale = 1.0,
+	muzzleFxScale = 1.0,      -- multiplier on the flash size the cartridge gives (cfg.physics.flashPerUnit)
 	portFx = "deagle.port_smoke",
 	bloodFx = "collisions.combat.hit_passed_bullet_fabric",
 	armorFx = "collisions.combat.hit_passed_bullet_plate",
@@ -55,6 +55,21 @@ Deagle.cfg = {
 	splatSize = { 0.45, 0.9 },
 	splatLife = 180,
 	recoil = 1.0,
+	-- cartridge-driven handling (guns/calibers.lua -> ShotPhysics): physics -> screen. PROVISIONAL constants, set so the
+	-- .50 AE Deagle kicks ~4.5 deg; to be fitted to Ready or Not's values for the same guns. A gun with no cartridge
+	-- data keeps kickPitch / kickYaw below.
+	physics = {
+		camPerFlip = 0.217,     -- camera kick (deg) per rad/s of muzzle flip (Deagle 20.7 rad/s -> 4.5 deg, Glock 7.1 -> 1.5)
+		returnPct = 0.65,       -- share of each kick the aim returns by itself (Ready or Not: RecoilReturnPercentage)
+		returnRate = 5,         -- 1/s, how fast that part settles
+		riseRate = 70,          -- 1/s, how fast the kick lands (not a one-frame jump)
+		sidePct = 0.25,         -- sideways kick, +- this share of the climb
+		vary = 0.15,            -- +- per shot
+		adsMult = 0.7,          -- aimed: steadier
+		gunBackPerVel = 0.007,  -- gun pushed back (m) per m/s of free recoil (Deagle 4.95 -> 3.5 cm)
+		gunFlipPerFlip = 0.29,  -- gun model flip (deg) per rad/s, on top of the shot animation
+		flashPerUnit = 0.476,   -- flash size per (powder g)^(1/3) x short-barrel factor (Deagle -> 0.6, Glock -> 0.3)
+	},
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
 	modelDir = "objects/manmade/weapons/deagle/",
@@ -257,6 +272,8 @@ end
 function Deagle:MuzzleFlash(dir)
 	local c = self.cfg
 	local pos = self:MuzzlePos()
+	local phys = self:ShotPhysics()
+	local scale = (phys and c.physics.flashPerUnit * phys.flash or 1) * c.muzzleFxScale
 	local e = c.flashMode == "entity" and self.vmInFp and self.vmShown and self:FlashEntity()
 	local ok = false
 	if e then
@@ -266,12 +283,12 @@ function Deagle:MuzzleFlash(dir)
 		-- alternate two slots, cleared first: loading into a slot that still holds the effect doesn't restart it
 		self.flashSlotN = ((self.flashSlotN or 0) + 1) % 2
 		pcall(e.FreeSlot, e, self.flashSlotN)
-		local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlotN, c.muzzleFx, { Scale = c.muzzleFxScale })
+		local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlotN, c.muzzleFx, { Scale = scale })
 		ok = okL and type(slot) == "number" and slot >= 0
 		if ok then self.flashUntil = System.GetCurrTime() + 0.2 end
 	end
-	if not ok then self:SpawnFx(c.muzzleFx, pos, dir, 0.6) end
-	self:SpawnFx(c.muzzleSmokeFx, pos, dir, 1.0)
+	if not ok then try("fx", Particle.SpawnEffect, c.muzzleFx, pos, dir, scale) end
+	try("fx", Particle.SpawnEffect, c.muzzleSmokeFx, pos, dir, scale / 0.6)
 end
 
 function Deagle:FlashEntity()
@@ -326,7 +343,29 @@ function Deagle:SlowMo(on)
 	log("slow motion " .. (on and ("x" .. tostring(self.cfg.slowmo)) or "off"))
 end
 
+-- What one shot does, from the gun's cartridge and build (SI units): recoil impulse (bullet momentum + powder gas,
+-- the gas leaving ~1.75x faster: the SAAMI-style free recoil formula), free recoil velocity / energy (impulse over the
+-- gun's mass), muzzle flip rate (impulse x bore height, turning gun + hand around the wrist), bullet energy, flash
+-- (powder charge; a short barrel burns more of it outside).
+local WRIST_ARM, HAND_INERTIA = 0.10, 0.004    -- m from the wrist to the gun's centre of mass; kg m^2 of the hand
+function Deagle:ShotPhysics(g)
+	g = g or self.gun
+	local ph = g.physics or (g.cs2 and self.gunPhysics and self.gunPhysics[g.cs2])
+	local cal = ph and self.calibers and self.calibers[ph.caliber]
+	if not cal then return nil end
+	local v = cal.velocity * (ph.barrel / cal.barrel) ^ 0.25          -- longer barrel, faster bullet (pistol rule of thumb)
+	local impulse = cal.bullet * v + cal.powder * 1.75 * v
+	local vr = impulse / ph.mass
+	local inertia = ph.mass * WRIST_ARM * WRIST_ARM + HAND_INERTIA
+	if ph.hold == "rifle" then inertia = inertia * 4 end               -- a stock in the shoulder: the body takes it
+	return { caliber = cal.name, velocity = v, energy = 0.5 * cal.bullet * v * v, impulse = impulse, recoilVel = vr,
+		recoilEnergy = 0.5 * ph.mass * vr * vr, flip = impulse * ph.bore / inertia,
+		flash = (cal.powder * 1000) ^ (1 / 3) * (cal.barrel / ph.barrel) ^ 0.5 }
+end
+
 function Deagle:Recoil()
+	local phys = self:ShotPhysics()
+	if phys then return self:PhysicsRecoil(phys) end
 	local p = self:Player()
 	local k = self.cfg.recoil
 	try("view kick", function()
@@ -340,6 +379,53 @@ function Deagle:Recoil()
 	try("recoil", function()
 		p.actor:SetViewShake({ x = math.rad(2.2) * k, y = math.rad(0.6) * k, z = math.rad(0.4) * k },
 			{ x = 0.004 * k, y = 0.02 * k, z = 0.006 * k }, 0.16, 1 / 30, 0.2)
+	end)
+end
+
+-- Kick from the physics: the camera climbs by the muzzle flip, a share of it (returnPct) settles back by itself, the rest
+-- stays (you pull it down); fast shots stack before they settle. The gun model is pushed back and flipped by the
+-- plugin's spring on top of the shot animation.
+function Deagle:PhysicsRecoil(phys)
+	local m, s = self.cfg.physics, self.state
+	local aim = s.aiming and m.adsMult or 1
+	local up = m.camPerFlip * phys.flip * (1 + m.vary * (math.random() * 2 - 1)) * aim * self.cfg.recoil
+	local side = up * m.sidePct * (math.random() * 2 - 1)
+	local r = self.camRecoil or { pitch = 0, yaw = 0, applied = { pitch = 0, yaw = 0 }, perm = { pitch = 0, yaw = 0 } }
+	self.camRecoil = r
+	-- target = permanent climb + a transient part that decays; the applied offset chases the target (riseRate)
+	r.perm.pitch, r.perm.yaw = r.perm.pitch + up * (1 - m.returnPct), r.perm.yaw + side * (1 - m.returnPct)
+	r.pitch, r.yaw = r.pitch + up * m.returnPct, r.yaw + side * m.returnPct
+	self.camRecoilT = System.GetCurrTime()
+	if self.native then
+		self:Native(string.format("kick %.4f %.3f %.3f", m.gunBackPerVel * phys.recoilVel * aim,
+			m.gunFlipPerFlip * phys.flip * aim, (math.random() * 2 - 1) * m.gunFlipPerFlip * phys.flip * m.sidePct * aim))
+	end
+end
+
+-- every frame: move the view by how much the recoil offset changed (never sets the aim outright)
+function Deagle:CamRecoilTick()
+	local r = self.camRecoil
+	if not r then return end
+	local now = System.GetCurrTime()
+	local dt = math.min(0.1, now - (self.camRecoilLast or now)); self.camRecoilLast = now
+	if dt <= 0 then return end
+	local m = self.cfg.physics
+	local decay = math.exp(-m.returnRate * dt)
+	r.pitch, r.yaw = r.pitch * decay, r.yaw * decay
+	local tp, ty = r.perm.pitch + r.pitch, r.perm.yaw + r.yaw
+	local k = 1 - math.exp(-m.riseRate * dt)
+	local dp, dy = (tp - r.applied.pitch) * k, (ty - r.applied.yaw) * k
+	if math.abs(dp) < 1e-4 and math.abs(dy) < 1e-4 then
+		if math.abs(r.pitch) < 1e-3 and math.abs(r.yaw) < 1e-3 then self.camRecoil = nil end   -- settled: start fresh
+		return
+	end
+	r.applied.pitch, r.applied.yaw = r.applied.pitch + dp, r.applied.yaw + dy
+	local p = self:Player()
+	try("view kick", function()
+		local d = System.GetViewCameraDir()
+		local pitch = math.asin(math.max(-1, math.min(1, d.z)))
+		local yaw = math.atan2(-d.x, d.y)
+		p.actor:PlayerSetViewAngles({ x = pitch + math.rad(dp), y = 0, z = yaw + math.rad(dy) })
 	end)
 end
 
@@ -941,6 +1027,7 @@ end
 function Deagle:VmPlace()
 	self:VmFollow()
 	self:FlashFollow()
+	self:CamRecoilTick()
 	local now = System.GetCurrTime()
 	if now ~= self.hudT then self.hudT = now; self:DrawHud() end
 end
@@ -1353,18 +1440,15 @@ end
 function Deagle:Set(line)
 	local key, value = string.match(unquote(line), "^%s*(%S+)%s+(.-)%s*$")
 	if not key then
-		log("usage: deagle_set <key> <value>")
+		log("usage: deagle_set <key> <value>   (nested: deagle_set physics.camPerFlip 0.3)")
 		return
 	end
+	local t, k = self.cfg, key
+	for part, rest in string.gmatch(key, "([^.]+)%.(.+)") do t, k = t[part], rest end   -- one level of nesting
+	if type(t) ~= "table" then log("no setting " .. key) return end
 	local num = tonumber(value)
-	if value == "nil" then
-		self.cfg[key] = nil
-	elseif num then
-		self.cfg[key] = num
-	else
-		self.cfg[key] = value
-	end
-	log("cfg." .. key .. " = " .. tostring(self.cfg[key]))
+	if value == "nil" then t[k] = nil elseif num then t[k] = num else t[k] = value end
+	log("cfg." .. key .. " = " .. tostring(t[k]))
 end
 
 function Deagle:Cfg()
@@ -1530,12 +1614,23 @@ end
 function Deagle:LoadGuns()
 	local load = Script.ReloadScript or Script.LoadScript
 	pcall(load, "Scripts/Deagle/guns/cs2.lua")
+	pcall(load, "Scripts/Deagle/guns/calibers.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end
 end
 Deagle:LoadGuns()
 if Deagle.gunId and Deagle.gunId ~= "deagle" and Deagle.guns[Deagle.gunId] then Deagle:UseGun(Deagle.gunId)   -- keep it across a dev reload
 else Deagle:ApplyGunStats(Deagle.gun) end
+-- what the current gun's cartridge does (deagle_physics)
+function Deagle:PrintPhysics()
+	local ph = self:ShotPhysics()
+	if not ph then log("no cartridge data for " .. tostring(self.gun.id) .. " (guns/calibers.lua)") return end
+	local m = self.cfg.physics
+	log(string.format("%s %s: bullet %.0f m/s %.0f J; recoil %.2f N s, %.2f m/s, %.1f J; flip %.1f rad/s -> camera %.1f deg, gun %.1f deg %.1f cm back; flash x%.2f",
+		self.gun.id, ph.caliber, ph.velocity, ph.energy, ph.impulse, ph.recoilVel, ph.recoilEnergy, ph.flip, m.camPerFlip * ph.flip,
+		m.gunFlipPerFlip * ph.flip, m.gunBackPerVel * ph.recoilVel * 100, m.flashPerUnit * ph.flash))
+end
+System.AddCCommand("deagle_physics", "Deagle:PrintPhysics()", "deagle_physics: what the current gun's cartridge does (recoil, flip, flash, energy)")
 System.AddCCommand("deagle_gun", "Deagle:UseGun((([[%1]]):gsub('\"','')))", "deagle_gun <id>: which gun the pistol looks / sounds like (no id: list)")
 
 log("loaded v2.1")

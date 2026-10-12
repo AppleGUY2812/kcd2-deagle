@@ -57,6 +57,7 @@ static struct {
 	float lastPos[3]{}, lastFwd[3]{}; bool have = false;
 	float speed = 0, vz = 0, phase = 0, sprint = 0, airTime = 0;
 	Spring yaw, pitch, land, aimK;
+	Spring kickBack, kickPitch, kickYaw;   // the shot's push on the gun model (Lua sends it from the cartridge physics)
 	float off[3]{}, rot[3]{};           // results: offset (m), rotation (deg: pitch about x, roll about y, yaw about z)
 } mo;
 
@@ -93,13 +94,15 @@ static void UpdateMotion(const float* cam) {
 	if (vz < -2.5f) mo.airTime += dt; else { if (mo.airTime > 0.25f) mo.land.v -= fminf(0.25f, -mo.vz * 0.03f); mo.airTime = 0; }
 	mo.vz = vz;
 	mo.land.step(0, 160, 16, dt);
+	// shot kick: slightly underdamped springs, so the gun snaps back and settles
+	mo.kickBack.step(0, 784, 50, dt); mo.kickPitch.step(0, 784, 50, dt); mo.kickYaw.step(0, 784, 50, dt);
 	float k = mo.enabled ? mo.scale : 0.0f;
 	mo.off[0] = k * (bobX * hip + 0.015f * mo.sprint);
-	mo.off[1] = k * (-0.01f * mo.sprint);
+	mo.off[1] = k * (-0.01f * mo.sprint) - mo.kickBack.x;
 	mo.off[2] = k * (bobZ * hip - 0.03f * mo.sprint + mo.land.x * 0.15f);
-	mo.rot[0] = k * (mo.pitch.x * hip - 14.0f * mo.sprint);                 // pitch (x)
+	mo.rot[0] = k * (mo.pitch.x * hip - 14.0f * mo.sprint) + mo.kickPitch.x;  // pitch (x)
 	mo.rot[1] = k * (mo.yaw.x * 0.5f * hip + 12.0f * mo.sprint + sinf(mo.phase) * 0.6f * a * hip);   // roll (y)
-	mo.rot[2] = k * (mo.yaw.x * hip + 6.0f * mo.sprint);                    // yaw (z)
+	mo.rot[2] = k * (mo.yaw.x * hip + 6.0f * mo.sprint) + mo.kickYaw.x;     // yaw (z)
 }
 
 static void MulRot(const float* a, const float* b, float* out) {   // 3x3, row-major, out = a*b
@@ -225,6 +228,13 @@ static void Command(const char* line) {
 		const char* xyz = strchr(hex, ' ');
 		if (sscanf_s(hex, "%llx", &id) == 1 && xyz && sscanf_s(xyz, "%f %f %f", &g_flashLocal[0], &g_flashLocal[1], &g_flashLocal[2]) == 3) {
 			g_flashId = (uint32_t)id; g_flashOn = true;
+		}
+	}
+	else if (!strcmp(cmd, "kick")) {     // kick <back m> <pitch deg> <yaw deg>: peaks of the shot's push on the gun
+		float b = 0, pt = 0, yw = 0;
+		if (sscanf_s(rest, "%f %f %f", &b, &pt, &yw) == 3) {
+			const float w = 28.0f * 2.71828f;   // velocity that peaks at the given displacement (spring w = 28 rad/s)
+			mo.kickBack.v += b * w; mo.kickPitch.v += pt * w; mo.kickYaw.v += yw * w;
 		}
 	}
 	else if (!strcmp(cmd, "flashpos")) sscanf_s(rest, "%f %f %f", &g_flashLocal[0], &g_flashLocal[1], &g_flashLocal[2]);

@@ -93,7 +93,9 @@ function player:GetBonePos(b)
 end
 player.inventory = { GetCountOfClass = function() return 1 end, DeleteItemOfClass = function() end, CreateItem = function() return 1 end, AddItem = function() return true end }
 player.human = { IsWeaponDrawn = function() return false end, HolsterWeapon = function() end }
-player.actor = { PlayerSetViewAngles = function() end, SetViewShake = function() end, GetViewAngles = function() return vec(0, 0, 0) end }
+M.view = { pitch = 0, yaw = 0 }   -- the camera follows PlayerSetViewAngles (recoil climbs and returns are measurable)
+player.actor = { PlayerSetViewAngles = function(self, a) M.view.pitch, M.view.yaw = a.x or 0, a.z or 0 end,
+	SetViewShake = function() end, GetViewAngles = function() return vec(M.view.pitch, 0, M.view.yaw) end }
 player.soul = {}
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }
@@ -110,7 +112,7 @@ _G.System = {
 	AddCCommand = function(name, code, help) M.cmds[name] = code end,
 	GetCurrTime = function() return M.t end,
 	GetViewCameraPos = function() return vec(100, 200, 31.75) end,
-	GetViewCameraDir = function() return vec(0, 1, 0) end,
+	GetViewCameraDir = function() local p, y = M.view.pitch, M.view.yaw return vec(-math.sin(y) * math.cos(p), math.cos(y) * math.cos(p), math.sin(p)) end,
 	GetViewCameraUpDir = function() return vec(0, 0, 1) end,
 	GetViewport = function() return 0, 0, 1920, 1080 end,
 	GetViewCameraFov = function() return 1.1011 end, SetViewCameraFov = function(f) M.fov = f end,
