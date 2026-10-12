@@ -45,7 +45,9 @@ echo "$n clips"
 
 echo "== stage into src/"
 ps "Copy-Item '$W\\animroot\\out\\Animations\\deagle_vm\\*.caf' '$(win "$here/src/Animations/deagle_vm")' -Force; Copy-Item '$W\\vm\\$VMDIR\\*.chr','$W\\vm\\$VMDIR\\*.skin' '$(win "$here/src/Objects/manmade/weapons/deagle/vm")' -Force; Copy-Item '$W\\out\\deagle_vm_anims.img' '$(win "$tmp")\\deagle_vm_anims.img' -Force"
-python3 "$here/tools/merge_img.py" "$here/assets/build/game_Animations.img" "$here/src/Animations/Animations.img" "$tmp/deagle_vm_anims.img" | tail -1
+# every converted gun's clips too (assets/build/gun_imgs, from tools/gb): rebuilding from the Deagle alone dropped them
+shopt -s nullglob; guns=("$here"/assets/build/gun_imgs/*.img); shopt -u nullglob
+python3 "$here/tools/merge_img.py" "$here/assets/build/game_Animations.img" "$here/src/Animations/Animations.img" "$tmp/deagle_vm_anims.img" "${guns[@]}" | tail -1
 
 echo "== tests"
 (cd "$here" && luajit tests/run_flows.lua | grep -E "TOTAL ERRORS" && luajit tests/run_fallback.lua | tail -1 && luajit tests/run_transitions.lua | tail -1)
