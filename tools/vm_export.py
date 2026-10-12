@@ -52,6 +52,40 @@ def fill_unkeyed():
                 fc.keyframe_points.insert(f0, rot[i]); fc.keyframe_points.insert(f1, rot[i])
             added.append(f"{bn}<-{dname}:{df}")
         print("FILLED", act.name, added)
+# ---- Source stores long sequences in 30-frame sections. Where a section doesn't animate a bone, Source uses the bone's
+# default (= our rest pose), but SourceIO writes a zero parent-relative transform. In @inspect that pulled the slide
+# back, stuck the spare round out of the bottom of the grip and left the mag hanging. Those frames go back to rest.
+def fix_section_zeros():
+    rest = {b.name: (b.parent.matrix_local.inverted() @ b.matrix_local) if b.parent else b.matrix_local for b in arm.data.bones}
+    cand = [n for n, m in rest.items() if m.translation.length > 1e-3]
+    def zero_frames(act):
+        arm.animation_data.action = act
+        f0, f1 = (int(v) for v in act.frame_range)
+        bad = {}
+        for f in range(f0, f1 + 1):
+            scene.frame_set(f)
+            for n in cand:
+                pb = arm.pose.bones[n]
+                if (pb.parent.matrix.inverted() @ pb.matrix).translation.length < 1e-5:
+                    bad.setdefault(n, set()).add(f)
+        return bad
+    for act in [a for a in bpy.data.actions if a.name.startswith("@")]:
+        bad = zero_frames(act)
+        for n, frames in bad.items():
+            for fc in act.fcurves:
+                if not fc.data_path.startswith(f'pose.bones["{n}"].'):
+                    continue
+                v = 1.0 if fc.data_path.endswith("rotation_quaternion") and fc.array_index == 0 else 0.0
+                for kp in fc.keyframe_points:
+                    if int(round(kp.co.x)) in frames:
+                        kp.co.y = kp.handle_left.y = kp.handle_right.y = v
+                fc.update()
+        if bad:
+            left = zero_frames(act)
+            print("SECTION ZEROS", act.name, {n: len(f) for n, f in bad.items()}, "left after fix", {n: len(f) for n, f in left.items()})
+if not arm.animation_data:
+    arm.animation_data_create()
+fix_section_zeros()
 fill_unkeyed()
 if not BLEND.endswith('_extra.blend'):
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(os.path.dirname(BLEND), 'mwii_vm_filled.blend'), copy=True)

@@ -151,6 +151,12 @@ for nm, p in (("rear", T @ rear), ("front", T @ front)):
           f"(= {ang_r / math.degrees(1.1011) * 1080:+.1f} px, {ang_u / math.degrees(1.1011) * 1080:+.1f} px at 1080p)")
 bake_pose("@ads", 1, 2)
 print("MADE @ads")
+
+# ---- @ads_empty: the ADS pose with the slide locked back (rest pose while aiming with an empty mag)
+for n, (l, r) in locked.items():
+    PB[n].location, PB[n].rotation_quaternion = l, r
+bake_pose("@ads_empty", 1, 2)
+print("MADE @ads_empty")
 bpy.ops.wm.save_as_mainfile(filepath=OUT)
 
 # ---- previews from the eye with KCD2's FOV (1.1011 rad vertical, 16:9)
@@ -168,7 +174,7 @@ cam.rotation_euler = Quaternion(Vector((0, 0, 1)), -math.pi / 2).to_euler()   # 
 cam.rotation_euler = (Matrix.Rotation(-math.pi / 2, 4, "Z") @ Matrix.Rotation(math.pi / 2, 4, "X")).to_euler()
 # crosshair
 ch = bpy.data.objects.new("ch", None); ch.empty_display_type = "SPHERE"; ch.empty_display_size = 0.001
-for act, f, label in (("@idle1", 1, "hip"), ("@ads", 1, "ads"), ("@idle_empty", 1, "idle_empty"), ("@holster", 18, "holster_mid")):
+for act, f, label in (("@idle1", 1, "hip"), ("@ads", 1, "ads"), ("@idle_empty", 1, "idle_empty"), ("@holster", 18, "holster_mid"), ("@ads_empty", 1, "ads_empty")):
     pose_at(A[act], f)
     scene.render.filepath = os.path.join(RENDER, f"vm {label}.png")
     bpy.ops.render.render(write_still=True)

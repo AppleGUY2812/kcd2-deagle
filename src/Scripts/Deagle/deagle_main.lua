@@ -410,10 +410,12 @@ end
 -- the pistol in Henry's right hand: a spawned entity attached with Human.AttachEntityToHand
 -- ---------------------------------------------------------------------------
 local function spawnModel(name, file, physical, mass)
-	return System.SpawnEntity({
-		class = "BasicEntity", name = name, position = { x = 0, y = 0, z = -1000 },
+	local e = System.SpawnEntity({
+		class = "BasicEntity", name = name, position = { x = 0, y = 0, z = -1000 }, flags = ENTITY_FLAG_NO_SAVE,
 		properties = { object_Model = file, Physics = { bPhysicalize = physical, bRigidBody = physical, bPushableByPlayers = false, Density = -1, Mass = mass or -1 } },
 	})
+	if e then pcall(e.SetFlags, e, ENTITY_FLAG_NO_SAVE, 0) end   -- casings live for seconds; never into a save
+	return e
 end
 
 -- Cry Ang3 (XYZ, radians) -> rotation applied to a vector
@@ -838,13 +840,30 @@ Deagle.cfg.vm = {
 	},
 }
 
+-- Older builds let the viewmodel (and test probes) into saves; on load they come back without their character, drawn
+-- as the engine's default pyramid (the big white triangle). Anything of ours still in the world before the viewmodel
+-- exists is one of those.
+function Deagle:RemoveStaleEntities()
+	if not System.GetEntitiesByClass then return end
+	local n = 0
+	for _, e in pairs(System.GetEntitiesByClass("BasicEntity") or {}) do
+		local ok, name = pcall(e.GetName, e)
+		if ok and type(name) == "string" and name:find("^deagle_") and e.id ~= self.vmId then
+			pcall(System.RemoveEntity, e.id); n = n + 1
+		end
+	end
+	if n > 0 then log("removed " .. n .. " stale entities from the save") end
+end
+
 function Deagle:VmEntity()
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if vm then return vm end
 	local c = self.cfg.vm
+	self:RemoveStaleEntities()
 	vm = System.SpawnEntity({ class = "BasicEntity", name = "deagle_viewmodel", position = System.GetViewCameraPos(),
-		properties = { object_Model = "" } })
+		flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = "" } })
 	if not vm then log("$4viewmodel spawn failed") return nil end
+	pcall(vm.SetFlags, vm, ENTITY_FLAG_NO_SAVE, 0)
 	local ok, slot = pcall(vm.LoadCharacter, vm, 0, c.cdf)
 	log("viewmodel character " .. c.cdf .. " -> " .. tostring(ok) .. " " .. tostring(slot))
 	if not ok or slot == nil or slot == false or slot == -1 then
@@ -874,7 +893,7 @@ function Deagle:VmTick(token)
 	if token ~= self.vmToken or not self.vmShown then return end
 	self:VmPlace()
 	local a = self.vmAnim
-	if a and not a.loop and System.GetCurrTime() >= a.ends then self:VmPlay("idle", true) end
+	if a and not a.loop and System.GetCurrTime() >= a.ends and not self.vmHolstering then self:VmPlay(self.VmRestKey and self:VmRestKey() or "idle", true) end
 	Script.SetTimer(0, function() Deagle:VmTick(token) end)
 end
 
@@ -1480,12 +1499,12 @@ function Deagle:VmPlay(key, loop, speed, blend)
 	end
 	local name, frames = a[1], a[2]
 	speed = speed or 1.0
-	local rest = { idle = true, idleEmpty = true, ads = true }
+	local rest = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }
 	if self.vmAnim and self.vmAnim.name == name and not rest[key] then
 		pcall(vm.StartAnimation, vm, 0, c.anims.idle[1], c.layer, 0, 1.0, true)
 	end
 	local ok, started = pcall(vm.StartAnimation, vm, 0, name, c.layer, blend or c.blend, speed, loop and true or false)
-	if not (ok and started) and self.vmLastFail ~= name then
+	if not (ok and started) and self.vmLastFail ~= name and not (self.vmAnim and self.vmAnim.name == name) then   -- already on the layer: refused, not failed
 		self.vmLastFail = name
 		log("$4viewmodel anim did not start: " .. name .. " " .. tostring(started))
 	end
@@ -1523,10 +1542,7 @@ function Deagle:Fire()
 	local ok, err = pcall(baseFire5, self)
 	self.VmPlay = savedPlay
 	if not ok then log("$4fire: " .. tostring(err)) end
-	if s.lastShot ~= last then
-		self:VmRecoilAdd(before == 1)
-		if s.ammo == 0 then self:VmPlay("idleEmpty", true) end
-	end
+	if s.lastShot ~= last then self:VmRecoilAdd(before == 1) end
 end
 
 -- ADS in/out blends the rest pose (FOV zoom is the existing SetAim)
@@ -1699,4 +1715,49 @@ local basePlayTrigger9 = Deagle.PlayTrigger
 function Deagle:PlayTrigger(name)
 	if self.native and name and name == self.cfg.shotTrigger then return end
 	return basePlayTrigger9(self, name)
+end
+
+-- ---- v10: recoil layer release, aim-aware rest loops
+Deagle.cfg.vm.anims.adsEmpty = { "deagle_vm_ads_empty", 2 }
+
+-- rest loop: aiming wins (a reload that ends while aiming lands in ADS); slide-locked poses only when the mag is
+-- empty and no reload is about to refill it
+function Deagle:VmRestKey()
+	local s = self.state
+	local empty = s.ammo == 0 and not s.reloading
+	if s.aiming then return empty and "adsEmpty" or "ads" end
+	return empty and "idleEmpty" or "idle"
+end
+
+-- A finished non-looping clip on the recoil layer holds its last frame. The empty-mag recoil ends with the slide
+-- locked back, so that offset rode on top of every later clip (reload, idle) until the layer was cleared.
+function Deagle:VmClearRecoil()
+	self.vmRecoilToken = (self.vmRecoilToken or 0) + 1
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if vm then pcall(vm.StopAnimation, vm, 0, self.cfg.vm.recoilLayer) end
+end
+
+function Deagle:VmRecoilAdd(empty)
+	local vm, c = self:VmEntity(), self.cfg.vm
+	if not vm then return end
+	local a = empty and c.anims.shootEmptyAdd or c.anims.shootAdd[((self.vmShot or 0) % 2) + 1]
+	self.vmShot = (self.vmShot or 0) + 1
+	self.vmRecoilToken = (self.vmRecoilToken or 0) + 1
+	local tok = self.vmRecoilToken
+	pcall(vm.StartAnimation, vm, 0, a[1], c.recoilLayer, 0.0, 1.0, false)
+	self:PlayCues(empty and "shootEmpty" or "shoot")
+	Script.SetTimer(math.floor(a[2] / c.fps * 1000), function()
+		if Deagle.vmRecoilToken ~= tok then return end
+		-- same frame: rest loop in (adsEmpty after the last round keeps the slide locked), recoil offset out
+		local busy = Deagle.vmAnim and not Deagle.vmAnim.loop and System.GetCurrTime() < (Deagle.vmAnim.ends or 0)
+		if Deagle.vmShown and not Deagle.vmHolstering and not busy then Deagle:VmPlay(Deagle:VmRestKey(), true, 1.0, 0) end
+		Deagle:VmClearRecoil()
+	end)
+end
+
+-- any full-body clip (hip shot, reload, inspect, holster, draw) replaces a recoil still playing on top
+local baseVmPlay10 = Deagle.VmPlay
+function Deagle:VmPlay(key, loop, speed, blend)
+	if not ({ idle = true, idleEmpty = true, ads = true, adsEmpty = true })[key] then self:VmClearRecoil() end
+	return baseVmPlay10(self, key, loop, speed, blend)
 end

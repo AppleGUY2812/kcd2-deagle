@@ -16,7 +16,18 @@ local function newEntity(name, props)
 	function e:SetWorldAngles(a) self.ang = a end
 	function e:LoadCharacter(slot, f) return 0 end
 	function e:Hide(h) self.hidden = (h == 1) end
-	function e:StartAnimation(slot, name, layer, blend, speed, loop) table.insert(M.anims, { t = M.t, name = name, layer = layer, loop = loop }) return true end
+	-- like the engine: a layer keeps its clip (a finished one-shot holds its last frame) until replaced or stopped;
+	-- asking for the clip that is already on the layer is refused
+	e.layers = {}
+	function e:StartAnimation(slot, name, layer, blend, speed, loop)
+		if self.layers[layer] == name then return false end
+		self.layers[layer] = name
+		table.insert(M.anims, { t = M.t, name = name, layer = layer, loop = loop }) return true
+	end
+	function e:StopAnimation(slot, layer) self.layers[layer] = nil end
+	e.flags = 0
+	function e:GetFlags() return self.flags end
+	function e:SetFlags(f, mode) if mode == 0 then self.flags = bit.bor(self.flags, f) elseif mode == 2 then self.flags = bit.band(self.flags, bit.bnot(f)) else self.flags = f end end
 	function e:IsAnimationRunning() return true end
 	function e:GetBonePos(b) return vec(self.pos.x + 0.3, self.pos.y + 0.4, self.pos.z - 0.05) end
 	function e:GetBoneDir(b) return vec(0, 1, 0) end
@@ -26,6 +37,7 @@ local function newEntity(name, props)
 end
 M.newEntity = newEntity
 local entities = {}
+M.entities = function() return entities end
 local player = newEntity("Dude")
 player.class = "Player"
 player.pos = vec(100, 200, 30)
@@ -41,6 +53,7 @@ _G.g_localActor = player
 _G.Player = { OnAction = function() end }
 _G.ent_all = 0xFFFF
 _G.ENTITY_FLAG_CASTSHADOW = 2
+_G.ENTITY_FLAG_NO_SAVE = 32768
 _G.System = {
 	LogAlways = function(s)
 		s = tostring(s)
@@ -55,9 +68,10 @@ _G.System = {
 	GetViewCameraUpDir = function() return vec(0, 0, 1) end,
 	GetViewport = function() return 0, 0, 1920, 1080 end,
 	GetViewCameraFov = function() return 1.1011 end, SetViewCameraFov = function(f) M.fov = f end,
-	SpawnEntity = function(p) local e = newEntity(p.name, p.properties); entities[tostring(e.id)] = e; entities[e.id] = e; e.pos = p.position or e.pos; return e end,
+	SpawnEntity = function(p) local e = newEntity(p.name, p.properties); entities[tostring(e.id)] = e; entities[e.id] = e; e.pos = p.position or e.pos; e.flags = p.flags or 0; return e end,
+	GetEntitiesByClass = function(cls) local out = {} for k, e in pairs(entities) do if type(k) ~= "string" and e.class == cls then out[#out + 1] = e end end return out end,
 	GetEntity = function(id) return entities[id] or entities[tostring(id)] end,
-	RemoveEntity = function(id) entities[id] = nil end,
+	RemoveEntity = function(id) local e = entities[id] or entities[tostring(id)]; if e then entities[e.id] = nil; entities[tostring(e.id)] = nil end end,
 	GetEntitiesInSphere = function() return {} end,
 	GetCVar = function(n) return 2 end, SetCVar = function(n, v) M.cvars = M.cvars or {}; M.cvars[n] = v end,
 	DrawText = function(...) M.drawn_text = M.drawn_text + 1 end,

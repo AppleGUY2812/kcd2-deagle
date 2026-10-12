@@ -116,3 +116,17 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   from the game's fmod.dll 2.02.21, files in Mods\deagle\sounds (loose, build.sh copies assets/build/sounds).
 - Log: Bin\Win64MasterMasterSteamPGO\deagle_native.log. Uninstall: native/install.ps1 -Remove.
 - INSTALLED 04:49 but NOT YET RUN in game (user asleep). First launch: check deagle_native.log + kcd.log "native plugin linked".
+
+## 2026-10-11 ~20:00 — first in-game test fixes (facts)
+- A non-looping clip on a layer > 0 holds its last frame (IsAnimationRunning(0,1) true, GetAnimationTime 1.0) until
+  StopAnimation(0, layer). The empty-mag additive recoil ends with the slide locked: it rode on every later clip.
+- StartAnimation returns false when that exact clip is already on the layer (not an error).
+- rc deletes CAF tracks equal to the chr rest pose (CompressionSettingsTable eps changes nothing; a >=1 mm offset keeps
+  them). Fine: the engine falls back to the rest pose for missing tracks (measured), and our rest = idle gun pose.
+- SourceIO: Source keeps long sequences in 30-frame sections; bones a section doesn't animate come in as a zero
+  parent-relative transform instead of the bone default. @inspect had it (slide, safety, spare round, mag);
+  vm_export.py fix_section_zeros puts those frames back to rest.
+- Lua-spawned BasicEntities go into saves; one with object_Model "" comes back as objects/default/primitive_pyramid.cgf
+  (the white triangle). ENTITY_FLAG_NO_SAVE = 32768; SetFlags(f, 0) ORs, (f, 2) clears. System.GetEntitiesByClass works.
+- Live debugging: tools/live.sh <snippet.lua> over the rcon port works while the game is unfocused, but the game is
+  paused then (timers and animation don't advance).

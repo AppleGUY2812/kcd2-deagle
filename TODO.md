@@ -1,4 +1,11 @@
-# Deagle mod — status (updated 2026-10-11 05:10)
+# Deagle mod — status (updated 2026-10-11 20:00)
+
+## Fixed after the first test (built, install when the game is closed)
+- Slide stuck back after reload: the aimed recoil (additive, layer 1) held its last frame forever; layer now cleared
+- Aimed empty mag stays aimed (new ads_empty pose, slide locked); reload while aiming returns to ADS
+- Inspect: spare round under the grip, slide pulled back, mag hanging (importer zeroed 30-frame sections) fixed
+- White triangle: an old viewmodel saved into the save file (engine default pyramid); our entities are no-save now
+  and stale ones are removed on load
 
 ## Built tonight, installed, NOT yet tested in game (first launch checks all of it)
 - Native plugin v1.1 (dinput8.dll + deagle_native.asi in Bin\Win64MasterMasterSteamPGO): zero-jitter viewmodel
@@ -21,6 +28,8 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- Movement poses: walk / sprint / crouch / jump hand animations (today only procedural bob + sprint tilt; the hands
+  themselves don't change). Need clips (MW19/MWII pistol sprint + walk) or hand-made poses blended by speed/stance
 - Tune from the first test (offsets, motion strength, flash size, HUD position, sound volume)
 - Own bullets: projectile travel + drop, tracers (native or Lua per-frame)
 - Option B proper: Henry's own hand/sleeve meshes on the viewmodel skeleton (medieval material is the quick version)
