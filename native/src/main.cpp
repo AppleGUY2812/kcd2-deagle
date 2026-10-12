@@ -9,6 +9,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "scan.h"
+#include "motion.h"
 #include "gore.h"
 #include <string>
 #include <unordered_map>
@@ -77,70 +78,7 @@ static float g_off[3] = { 0, 0, 0 };            // right, forward, up (m)
 static uint64_t g_placed = 0, g_repeats = 0;
 static std::string g_pendingConsole;           // console command to run next frame (native -> Lua)
 
-// ---- procedural motion (camera space: x right, y forward, z up), from the camera's own movement
-// Springs step implicitly (backward Euler): stable at any frame time. The explicit step it replaced blew up once
-// dt > 2 / sqrt(k) (a 70 ms hitch for the stiff shot kick, k = 784): the gun's transform went NaN and it vanished.
-struct Spring {
-	float x = 0, v = 0;
-	void step(float target, float k, float c, float dt) {
-		v = (v - dt * k * (x - target)) / (1.0f + dt * c + dt * dt * k);
-		x += v * dt;
-	}
-};
-static struct {
-	bool enabled = true, aiming = false;
-	float scale = 1.0f;                 // global multiplier
-	LARGE_INTEGER lastT{}; double freq = 0;
-	float lastPos[3]{}, lastFwd[3]{}; bool have = false;
-	float speed = 0, vz = 0, phase = 0, sprint = 0, airTime = 0;
-	Spring yaw, pitch, land, aimK;
-	Spring kickBack, kickPitch, kickYaw, kickRoll;   // the shot's push on the gun model (Lua sends it from the cartridge physics)
-	float off[3]{}, rot[3]{};           // results: offset (m), rotation (deg: pitch about x, roll about y, yaw about z)
-} mo;
-
-static void UpdateMotion(const float* cam) {
-	LARGE_INTEGER now; QueryPerformanceCounter(&now);
-	if (!mo.freq) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); mo.freq = (double)f.QuadPart; }
-	float pos[3] = { cam[3], cam[7], cam[11] }, fwd[3] = { cam[1], cam[5], cam[9] };
-	float dt = mo.lastT.QuadPart ? (float)((now.QuadPart - mo.lastT.QuadPart) / mo.freq) : 0.016f;
-	mo.lastT = now;
-	if (!mo.have || dt <= 0 || dt > 0.25f) { memcpy(mo.lastPos, pos, sizeof(pos)); memcpy(mo.lastFwd, fwd, sizeof(fwd)); mo.have = true; return; }
-	float dx = pos[0] - mo.lastPos[0], dy = pos[1] - mo.lastPos[1], dz = pos[2] - mo.lastPos[2];
-	float hs = sqrtf(dx * dx + dy * dy) / dt, vz = dz / dt;
-	if (hs > 15) hs = 0;                                         // teleports / cutscene cuts
-	mo.speed += (hs - mo.speed) * (1 - expf(-dt / 0.15f));
-	// turn rates (deg/s) from the forward vector change
-	float yawNow = atan2f(fwd[1], fwd[0]), yawLast = atan2f(mo.lastFwd[1], mo.lastFwd[0]);
-	float dyaw = yawNow - yawLast; if (dyaw > 3.14159f) dyaw -= 6.28318f; if (dyaw < -3.14159f) dyaw += 6.28318f;
-	float dpitch = asinf(fmaxf(-1, fminf(1, fwd[2]))) - asinf(fmaxf(-1, fminf(1, mo.lastFwd[2])));
-	float yawRate = dyaw / dt * 57.3f, pitchRate = dpitch / dt * 57.3f;
-	memcpy(mo.lastPos, pos, sizeof(pos)); memcpy(mo.lastFwd, fwd, sizeof(fwd));
-	mo.aimK.step(mo.aiming ? 1.0f : 0.0f, 200, 28, dt);
-	float hip = 1.0f - fminf(1.0f, fmaxf(0.0f, mo.aimK.x)) * 0.85f;   // most motion fades while aiming
-	// sway: the gun lags behind turns (spring toward an offset proportional to turn rate)
-	mo.yaw.step(fmaxf(-2.5f, fminf(2.5f, -yawRate * 0.012f)), 120, 18, dt);
-	mo.pitch.step(fmaxf(-2.0f, fminf(2.0f, -pitchRate * 0.010f)), 120, 18, dt);
-	// bob: phase advances with distance walked (one step ~0.75 m)
-	mo.phase += hs * dt / 0.75f * 3.14159f;
-	float a = fminf(1.0f, mo.speed / 5.0f);
-	float bobX = sinf(mo.phase) * 0.006f * a, bobZ = -fabsf(cosf(mo.phase)) * 0.005f * a;
-	// sprint: lowered + tilted when moving fast
-	float sprintT = mo.speed > 4.6f && !mo.aiming ? 1.0f : 0.0f;
-	mo.sprint += (sprintT - mo.sprint) * (1 - expf(-dt / 0.2f));
-	// landing: falling then stopping kicks the gun down a little
-	if (vz < -2.5f) mo.airTime += dt; else { if (mo.airTime > 0.25f) mo.land.v -= fminf(0.25f, -mo.vz * 0.03f); mo.airTime = 0; }
-	mo.vz = vz;
-	mo.land.step(0, 160, 16, dt);
-	// shot kick: slightly underdamped springs, so the gun snaps back and settles
-	mo.kickBack.step(0, 784, 50, dt); mo.kickPitch.step(0, 784, 50, dt); mo.kickYaw.step(0, 784, 50, dt); mo.kickRoll.step(0, 784, 50, dt);
-	float k = mo.enabled ? mo.scale : 0.0f;
-	mo.off[0] = k * (bobX * hip + 0.015f * mo.sprint);
-	mo.off[1] = k * (-0.01f * mo.sprint) - mo.kickBack.x;
-	mo.off[2] = k * (bobZ * hip - 0.03f * mo.sprint + mo.land.x * 0.15f);
-	mo.rot[0] = k * (mo.pitch.x * hip - 14.0f * mo.sprint) + mo.kickPitch.x;  // pitch (x)
-	mo.rot[1] = k * (mo.yaw.x * 0.5f * hip + 12.0f * mo.sprint + sinf(mo.phase) * 0.6f * a * hip) + mo.kickRoll.x;   // roll (y)
-	mo.rot[2] = k * (mo.yaw.x * hip + 6.0f * mo.sprint) + mo.kickYaw.x;     // yaw (z)
-}
+// ---- procedural motion: motion.cpp / motion.h (mo, UpdateMotion, ResetMotion)
 
 static void MulRot(const float* a, const float* b, float* out) {   // 3x3, row-major, out = a*b
 	for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
@@ -154,7 +92,6 @@ static void LocalRot(const float* deg, float* R) {   // R = Rz(yaw) * Rx(pitch) 
 }
 
 static bool Finite(const float* f, int n) { for (int i = 0; i < n; i++) if (!std::isfinite(f[i])) return false; return true; }
-static void ResetMotion() { mo.yaw = mo.pitch = mo.land = mo.aimK = mo.kickBack = mo.kickPitch = mo.kickYaw = mo.kickRoll = Spring{}; memset(mo.off, 0, sizeof(mo.off)); memset(mo.rot, 0, sizeof(mo.rot)); }
 
 // world location of the muzzle on the gun placed last (vm), as CryEngine's QuatTS {q.xyz, q.w, t.xyz, s}: forward (y)
 // down the barrel, no roll (x = y x the gun's up), like Matrix33::CreateRotationVDir
@@ -580,6 +517,14 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
+	else if (!strcmp(cmd, "vel")) { float r = 0, f = 0, u = 0; if (sscanf_s(rest, "%f %f %f", &r, &f, &u) == 3) MotionVel(r, f, u); }   // camera-relative m/s
+	else if (!strcmp(cmd, "air")) MotionAir(atoi(rest) != 0);
+	else if (!strcmp(cmd, "stance")) MotionStance(atoi(rest) != 0);        // 1 = crouched
+	else if (!strcmp(cmd, "dodge")) { float sd = 0, k = 1; if (sscanf_s(rest, "%f %f", &sd, &k) >= 1) MotionDodge(sd, k); }
+	else if (!strcmp(cmd, "mparams")) {   // mparams <key> <value>: per-gun motion tunables (motion.h MotionParams)
+		char key[48] = {}; float v = 0;
+		if (sscanf_s(rest, "%47s %f", key, (unsigned)sizeof(key), &v) >= 1 && !MotionParam(key, v)) Log("mparams: unknown key %s", key);
+	}
 	else if (!strcmp(cmd, "hitreact")) HitReact(rest);
 	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
 }

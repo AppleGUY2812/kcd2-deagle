@@ -1856,6 +1856,7 @@ function Deagle:VmTick(token)
 	if self.vmTickT and now > self.vmTickT then self.frameDt = math.min(0.1, now - self.vmTickT) end   -- a round's first step
 	self.vmTickT = now
 	self:VmPlace()
+	if self.MotionTick then self:MotionTick() end
 	self:HoldGameMapsOff()
 	if (self.zoom ~= nil) ~= (self.vmZoomHidden == true) then     -- the gun out of view while the debug zoom is on
 		local vm = self.vmId and System.GetEntity(self.vmId)
@@ -2362,7 +2363,7 @@ System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key 
 System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.state.logActions", "Toggle logging of every input action")
 System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
-System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked')", "internal: native plugin handshake")
+System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end", "internal: native plugin handshake")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
 System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")
 System.AddCCommand("deagle_lua", "Deagle:DevLua([==[%line]==])", "deagle_lua <code>: run Lua (dev)")
@@ -2478,6 +2479,7 @@ function Deagle:UseGun(id)
 	self.gun, self.gunId = g, id
 	self.cfg.vm.cdf, self.cfg.vm.anims, self.cfg.magSize = g.cdf, g.anims, g.magSize
 	self:ApplyGunStats(g)
+	if self.MotionParams then self:MotionParams(g) end
 	self.state.modeIndex, self.state.trigger = 1, false
 	self.state.ammo = math.min(self.state.ammo, g.magSize)
 	self.vmAnim, self.vmArmsApplied = nil, nil
@@ -2500,6 +2502,7 @@ function Deagle:LoadGuns()
 	pcall(load, "Scripts/Deagle/guns/armor.lua")
 	pcall(load, "Scripts/Deagle/guns/hitbones.lua")
 	pcall(load, "Scripts/Deagle/guns/impact_sounds.lua")
+	pcall(load, "Scripts/Deagle/motion.lua")          -- weapon movement inputs (Deagle:MotionTick / MotionParams)
 	pcall(load, "Scripts/Deagle/guns/shot_gain.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end
