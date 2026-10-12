@@ -59,7 +59,8 @@ Deagle.cfg.vm = {
 	offset = { fwd = 0.0, right = 0.0, up = 0.0 },   -- camera-space nudge (m)
 	fps = 24, layer = 0, blend = 0.08,
 	recoilLayer = 1,          -- aimed shots: additive recoil on top of the ADS pose
-	adsBlend = 0.14,          -- seconds to blend hip <-> ADS
+	adsBlend = 0.14,          -- seconds to blend hip <-> ADS (pose and zoom)
+	adsLead = 0.2,            -- reload / draw hand over to a held aim this long before they end, blending as long
 	holsterSpeed = 1.6,
 	anims = {   -- clip, frame count (24 fps)
 		draw = { "deagle_vm_draw", 37 }, holster = { "deagle_vm_holster", 37 },
@@ -103,6 +104,7 @@ Deagle.vmSoundCues = {
 }
 local CUE_SEQ = { shoot = "shoot1", shootEmpty = "shoot_empty", reload = "reload", reloadEmpty = "reload_empty", draw = "draw", inspect = "inspect" }
 local REST = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }   -- looping rest poses
+local HOLDS_AIM = { draw = true, holster = true, reload = true, reloadEmpty = true }   -- aim waits for these; shots and inspect it cuts
 
 -- ---------------------------------------------------------------------------
 -- helpers
@@ -465,7 +467,8 @@ function Deagle:Reload()
 	self:Notify("Desert Eagle  reloading...")
 	self:PlayTrigger(c.reloadTrigger)
 	Script.SetTimer(math.floor(len * 1000) + 20, function() self:FinishReload() end)
-	self:VmPlay(key, false)
+	self:VmPlay(key, false, nil, s.aiming and c.vm.adsBlend or nil)
+	self:UpdateAim()
 end
 
 -- Called by the timer and polled from input, so a reload never gets stuck if timers are cleared.
@@ -485,30 +488,59 @@ function Deagle:FinishReload()
 	self:ShowAmmo()
 end
 
--- FOV zoom plus the ADS pose (when no one-shot clip is playing; it returns to the right rest pose by itself)
+-- Aim input. Aiming (zoom + ADS pose) follows the button, except while a reload / draw / holster runs: those finish
+-- first and hand over to ADS in their last moments. Hip shots and inspect are cut by it.
 function Deagle:SetAim(on)
+	self.state.aimHeld = on
+	self:UpdateAim()
+end
+
+function Deagle:AimBlocked()
+	if self.vmHolstering or not self.state.drawn then return true end
+	local a = self.vmAnim
+	return a and not a.loop and HOLDS_AIM[a.key] and System.GetCurrTime() < (a.ends or 0) - self.cfg.vm.adsLead or false
+end
+
+function Deagle:UpdateAim(blend)
 	local s = self.state
-	if s.aiming ~= on then
-		s.aiming = on
-		try("aim fov", function()
-			if on then
-				s.baseFov = System.GetViewCameraFov()
-				System.SetViewCameraFov(s.baseFov * self.cfg.aimFovScale)
-			elseif s.baseFov then
-				System.SetViewCameraFov(s.baseFov)
-			end
-		end)
+	local blocked = self:AimBlocked()
+	local want = (s.aimHeld and not blocked) and true or false
+	if want ~= s.aiming then
+		s.aiming = want
+		self:EaseFov(want)
+		if self.native then self:Native("aim " .. (want and "1" or "0")) end
 	end
-	if self.vmShown and not self:VmBusy() and not self.vmHolstering then
-		self:VmPlay(self:VmRestKey(), true, 1.0, self.cfg.vm.adsBlend)
+	if self.vmShown and not blocked then
+		self:VmPlay(self:VmRestKey(), true, 1.0, blend or self.cfg.vm.adsBlend)
 	end
-	if self.native then self:Native("aim " .. (on and "1" or "0")) end
+end
+
+-- zoom in / out over adsBlend (smoothstep) instead of snapping
+function Deagle:EaseFov(on)
+	local s = self.state
+	try("aim fov", function()
+		if on and not s.baseFov then s.baseFov = System.GetViewCameraFov() end
+		if not s.baseFov then return end
+		local from, to, t0 = s.fovNow or s.baseFov, s.baseFov * (on and self.cfg.aimFovScale or 1), System.GetCurrTime()
+		self.fovToken = (self.fovToken or 0) + 1
+		local tok = self.fovToken
+		local function step()
+			if Deagle.fovToken ~= tok then return end
+			local k = math.min(1, (System.GetCurrTime() - t0) / math.max(0.01, Deagle.cfg.vm.adsBlend))
+			k = k * k * (3 - 2 * k)
+			s.fovNow = from + (to - from) * k
+			System.SetViewCameraFov(s.fovNow)
+			if k < 1 then Script.SetTimer(0, step)
+			elseif not on then s.baseFov, s.fovNow = nil, nil end   -- fully out: read the game's FOV again next time
+		end
+		step()
+	end)
 end
 
 -- inspect only from the hip
 function Deagle:Inspect()
 	local s = self.state
-	if s.aiming or not s.drawn or s.reloading then return end
+	if s.aiming or s.aimHeld or not s.drawn or s.reloading then return end
 	self:VmPlay("inspect", false)
 end
 
@@ -677,7 +709,7 @@ function Deagle:VmTick(token)
 	if token ~= self.vmToken or not self.vmShown then return end
 	self:VmPlace()
 	local a = self.vmAnim
-	if a and not a.loop and System.GetCurrTime() >= a.ends and not self.vmHolstering then self:VmPlay(self:VmRestKey(), true) end
+	if a and not a.loop and System.GetCurrTime() >= a.ends and not self.vmHolstering then self:VmReturn() end
 	Script.SetTimer(0, function() Deagle:VmTick(token) end)
 end
 
@@ -721,6 +753,12 @@ function Deagle:VmRestKey()
 	return empty and "idleEmpty" or "idle"
 end
 
+-- a one-shot clip is over: back to the rest loop, or into ADS if aim was held through it
+function Deagle:VmReturn()
+	local s = self.state
+	if s.aimHeld ~= s.aiming then self:UpdateAim() else self:VmPlay(self:VmRestKey(), true) end
+end
+
 function Deagle:VmBusy()   -- a one-shot clip (shot, reload, inspect, draw, holster) still playing
 	local a = self.vmAnim
 	return a and not a.loop and System.GetCurrTime() < (a.ends or 0)
@@ -753,8 +791,13 @@ function Deagle:VmPlay(key, loop, speed, blend)
 	self.vmAnim = { key = key, name = name, loop = loop, ends = System.GetCurrTime() + len }
 	if not loop then
 		self:PlayCues(key)
+		if HOLDS_AIM[key] and len > c.adsLead then
+			Script.SetTimer(math.floor((len - c.adsLead) * 1000), function()
+				if Deagle.vmAnimToken == tok and Deagle.vmShown and Deagle.state.aimHeld then Deagle:UpdateAim(c.adsLead) end
+			end)
+		end
 		Script.SetTimer(math.max(1, math.floor(len * 1000) - 30), function()
-			if Deagle.vmAnimToken == tok and Deagle.vmShown and not Deagle.vmHolstering then Deagle:VmPlay(Deagle:VmRestKey(), true) end
+			if Deagle.vmAnimToken == tok and Deagle.vmShown and not Deagle.vmHolstering then Deagle:VmReturn() end
 		end)
 	end
 	return len
@@ -981,7 +1024,8 @@ end
 function Deagle:OnGameplayStarted()
 	log("gameplay started")
 	local s = self.state
-	s.reloading, s.drawn, s.aiming, s.lastShot, s.ammo = false, false, false, -100, self.cfg.magSize
+	s.reloading, s.drawn, s.aiming, s.aimHeld, s.lastShot, s.ammo = false, false, false, false, -100, self.cfg.magSize
+	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
 	self.vmId = nil

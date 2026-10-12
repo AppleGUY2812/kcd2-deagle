@@ -56,7 +56,7 @@ local function newEntity(name, props)
 	function e:StartAnimation(slot, name, layer, blend, speed, loop)
 		if self.layers[layer] == name then return false end
 		self.layers[layer] = name
-		table.insert(M.anims, { t = M.t, name = name, layer = layer, loop = loop }) return true
+		table.insert(M.anims, { t = M.t, name = name, layer = layer, loop = loop, blend = blend }) return true
 	end
 	function e:StopAnimation(slot, layer) self.layers[layer] = nil end
 	e.flags = 0

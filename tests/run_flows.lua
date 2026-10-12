@@ -43,6 +43,21 @@ step("reload while aiming", function() Deagle:OnAction("deagle_reload", "press")
 print("   ammo:", Deagle.state.ammo, " aiming:", tostring(Deagle.state.aiming), " base=" .. layers())
 step("aim out", function() Deagle:OnAction("deagle_aim", "release"); M.advance(0.3) end)
 print("   base=" .. layers())
+-- ADS feel: aim cuts a hip shot at once; aim held through reload / draw hands over before the clip ends (no idle between)
+local function since(t0)
+	local out = {}
+	for _, a in ipairs(M.anims) do if a.t >= t0 and a.layer == 0 then out[#out + 1] = string.format("%s@+%.2fs/b%.2f", a.name:gsub("deagle_vm_", ""), a.t - t0, a.blend or -1) end end
+	return table.concat(out, " ")
+end
+local t0 = M.t
+step("aim mid hip shot", function() Deagle:OnAction("deagle_fire", "press"); M.advance(0.3); Deagle:OnAction("deagle_aim", "press"); M.advance(0.5) end)
+print("   " .. since(t0), " aiming:", tostring(Deagle.state.aiming), " fov:", string.format("%.3f", M.fov or -1))
+t0 = M.t
+step("reload with aim held", function() Deagle:OnAction("deagle_reload", "press"); M.advance(0.5)
+	print("   during reload: aiming", tostring(Deagle.state.aiming), " fov", string.format("%.3f", M.fov or -1)); M.advance(3.0) end)
+print("   " .. since(t0), " aiming:", tostring(Deagle.state.aiming), " fov:", string.format("%.3f", M.fov or -1), " ammo:", Deagle.state.ammo)
+step("aim out", function() Deagle:OnAction("deagle_aim", "release"); M.advance(0.4) end)
+print("   fov back:", string.format("%.4f", M.fov or -1))
 step("inspect", function() Deagle:OnAction("deagle_inspect", "press"); M.advance(7.0) end)
 step("inspect again", function() Deagle:OnAction("deagle_inspect", "press"); M.advance(1.0) end)
 print("   anims:", lastAnims(3))
@@ -57,6 +72,10 @@ step("dialogue camera", function()
 end)
 step("holster", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(1.5) end)
 print("   anims:", lastAnims(2), " shown:", tostring(Deagle.vmShown), " body hidden:", tostring(Deagle.bodyHidden), " DOF:", tostring(M.cvars.r_DepthOfField))
+t0 = M.t
+step("draw with aim held", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(0.2); Deagle:OnAction("deagle_aim", "press"); M.advance(2.0) end)
+print("   " .. since(t0), " aiming:", tostring(Deagle.state.aiming))
+step("aim out + holster", function() Deagle:OnAction("deagle_aim", "release"); M.advance(0.3); Deagle:OnAction("deagle_toggle", "press"); M.advance(1.5) end)
 step("console commands", function() for _, c in ipairs({ "deagle_arms", "deagle_motion", "deagle_hud", "deagle_native_test" }) do M.console(c) end end)
 print(string.format("\nnative commands sent: %d (sounds %d)", #M.native, (function() local n = 0 for _, c in ipairs(M.native) do if c:find("snd") then n = n + 1 end end return n end)()))
 print("TOTAL ERRORS:", #M.errors)
