@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdarg>
 #include <mutex>
+#include <share.h>
 
 static FILE* g_file = nullptr;
 static std::mutex g_mu;
@@ -12,7 +13,7 @@ void LogInit(void* module) {
 	GetModuleFileNameA((HMODULE)module, path, MAX_PATH);
 	char* dot = strrchr(path, '.');
 	if (dot) strcpy_s(dot, path + MAX_PATH - dot, ".log");
-	fopen_s(&g_file, path, "w");
+	g_file = _fsopen(path, "w", _SH_DENYWR);   // others may read it while the game runs (fopen_s locks it)
 }
 
 void Log(const char* fmt, ...) {

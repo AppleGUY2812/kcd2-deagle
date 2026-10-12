@@ -170,14 +170,16 @@ static bool MuzzleLoc(const float* vm, float scale, float* loc) {
 	return true;
 }
 
+static uintptr_t g_lastEffect = 0; static LONG g_lastRefs = 0;
 static uintptr_t SpawnFlash(const char* effect, const float* loc) {
 	uintptr_t pm; if (!ReadPtr(g_env + 0x68, pm) || !pm) return 0;
 	auto find = (FindEffectFn)VFn(pm, 0x30);
 	uintptr_t eff = find ? find(pm, effect, "deagle_native", true) : 0;
+	g_lastEffect = eff;
 	if (!eff) return (uintptr_t)-1;
 	auto spawn = (SpawnFn)VFn(eff, 0x30);
 	uintptr_t em = spawn ? spawn(eff, loc, nullptr) : 0;
-	if (em) InterlockedIncrement((volatile LONG*)(em + 0x58));   // ours until flashoff, so the pointer stays valid
+	if (em) g_lastRefs = InterlockedIncrement((volatile LONG*)(em + 0x58));   // ours until flashoff: the pointer stays valid
 	return em;
 }
 static uintptr_t SafeSpawnFlash(const char* effect, const float* loc) {
@@ -338,13 +340,19 @@ static void Command(const char* line) {
 				}
 				Flash& fl = g_flashes[g_nFlashes++];
 				fl.emitter = em; fl.scale = scale; QueryPerformanceCounter(&fl.born);
-				static int said = 0; if (said++ < 3) Log("flashfx %s scale %.2f emitter %p", effect, scale, (void*)em);
+				static int said = 0;
+				if (said++ < 40) Log("flashfx %s effect %p emitter %p refs %ld at %.3f %.3f %.3f q %.3f %.3f %.3f %.3f s %.2f (gun at %.3f %.3f %.3f)",
+					effect, (void*)g_lastEffect, (void*)em, g_lastRefs, loc[4], loc[5], loc[6], loc[0], loc[1], loc[2], loc[3], loc[7],
+					g_vmTM[3], g_vmTM[7], g_vmTM[11]);
 			}
 		}
 	}
 	else if (!strcmp(cmd, "flashpos"))
 		sscanf_s(rest, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1], &g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);
-	else if (!strcmp(cmd, "flashoff")) ReleaseFlashes();
+	else if (!strcmp(cmd, "flashoff")) {
+		static int said = 0; if (said++ < 40) Log("flashoff: releasing %d", g_nFlashes);
+		ReleaseFlashes();
+	}
 	else if (!strcmp(cmd, "kick")) {     // kick <back m> <pitch deg> <yaw deg> [<roll deg>]: peaks of the shot's push
 		float b = 0, pt = 0, yw = 0, rl = 0;
 		if (sscanf_s(rest, "%f %f %f %f", &b, &pt, &yw, &rl) >= 3) {
