@@ -1221,7 +1221,7 @@ function Deagle:PathTick(token)
 	Script.SetTimer(0, function() Deagle:PathTick(token) end)
 end
 function Deagle:Paths(arg)
-	arg = tostring(arg or "")
+	arg = Deagle.Arg(arg)   -- here too: a command registered before a dev reload still passes it quoted
 	if arg == "clear" then self.paths = {}
 	else self.cfg.debugPaths = not arg:find("0") end
 	if not self.cfg.debugPaths then self.paths = {} end
