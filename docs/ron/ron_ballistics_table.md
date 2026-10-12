@@ -7,7 +7,7 @@ Every asset decoded byte-exact with the community Mappings.usmap (build 113804, 
 
 ## 1. Ammo (AmmoDataTable, 41 rows; every field stored per row)
 
-Damage curve = `ExternalCurve` (distance m : damage). Curve x is assumed to be UE cm (divided by 100 here). That fits pistols (1.5–50 m), but rifle curves then run to 3000 m, so treat curve x units as unverified. Body multipliers H/U/L/A/Ha/Le/F = Head / UpperBody / LowerBody / Arm / Hand / Leg / Foot.
+Damage curve = `ExternalCurve` (distance m : damage). Curve x is UE **cm**, divided by 100 here. The units are inferred from the curve ranges, since there is no UI range text to check against. Read as cm, pistol falloff runs 1.5–50 m and buckshot 25–151 m. Read as metres, pistol falloff would run out to 5 km. The rifle curves’ last key at 3000 m is just where the curve goes flat. Body multipliers H/U/L/A/Ha/Le/F = Head / UpperBody / LowerBody / Arm / Hand / Leg / Foot.
 
 | row | caliber | variety | Damage | damage curve | pellets | spread | PenLevel | PenDist | DurabilityDmg | Ricochet | Spall dmg/r | ArmouredHits | Hits | Artery | Dismember | Wound | H/U/L/A/Ha/Le/F | ragdoll D/H/A/L/T | IgnoresArmour |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
