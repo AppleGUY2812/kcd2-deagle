@@ -6,7 +6,7 @@
 - Kick feel: Deagle 7.1 deg a shot (above Ready or Not's .357), Glock 3.5, gun model kick, at most 60 % springs back;
   Glock louder (0.83x the Deagle). Settings: docs/DEBUG.md (Desktop "DEBUG TOOLS.md").
 
-## Pending install (built, committed; installs at the next "closed")
+## Installed 2026-10-12 (md5 checked: pak 6e51280c, plugin b528da07), user check pending
 - Clean flash build (diagnosis switches removed), muzzle light reach 7 m / 21 m (inverse-square), kick / spring-back /
   loudness defaults, torch held off while the gun is out (live in the running game via hot reload only), dev-reload
   gun loading fix.
