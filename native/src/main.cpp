@@ -12,6 +12,7 @@
 #include "motion.h"
 #include "gore.h"
 #include "settings.h"
+#include "freecam.h"
 #include <deque>
 #include <mutex>
 #include <string>
@@ -479,6 +480,7 @@ static void Command(const char* line) {
 	const char* rest = line + strlen(cmd);
 	while (*rest == ' ') rest++;
 	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
+		Freecam_Reset("hello");
 		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
 		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1;
 		// the handshake, then the player's saved settings (settings.cpp)
@@ -599,6 +601,7 @@ static void Command(const char* line) {
 		}
 	}
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
+	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
@@ -748,6 +751,7 @@ static DWORD WINAPI Init(LPVOID) {
 		Log("Lua channel hook FAILED");
 	for (int i = 0; i < 240 && !g_env; i++) { g_env = FindEnv(); if (!g_env) Sleep(500); }
 	Log("gEnv %p", (void*)g_env);
+	if (g_env) Freecam_Install(g_env, (void*)g_origFrustum);   // free camera (freecam.cpp, johnpork-18)
 	if (g_env) {
 		static const struct { int off; const char* what; } members[] = {
 			{ 0x08, "3DEngine" }, { 0x30, "PhysicalWorld" }, { 0x68, "ParticleManager" }, { 0x80, "Timer" },

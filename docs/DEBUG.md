@@ -35,6 +35,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_reset` | every setting back as shipped, the kept ones forgotten |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
 | `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
+| `\` or `deagle_freecam` | free camera: time keeps running and Henry still shoots (the mouse turns both). Home / End = forward / back, Delete / PgDn = left / right, PgUp / Insert = up / down, Shift = 5x faster. `deagle_freecam speed 10`, `deagle_freecam keys arrows`. Turns itself off on a save load. (testing) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.on 0`) is an unknown command.
