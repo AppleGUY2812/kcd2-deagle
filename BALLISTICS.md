@@ -24,6 +24,24 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
   ammo spawn + launch (find it in WHGame.dll like the camera hook).
 - Live: list the projectile entity while a hand cannon round is in flight; try spawning the class from Lua.
 
+### Live probe findings (2026-10-12, read-only Lua dump in the running game)
+- KCD2 has a bullet hit type built in: `enum_HitReactionType.Bullet = 6` (Melee 1, MeleeStealth 2, Collision 3, Fall 5,
+  Decoy 8, Stone 9, Shock 10), globals `bullet_hit = 16`, `arrow_hit = 15`. `enum_HitReactionStrength`: Zero 0,
+  Healing 1, Tickle 2, Unpleasant 3, Exhausting 4, MinorInjury 5, MajorInjury 6, Fatal 7.
+- Hit entry points in Lua:
+  - `g_gameRules:CreateHit(targetId, shooterId, weaponId, dmg, radius, material, partId, type, pos, dir, normal)`
+    (Scripts/GameRules/SinglePlayer.lua:184) -> `self.game:ServerHit(...)` with `GetHitTypeId(type)` /
+    `GetHitMaterialId(material)`: the engine hit pipeline (the game's own Hazard.lua uses it for "fire").
+  - `soul:DealDamage(health, stamina, nil, true)` (Scripts/Debug/Quick.lua `q.dd`): direct damage.
+  - `soul:AddInjury`, `actor:AddBlood`, `actor:GetArmor / GetMaxArmor / GetHealth`, `actor:RagDollize`,
+    `actor:RequestKnockOut`, `entity:AddImpulse(part, pos, dir, force)`.
+- Hand cannon hits don't go through Lua (no script calls CreateHit for missiles): KCD2's missile -> armor math is C++.
+- NPC physics: mass 80 kg, `physicsParams.Living.timeImpulseRecover = 1`, `collisionDamageThreshold` per actor.
+- Enums dumped: `enum_ammo_class` (Arrow 1, Bolt 2, Ball 3, Shotgun 4), `enum_armor_type` (79 piece types, e.g. MailLong
+  32, Cuirass 33, Brigandine 34, GambesonLong 28), `enum_armor_archetype` (coverage shapes), `enum_weapon_class` (rifle 13).
+- Next (needs the user: save first, pick an NPC): CreateHit with type "bullet" (or its id) on an NPC with tiny damage,
+  log health / armor / reaction, then compare with soul:DealDamage.
+
 ## Phase 1: flight
 - [ ] Projectile per round: position, velocity, gravity, air drag (ballistic coefficient), time of flight, max range
 - [ ] Hit test each frame along the path (segment ray from last position to new position)
