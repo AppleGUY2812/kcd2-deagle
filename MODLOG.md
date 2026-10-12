@@ -221,3 +221,14 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
 - R in KCD2's draw_holster_torch map (toggle_torch) took the torch out: map off while drawn, like combat.
 - Fire rate from the mods' weapon scripts (Deagle 0.08, Glock 0.075); burst 0.05 s, burst clip played gun.burstGap /
   gap faster.
+
+## 2026-10-12 — cartridge-driven handling (first version, provisional constants)
+- guns/calibers.lua: .50 AE 300 gr 442 m/s from 6", 2.01 g powder (Speer 28-34 gr); 9x19 124 gr 350 m/s from 4",
+  0.285 g (Hodgdon ~4.4 gr Titegroup). Guns by CS2 id: Deagle 2.05 kg, 152 mm, bore 50 mm; Glock 0.905 kg, 114 mm, 30 mm.
+- ShotPhysics: v scales (barrel / ref)^0.25; impulse = m_b v + m_powder 1.75 v; free recoil v = p / M, E = p^2 / 2M;
+  flip = p x bore / (M 0.1^2 + 0.004); flash = (powder g)^(1/3) x (ref barrel / barrel)^0.5. Deagle 10.15 N s,
+  4.95 m/s, 25 J, flip 20.7 rad/s; Glock 3.07 N s, 3.40 m/s, 5.2 J, 7.1 rad/s (energies match published figures).
+- Camera: kick = 0.217 deg per rad/s (Deagle 4.5, Glock 1.5), 65% returns (rate 5/s), rises at 70/s, applied as
+  per-frame deltas through PlayerSetViewAngles (watch for eaten mouse input in game). Gun: plugin springs (w 28,
+  slightly underdamped) on "[DN] kick back pitch yaw": Deagle 3.5 cm / 6 deg, Glock 2.4 cm / 2 deg. Flash scale
+  0.476 x flash (Deagle 0.6, Glock 0.3), smoke with it. All in cfg.physics, live via deagle_set physics.<key>.

@@ -34,8 +34,8 @@
   chambered round, no mag until the next reload), bullets in the mag, burst 0.05 s, R no torch, flash (world / entity)
 - Flash look: size (muzzleFxScale), brightness (deagle_test b100 / b50 / b25 + light), entity mode as default if it
   stays on the gun; then drop the deagle_test library
-- Cartridge-driven handling (BALLISTICS.md): needs the user's Ready or Not recording (strong pistol slow / fast, rifle
-  full auto) to calibrate
+- Cartridge-driven handling: built with provisional constants (cfg.physics); fit them to Ready or Not's recoil values /
+  the user's recording; check the per-frame camera return doesn't eat mouse input
 - Recoil recovery + CS2 spray patterns for automatics; camera sway in inspects / reloads (MWII clips move the view)
 - Recoil: kick is our hand-tuned 2.6 deg (Deagle) scaled by CS2's recoil magnitude, and never recovers; user finds the
   Deagle's too small -> tune kickPitch live (deagle_set kickPitch N), then add recovery (rise, settle partway back)
