@@ -73,7 +73,8 @@ if phys then
 	local final = math.deg(M.view.pitch - p0)
 	local kicks = 0
 	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] kick ") then kicks = kicks + 1 end end
-	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = 1 - Deagle.cfg.physics.returnPct }
+	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = 1 - Deagle.cfg.physics.returnPct,
+		flashScale = M.lastSlotScale, flashPrime = M.lastSlotPrime, wantScale = Deagle.cfg.physics.flashPerUnit * phys.flash * Deagle.cfg.muzzleFxScale }
 end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
@@ -127,6 +128,8 @@ end
 if recoil then
 	check(string.format("cartridge kick %.1f deg: climbs %.1f, settles at %.1f (keeps ~%d%%), gun kick sent %d", recoil.up, recoil.peak, recoil.final, recoil.keep * 100, recoil.kicks),
 		recoil.peak > 0.5 * recoil.up and recoil.peak < 1.2 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.2 * recoil.up and recoil.kicks == 1, recoil.peak)
+	check(string.format("flash loads at the cartridge size x%.2f, not primed (got %s, prime %s)", recoil.wantScale, tostring(recoil.flashScale), tostring(recoil.flashPrime)),
+		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-6 and recoil.flashPrime == false, recoil.flashScale)
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))

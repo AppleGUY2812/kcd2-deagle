@@ -69,9 +69,11 @@ local function newEntity(name, props)
 	function e:AddImpulse() return true end
 	-- particle effects in entity slots (the muzzle flash rides on the viewmodel)
 	e.nslots = 1
-	function e:LoadParticleEffect(slot, fx, params)
+	-- KCD2's binding: (slot, effect, bPrime, pulsePeriod, scale, countScale, attachType, attachForm)
+	function e:LoadParticleEffect(slot, fx, prime, pulse, scale)
+		if type(prime) == "table" then error("LoadParticleEffect takes plain arguments, not a table") end
 		if slot < 0 then slot = self.nslots; self.nslots = self.nslots + 1 end
-		M.slotFx = (M.slotFx or 0) + 1; M.lastSlotFx = fx
+		M.slotFx = (M.slotFx or 0) + 1; M.lastSlotFx = fx; M.lastSlotScale = scale; M.lastSlotPrime = prime
 		return slot
 	end
 	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end

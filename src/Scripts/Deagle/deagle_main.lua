@@ -283,7 +283,10 @@ function Deagle:MuzzleFlash(dir)
 		-- alternate two slots, cleared first: loading into a slot that still holds the effect doesn't restart it
 		self.flashSlotN = ((self.flashSlotN or 0) + 1) % 2
 		pcall(e.FreeSlot, e, self.flashSlotN)
-		local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlotN, c.muzzleFx, { Scale = scale })
+		-- KCD2's binding takes plain arguments: (slot, effect, bPrime, pulsePeriod, scale, countScale, attachType,
+		-- attachForm). A table in bPrime's place left the scale at 1 (and may have primed the one-shot flash, i.e.
+		-- started it as if it had already burned out).
+		local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlotN, c.muzzleFx, false, 0, scale, 1, "", "")
 		ok = okL and type(slot) == "number" and slot >= 0
 		if c.flashDebug == 1 or not ok then log(string.format("flash slot %d -> %s %s", self.flashSlotN, tostring(okL), tostring(slot))) end
 		if ok then self.flashUntil = System.GetCurrTime() + 0.2 end
