@@ -38,6 +38,13 @@ using ExecFn = void(__fastcall*)(uintptr_t con, const char* cmd, bool silent, bo
 
 // ---- viewmodel follow
 static uint32_t g_vmId = 0;
+// The muzzle flash burns on a small entity of its own, put on the muzzle in the same step that places the gun: Lua sends
+// the muzzle (position and barrel direction in the viewmodel's own axes) every frame while the flash burns. Effects
+// attached to the viewmodel itself trail it by a frame (the engine positions them before this camera step) or don't
+// render at all (tested in game 2026-10-12).
+static uint32_t g_flashId = 0;
+static float g_flashPos[3] = {}, g_flashDir[3] = { 0, 1, 0 };
+static bool g_flashOn = false;
 static bool g_follow = false;
 static float g_off[3] = { 0, 0, 0 };            // right, forward, up (m)
 static uint64_t g_placed = 0, g_repeats = 0;
@@ -122,6 +129,31 @@ static void LocalRot(const float* deg, float* R) {   // R = Rz(yaw) * Rx(pitch) 
 static bool Finite(const float* f, int n) { for (int i = 0; i < n; i++) if (!std::isfinite(f[i])) return false; return true; }
 static void ResetMotion() { mo.yaw = mo.pitch = mo.land = mo.aimK = mo.kickBack = mo.kickPitch = mo.kickYaw = mo.kickRoll = Spring{}; memset(mo.off, 0, sizeof(mo.off)); memset(mo.rot, 0, sizeof(mo.rot)); }
 
+// the flash entity on the muzzle of the gun just placed (vm = its transform): forward (y) down the barrel, no roll
+static void PlaceFlash(uintptr_t es, GetEntityFn getEntity, const float* vm) {
+	uintptr_t f = getEntity(es, g_flashId);
+	auto setTM = f ? (SetWorldTMFn)VFn(f, 0xF0) : nullptr;
+	if (!setTM) return;
+	float y[3] = { g_flashDir[0], g_flashDir[1], g_flashDir[2] };
+	float ly = sqrtf(y[0] * y[0] + y[1] * y[1] + y[2] * y[2]);
+	if (ly < 1e-6f) return;
+	for (float& v : y) v /= ly;
+	float x[3] = { y[1], -y[0], 0 };                       // y x up (viewmodel's up), like CryEngine's CreateRotationVDir
+	float lx = sqrtf(x[0] * x[0] + x[1] * x[1]);
+	if (lx < 1e-6f) { x[0] = 1; x[1] = 0; lx = 1; }
+	x[0] /= lx; x[1] /= lx;
+	float z[3] = { x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0] };
+	float ft[12];
+	for (int r = 0; r < 3; r++) {
+		const float* row = vm + r * 4;
+		ft[r * 4 + 0] = row[0] * x[0] + row[1] * x[1] + row[2] * x[2];
+		ft[r * 4 + 1] = row[0] * y[0] + row[1] * y[1] + row[2] * y[2];
+		ft[r * 4 + 2] = row[0] * z[0] + row[1] * z[1] + row[2] * z[2];
+		ft[r * 4 + 3] = row[3] + row[0] * g_flashPos[0] + row[1] * g_flashPos[1] + row[2] * g_flashPos[2];
+	}
+	if (Finite(ft, 12)) setTM(f, ft, 0);
+}
+
 static bool PlaceViewmodel(const float* cam) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
 	auto getEntity = (GetEntityFn)VFn(es, 0x70);
@@ -145,6 +177,7 @@ static bool PlaceViewmodel(const float* cam) {
 		return false;
 	}
 	setTM(e, tm, 0);
+	if (g_flashOn && g_flashId) PlaceFlash(es, getEntity, tm);
 	return true;
 }
 
@@ -212,7 +245,7 @@ static void Command(const char* line) {
 	const char* rest = line + strlen(cmd);
 	while (*rest == ' ') rest++;
 	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
-		g_follow = false; g_vmId = 0; mo.aiming = false;
+		g_follow = false; g_vmId = 0; mo.aiming = false; g_flashOn = false; g_flashId = 0;
 		g_pendingConsole = "deagle_native_ok"; Log("hello from Lua");
 	}
 	else if (!strcmp(cmd, "vm")) {
@@ -221,6 +254,19 @@ static void Command(const char* line) {
 		if (sscanf_s(hex, "%llx", &id) == 1) { g_vmId = (uint32_t)id; Log("viewmodel entity %08X", g_vmId); }
 	}
 	else if (!strcmp(cmd, "follow")) { g_follow = atoi(rest) != 0; Log("follow %d", (int)g_follow); }
+	else if (!strcmp(cmd, "flash")) {    // flash 0x<entity> <pos xyz> <dir xyz>: the flash entity, the muzzle in viewmodel axes
+		unsigned long long id = 0;
+		const char* hex = strstr(rest, "0x"); hex = hex ? hex + 2 : rest;
+		const char* nums = strchr(hex, ' ');
+		if (sscanf_s(hex, "%llx", &id) == 1 && nums && sscanf_s(nums, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1],
+				&g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]) == 6) {
+			g_flashId = (uint32_t)id; g_flashOn = true;
+		}
+		else Log("bad flash command: %s", rest);
+	}
+	else if (!strcmp(cmd, "flashpos"))
+		sscanf_s(rest, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1], &g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);
+	else if (!strcmp(cmd, "flashoff")) g_flashOn = false;
 	else if (!strcmp(cmd, "kick")) {     // kick <back m> <pitch deg> <yaw deg> [<roll deg>]: peaks of the shot's push
 		float b = 0, pt = 0, yw = 0, rl = 0;
 		if (sscanf_s(rest, "%f %f %f %f", &b, &pt, &yw, &rl) >= 3) {

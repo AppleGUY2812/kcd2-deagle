@@ -65,17 +65,24 @@ local function newEntity(name, props)
 	function e:IsAnimationRunning() return true end
 	function e:GetBonePos(b) return vec(self.pos.x + 0.3, self.pos.y + 0.4, self.pos.z - 0.05) end
 	function e:GetBoneDir(b) return vec(0, 1, 0) end
-	function e:GetBoneLocal(b, t) return vec(1, 0, 0) end   -- a world direction in the bone axes (CoD tags: x along the barrel)
+	function e:GetBoneLocal(b, t) return vec(t.x, t.y, t.z) end   -- a world direction in the bone's axes (bone = world axes here)
 	function e:AddImpulse() return true end
-	-- particle effects in entity slots (the muzzle flash rides on the viewmodel)
+	-- particle effects in entity slots. Like KCD2 (checked in game 2026-10-12): CryEngine's table form
+	-- (slot, effect, { Scale, bPrime, ... }) returns the slot; plain arguments create nothing and return nil
 	e.nslots = 1
-	-- KCD2's binding: (slot, effect, bPrime, pulsePeriod, scale, countScale, attachType, attachForm)
-	function e:LoadParticleEffect(slot, fx, prime, pulse, scale)
-		if type(prime) == "table" then error("LoadParticleEffect takes plain arguments, not a table") end
+	e.slots = {}
+	function e:LoadParticleEffect(slot, fx, params)
+		if type(params) ~= "table" then M.badFxLoads = (M.badFxLoads or 0) + 1 return nil end
 		if slot < 0 then slot = self.nslots; self.nslots = self.nslots + 1 end
-		M.slotFx = (M.slotFx or 0) + 1; M.lastSlotFx = fx; M.lastSlotScale = scale; M.lastSlotPrime = prime
+		if self.slots[slot] then M.fxLoadsOnBusySlot = (M.fxLoadsOnBusySlot or 0) + 1 end
+		self.slots[slot] = fx
+		M.slotFx = (M.slotFx or 0) + 1; M.lastSlotFx = fx; M.lastSlotScale = params.Scale; M.lastSlotPrime = params.bPrime
+		M.lastSlotEntity = self.name
 		return slot
 	end
+	function e:FreeSlot(slot) self.slots[slot] = nil end
+	function e:IsSlotValid(slot) return self.slots[slot] ~= nil end
+	function e:SetDirectionVector(d) self.dir = vec(d.x, d.y, d.z) end
 	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end
 	function e:HideAttachment(slot, name, hide) M.hidden = M.hidden or {}; M.hidden[name] = hide end
 	function e:CreateBoneAttachment(slot, bone, name) M.boneAttach = (M.boneAttach or 0) + 1 end
