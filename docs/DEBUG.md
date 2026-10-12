@@ -25,6 +25,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_hud 0` / `1` | ammo HUD off / on |
 | `deagle_arms medieval` / `mw` | sleeve and glove look |
 | `deagle_ads 1` / `0` | aim down sights on / off |
+| `deagle_motion 0`..`2` | gun bob / sway / sprint pose strength (0 = off, 1 = normal) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 | Setting | Default | What it changes |
@@ -44,7 +45,6 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `physics.gunFlipPerFlip` | `0.29` | gun model flip per unit of muzzle flip |
 | `physics.gunBackPerVel` | `0.007` | gun model push-back per m/s of recoil |
 | `physics.flashPerUnit` | `0.476` | flash size per unit of powder |
-| `motion` | `1` | gun bob / sway / sprint pose strength (`deagle_set motion 0` = off) |
 
 Examples: `deagle_set physics.camPerFlip 0.3` (bigger kick for every gun), `deagle_set flashMode world`,
 `deagle_set muzzleFxScale 0.5`.
