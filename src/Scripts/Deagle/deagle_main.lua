@@ -49,8 +49,10 @@ Deagle.cfg = {
 	muzzleFxScale = 1.0,      -- multiplier on the flash size the cartridge gives (cfg.physics.flashPerUnit)
 	portFx = "deagle.port_smoke",
 	bloodFx = "collisions.combat.hit_passed_bullet_fabric",
-	armorFx = "collisions.combat.hit_passed_bullet_plate",
+	armorFx = "deagle_impacts.metal",   -- a round on plate / mail sparks like any metal (KCD2's plate hit effect doesn't exist)
 	headFx = "collisions.combat.blood_head",
+	holeSize = 0.035,         -- m, a 9 mm's bullet hole (Ready or Not's pistol holes: 3-4 cm); x the impact scale
+	holeLife = 300,           -- s a bullet hole stays
 	bloodPaint = 0.45,        -- actor:AddBlood amount per hit on that body part
 	bleeding = true,          -- non-lethal hits apply the game's bleeding buff
 	bleedingBuff = "0c903899-fcc9-4cf2-9ee3-1130ac08b0fc",
@@ -560,21 +562,38 @@ end
 -- ---------------------------------------------------------------------------
 -- hits
 -- ---------------------------------------------------------------------------
--- Bullet impact effect for the surface the ray hit (Libs/Particles/collisions.xml, destructibles.bullet_*).
-local surfaceFx = {
-	{ "water", "mudwater" }, { "mud", "mud" }, { "stone", "stone" }, { "rock", "stone" }, { "brick", "stone" },
-	{ "wood", "wood" }, { "metal", "metal" }, { "iron", "metal" }, { "grass", "grass" }, { "plant", "grass" },
-	{ "veget", "grass" }, { "plaster", "plaster" }, { "straw", "straw" }, { "hay", "straw" }, { "cloth", "sack" },
-	{ "sack", "sack" }, { "fabric", "sack" }, { "ceram", "ceramics" }, { "pottery", "ceramics" }, { "clay", "ceramics" },
-}
+-- What a round does on each of KCD2's 74 surface types (Libs/MaterialEffects/SurfaceTypes.xml): our impact effect
+-- (deagle_impacts.<family>, built from Ready or Not's, docs/impact_fx_build.md) and bullet hole
+-- (Materials/deagle/decals/bullet_hole_<hole>), or "pass": invisible helpers (window and map barriers, player / NPC /
+-- horse-only colliders, designer blockers) and foliage, which a round flies through. Worn armour (plate / mail combos)
+-- sparks like metal and gets no hole (decals don't follow a moving body).
+local SURFACES = {}
+local function surfaces(fx, hole, names) for _, n in ipairs(names) do SURFACES[n] = { fx = fx, hole = hole } end end
+surfaces("metal", "metal", { "mat_metal", "mat_door_metal", "mat_metal_seethrough", "mat_bells", "mat_super_cool_sparkly_type" })
+surfaces("metal", nil, { "mat_plate", "mat_chainmail", "mat_chainmail_plate", "mat_fabric_plate", "mat_fabric_chainmail",
+	"mat_fabric_chainmail_plate", "mat_leather_chainmail" })
+surfaces("stone", "stone", { "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_stairs_stone", "mat_default", "mat_invulnerable" })
+surfaces("stone", "ceramic", { "mat_ceramics" })
+surfaces("plaster", "plaster", { "mat_plaster" })
+surfaces("wood", "wood", { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood", "mat_railing_wood_seethrough" })
+surfaces("wood", "wood_soft", { "mat_wood_soft", "mat_wicker" })
+surfaces("soil", "soil", { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_gravel", "mat_forest", "mat_grass", "mat_grassdry", "mat_road", "mat_field" })
+surfaces("water", nil, { "mat_water", "mat_mudwater", "mat_slowwater", "mat_rockwater", "mat_puddle" })
+surfaces("straw", nil, { "mat_thatch", "mat_organic_stuff" })
+surfaces("cloth", "cloth", { "mat_sack", "mat_fabric_items", "mat_fabric", "mat_leather" })
+surfaces("glass", "glass", { "mat_glass" })
+surfaces("blood", nil, { "mat_flesh" })
+surfaces("pass", nil, { "mat_none", "mat_window", "mat_player_collider", "mat_player_only", "mat_no_photomode", "mat_npc_only",
+	"mat_horse_only", "mat_horse_ignore", "mat_player_only_with_bark", "mat_level_barrier", "mat_deep_water_barrier",
+	"mat_cart_slowdown", "mat_corpses_barrier", "mat_prepadeni_roadTocamp_barrier", "mat_slope", "mat_barrier_navignore",
+	"mat_nodraw_designer", "mat_raycast", "mat_canopy", "mat_vegetation", "mat_vegetation_seethrough",
+	"mat_vegetation_horse_ignore", "mat_bushes", "mat_grass_tall" })
+Deagle.surfaces = SURFACES
 
-local function impactFxFor(hit)
+local function surfaceName(hit)
 	local name = ""
-	pcall(function() name = string.lower(System.GetSurfaceTypeNameById(hit.surface) or "") end)
-	for _, pair in ipairs(surfaceFx) do
-		if string.find(name, pair[1], 1, true) then return "collisions.destructibles.bullet_" .. pair[2], name end
-	end
-	return "collisions.destructibles.bullet_soil", name
+	pcall(function() name = System.GetSurfaceTypeNameById(hit.surface) or "" end)
+	return name
 end
 
 -- Body part from where the ray hit, relative to the target's feet and facing (human skeletons only).
@@ -652,6 +671,38 @@ function Deagle:HitReact(e, hit, dir, dmg)
 		dir.x, dir.y, dir.z, c.hitReactFlags))
 end
 
+-- How big a round's impact looks: debris and crater volume go with the energy it lands with, so their size goes with
+-- its cube root, against a 9 mm at the muzzle (= 1: the size the effects and holes are made at). Deagle ~1.5 close up.
+function Deagle:ImpactScale(phys, dist)
+	if not phys then return 1 end
+	local ref = self.calibers["9x19"]
+	local eIn = phys.energy * math.exp(-2 * (dist or 0) / phys.dragLength)
+	return (eIn / (0.5 * ref.bullet * ref.velocity * ref.velocity)) ^ (1 / 3)
+end
+
+-- a round hitting the world: the surface's effect, sized by the round, and a bullet hole that stays a while
+function Deagle:Impact(hit, dir, phys)
+	local c = self.cfg
+	local name = surfaceName(hit)
+	local s = SURFACES[name]
+	if not s then
+		self.unknownSurface = self.unknownSurface or {}
+		if not self.unknownSurface[name] then
+			self.unknownSurface[name] = true
+			log("$4impact: surface '" .. tostring(name) .. "' isn't in the table (deagle_main.lua SURFACES)")
+		end
+		return
+	end
+	local scale = self:ImpactScale(phys, hit.dist)
+	self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale)
+	if s.hole then
+		local size = c.holeSize * scale * (0.85 + 0.3 * math.random())
+		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
+			"Materials/deagle/decals/bullet_hole_" .. s.hole, math.random() * 360, dir, hit.entity and hit.entity.id or nil, hit.partid)
+	end
+	if self.state.logActions then log(string.format("impact %s -> %s x%.2f hole %s", name, s.fx, scale, tostring(s.hole))) end
+end
+
 function Deagle:ApplyHit(hit, dir, phys)
 	local c = self.cfg
 	phys = phys or self:ShotPhysics()
@@ -687,9 +738,7 @@ function Deagle:ApplyHit(hit, dir, phys)
 		pcall(function() hp = string.format("%.1f/%.1f", e.actor:GetHealth(), e.actor:GetMaxHealth()) end)
 		log("hit " .. tostring(e:GetName()) .. " mode " .. c.hitMode .. " part " .. tostring(hit.bodyPart) .. " dist " .. string.format("%.1f", hit.dist or -1) .. " hp " .. hp)
 	else
-		local fx, surface = impactFxFor(hit)
-		self:SpawnFx(fx, hit.pos, hit.normal)
-		if self.state.logActions then log("impact " .. tostring(surface) .. " -> " .. fx) end
+		self:Impact(hit, dir, phys)
 	end
 	if e and e.AddImpulse and (not e.soul or (e.IsDead and e:IsDead())) then
 		local push = phys and c.physics.punchPerMomentum * phys.momentum or c.impulse   -- the shove follows momentum
@@ -725,12 +774,26 @@ function Deagle:MoveRound(r, h)
 		log("$4raycast failed: " .. tostring(n))
 		return true
 	end
-	if n and n > 0 and hits[1] then
+	local from, left, through = r.pos, move, 0
+	while n and n > 0 and hits[1] do
 		local hit = hits[1]
-		hit.dist = r.dist + hit.dist            -- the ray's distance is from this step's start: the path flown so far
-		r.pos, r.landed = hit.pos, true
-		self:ApplyHit(hit, vnorm(move), r.phys)
-		return true
+		local s = not hit.entity and SURFACES[surfaceName(hit)]
+		if s and s.fx == "pass" and through < 8 then
+			-- an invisible blocker or foliage: on through it, from just past the hit, for the rest of this step
+			through = through + 1
+			local dir, done = vnorm(move), hit.dist + 0.001     -- hit.dist counts from this step's start
+			if done >= vlen(move) then break end
+			from, left = vadd(r.pos, vscale(dir, done)), vscale(dir, vlen(move) - done)
+			hits = {}
+			ok, n = pcall(Physics.RayWorldIntersection, from, left, 1, ent_all, p and p.id, nil, hits)
+			if not ok then log("$4raycast failed: " .. tostring(n)); return true end
+			if n and n > 0 and hits[1] then hits[1].dist = hits[1].dist + done end
+		else
+			hit.dist = r.dist + hit.dist        -- the ray's distance is from this step's start: the path flown so far
+			r.pos, r.landed = hit.pos, true
+			self:ApplyHit(hit, vnorm(move), r.phys)
+			return true
+		end
 	end
 	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
 	return r.dist > self.cfg.range or r.age > ROUND_LIFE

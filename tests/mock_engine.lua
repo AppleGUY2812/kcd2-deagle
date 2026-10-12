@@ -136,6 +136,7 @@ _G.System = {
 	GetEntity = function(id) return entities[id] or entities[tostring(id)] end,
 	RemoveEntity = function(id) local e = entities[id] or entities[tostring(id)]; if e then entities[e.id] = nil; entities[tostring(e.id)] = nil end end,
 	GetEntitiesInSphere = function() return {} end,
+	GetSurfaceTypeNameById = function(id) return M.surfaceNames[id] end,
 	GetCVar = function(n) return 2 end, SetCVar = function(n, v) M.cvars = M.cvars or {}; M.cvars[n] = v end,
 	DrawText = function(...) M.drawn_text = M.drawn_text + 1 end,
 	ExecuteCommand = function(c) end,
@@ -148,7 +149,8 @@ _G.Script = {
 	ReloadScript = function(path) if M.loaded[path] then return 1 end return M.loadScript(path) end,
 }
 _G.Game = { SendInfoText = function(t) M.info = t end, HideInfoText = function() end }
-_G.Particle = { SpawnEffect = function(n) M.fx = (M.fx or 0) + 1 M.lastFx = n; M.fxNames = M.fxNames or {}; M.fxNames[n] = (M.fxNames[n] or 0) + 1 end, CreateMatDecal = function() end }
+_G.Particle = { SpawnEffect = function(n, pos, dir, scale) M.fx = (M.fx or 0) + 1 M.lastFx = n; M.lastFxScale = scale; M.fxNames = M.fxNames or {}; M.fxNames[n] = (M.fxNames[n] or 0) + 1; M.fxScale = M.fxScale or {}; M.fxScale[n] = scale end,
+	CreateMatDecal = function(pos, normal, size, life, mat) M.decals = M.decals or {}; table.insert(M.decals, { pos = pos, size = size, life = life, mat = mat }) end }
 _G.Physics = { RayWorldIntersection = function() return 0 end }
 M.maps = {}
 _G.ActionMapManager = { LoadFromXML = function() return true end, EnableActionMap = function(name, on) M.maps[name] = on end }
@@ -158,6 +160,7 @@ _G.AudioUtils = { LookupTriggerID = function() return 1 end, ExecuteAudioTrigger
 _G.CryAction = {}
 -- game paths load from the repo's src/ (gun files etc.); missing files fail like the engine (0)
 M.loaded = {}
+M.surfaceNames = { [1] = "mat_rock", [2] = "mat_window", [3] = "mat_wood", [4] = "mat_level_barrier" }   -- ray hits' surface ids
 function M.loadScript(path)
 	M.loaded[path] = true
 	local f = io.open("src/" .. path, "r")

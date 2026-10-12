@@ -9,7 +9,7 @@ Deagle:OnGameplayStarted(); M.console("deagle_native_ok")
 
 local function vec(x, y, z) return { x = x, y = y, z = z } end
 -- the world: a wall at y = wallY (none when nil) and an NPC box in front of the camera at y = npcY (none when nil)
-local world = { wallY = nil, npcY = nil }
+local world = { wallY = nil, npcY = nil, wallSurface = 1, barrierY = nil }
 local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0 }
 function npc:GetName() return "target" end
 function npc:GetWorldPos() return vec(100, world.npcY or 0, 30.3) end   -- the shot (z 31.75) lands on the torso
@@ -27,7 +27,10 @@ Physics.RayWorldIntersection = function(pos, dir, _, _, _, _, hits)
 	local function try(t, hit) if t >= 0 and t <= 1 and (not best or t < best.t) then hit.t = t; best = hit end end
 	if world.wallY and dir.y ~= 0 then
 		local t = (world.wallY - pos.y) / dir.y
-		try(t, { normal = vec(0, -1, 0), surface = 1 })
+		try(t, { normal = vec(0, -1, 0), surface = world.wallSurface })
+	end
+	if world.barrierY and dir.y ~= 0 then   -- an invisible window blocker / map barrier (pass-through surfaces)
+		try((world.barrierY - pos.y) / dir.y, { normal = vec(0, -1, 0), surface = world.barrierSurface or 2 })
 	end
 	if world.npcY and dir.y ~= 0 then     -- the NPC's front face: x 99.7..100.3, z 30..31.9
 		local t = (world.npcY - pos.y) / dir.y
@@ -101,6 +104,36 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	check(string.format("%s: one hit, rounds no longer moved (%d in flight)", id, #(Deagle.rounds or {})),
 		#landed == 1 and #(Deagle.rounds or {}) == 0 and Deagle.roundsToken == nil, #landed)
 
+	-- the wall's look: our stone impact, scaled by the round's energy there (cube root against a 9 mm), and a stone hole
+	local scale = Deagle:ImpactScale(phys, 100)
+	local hole = M.decals and M.decals[#M.decals]
+	local stoneScale = M.fxScale and M.fxScale["deagle_impacts.stone"]
+	check(string.format("%s: stone wall -> deagle_impacts.stone x%.2f + %s %.3f m", id, stoneScale or -1, hole and hole.mat or "no hole", hole and hole.size or -1),
+		(M.fxNames["deagle_impacts.stone"] or 0) == 1 and math.abs((stoneScale or 0) - scale) < 1e-3 and hole
+		and hole.mat == "Materials/deagle/decals/bullet_hole_stone" and hole.size > 0.85 * Deagle.cfg.holeSize * scale - 1e-6
+		and hole.size < 1.15 * Deagle.cfg.holeSize * scale + 1e-6 and hole.life == Deagle.cfg.holeLife, M.fxNames["deagle_impacts.stone"])
+
+	-- invisible blockers in front of the wall (a window blocker, then a map barrier): the round flies through them
+	for _, b in ipairs({ 2, 4 }) do
+		world.barrierY, world.barrierSurface = 250, b
+		landed = {}
+		fire()
+		M.advance(1.0, 60)
+		local h = landed[1]
+		check(string.format("%s: flies through %s at 50 m, hits the wall at %.1f m", id, M.surfaceNames[b], h and h.hit.pos.y - 200 or -1),
+			#landed == 1 and math.abs(h.hit.pos.y - 300) < 1e-6 and math.abs(h.hit.dist - 100) < 0.05, h and h.hit.pos.y)
+	end
+	world.barrierY = nil
+
+	-- a wooden wall: wood splinters and a wood hole
+	world.wallSurface = 3
+	M.decals = {}
+	fire()
+	M.advance(1.0, 60)
+	check(string.format("%s: wood wall -> deagle_impacts.wood + %s", id, M.decals[1] and M.decals[1].mat or "no hole"),
+		(M.fxNames["deagle_impacts.wood"] or 0) == 1 and M.decals[1] and M.decals[1].mat == "Materials/deagle/decals/bullet_hole_wood", M.decals[1])
+	world.wallSurface = 1
+
 	-- the same wall at 8 fps: long frames are cut into steps, the round can't skip through the wall
 	landed = {}
 	fire()
@@ -172,6 +205,30 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	world.wallY = nil
 	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 end
+-- every surface KCD2 has (Libs/MaterialEffects/SurfaceTypes.xml, 1.5.6: 74 entries, mat_corpses_barrier twice) does something defined; every effect / hole
+-- named exists in deagle_impacts.xml / Materials/deagle/decals
+local kcd2 = [[mat_none mat_canopy mat_vegetation_seethrough mat_window mat_default mat_player_collider mat_player_only
+mat_no_photomode mat_npc_only mat_horse_only mat_horse_ignore mat_player_only_with_bark mat_level_barrier
+mat_deep_water_barrier mat_cart_slowdown mat_corpses_barrier mat_prepadeni_roadTocamp_barrier mat_flesh mat_leather
+mat_chainmail mat_plate mat_bells mat_chainmail_plate mat_fabric_plate mat_fabric_chainmail mat_fabric_chainmail_plate
+mat_leather_chainmail mat_thatch mat_plaster mat_wicker mat_ceramics mat_organic_stuff mat_glass mat_soil mat_mud
+mat_mudwater mat_rockwater mat_slowwater mat_water mat_rock mat_wood mat_wood_soft mat_grass mat_grassdry mat_forest
+mat_gravel mat_metal mat_vegetation mat_super_cool_sparkly_type mat_fabric mat_fabric_items mat_sack mat_invulnerable
+mat_shield_wood mat_road mat_field mat_grass_tall mat_bushes mat_metal_seethrough mat_vegetation_horse_ignore
+mat_rock_horse_ignore mat_wood_unwalk mat_rock_unwalk mat_soil_unwalk mat_stairs_stone mat_stairs_wood mat_slope
+mat_railing_wood_seethrough mat_door_wood mat_door_metal mat_barrier_navignore mat_nodraw_designer mat_raycast]]
+local impactsLib = io.open("src/Libs/Particles/deagle_impacts.xml"):read("*a")
+local missing, count = {}, 0
+for name in kcd2:gmatch("%S+") do
+	count = count + 1
+	local sfc = Deagle.surfaces[name]
+	if not sfc then missing[#missing + 1] = name .. " (not in the table)"
+	else
+		if sfc.fx ~= "pass" and sfc.fx ~= "blood" and not impactsLib:find('\n\t<Particles Name="' .. sfc.fx .. '"', 1, true) then missing[#missing + 1] = name .. " -> no effect " .. sfc.fx end
+		if sfc.hole and not io.open("src/Materials/deagle/decals/bullet_hole_" .. sfc.hole .. ".mtl") then missing[#missing + 1] = name .. " -> no hole " .. sfc.hole end
+	end
+end
+check(string.format("all %d KCD2 surfaces have an impact, a hole or pass through", count), #missing == 0 and count == 73, table.concat(missing, ", "))
 check("tracer speeds round to the nearest 25 m/s and stay in 250..1000",
 	Deagle:TracerFx(442) == "deagle_tracers.v450" and Deagle:TracerFx(362) == "deagle_tracers.v350" and Deagle:TracerFx(100) == "deagle_tracers.v250" and Deagle:TracerFx(5000) == "deagle_tracers.v1000",
 	Deagle:TracerFx(442))
