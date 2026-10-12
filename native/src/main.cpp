@@ -49,7 +49,15 @@ static uint64_t g_placed = 0;
 static std::string g_pendingConsole;           // console command to run next frame (native -> Lua)
 
 // ---- procedural motion (camera space: x right, y forward, z up), from the camera's own movement
-struct Spring { float x = 0, v = 0; void step(float target, float k, float c, float dt) { float a = -k * (x - target) - c * v; v += a * dt; x += v * dt; } };
+// Springs step implicitly (backward Euler): stable at any frame time. The explicit step it replaced blew up once
+// dt > 2 / sqrt(k) (a 70 ms hitch for the stiff shot kick, k = 784): the gun's transform went NaN and it vanished.
+struct Spring {
+	float x = 0, v = 0;
+	void step(float target, float k, float c, float dt) {
+		v = (v - dt * k * (x - target)) / (1.0f + dt * c + dt * dt * k);
+		x += v * dt;
+	}
+};
 static struct {
 	bool enabled = true, aiming = false;
 	float scale = 1.0f;                 // global multiplier
@@ -116,6 +124,9 @@ static void LocalRot(const float* deg, float* R) {   // R = Rz(yaw) * Rx(pitch) 
 	float t[9]; MulRot(Rz, Rx, t); MulRot(t, Ry, R);
 }
 
+static bool Finite(const float* f, int n) { for (int i = 0; i < n; i++) if (!std::isfinite(f[i])) return false; return true; }
+static void ResetMotion() { mo.yaw = mo.pitch = mo.land = mo.aimK = mo.kickBack = mo.kickPitch = mo.kickYaw = Spring{}; memset(mo.off, 0, sizeof(mo.off)); memset(mo.rot, 0, sizeof(mo.rot)); }
+
 static bool PlaceViewmodel(const float* cam) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
 	auto getEntity = (GetEntityFn)VFn(es, 0x70);
@@ -132,6 +143,11 @@ static bool PlaceViewmodel(const float* cam) {
 	for (int r = 0; r < 3; r++) {
 		tm[r * 4 + 0] = R[r * 3 + 0]; tm[r * 4 + 1] = R[r * 3 + 1]; tm[r * 4 + 2] = R[r * 3 + 2];
 		tm[r * 4 + 3] = cam[r * 4 + 3] + C[r * 3 + 0] * o[0] + C[r * 3 + 1] * o[1] + C[r * 3 + 2] * o[2];
+	}
+	if (!Finite(tm, 12)) {          // never hand the engine a broken transform (the gun would vanish for good)
+		static bool said = false; if (!said) { Log("motion went non-finite: reset"); said = true; }
+		ResetMotion();
+		return false;
 	}
 	setTM(e, tm, 0);
 	if (g_flashOn && g_flashId) {
