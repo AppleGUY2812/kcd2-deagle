@@ -14,7 +14,7 @@
 Scripted pistol in Lua (own action map + gamerules action hook), not the native hand-cannon pipeline (two-handed, ramrod reload = janky for a pistol).
 
 ## v0.1 (2026-10-10): gameplay core, no model
-Console: deagle_probe, deagle_toggle, deagle_fire, deagle_reload, deagle_set <k> <v>, deagle_cfg, deagle_fx <name>, deagle_log_actions, deagle_input.
+Console: deagle_toggle, deagle_fire, deagle_reload, deagle_set <k> <v>, deagle_cfg, deagle_fx <name>, deagle_log_actions, deagle_input.
 Keys (if LoadFromXML works): H draw, LMB fire, RMB aim, R reload.
 
 ## Open questions (need in-game test)

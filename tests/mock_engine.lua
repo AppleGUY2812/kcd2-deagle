@@ -1,11 +1,45 @@
 -- Minimal stand-in for KCD2's Lua environment: enough to run the Deagle script's flows and catch Lua errors.
 local M = { t = 100.0, timers = {}, logs = {}, errors = {}, anims = {}, native = {}, drawn_text = 0, cmds = {} }
 _G.MOCK = M
+M.trace = {}
+math.randomseed(42)
+-- every effect the script has on the engine (getters excluded), for before/after comparisons (tests/trace_flows.lua)
+local function fmt(v)
+	local t = type(v)
+	if t == "number" then return string.format("%.4g", v) end
+	if t == "string" then return string.format("%q", v) end
+	if t == "function" then return "fn" end
+	if t == "table" then
+		local mt = getmetatable(v)
+		if mt and mt.__tostring then return tostring(v) end
+		if v.x and v.y and v.z then return string.format("(%.4g,%.4g,%.4g)", v.x, v.y, v.z) end
+		if v.name then return "<" .. tostring(v.name) .. ">" end
+		local keys = {}
+		for k in pairs(v) do keys[#keys + 1] = tostring(k) end
+		table.sort(keys)
+		return "{" .. table.concat(keys, ",") .. "}"
+	end
+	return tostring(v)
+end
+local function effectful(name) return not (name:find("^Get") or name:find("^Is") or name:find("^Has")) end
+function M.record(who, name, ...)
+	if not effectful(name) then return end
+	local args = {}
+	for i = 1, select("#", ...) do args[#args + 1] = fmt((select(i, ...))) end
+	M.trace[#M.trace + 1] = string.format("%.3f %s.%s(%s)", M.t, who, name, table.concat(args, ", "))
+end
+function M.traced(who, name, fn)
+	return function(...) M.record(who, name, select(2, ...)) return fn(...) end
+end
+function M.tracedStatic(who, name, fn)
+	return function(...) M.record(who, name, ...) return fn(...) end
+end
 local function vec(x, y, z) return { x = x or 0, y = y or 0, z = z or 0 } end
 local idc = 0
 local function newEntity(name, props)
 	idc = idc + 1
-	local e = { id = setmetatable({}, { __tostring = function() return string.format("userdata: %016X", 0x100000 + idc) end }),
+	local n = idc
+	local e = { id = setmetatable({}, { __tostring = function() return string.format("userdata: %016X", 0x100000 + n) end }),
 		class = "BasicEntity", pos = vec(0, 0, 0), hidden = false, name = name }
 	local mt = { __index = function(t, k) return function(self, ...) return nil end end }   -- unknown methods: no-op
 	setmetatable(e, mt)
@@ -33,6 +67,8 @@ local function newEntity(name, props)
 	function e:GetBoneDir(b) return vec(0, 1, 0) end
 	function e:GetBoneLocal(b, t) return vec(0, 0, 0) end
 	function e:AddImpulse() return true end
+	for k, v in pairs(e) do if type(v) == "function" then e[k] = M.traced(name or "?", k, v) end end
+	setmetatable(e, { __index = function(t, k) return M.traced(name or "?", k, function() return nil end) end })
 	return e
 end
 M.newEntity = newEntity
@@ -112,4 +148,11 @@ function M.console(name)
 	if not f then table.insert(M.errors, "compile " .. name .. ": " .. err) return end
 	local ok, e = pcall(f); if not ok then table.insert(M.errors, "cmd " .. name .. ": " .. tostring(e)) end
 end
+for _, lib in ipairs({ "System", "Script", "Game", "Particle", "Physics", "ActionMapManager", "UIAction", "AudioUtils" }) do
+	for k, v in pairs(_G[lib]) do
+		if type(v) == "function" and not (lib == "System" and k == "LogAlways") then _G[lib][k] = M.tracedStatic(lib, k, v) end
+	end
+end
+local log = System.LogAlways
+System.LogAlways = function(msg) M.record("System", "LogAlways", msg) return log(msg) end
 return M

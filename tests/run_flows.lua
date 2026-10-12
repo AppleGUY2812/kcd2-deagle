@@ -57,7 +57,7 @@ step("dialogue camera", function()
 end)
 step("holster", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(1.5) end)
 print("   anims:", lastAnims(2), " shown:", tostring(Deagle.vmShown), " body hidden:", tostring(Deagle.bodyHidden), " DOF:", tostring(M.cvars.r_DepthOfField))
-step("console commands", function() for _, c in ipairs({ "deagle_arms", "deagle_motion", "deagle_hud", "deagle_predict", "deagle_native_test" }) do M.console(c) end end)
+step("console commands", function() for _, c in ipairs({ "deagle_arms", "deagle_motion", "deagle_hud", "deagle_native_test" }) do M.console(c) end end)
 print(string.format("\nnative commands sent: %d (sounds %d)", #M.native, (function() local n = 0 for _, c in ipairs(M.native) do if c:find("snd") then n = n + 1 end end return n end)()))
 print("TOTAL ERRORS:", #M.errors)
 for i, e in ipairs(M.errors) do if i <= 15 then print("  " .. e) end end
