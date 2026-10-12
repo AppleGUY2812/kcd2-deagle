@@ -64,6 +64,7 @@ Deagle.cfg.vm = {
 	-- rest -> clip, refire mid-recoil, a shot cut by reload / holster / aim, an inspect cut by anything (the gun may be
 	-- upside down). Clip end -> rest is instant: every clip ends on its rest pose.
 	blend = 0.08, refireBlend = 0.12, cutBlend = 0.2, inspectCutBlend = 0.3,
+	trimBlend = 0.1,          -- a clip ended where its hands settled (gun.times trim) is a few mm off its rest pose
 	ads = false,              -- aim down sights on right click (deagle_ads 1); off = CS-style hip only
 	recoilLayer = 1,          -- aimed shots: additive recoil on top of the ADS pose
 	adsBlend = 0.14,          -- seconds to blend hip <-> ADS (pose and zoom)
@@ -131,9 +132,29 @@ do
 	for i = 1, 8 do shots[i] = "decho/decho-" .. i .. ".wav" end
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
 		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = true,
-		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle" })
+		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
+		-- the clips were exported frame for frame at 24 fps, but the mod's sequences run at 30 (shots at 40): play them
+		-- faster (measured against YabrakProds' own video of the mod: reload back at idle ~1.7 s, as at 30 fps)
+		rate = { default = 30 / 24, shoot = 40 / 24, shootAdd = 40 / 24 },
+		-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
+		times = { reload = { cancel = 0.375, ready = 2.375, seat = 1.542, trim = 2.375 },
+			reloadEmpty = { cancel = 0.333, ready = 2.292, seat = 1.292, trim = 2.542 },
+			inspect = { trim = 5.833 }, inspectEmpty = { trim = 5.833 },
+			draw = { ready = 0.958, trim = 1.292 }, drawEmpty = { ready = 0.958, trim = 1.292 } } })
 end
 Deagle.gun = Deagle.guns.deagle
+
+-- playback speed of a clip relative to its export rate; clip-timeline seconds (cues, mag timings) divide by it
+function Deagle:Rate(key)
+	local r = self.gun and self.gun.rate
+	return r and (r[key] or r.default) or 1.0
+end
+
+-- a point of a clip from the gun's measured times (cancel / seat / ready / trim), in real seconds from its start
+function Deagle:ClipTime(key, what)
+	local t = self.gun and self.gun.times and self.gun.times[key] and self.gun.times[key][what]
+	return t and t / self:Rate(key) or nil
+end
 local SHOT_CUE = { { 0, "shot" } }
 local REST = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }   -- looping rest poses
 local HOLDS_AIM = { draw = true, drawEmpty = true, holster = true, holsterEmpty = true, reload = true, reloadEmpty = true }   -- aim waits for these; shots and inspect it cuts
@@ -418,7 +439,16 @@ end
 -- hip shots play the full shoot clip; aimed shots keep the ADS pose and add the recoil on top
 function Deagle:Fire(force)
 	local s = self.state
-	if self:VmBusyWith(DRAWING) or self.vmHolstering then return end
+	if self:VmDrawing() or self.vmHolstering then return end
+	if s.reloading then
+		if System.GetCurrTime() >= (s.reloadCancel or 0) then return end
+		self:CancelReload()
+		if s.ammo <= 0 then        -- an empty gun: the click, and the hands go back to the rest pose
+			self:Shoot(force)
+			self:VmPlay(self:VmRestKey(), true, 1.0, self.cfg.vm.cutBlend)
+			return
+		end
+	end
 	local aimed, wasLast = s.aiming, s.ammo == 1
 	if not self:Shoot(force) then return end
 	if s.ammo == 0 then self:VmRounds(false) end
@@ -469,38 +499,45 @@ function Deagle:Give(line)
 	log("give: pistol " .. self:CountOf(self.cfg.itemId) .. ", cartridges " .. self:CountOf(self.cfg.ammoId))
 end
 
--- the reload lasts exactly as long as its clip (full or empty-mag version)
+-- A reload's clip says when its work is done (gun.times, tools/clip_times.py): the new mag seats (the ammo goes in),
+-- then the gun comes back up (ready: the reload is over and a shot cuts the rest of the clip). Until the old mag leaves
+-- the gun, a shot cancels the reload: the rounds you had stay, no new ones.
 function Deagle:Reload()
 	local s, c = self.state, self.cfg
-	if s.reloading or s.ammo >= c.magSize or self:VmBusyWith(DRAWING) or self.vmHolstering then return end
+	if s.reloading or s.ammo >= c.magSize or self:VmDrawing() or self.vmHolstering then return end
 	if c.useAmmoItems and self:CountOf(c.ammoId) <= 0 then
 		self:Notify("No .50 AE cartridges")
 		return
 	end
 	local key = s.ammo == 0 and "reloadEmpty" or "reload"
 	local a = c.vm.anims[key]
-	local len = a[2] / (a[3] or c.vm.fps)
-	s.reloading = true
-	s.reloadEnd = System.GetCurrTime() + len
+	local len = a[2] / (a[3] or c.vm.fps) / self:Rate(key)
+	local seat = math.min(self:ClipTime(key, "seat") or len, len)
+	local ready = math.max(seat, math.min(self:ClipTime(key, "ready") or len, len))
+	local now = System.GetCurrTime()
+	s.reloading, s.magSeated = true, false
+	s.reloadEnd = now + ready
+	s.reloadCancel = now + (self:ClipTime(key, "cancel") or 0)
+	local this = s.reloadEnd
+	local function mine() return Deagle.state.reloading and Deagle.state.reloadEnd == this end
 	self:Notify("Desert Eagle  reloading...")
 	self:PlayTrigger(c.reloadTrigger)
-	Script.SetTimer(math.floor(len * 1000) + 20, function() self:FinishReload() end)
+	Script.SetTimer(math.floor(seat * 1000), function() if mine() then Deagle:SeatMag() end end)
+	Script.SetTimer(math.floor(ready * 1000) + 20, function() self:FinishReload() end)
 	self:VmPlay(key, false)
 	self:UpdateAim()
 	if key == "reloadEmpty" and self.gun.newMagAt then
-		local this = s.reloadEnd
-		Script.SetTimer(math.floor(self.gun.newMagAt * 1000), function()
-			if Deagle.state.reloading and Deagle.state.reloadEnd == this then Deagle:VmRounds(true) end
+		Script.SetTimer(math.floor(self.gun.newMagAt / self:Rate(key) * 1000), function()
+			if mine() then Deagle:VmRounds(true) end
 		end)
 	end
 end
 
--- Called by the timer and polled from input, so a reload never gets stuck if timers are cleared.
-function Deagle:FinishReload()
+-- the new magazine is in: its rounds count (taken from the inventory with useAmmoItems)
+function Deagle:SeatMag()
 	local s, c = self.state, self.cfg
-	if not s.reloading then return end
-	if System.GetCurrTime() < (s.reloadEnd or 0) then return end
-	s.reloading = false
+	if s.magSeated then return end
+	s.magSeated = true
 	local take = c.magSize - s.ammo
 	if c.useAmmoItems then
 		take = math.min(take, self:CountOf(c.ammoId))
@@ -509,6 +546,23 @@ function Deagle:FinishReload()
 		end
 	end
 	s.ammo = s.ammo + take
+	self:VmRounds(s.ammo > 0)
+end
+
+-- Called by the timer and polled from input, so a reload never gets stuck if timers are cleared.
+function Deagle:FinishReload()
+	local s = self.state
+	if not s.reloading then return end
+	if System.GetCurrTime() < (s.reloadEnd or 0) then return end
+	self:SeatMag()
+	s.reloading = false
+	self:ShowAmmo()
+end
+
+-- a shot while the old magazine is still in: no reload, the rounds in it stay
+function Deagle:CancelReload()
+	local s = self.state
+	s.reloading, s.reloadEnd = false, nil
 	self:VmRounds(s.ammo > 0)
 	self:ShowAmmo()
 end
@@ -790,16 +844,27 @@ end
 -- a one-shot clip is over: back to the rest loop, or into ADS if aim was held through it
 -- Instant: every one-shot clip ends exactly on its rest pose (and the reload's seated spare mag swaps for the
 -- identical main one without a blend that would fly them past each other). A queued draw / holster goes first.
-function Deagle:VmReturn()
+function Deagle:VmReturn(trimmed)
 	local s = self.state
 	if self.pendingToggle then self.pendingToggle = false; self:Toggle()
 	elseif s.aimHeld ~= s.aiming then self:UpdateAim()
-	else self:VmPlay(self:VmRestKey(), true, 1.0, 0) end
+	else
+		-- a trimmed clip ends a few mm off its rest pose: a short blend, unless it ends with the spare mag seated (the
+		-- rest pose has the main one there and a blend would fly both: switch, the image is the same to 3 mm)
+		local cur = self.vmAnim
+		local swap = cur and self.gun.swapTail and self.gun.swapTail[cur.key]
+		self:VmPlay(self:VmRestKey(), true, 1.0, (trimmed and not swap) and self.cfg.vm.trimBlend or 0)
+	end
 end
 
 function Deagle:VmBusy()   -- a one-shot clip (shot, reload, inspect, draw, holster) still playing
 	local a = self.vmAnim
 	return a and not a.loop and System.GetCurrTime() < (a.ends or 0)
+end
+
+function Deagle:VmDrawing()   -- a draw until the gun is up (its ready time): no shots, reloads or inspects before
+	local a = self.vmAnim
+	return a and DRAWING[a.key] and System.GetCurrTime() < (a.ready or a.ends or 0) or false
 end
 
 function Deagle:VmBusyWith(keys)
@@ -832,13 +897,14 @@ function Deagle:VmPlay(key, loop, speed, blend)
 		a = a[(self.vmShot - 1) % #a + 1]
 	end
 	local name, frames = a[1], a[2]
-	speed = speed or 1.0
+	local plain = (speed or 1.0) == 1.0     -- measured times only hold at the clip's own pace (not a fast holster)
+	speed = (speed or 1.0) * self:Rate(key)
 	blend = blend or self:VmBlendFor(key)
 	local cur = self.vmAnim
 	-- the reload ends with the spare mag seated and the main one parked off screen: switch to idle (identical image)
 	-- before any blend, or the blend would fly both magazines across the view
-	local tail = cur and self.gun.swapTail and self.gun.swapTail[cur.key]
-	local swapped = tail and System.GetCurrTime() >= (cur.ends or 0) - tail
+	local tail = cur and self.gun.swapTail and self.gun.swapTail[cur.key] and self.gun.swapTail[cur.key] / self:Rate(cur.key)
+	local swapped = tail and System.GetCurrTime() >= (cur.full or cur.ends or 0) - tail
 	if (cur and cur.name == name and not REST[key]) or (swapped and blend > 0 and key ~= "idle") then
 		pcall(vm.StartAnimation, vm, 0, c.anims.idle[1], c.layer, 0, 1.0, true)
 	end
@@ -848,18 +914,23 @@ function Deagle:VmPlay(key, loop, speed, blend)
 		log("$4viewmodel anim did not start: " .. name .. " " .. tostring(started))
 	end
 	local len = frames / (a[3] or c.fps) / speed
+	-- the clip ends where its hands have settled (gun.times trim): the rest of it is them holding still
+	local stop = math.min(not loop and plain and self:ClipTime(key, "trim") or len, len)
+	local trimmed = stop < len - 0.01
+	local now = System.GetCurrTime()
 	self.vmAnimToken = (self.vmAnimToken or 0) + 1
 	local tok = self.vmAnimToken
-	self.vmAnim = { key = key, name = name, loop = loop, ends = System.GetCurrTime() + len }
+	self.vmAnim = { key = key, name = name, loop = loop, ends = now + stop, full = now + len,
+		ready = now + math.min(plain and self:ClipTime(key, "ready") or stop, stop) }
 	if not loop then
 		self:PlayCues(key)
-		if HOLDS_AIM[key] and key ~= "reload" and len > c.adsLead then   -- reload: at its end (mag swap)
-			Script.SetTimer(math.floor((len - c.adsLead) * 1000), function()
+		if HOLDS_AIM[key] and key ~= "reload" and stop > c.adsLead then   -- reload: at its end (mag swap)
+			Script.SetTimer(math.floor((stop - c.adsLead) * 1000), function()
 				if Deagle.vmAnimToken == tok and Deagle.vmShown and Deagle.state.aimHeld then Deagle:UpdateAim(c.adsLead) end
 			end)
 		end
-		Script.SetTimer(math.max(1, math.floor(len * 1000) - 30), function()
-			if Deagle.vmAnimToken == tok and Deagle.vmShown and not Deagle.vmHolstering then Deagle:VmReturn() end
+		Script.SetTimer(math.max(1, math.floor(stop * 1000) - 30), function()
+			if Deagle.vmAnimToken == tok and Deagle.vmShown and not Deagle.vmHolstering then Deagle:VmReturn(trimmed) end
 		end)
 	end
 	return len
@@ -879,15 +950,17 @@ function Deagle:VmRecoilAdd(empty)
 	if not vm then return end
 	local list = c.anims.shootAdd
 	local a = empty and c.anims.shootEmptyAdd or list[((self.vmShot or 0) % #list) + 1]
+	local r = self:Rate(empty and "shootEmptyAdd" or "shootAdd")
+	local len = a[2] / (a[3] or c.fps) / r
 	self.vmShot = (self.vmShot or 0) + 1
 	self.vmRecoilToken = (self.vmRecoilToken or 0) + 1
 	local tok = self.vmRecoilToken
 	local now = System.GetCurrTime()
 	local rapid = now < (self.vmRecoilEnds or 0)       -- the last kick is still on: crossfade instead of snapping to zero
-	self.vmRecoilEnds = now + a[2] / (a[3] or c.fps)
-	pcall(vm.StartAnimation, vm, 0, a[1], c.recoilLayer, rapid and 0.04 or 0.0, 1.0, false)
+	self.vmRecoilEnds = now + len
+	pcall(vm.StartAnimation, vm, 0, a[1], c.recoilLayer, rapid and 0.04 or 0.0, r, false)
 	self:PlayCues(empty and "shootEmpty" or "shoot")
-	Script.SetTimer(math.floor(a[2] / (a[3] or c.fps) * 1000), function()
+	Script.SetTimer(math.floor(len * 1000), function()
 		if Deagle.vmRecoilToken ~= tok then return end
 		-- same frame: rest loop in (adsEmpty after the last round keeps the slide locked), recoil offset out
 		if Deagle.vmShown and not Deagle.vmHolstering and not Deagle:VmBusy() then Deagle:VmPlay(Deagle:VmRestKey(), true, 1.0, 0) end
@@ -902,8 +975,9 @@ function Deagle:PlayCues(key)
 	if not cues then return end
 	local tok = self.vmAnimToken
 	local v = self.cfg.vm.soundVol
+	local rate = self:Rate(key)
 	for _, c in ipairs(cues) do
-		local t, file = c[1], c[2]
+		local t, file = c[1] / rate, c[2]
 		local function fire()
 			if Deagle.vmAnimToken ~= tok and key ~= "shoot" and key ~= "shootEmpty" then return end
 			if file == "shot" then

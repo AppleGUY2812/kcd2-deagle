@@ -20,7 +20,7 @@ end
 local function reset(ammo) Deagle.state.ammo = ammo or 7; M.advance(3.0) end
 
 local m = mark(); act("deagle_toggle"); M.advance(0.3); act("deagle_fire"); act("deagle_reload"); act("deagle_inspect"); M.advance(1.6)
-expect("draw blocks fire / reload / inspect", since(m), "draw/0.08 idle1/0.00")
+expect("draw blocks fire / reload / inspect", since(m), "draw/0.08 idle1/0.10")   -- ends where it settles: 0.1 s blend
 expect("  ...nothing else started", tostring(select(2, since(m):gsub("/", ""))), "2")
 
 reset(7); m = mark(); act("deagle_fire"); M.advance(0.25); act("deagle_fire"); M.advance(2.0)
@@ -45,13 +45,27 @@ M.advance(1.0); m = mark(); act("deagle_toggle"); M.advance(0.3); act("deagle_to
 expect("draw/holster double-tap ends where asked", tostring(Deagle.state.drawn) .. " " .. tostring(Deagle.vmShown), "true true")
 
 reset(0); m = mark(); act("deagle_inspect"); M.advance(7.0)
-expect("empty gun: inspect_empty, back to empty idle", since(m), "inspect_empty/0.08 idle_empty/0.00")
+expect("empty gun: inspect_empty, back to empty idle", since(m), "inspect_empty/0.08 idle_empty/0.10")
 m = mark(); act("deagle_toggle"); M.advance(1.5)
 expect("empty gun: holster_empty", since(m), "holster_empty/")
 m = mark(); act("deagle_toggle"); M.advance(1.8)
-expect("empty gun: draw_empty -> idle_empty", since(m), "draw_empty/0.08 idle_empty/0.00")
+expect("empty gun: draw_empty -> idle_empty", since(m), "draw_empty/0.08 idle_empty/0.10")
 m = mark(); act("deagle_reload"); M.advance(3.2)
-expect("empty reload -> idle instantly", since(m), "reload_empty/0.08 idle1/0.00")
+expect("empty reload settles into idle", since(m), "reload_empty/0.08 idle1/0.10")
+
+-- reload timing (Deagle times / rate 1.25): mag seated 1.23 s, ready 1.90 s, clean cancel until 0.30 s
+reset(3); act("deagle_reload"); M.advance(1.3)
+expect("ammo goes in when the mag seats", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading), "7 true")
+M.advance(0.65)
+expect("  ...and the reload is over once the gun is up", tostring(Deagle.state.reloading), "false")
+reset(3); m = mark(); act("deagle_reload"); M.advance(0.15); act("deagle_fire"); M.advance(1.5)
+expect("a shot before the mag leaves cancels the reload", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. since(m), "2 false reload/0.08 shoot")
+reset(3); act("deagle_reload"); M.advance(0.6); act("deagle_fire"); M.advance(0.1)
+expect("  ...after it nothing until the gun is up", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading), "3 true")
+M.advance(1.3); m = mark(); act("deagle_fire"); M.advance(0.5)
+expect("  ...then a shot cuts the settle", Deagle.state.ammo .. " " .. since(m), "6 ")
+reset(0); m = mark(); act("deagle_reload"); M.advance(0.1); act("deagle_fire"); M.advance(0.5)
+expect("an empty reload cancels to the empty idle", tostring(Deagle.state.reloading) .. " " .. since(m), "false reload_empty/0.08 idle_empty/0.20")
 
 Deagle.cfg.vm.ads = true
 reset(6); m = mark(); act("deagle_aim"); M.advance(0.3); act("deagle_reload"); M.advance(3.2)

@@ -2,10 +2,11 @@
 """Writes a converted gun's game-side files into the repo: Scripts/Deagle/guns/<slug>.lua (clips + frame rates,
 sound cues, gunshot sounds, muzzle / ejection bones, magazine timings), the guns index, the .cdf and .chrparams.
 Prints the sound files to copy as 'SOUND <source relative path> <destination name>' lines.
-usage: gb_stage.py <repo> <slug> <profile.json> <build.json>"""
+usage: gb_stage.py <repo> <slug> <profile.json> <build.json> [times.json from tools/clip_times.py]"""
 import sys, os, json, re
 REPO, SLUG, PROF, BUILD = sys.argv[1:5]
 prof, build = json.load(open(PROF)), json.load(open(BUILD))
+ctimes = json.load(open(sys.argv[5])) if len(sys.argv) > 5 and os.path.exists(sys.argv[5]) else {}
 NAME = f"{SLUG}_vm"
 KEY = {"idle": "idle", "idle_empty": "idleEmpty", "draw": "draw", "draw_empty": "drawEmpty", "holster": "holster",
        "holster_empty": "holsterEmpty", "shoot": "shoot", "shoot_empty": "shootEmpty", "reload": "reload",
@@ -69,6 +70,8 @@ Deagle:RegisterGun({lua(SLUG)}, {{
 	rounds = {str(bool(build.get("has_rounds"))).lower()},
 	swapTail = {{ {", ".join(f"{k} = {v}" for k, v in swap.items())} }},
 	newMagAt = {t.get("newMagAt", "nil")},
+	-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
+	times = {{ {", ".join(f"{k} = {{ " + ", ".join(f"{w} = {v}" for w, v in sorted(d.items())) + " }" for k, d in ctimes.items())} }},
 }})
 '''
 gdir = os.path.join(REPO, "src", "Scripts", "Deagle", "guns")

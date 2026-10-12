@@ -35,6 +35,14 @@ want="$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["
 echo "$n of $want clips"
 [ "$n" = "$want" ] || { echo "rc failed on some clips (see KCD2Mod/Tools/rc/rc_log_errors.log)" >&2; exit 1; }
 
+echo "== clip timings (cancel / mag seated / ready / settled, from the clip tracks)"
+out="$(ps "& '$BLENDER' -b '$G\\${slug}_vm_roles.blend' -P '$(win "$here/tools/gb/gb_tracks_dump.py")' -- '$G\\tracks.json' '$G\\profile.json' 2>&1 | Select-String 'DUMP DONE|Traceback|Error' | % Line; exit 0")"
+grep -q "DONE" <<<"$out" || { echo "tracks dump failed: $out" >&2; exit 1; }
+ps "Copy-Item '$G\\tracks.json' '$(win "$tmp")\\tracks.json' -Force"
+swap="$(python3 -I -c 'import json,sys; print(",".join(json.load(open(sys.argv[1])).get("timing", {}).get("swapTail", {})))' "$tmp/build.json")"
+python3 "$here/tools/clip_times.py" "$tmp/tracks.json" --profile "$here/guns/$slug.json" --swap "$swap" > "$tmp/times.json"
+python3 -I -c 'import json,sys; [print("  ", k, v) for k, v in json.load(open(sys.argv[1])).items()]' "$tmp/times.json"
+
 echo "== textures"
 out="$(blend "$here/tools/gb/gb_vtf.py" "'$G' 'E:\\Tools\\deagle-work\\guns'" 'MATERIAL|MISSING|FAILED|VTF DONE|Traceback')"
 echo "$out"
@@ -44,7 +52,7 @@ python3 "$here/tools/gb/gb_tex.py" "$tmp/npy" "$tmp/tex.json" "$tmp/tif" "$slug"
 ps "Remove-Item -Recurse -Force '$G\\tex\\tif' -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force '$G\\tex\\tif' | Out-Null; Copy-Item '$(win "$tmp/tif")\\*' '$G\\tex\\tif\\' -Force; Set-Location '$G\\tex\\tif'; & '$RC' '*.tif' /userdialog=0 /refresh /streaming=1 | Select-String 'processed|rror' | % Line"
 
 echo "== stage into src/"
-python3 "$here/tools/gb/gb_stage.py" "$here" "$slug" "$here/guns/$slug.json" "$tmp/build.json" > "$tmp/stage.txt"
+python3 "$here/tools/gb/gb_stage.py" "$here" "$slug" "$here/guns/$slug.json" "$tmp/build.json" "$tmp/times.json" > "$tmp/stage.txt"
 grep "^STAGED" "$tmp/stage.txt"
 copies="Copy-Item '$G\\build\\model\\*.chr','$G\\build\\model\\*.skin','$G\\tex\\tif\\*.dds*' '$(win "$odir")\\' -Force; Copy-Item '$G\\build\\caf\\*.caf' '$(win "$adir")\\' -Force; Copy-Item '$G\\build\\anims.img' '$(win "$here/assets/build/gun_imgs")\\$slug.img' -Force"
 while IFS=$'\t' read -r _ rel base; do

@@ -36,4 +36,6 @@ Deagle:RegisterGun("glock_17", {
 	rounds = true,
 	swapTail = { reload = 0.917, reloadEmpty = 1.283 },
 	newMagAt = 1.65,
+	-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
+	times = { reload = { cancel = 0.3, ready = 1.833, seat = 1.233, trim = 1.833 }, reloadEmpty = { cancel = 0.267, ready = 1.867, seat = 0.9, trim = 1.867 }, inspect = { trim = 4.2 }, inspectEmpty = { trim = 4.2 }, draw = { ready = 0.967, trim = 1.133 }, drawEmpty = { ready = 0.967, trim = 1.133 } },
 })
