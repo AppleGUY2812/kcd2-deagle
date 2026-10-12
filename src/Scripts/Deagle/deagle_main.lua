@@ -1200,7 +1200,9 @@ function Deagle:PathAdd(a, b, color)
 	self.paths = list
 	list[#list + 1] = { a = a, b = b, c = color }
 	while #list > self.cfg.debugPathsMax do table.remove(list, 1) end
-	if not self.pathsToken then
+	-- (re)start the frame loop: none running, or one that stopped ticking (a dev reload can break a timer chain and
+	-- leave its token behind: the lines were never drawn again, in game 2026-10-12)
+	if not self.pathsToken or System.GetCurrTime() - (self.pathsTickT or -1e9) > 0.5 then
 		local token = {}
 		self.pathsToken = token
 		Script.SetTimer(0, function() Deagle:PathTick(token) end)
@@ -1213,6 +1215,7 @@ function Deagle:PathMark(p, color)
 end
 function Deagle:PathTick(token)
 	if token ~= self.pathsToken then return end
+	self.pathsTickT = System.GetCurrTime()
 	if not self.cfg.debugPaths or not self.paths or #self.paths == 0 then self.pathsToken = nil; return end
 	for _, l in ipairs(self.paths) do pcall(System.DrawLine, l.a, l.b, l.c[1], l.c[2], l.c[3], 1) end
 	Script.SetTimer(0, function() Deagle:PathTick(token) end)
@@ -1287,7 +1290,7 @@ function Deagle:LaunchRound(pos, dir, phys)
 	if self:StepRound(r, self.frameDt or 1 / 30) then return r end   -- landed in this frame
 	self.rounds = self.rounds or {}
 	table.insert(self.rounds, r)
-	if not self.roundsToken then
+	if not self.roundsToken or System.GetCurrTime() - (self.roundsTickT or -1e9) > 0.5 then   -- none, or a dead chain
 		local token = {}
 		self.roundsToken = token
 		Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
@@ -1298,6 +1301,7 @@ end
 -- every frame while rounds fly: each moves by the game time since its last move (a round fired this frame waits)
 function Deagle:RoundsTick(token)
 	if token ~= self.roundsToken then return end
+	self.roundsTickT = System.GetCurrTime()
 	local now, keep = System.GetCurrTime(), {}
 	for _, r in ipairs(self.rounds or {}) do
 		local dt = now - r.t
@@ -2293,6 +2297,7 @@ function Deagle:OnGameplayStarted()
 	self.vmId, self.casePool, self.flashUntil = nil, nil, nil   -- a load ends the old world: its ids may now name other entities
 	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
+	self.paths, self.pathsToken = nil, nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()

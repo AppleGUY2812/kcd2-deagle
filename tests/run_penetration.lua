@@ -269,6 +269,12 @@ local drawn = (M.lines or 0) - l0
 check(string.format("bullet paths: %d pieces (yellow %d, red %d, cyan %d, crosses), %d lines drawn in 6 frames", #(Deagle.paths or {}),
 	kinds["1,0.9,0.1"] or 0, kinds["1,0.15,0.1"] or 0, kinds["0.2,0.9,1"] or 0, drawn),
 	(kinds["1,0.9,0.1"] or 0) > 0 and (kinds["1,0.15,0.1"] or 0) > 0 and (kinds["0.2,0.9,1"] or 0) > 0 and drawn >= 6 * #Deagle.paths, drawn)
+Deagle.pathsToken = {}                               -- a stale token (a dev reload broke the loop): it restarts
+M.advance(1.0, 60)
+local l1 = M.lines
+fire()
+M.advance(0.1, 60)
+check("bullet paths: a dead draw loop restarts on the next shot", M.lines > l1, M.lines - l1)
 M.console("deagle_paths", "clear"); M.advance(0.1, 60)
 local afterClear = M.lines
 M.advance(0.1, 60)

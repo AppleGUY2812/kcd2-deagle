@@ -233,6 +233,15 @@ for name in kcd2:gmatch("%S+") do
 	end
 end
 check(string.format("all %d KCD2 surfaces have an impact, a hole or pass through", count), #missing == 0 and count == 73, table.concat(missing, ", "))
+-- a dev reload can break the frame loop and leave its token behind: the next round must still fly and land
+world.wallY = 300
+Deagle:UseGun("deagle"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+Deagle.roundsToken, Deagle.rounds = {}, {}          -- a stale token, no loop running
+landed = {}
+fire()
+M.advance(1.0, 60)
+check("a dead round loop (stale token) restarts: the round still lands (" .. #landed .. ")", #landed == 1, #landed)
+world.wallY = nil
 check("tracer speeds round to the nearest 25 m/s and stay in 250..1000",
 	Deagle:TracerFx(442) == "deagle_tracers.v450" and Deagle:TracerFx(362) == "deagle_tracers.v350" and Deagle:TracerFx(100) == "deagle_tracers.v250" and Deagle:TracerFx(5000) == "deagle_tracers.v1000",
 	Deagle:TracerFx(442))
