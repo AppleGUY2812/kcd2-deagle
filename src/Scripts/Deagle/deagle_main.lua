@@ -420,6 +420,7 @@ end
 function Deagle:SlowMo(on)
 	self.slowOn = on and true or false
 	pcall(System.SetCVar, "t_Scale", on and self.cfg.slowmo or 1)
+	self:Native(string.format("speed %.3f", on and self.cfg.slowmo or 1))   -- our sounds slow down with the game's
 	log("slow motion " .. (on and ("x" .. tostring(self.cfg.slowmo)) or "off"))
 end
 
@@ -2109,6 +2110,7 @@ function Deagle:NativeSyncVm()
 	self:Native("follow " .. ((self.vmShown and self.vmInFp) and "1" or "0"))
 	self:Native(string.format("motion %.2f", c.motion))
 	self:Native("flashgrow " .. table.concat(self.cfg.flashGrow, " "))
+	self:Native(string.format("speed %.3f", self.slowOn and self.cfg.slowmo or 1))
 end
 
 function Deagle:Snd(file, vol)

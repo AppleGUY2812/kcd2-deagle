@@ -295,12 +295,23 @@ typedef int (__stdcall* F_Listener)(void* sys, int listener, const FVec* pos, co
 typedef int (__stdcall* F_Chan3D)(void* chan, const FVec* pos, const FVec* vel);
 typedef int (__stdcall* F_ChanMinMax)(void* chan, float mn, float mx);
 typedef int (__stdcall* F_ChanPaused)(void* chan, int paused);
+typedef int (__stdcall* F_MasterGroup)(void* sys, void** group);
+typedef int (__stdcall* F_GroupPitch)(void* group, float pitch);
 static struct { F_SysCreate create; F_SysInit init; F_CreateSound createSound; F_PlaySound play; F_Update update; F_ChanVol vol;
-	F_Listener listener; F_Chan3D chan3d; F_ChanMinMax minmax; F_ChanPaused paused; } fm{};
+	F_Listener listener; F_Chan3D chan3d; F_ChanMinMax minmax; F_ChanPaused paused; F_MasterGroup master; F_GroupPitch pitch; } fm{};
+static float g_soundSpeed = 1.0f;   // game speed (F9 slow motion): our sounds play at it, like the game's own
 static void* g_fmod = nullptr;
 static std::unordered_map<std::string, void*> g_sounds;
 static std::string g_soundRoot;
 static float g_masterVol = 1.0f;
+
+// every sound of ours, playing or not, at the game's speed (the master channel group's pitch: 0.1 = ten times slower
+// and lower, like the game's own sounds in slow motion)
+static void SetSoundSpeed(float speed) {
+	g_soundSpeed = speed > 0.01f ? speed : 0.01f;
+	void* group = nullptr;
+	if (g_fmod && fm.master(g_fmod, &group) == 0 && group) fm.pitch(group, g_soundSpeed);
+}
 
 static bool FmodInit() {
 	if (g_fmod) return true;
@@ -316,7 +327,10 @@ static bool FmodInit() {
 	fm.chan3d = (F_Chan3D)GetProcAddress(h, "FMOD_Channel_Set3DAttributes");
 	fm.minmax = (F_ChanMinMax)GetProcAddress(h, "FMOD_Channel_Set3DMinMaxDistance");
 	fm.paused = (F_ChanPaused)GetProcAddress(h, "FMOD_Channel_SetPaused");
-	if (!fm.create || !fm.init || !fm.createSound || !fm.play || !fm.update || !fm.vol || !fm.listener || !fm.chan3d || !fm.minmax || !fm.paused) {
+	fm.master = (F_MasterGroup)GetProcAddress(h, "FMOD_System_GetMasterChannelGroup");
+	fm.pitch = (F_GroupPitch)GetProcAddress(h, "FMOD_ChannelGroup_SetPitch");
+	if (!fm.create || !fm.init || !fm.createSound || !fm.play || !fm.update || !fm.vol || !fm.listener || !fm.chan3d || !fm.minmax || !fm.paused
+		|| !fm.master || !fm.pitch) {
 		Log("fmod exports missing"); return false;
 	}
 	void* sys = nullptr;
@@ -325,6 +339,7 @@ static bool FmodInit() {
 	Log("FMOD system create %d init %d", r1, r2);
 	if (r1 != 0 || r2 != 0) return false;
 	g_fmod = sys;
+	SetSoundSpeed(g_soundSpeed);
 	return true;
 }
 
@@ -553,6 +568,7 @@ static void Command(const char* line) {
 		if (sscanf_s(rest, "%259s %f %f %f %f %f %f", file, (unsigned)sizeof(file), &v, &at[0], &at[1], &at[2], &mn, &mx) >= 5 && Finite(at, 3))
 			PlaySound3D(file, v, at, mn, mx);
 	}
+	else if (!strcmp(cmd, "speed")) { float v = (float)atof(rest); if (Finite(&v, 1)) SetSoundSpeed(v); Log("sound speed %.2f", g_soundSpeed); }
 	else if (!strcmp(cmd, "flashgrow")) {   // flashgrow <size on drawn frame 1> <2> ... (up to 8; none = the particles' own life)
 		float v[8] = {};
 		int n = sscanf_s(rest, "%f %f %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);
