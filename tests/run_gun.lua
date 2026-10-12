@@ -22,6 +22,22 @@ step("empty reload", function() act("deagle_reload"); M.advance(4) end)
 local ammoAfterReload = Deagle.state.ammo
 step("one shot + reload", function() act("deagle_fire"); M.advance(0.5); act("deagle_reload"); M.advance(4) end)
 step("inspect", function() act("deagle_inspect"); M.advance(6) end)
+-- fire modes: every mode the gun has (B cycles); burst = 3 rounds a press, auto = rounds while held
+local modeResults = {}
+local modes = Deagle:FireModes()
+for i = 1, #modes do
+	local mode = Deagle:FireMode()
+	Deagle.state.ammo = g.magSize; M.advance(0.5)
+	local before = Deagle.state.ammo
+	if mode == "auto" then
+		Deagle:OnAction("deagle_fire", "press"); M.advance(0.55); Deagle:OnAction("deagle_fire", "release"); M.advance(0.5)
+	else
+		act("deagle_fire"); M.advance(0.5)
+	end
+	local after = Deagle.state.ammo; M.advance(1.0)
+	modeResults[#modeResults + 1] = { mode = mode, used = before - after }
+	act("deagle_firemode"); M.advance(0.1)
+end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
 
@@ -53,6 +69,16 @@ check("every clip belongs to " .. id .. " (" .. roles .. " used)", #unknown == 0
 check("every sound is staged (" .. sounds .. " played)", #missing == 0, table.concat(missing, ", "))
 check("magazine refills to " .. g.magSize, ammoAfterReload == g.magSize, ammoAfterReload)
 check("empty magazine hides its rounds", (not g.rounds) or roundsWhenEmpty == false, roundsWhenEmpty)
+for _, r in ipairs(modeResults) do
+	local want = (r.mode == "semi" and 1) or (r.mode == "burst" and 3) or nil
+	local ok = want and r.used == want or (r.mode == "auto" and r.used >= 3)
+	check(string.format("%s fire: %d round(s) per trigger", r.mode, r.used), ok, r.used)
+end
+local w = g.cs2 and Deagle.cs2 and Deagle.cs2[g.cs2]
+if w then
+	check(string.format("CS2 %s: damage %g, %d rpm, head x%.1f", g.cs2, Deagle.cfg.damage, 60 / Deagle.cfg.interval, Deagle.cfg.headshotMult * 1.5),
+		Deagle.cfg.damage == w.damage and math.abs(Deagle.cfg.interval - w.cycle) < 1e-6, Deagle.cfg.damage)
+end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))
 os.exit(fails == 0 and 0 or 1)

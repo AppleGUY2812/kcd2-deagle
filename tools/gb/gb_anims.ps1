@@ -16,7 +16,8 @@ $ad = "$AR\Animations\guns\$name"
 Remove-Item -Recurse -Force $ad -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $ad | Out-Null
 Get-ChildItem "$Gun\build\anims\*.dae" | % {
   Copy-Item $_.FullName $ad
-  Set-Content "$ad\$($_.BaseName).animsettings" "{`n`t`"build`": {`n`t`t`"skeletonAlias`": `"$alias`",`n`t`t`"additive`": false`n`t}`n}" -Encoding ascii
+  $add = if ($_.BaseName -like '*_add') { 'true' } else { 'false' }
+  Set-Content "$ad\$($_.BaseName).animsettings" "{`n`t`"build`": {`n`t`t`"skeletonAlias`": `"$alias`",`n`t`t`"additive`": $add`n`t}`n}" -Encoding ascii
 }
 Set-Location $ad
 Get-ChildItem *.dae | % { & $RC $_.Name /refresh /userdialog=0 | Out-Null }

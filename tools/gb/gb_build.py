@@ -390,5 +390,13 @@ for act in sorted(roles(), key=lambda a: a.name):
     bpy.ops.bcry.export_animations("EXEC_DEFAULT", filepath=os.path.join(out_anims, f"{clip}.dae"), disable_rc=True, save_dae=True)
     info["clips"][act.name[1:]] = {"name": clip, "frames": f1 - f0 + 1, "fps": fps}
     print("ANIM", clip, f0, f1, fps)
+    if act.name in ("@shoot", "@shoot_empty"):    # additive copy: recoil stacked on the idle / ADS pose (burst, auto)
+        for c in [c for c in bpy.data.collections if c.name.endswith(".i_caf")]:
+            bpy.data.collections.remove(c)
+        bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); bpy.context.view_layer.objects.active = arm
+        bpy.ops.bcry.add_cry_animation_node("EXEC_DEFAULT", node_type="i_caf", node_name=clip + "_add", mode="Manual", range_type="Values", node_start=f0, node_end=f1)
+        bpy.ops.bcry.export_animations("EXEC_DEFAULT", filepath=os.path.join(out_anims, f"{clip}_add.dae"), disable_rc=True, save_dae=True)
+        info["clips"][act.name[1:] + "_add"] = {"name": clip + "_add", "frames": f1 - f0 + 1, "fps": fps}
+        print("ANIM", clip + "_add", f0, f1, fps)
 json.dump(info, open(os.path.join(GUN, "build.json"), "w"), indent=1)
 print("GB BUILD DONE")

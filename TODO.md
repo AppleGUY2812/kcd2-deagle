@@ -28,6 +28,10 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- Real bullets (asked 2026-10-11): projectile travel + drop, penetration vs the KCD2 armor on the hit body part,
+  ricochets off plate; ammo data from Escape from Tarkov (tarkov.dev public API); CS2 keeps the handling
+- Shotguns: CS2 pellets (m_nNumBullets) not used yet
+- Test in game: B on the Glock (semi / burst), CS2 damage + range falloff, rapid-fire recoil
 - Test in game: `deagle_gun glock_17` (first GameBanana gun through tools/gb), then `deagle_gun deagle`
 - Move the Deagle itself onto tools/gb (it still plays at 24 fps; its source clips are 30 / 40 fps, so ~25-40% slow)
 - Gore: headshot head-pop on kills (hide the head attachment + blood burst + gib), later real dismemberment (native)

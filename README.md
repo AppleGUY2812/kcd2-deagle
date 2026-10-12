@@ -16,6 +16,8 @@ or share the built mod.
 | R | reload |
 | Y | inspect |
 | Right click | aim down sights, off by default (`deagle_ads 1`) |
+| B | fire mode (guns whose CS2 counterpart has burst / full auto) |
+| `deagle_gun <id>` | which converted gun the pistol is (no id: list) |
 | `deagle_give` | adds the pistol |
 | `deagle_arms medieval` / `mw` | sleeve and glove look |
 | `deagle_motion 0..2` | bob / sway strength (plugin) |
@@ -86,4 +88,9 @@ resampled for rc, magazine-swap timings measured), compiles them, converts the t
 `src/` (`Scripts/Deagle/guns/<slug>.lua` holds the gun's data) and runs the tests (`tests/run_gun.lua <slug>`).
 Audit it like the Deagle: `tools/gb/gb_tracks_dump.py` on `<slug>_vm_roles.blend`, then
 `tools/vm_transition_audit.py`; `tools/gb/gb_roles_preview.py` + `gb_sheet.py` render the converted clips.
-In game: `deagle_gun glock_17` (no argument lists the guns); the gameplay stays the Deagle's.
+In game: `deagle_gun glock_17` (no argument lists the guns).
+
+Handling comes from **CS2**: each profile names its closest CS2 weapon (`"cs2": "weapon_glock"`, guessed from the
+title). `tools/gb/cs2_fetch.sh` downloads CS2's current `weapons.vdata` (SteamDB GameTracking-CS2) and
+`python3 tools/gb/cs2_apply.py .` writes `Scripts/Deagle/guns/cs2.lua`; the script takes damage, headshot multiplier,
+range falloff, fire rate, recoil and fire modes (semi / burst / auto) from it.

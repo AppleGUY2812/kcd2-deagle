@@ -51,6 +51,28 @@ MAG_SIZES = [   # name pattern -> rounds (edit in the profile if the gun differs
 ]
 
 
+CS2 = [   # gun name pattern -> closest CS2 weapon (its stats drive damage, fire rate, recoil, fire modes); edit "cs2" in the profile
+    (r"deagle|desert ?eagle", "weapon_deagle"), (r"r8|revolver", "weapon_revolver"), (r"glock", "weapon_glock"),
+    (r"usp", "weapon_usp_silencer"), (r"p250|p320|p226|sig", "weapon_p250"), (r"five.?seven", "weapon_fiveseven"),
+    (r"cz.?75", "weapon_cz75a"), (r"tec.?9", "weapon_tec9"), (r"m9\b|m9a1|beretta|1911|m45|makarov|p2000", "weapon_hkp2000"),
+    (r"\bak|akm|ak alpha|ak-?\d", "weapon_ak47"), (r"galil", "weapon_galilar"), (r"aug", "weapon_aug"), (r"famas", "weapon_famas"),
+    (r"sg ?55[26]", "weapon_sg556"), (r"as ?val|m4a1-?s", "weapon_m4a1_silencer"),
+    (r"m4|mk18|hk416|mcx|mk16|honey ?badger|tavor|x95|l85|mdr|scar-?l", "weapon_m4a1"),
+    (r"scar|mk17|g3|sa-?58|fal", "weapon_ak47"), (r"mp5", "weapon_mp5sd"), (r"mp7", "weapon_mp7"),
+    (r"mp9|mpx|spc", "weapon_mp9"), (r"p90", "weapon_p90"), (r"ump", "weapon_ump45"), (r"mac.?10|uzi|vector", "weapon_mac10"),
+    (r"bizon|pp-?19|vityaz", "weapon_bizon"), (r"m249", "weapon_m249"), (r"negev", "weapon_negev"),
+    (r"awp|barrett|m82|tac-?338", "weapon_awp"), (r"svd|m110|sass", "weapon_g3sg1"), (r"sks|ssg", "weapon_ssg08"),
+    (r"supernova|nova|ksg|m590", "weapon_nova"), (r"benelli|m4 super|xm1014", "weapon_xm1014"), (r"sawed", "weapon_sawedoff"), (r"mag.?7", "weapon_mag7"),
+]
+
+
+def guess_cs2(title):
+    for pat, w in CS2:
+        if re.search(pat, title or "", re.I):
+            return w
+    return None
+
+
 def _first(patterns, names, exclude=()):
     for p in patterns:
         rx = re.compile(p, re.I)
@@ -268,6 +290,7 @@ def build_profile(inspect, title="", source=None):
         "mdl": inspect.get("mdl"),
         "magSize": _int(ws.get("clip_size")) or guess_mag_size(title or inspect.get("mdl", "")),
         "fireInterval": _float(ws.get("cycletime")),
+        "cs2": guess_cs2(title),
         "weaponScript": {k: ws[k] for k in ("printname", "clip_size", "cycletime", "damage", "range", "penetration", "weapontype", "bullets") if k in ws},
         "clips": clips,
         "bones": guess_bones(inspect.get("bones", []), inspect.get("attachments", [])),

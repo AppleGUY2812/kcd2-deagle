@@ -160,3 +160,12 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   its reloads end with BOTH mags seated (overlapping); its empty reload uses the spare mag as the new one and brings
   j_mag1 back at 1.65 s. All measured by gb_build (swapTail, newMagAt), the script reads them per gun.
 - Shared MW-hands materials (arms / sleeve / gloves) are found in other imported guns' folders automatically.
+
+## 2026-10-12 — CS2 handling + fire modes
+- CS2 moved weapon stats out of items_game.txt into scripts/weapons.vdata (KV3 text, `_base` inheritance); SteamDB's
+  GameTracking-CS2 mirrors it (CS2 isn't installed here). Key by entry name: the R8 (weapon_revolver) reuses the
+  class weapon_deagle. Deagle: 53 dmg, 0.225 s, head x3.9, armor ratio 1.864, range mod 0.85 / 500 u, recoil 48.2+-18.
+- Mapping: headshotMult = CS2 head / 1.5 (KCD2's DealDamage already applies head x1.5); damage x rangeMod^(m / 12.7);
+  kick scaled by CS2 recoil magnitude relative to the Deagle's 48.2 (its tuned 2.6 deg); modes from m_bIsFullAuto /
+  m_bHasBurstMode (burst rounds 0.06 s apart, burstCycle after). Rapid fire stacks the additive recoil clip on the
+  idle (converted guns now export <clip>_add too), crossfading 0.04 s when the previous kick is still playing.

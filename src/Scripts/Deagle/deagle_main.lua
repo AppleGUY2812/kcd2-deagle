@@ -10,7 +10,13 @@ Deagle.cfg = {
 	ammoId = "214b29af-66a9-42be-882a-d63562010b7b",   -- deagle_ammo
 	useAmmoItems = false,     -- cartridge items stack as one count in KCD2; unlimited reserve until that is solved
 	magSize = 7,
-	interval = 0.22,          -- seconds between shots (semi-auto cap)
+	interval = 0.22,          -- seconds between shots (the gun's CS2 cycle time replaces it)
+	rangeMod = 1.0,           -- damage x rangeMod per 12.7 m (CS2: per 500 units)
+	burstShotGap = 0.06,      -- seconds between the rounds of a burst
+	burstInterval = 0.3,      -- after a burst
+	heatPerShot = 0.35,       -- degrees of extra spread per shot; cools at heatDecay deg/s (rapid fire opens the cone)
+	heatDecay = 4.0,
+	kickPitchVar = 0.0,
 	range = 250,
 	damage = 60,              -- health damage (game applies body_part coeff: head 1.5, limbs 0.7)
 	headshotMult = 3.0,       -- extra on top: .50 AE to the head should drop anyone
@@ -125,7 +131,7 @@ do
 	for i = 1, 8 do shots[i] = "decho/decho-" .. i .. ".wav" end
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
 		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = true,
-		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true })
+		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle" })
 end
 Deagle.gun = Deagle.guns.deagle
 local SHOT_CUE = { { 0, "shot" } }
@@ -218,7 +224,7 @@ function Deagle:Recoil()
 		local d = System.GetViewCameraDir()
 		local pitch = math.asin(math.max(-1, math.min(1, d.z)))
 		local yaw = math.atan2(-d.x, d.y)
-		local up = math.rad(self.cfg.kickPitch) * k * (self.state.aiming and 0.7 or 1)
+		local up = math.rad(self.cfg.kickPitch + self.cfg.kickPitchVar * (math.random() * 2 - 1)) * k * (self.state.aiming and 0.7 or 1)
 		local side = math.rad(self.cfg.kickYaw) * k * (math.random() * 2 - 1)
 		p.actor:PlayerSetViewAngles({ x = pitch + up, y = 0, z = yaw + side })
 	end)
@@ -318,7 +324,7 @@ function Deagle:ApplyHit(hit, dir)
 			end)
 		else
 			local part = bodyPartFor(e, hit.pos)
-			local dmg = c.damage * (part == "head" and c.headshotMult or 1)
+			local dmg = c.damage * (part == "head" and c.headshotMult or 1) * c.rangeMod ^ ((hit.dist or 0) / 12.7)
 			hit.bodyPart = part
 			try("DealDamage", function() e.soul:DealDamage(c.stamina, dmg, p.id, false, part) end)
 		end
@@ -368,7 +374,7 @@ function Deagle:EjectCase()
 end
 
 -- one shot: ray, effects, ammo. Returns true when a round was fired.
-function Deagle:Shoot()
+function Deagle:Shoot(force)
 	local s, c = self.state, self.cfg
 	local p = self:Player()
 	if not p or s.reloading then return false end
@@ -379,17 +385,19 @@ function Deagle:Shoot()
 		return false
 	end
 	local now = System.GetCurrTime()
-	if now - s.lastShot < c.interval then return false end
+	if not force and now - s.lastShot < c.interval - 0.005 then return false end
 	if s.ammo <= 0 then
 		self:PlayTrigger(c.dryTrigger)
 		self:ShowAmmo()
 		return false
 	end
+	s.heat = math.max(0, (s.heat or 0) - (now - s.lastShot) * c.heatDecay)
 	s.lastShot = now
 	s.ammo = s.ammo - 1
 
 	local pos = System.GetViewCameraPos()
-	local dir = coneDir(System.GetViewCameraDir(), s.aiming and c.spreadAim or c.spreadHip)
+	local dir = coneDir(System.GetViewCameraDir(), (s.aiming and c.spreadAim or c.spreadHip) + s.heat)
+	s.heat = s.heat + c.heatPerShot
 
 	self:PlayTrigger(c.shotTrigger)
 	self:SpawnFx(c.muzzleFx, self:MuzzlePos(), dir, 0.6)
@@ -408,13 +416,13 @@ function Deagle:Shoot()
 end
 
 -- hip shots play the full shoot clip; aimed shots keep the ADS pose and add the recoil on top
-function Deagle:Fire()
+function Deagle:Fire(force)
 	local s = self.state
 	if self:VmBusyWith(DRAWING) or self.vmHolstering then return end
 	local aimed, wasLast = s.aiming, s.ammo == 1
-	if not self:Shoot() then return end
+	if not self:Shoot(force) then return end
 	if s.ammo == 0 then self:VmRounds(false) end
-	if aimed then
+	if aimed or (self:FireMode() ~= "semi" and self.cfg.vm.anims.shootAdd) then   -- rapid fire stacks recoil on the idle
 		self:VmRecoilAdd(wasLast)
 	else
 		self:VmPlay(wasLast and "shootEmpty" or "shoot", false)
@@ -762,7 +770,8 @@ function Deagle:DrawHud()
 	end
 	self.hudOk = true
 	hudText(x + 0.028 * W, y + 0.012 * H, "/ " .. self.cfg.magSize, h.size * 0.9, h.col)
-	local label = s.reloading and "RELOADING" or "DESERT EAGLE"
+	local label = s.reloading and "RELOADING" or string.upper(self.gun.short or self.gun.title or "DESERT EAGLE")
+	if #self:FireModes() > 1 then label = label .. "   " .. string.upper(self:FireMode()) end
 	hudText(x - 0.004 * W, y + 0.05 * H, label, h.size * 0.55, { h.col[1], h.col[2], h.col[3], 0.7 })
 end
 
@@ -868,11 +877,15 @@ end
 function Deagle:VmRecoilAdd(empty)
 	local vm, c = self:VmEntity(), self.cfg.vm
 	if not vm then return end
-	local a = empty and c.anims.shootEmptyAdd or c.anims.shootAdd[((self.vmShot or 0) % 2) + 1]
+	local list = c.anims.shootAdd
+	local a = empty and c.anims.shootEmptyAdd or list[((self.vmShot or 0) % #list) + 1]
 	self.vmShot = (self.vmShot or 0) + 1
 	self.vmRecoilToken = (self.vmRecoilToken or 0) + 1
 	local tok = self.vmRecoilToken
-	pcall(vm.StartAnimation, vm, 0, a[1], c.recoilLayer, 0.0, 1.0, false)
+	local now = System.GetCurrTime()
+	local rapid = now < (self.vmRecoilEnds or 0)       -- the last kick is still on: crossfade instead of snapping to zero
+	self.vmRecoilEnds = now + a[2] / (a[3] or c.fps)
+	pcall(vm.StartAnimation, vm, 0, a[1], c.recoilLayer, rapid and 0.04 or 0.0, 1.0, false)
 	self:PlayCues(empty and "shootEmpty" or "shoot")
 	Script.SetTimer(math.floor(a[2] / (a[3] or c.fps) * 1000), function()
 		if Deagle.vmRecoilToken ~= tok then return end
@@ -1025,7 +1038,10 @@ function Deagle:OnAction(action, activation)
 	end
 	if not s.drawn then return false end
 	if action == "deagle_fire" then
-		if activation == "press" then self:Fire() end
+		if activation == "press" then self:TriggerPress() else self.state.trigger = false end
+		return true
+	elseif action == "deagle_firemode" then
+		if activation == "press" then self:CycleFireMode() end
 		return true
 	elseif action == "deagle_aim" then
 		self:SetAim(activation == "press")
@@ -1182,6 +1198,71 @@ if not Deagle.listening then
 	end)
 end
 
+-- ---- fire modes: from the gun's CS2 weapon (burst / full auto); B cycles them, the HUD shows the current one
+function Deagle:FireModes()
+	return self.gun.modes or { "semi" }
+end
+
+function Deagle:FireMode()
+	local m = self:FireModes()
+	return m[self.state.modeIndex or 1] or m[1]
+end
+
+function Deagle:CycleFireMode()
+	local m = self:FireModes()
+	if #m < 2 then return end
+	self.state.modeIndex = (self.state.modeIndex or 1) % #m + 1
+	log("fire mode " .. self:FireMode())
+end
+
+function Deagle:TriggerPress()
+	local s, c, mode = self.state, self.cfg, self:FireMode()
+	if mode == "auto" then
+		s.trigger = true
+		self.autoToken = (self.autoToken or 0) + 1
+		local tok = self.autoToken
+		local function shot()
+			if not (Deagle.state.trigger and Deagle.autoToken == tok and Deagle.state.drawn) then return end
+			Deagle:Fire()
+			if Deagle.state.ammo > 0 then Script.SetTimer(math.max(1, math.floor(Deagle.cfg.interval * 1000)), shot) end
+		end
+		shot()
+	elseif mode == "burst" then
+		local now = System.GetCurrTime()
+		if now < (s.burstReady or 0) or now - s.lastShot < c.interval - 0.005 then return end
+		s.burstReady = now + 2 * c.burstShotGap + c.burstInterval
+		self:Fire()
+		for i = 1, 2 do
+			Script.SetTimer(math.floor(i * c.burstShotGap * 1000), function() if Deagle.state.drawn then Deagle:Fire(true) end end)
+		end
+	else
+		self:Fire()
+	end
+end
+
+-- handling from the gun's CS2 weapon (Scripts/Deagle/guns/cs2.lua): damage, headshots, range falloff, fire rate,
+-- recoil (scaled so the Deagle keeps the kick it was tuned with), fire modes. Without one the defaults above stay.
+local BASE = { damage = Deagle.cfg.damage, headshotMult = Deagle.cfg.headshotMult, interval = Deagle.cfg.interval,
+	rangeMod = Deagle.cfg.rangeMod, kickPitch = Deagle.cfg.kickPitch, kickPitchVar = Deagle.cfg.kickPitchVar, kickYaw = Deagle.cfg.kickYaw }
+function Deagle:ApplyGunStats(g)
+	local c = self.cfg
+	for k, v in pairs(BASE) do c[k] = v end
+	local w = g.cs2 and Deagle.cs2 and Deagle.cs2[g.cs2]
+	if not w then return end
+	c.damage = w.damage
+	c.headshotMult = w.head / 1.5                 -- KCD2 already multiplies head hits by 1.5
+	c.interval = w.cycle
+	c.burstInterval = w.burstCycle
+	c.rangeMod = w.rangeMod
+	c.kickPitch = BASE.kickPitch * w.recoil / 48.2   -- CS2's Deagle recoil (48.2) = the kick this mod was tuned with
+	c.kickPitchVar = BASE.kickPitch * w.recoilVar / 48.2
+	c.kickYaw = BASE.kickYaw * w.angleVar / 60
+	if not g.modes then
+		g.modes = w.auto and { "auto", "semi" } or { "semi" }
+		if w.burst then g.modes[#g.modes + 1] = "burst" end
+	end
+end
+
 -- switch the pistol's look: viewmodel, clips, sounds, magazine (ammo is kept, up to the new magazine size)
 function Deagle:UseGun(id)
 	id = id ~= "" and id or nil
@@ -1195,6 +1276,8 @@ function Deagle:UseGun(id)
 	end
 	self.gun, self.gunId = g, id
 	self.cfg.vm.cdf, self.cfg.vm.anims, self.cfg.magSize = g.cdf, g.anims, g.magSize
+	self:ApplyGunStats(g)
+	self.state.modeIndex, self.state.trigger = 1, false
 	self.state.ammo = math.min(self.state.ammo, g.magSize)
 	self.vmAnim, self.vmArmsApplied = nil, nil
 	if self.vmShown then
@@ -1208,11 +1291,13 @@ end
 
 function Deagle:LoadGuns()
 	local load = Script.ReloadScript or Script.LoadScript
+	pcall(load, "Scripts/Deagle/guns/cs2.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end
 end
 Deagle:LoadGuns()
-if Deagle.gunId and Deagle.gunId ~= "deagle" and Deagle.guns[Deagle.gunId] then Deagle:UseGun(Deagle.gunId) end   -- keep it across a dev reload
+if Deagle.gunId and Deagle.gunId ~= "deagle" and Deagle.guns[Deagle.gunId] then Deagle:UseGun(Deagle.gunId)   -- keep it across a dev reload
+else Deagle:ApplyGunStats(Deagle.gun) end
 System.AddCCommand("deagle_gun", "Deagle:UseGun((([[%1]]):gsub('\"','')))", "deagle_gun <id>: which gun the pistol looks / sounds like (no id: list)")
 
 log("loaded v2.1")

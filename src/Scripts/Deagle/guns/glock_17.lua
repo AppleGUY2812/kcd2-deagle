@@ -3,7 +3,9 @@
 -- Edit the profile and re-run tools/gb/gb_convert.sh glock_17, not this file.
 Deagle:RegisterGun("glock_17", {
 	title = "Insurgency: Sandstorm Glock 17 on MWII Anims",
+	short = "Glock 17",
 	magSize = 17,
+	cs2 = "weapon_glock",
 	cdf = "objects/manmade/weapons/guns/glock_17/glock_17_vm.cdf",
 	anims = {   -- clip, frames, frames per second
 		draw = { "glock_17_vm_draw", 41, 30 },
@@ -17,7 +19,9 @@ Deagle:RegisterGun("glock_17", {
 		reload = { "glock_17_vm_reload", 64, 30 },
 		reloadEmpty = { "glock_17_vm_reload_empty", 65, 30 },
 		shoot = { { "glock_17_vm_shoot", 18, 30 } },
+		shootAdd = { { "glock_17_vm_shoot_add", 18, 30 } },
 		shootEmpty = { "glock_17_vm_shoot_empty", 13, 30 },
+		shootEmptyAdd = { "glock_17_vm_shoot_empty_add", 13, 30 },
 	},
 	cues = {   -- seconds from clip start, sound file under Mods/deagle/sounds
 		draw = { { 0.000, "guns/glock_17/p24_pi_golf17_raise.wav" }, { 0.300, "guns/glock_17/p24_pi_golf17_inspect_slide_pull.wav" }, { 0.600, "guns/glock_17/p24_pi_golf17_inspect_slide_release.wav" }, { 0.733, "guns/glock_17/p24_pi_golf17_inspect_end.wav" } },
