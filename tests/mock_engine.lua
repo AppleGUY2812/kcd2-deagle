@@ -141,7 +141,10 @@ _G.System = {
 }
 _G.Script = {
 	SetTimer = function(ms, fn) table.insert(M.timers, { at = M.t + (ms or 0) / 1000, fn = fn }) return #M.timers end,
-	LoadScript = function(path) return M.loadScript(path) end, ReloadScript = function(path) return M.loadScript(path) end,
+	-- like KCD2 (checked in game 2026-10-12): LoadScript(path, true, ...) always runs the file; without bReload, and
+	-- ReloadScript, skip a file that already ran
+	LoadScript = function(path, reload) if not reload and M.loaded[path] then return 1 end return M.loadScript(path) end,
+	ReloadScript = function(path) if M.loaded[path] then return 1 end return M.loadScript(path) end,
 }
 _G.Game = { SendInfoText = function(t) M.info = t end, HideInfoText = function() end }
 _G.Particle = { SpawnEffect = function(n) M.fx = (M.fx or 0) + 1 M.lastFx = n; M.fxNames = M.fxNames or {}; M.fxNames[n] = (M.fxNames[n] or 0) + 1 end, CreateMatDecal = function() end }
@@ -153,7 +156,9 @@ _G.Sound = {}
 _G.AudioUtils = { LookupTriggerID = function() return 1 end, ExecuteAudioTrigger = function() M.gameShot = (M.gameShot or 0) + 1 end }
 _G.CryAction = {}
 -- game paths load from the repo's src/ (gun files etc.); missing files fail like the engine (0)
+M.loaded = {}
 function M.loadScript(path)
+	M.loaded[path] = true
 	local f = io.open("src/" .. path, "r")
 	if not f then return 0 end
 	f:close()

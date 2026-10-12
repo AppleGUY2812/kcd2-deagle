@@ -1764,8 +1764,10 @@ function Deagle:UseGun(id)
 	return true
 end
 
+-- Script.LoadScript(file, bReload = true, bRaiseError = true): always runs the file. Script.ReloadScript skips a file
+-- that's already loaded, so after a dev reload (which recreates Deagle.guns) only the Deagle was left.
 function Deagle:LoadGuns()
-	local load = Script.ReloadScript or Script.LoadScript
+	local function load(f) return Script.LoadScript(f, true, true) end
 	pcall(load, "Scripts/Deagle/guns/cs2.lua")
 	pcall(load, "Scripts/Deagle/guns/calibers.lua")
 	pcall(load, "Scripts/Deagle/guns/shot_gain.lua")

@@ -133,6 +133,16 @@ print("   " .. since(t0), " aiming:", tostring(Deagle.state.aiming))
 step("aim out + holster", function() Deagle:OnAction("deagle_aim", "release"); M.advance(0.3); Deagle:OnAction("deagle_toggle", "press"); M.advance(1.5) end)
 step("console commands", function() for _, c in ipairs({ "deagle_arms", "deagle_motion", "deagle_hud", "deagle_ads", "deagle_native_test" }) do M.console(c) end end)
 print(string.format("\nnative commands sent: %d (sounds %d)", #M.native, (function() local n = 0 for _, c in ipairs(M.native) do if c:find("snd") then n = n + 1 end end return n end)()))
+step("dev reload keeps every gun and the one in hand", function()   -- deagle_dev_reload re-runs the main script
+	Deagle:UseGun("glock_17"); M.advance(1.0)
+	dofile("src/Scripts/Deagle/deagle_main.lua")
+	local ids = {}
+	for k in pairs(Deagle.guns) do ids[#ids + 1] = k end
+	table.sort(ids)
+	print("   guns after reload:", table.concat(ids, ","), " in hand:", Deagle.gun.id)
+	if not Deagle.guns.glock_17 then error("the Glock is gone after a dev reload") end
+	if Deagle.gun.id ~= "glock_17" then error("the gun in hand changed to " .. tostring(Deagle.gun.id)) end
+end)
 print("TOTAL ERRORS:", #M.errors)
 for i, e in ipairs(M.errors) do if i <= 15 then print("  " .. e) end end
 print("game firearm shot triggers (should be 0 with the plugin linked):", M.gameShot or 0)
