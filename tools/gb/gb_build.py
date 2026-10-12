@@ -116,10 +116,43 @@ for bn in sorted(every):
 
 # ---------------------------------------------------------------- empty idle (slide locked like the end of the last shot)
 pose_at(A["@idle"], rng(A["@idle"])[0]); IDLE = snap()
-LOCK = None
+LOCK, LOCK_MADE = None, False
 if A.get("@shoot_empty") and "slide" in B:
-    pose_at(A["@shoot_empty"], rng(A["@shoot_empty"])[1])
-    LOCK = {n: (PB[n].location.copy(), PB[n].rotation_quaternion.copy()) for n in (B.get("slide"), B.get("slide_stop")) if n}
+    se, sl = A["@shoot_empty"], B["slide"]
+    held = [sl] + [b for b in dict.fromkeys((B.get("barrel"), "j_barrel")) if b and b in PB and b != sl]
+    def away(act):   # per frame: how far the slide is from its idle place
+        f0, f1 = rng(act); out = []
+        for f in range(f0, f1 + 1):
+            pose_at(act, f); out.append((PB[sl].location - IDLE[sl][0]).length)
+        return out
+    se_away = away(se)
+    # CS:S-era last shots often leave the slide alone (the Glock's glock_firelast doesn't key it) or run it home again;
+    # a real pistol locks it back on the empty magazine: play the slide cycle (this clip's, else the single shot's) up
+    # to its farthest-back point (slide + the barrel tilting with it) and hold it there to the end
+    donor = se if max(se_away) > 1e-4 else A.get("@shoot")
+    d_away = se_away if donor is se else (away(donor) if donor else [0])
+    if donor and max(d_away) > 1e-4 and se_away[-1] < 0.5 * max(d_away):
+        d0 = rng(donor)[0]; dmax = d0 + d_away.index(max(d_away))
+        poses = {}
+        for f in range(d0, dmax + 1):
+            pose_at(donor, f); poses[f] = {b: (PB[b].location.copy(), PB[b].rotation_quaternion.copy()) for b in held}
+        f0, f1 = rng(se)
+        arm.animation_data.action = se
+        for f in range(f0, f1 + 1):
+            fd = d0 + (f - f0) / se["fps"] * donor["fps"]
+            if fd >= dmax:
+                p = poses[dmax]
+            else:
+                i = int(math.floor(fd)); p = lerp(poses[i], poses[i + 1], fd - i)
+            for bn, (l, r) in p.items():
+                PB[bn].rotation_mode = "QUATERNION"; PB[bn].location, PB[bn].rotation_quaternion = l, r
+                PB[bn].keyframe_insert("location", frame=f, group=bn); PB[bn].keyframe_insert("rotation_quaternion", frame=f, group=bn)
+        LOCK_MADE = True
+        note(f"@shoot_empty: slide locked back at {(dmax - d0) / donor['fps']:.3f} s, {max(d_away) * 1000:.0f} mm "
+             f"(cycle from {donor.name}: the source " + ("runs it home)" if donor is se else "doesn't move it)"))
+    pose_at(se, rng(se)[1])
+    LOCK = {n: (PB[n].location.copy(), PB[n].rotation_quaternion.copy())
+            for n in [B.get("slide"), B.get("slide_stop")] + (held[1:] if LOCK_MADE else []) if n}
 if not A.get("@idle_empty"):
     p = dict(IDLE); p.update(LOCK or {})
     bake("@idle_empty", p, A["@idle"]["fps"])
@@ -165,6 +198,43 @@ for act in [a for a in roles() if a.name not in ("@idle", "@idle_empty")]:
             put(lerp(spose, cp, k), act, f)
         note(f"{act.name}: started {pos:.0f} mm / {ang:.0f} deg off {sname}; eased in over {n} frames")
 
+# ---------------------------------------------------------------- empty reload with a lock we made: the source clip
+# has the slide forward from the start, so keep it locked (never forward of the lock) until the hand charges it (the
+# clip's farthest-back slide point), or failing that until its slide release / charge sound, then follow the clip home
+if LOCK_MADE and A.get("@reload_empty"):
+    re_, sl = A["@reload_empty"], B["slide"]
+    f0, f1 = rng(re_)
+    base = IDLE[sl][0]
+    axis = (LOCK[sl][0] - base).normalized()
+    travel = (LOCK[sl][0] - base).length
+    frames = []
+    for f in range(f0, f1 + 1):
+        pose_at(re_, f); frames.append((f, PB[sl].location.copy()))
+    # the charge is found on the untouched source clip: the ease-in above starts this one on the locked idle
+    orig = src(prof["clips"].get("reload_empty", {}).get("sequence", "")) or re_
+    proj = []
+    for f, _ in frames:
+        pose_at(orig, f); proj.append((PB[sl].location - base).dot(axis))
+    i = proj.index(max(proj))
+    how = "charge"
+    if proj[i] < 0.5 * travel:
+        cue = next((s["t"] for s in prof["clips"].get("reload_empty", {}).get("sounds", [])
+                    if re.search(r"slide|charge|release", (s.get("option") or "") + (s.get("file") or ""), re.I)
+                    and not re.search(r"mag", (s.get("option") or "") + (s.get("file") or ""), re.I)), None)
+        i = int(round(cue * re_["fps"])) if cue is not None else int(len(frames) * 0.6)
+        i = max(0, min(len(frames) - 1, i)); how = "sound cue" if cue is not None else "60% (no cue)"
+    arm.animation_data.action = re_
+    for f, L in frames[:i + 1]:
+        s_ = max((L - base).dot(axis), travel)
+        PB[sl].location = base + axis * s_ + ((L - base) - axis * (L - base).dot(axis))
+        PB[sl].rotation_quaternion = LOCK[sl][1]
+        PB[sl].keyframe_insert("location", frame=f, group=sl); PB[sl].keyframe_insert("rotation_quaternion", frame=f, group=sl)
+        for n, (l, r) in LOCK.items():
+            if n != sl:
+                PB[n].location, PB[n].rotation_quaternion = l, r
+                PB[n].keyframe_insert("location", frame=f, group=n); PB[n].keyframe_insert("rotation_quaternion", frame=f, group=n)
+    note(f"@reload_empty: slide held locked until frame {frames[i][0]} ({how})")
+
 # ---------------------------------------------------------------- empty draw / holsters / empty inspect
 def locked_copy(srcname, dst):
     s = A.get(srcname)
@@ -197,15 +267,16 @@ if A.get("@inspect") and not A.get("@inspect_empty") and LOCK and B.get("slide")
     # the slide stays locked back; a slide check may push it further back, never forward
     ie = A["@inspect"].copy(); ie.name = "@inspect_empty"; ie.use_fake_user = True; ie["fps"] = A["@inspect"]["fps"]
     sl = B["slide"]
-    L_lock = LOCK[sl][0]
+    base = IDLE[sl][0]                     # travel measured from the idle slide, like the lock itself
+    L_lock = LOCK[sl][0] - base
     axis = L_lock.normalized() if L_lock.length > 1e-6 else Vector((1, 0, 0))
     f0, f1 = rng(A["@inspect"])
     keys = []
     for f in range(f0, f1 + 1):
         pose_at(A["@inspect"], f)
-        L = PB[sl].location.copy()
+        L = PB[sl].location - base
         s_ = max(L.dot(axis), L_lock.length)
-        keys.append((f, axis * s_ + (L - axis * L.dot(axis))))
+        keys.append((f, base + axis * s_ + (L - axis * L.dot(axis))))
     for fc in [fc for fc in ie.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in LOCK]:
         ie.fcurves.remove(fc)
     arm.animation_data.action = ie
