@@ -64,6 +64,12 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `wallbang.budget` | `0.1` | metres of wood a 9 mm gets through (others by energy; the Deagle ~0.19) |
 | `ricochetKeep` | `0.35` | energy a ricochet keeps |
 | `holeExitSize` | `0.09` | exit hole size in m |
+| `accuracy.scale` | `1` | CS2 guns: 1 = CS2's own accuracy (standing / crouched / moving / jumping / shots in a row), 0.5 = twice as tight, 0 = no spread |
+| `flashFrames` | `2` | frames the muzzle flash is seen (any frame rate); 0 = the particles' own life |
+| `impactVolume` | `1` | bullet impact / ricochet / armour sounds |
+| `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
+| `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |
+| `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
 
 Examples: `deagle_set physics.camPerFlip 0.3` (bigger kick for every gun), `deagle_set flashMode world`,
 `deagle_set muzzleFxScale 0.5`.
