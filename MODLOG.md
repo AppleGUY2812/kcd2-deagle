@@ -350,3 +350,11 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   default now.
 - Settings: Lua has no io in KCD2; the plugin keeps every deagle_set (native/src/settings.cpp,
   Bin\...\deagle_settings.txt) and replays them as deagle_set lines after the hello handshake (console queue).
+- Tracer lab, in game ~10:50 (deagle_lab.xml, captures of the game window): only t_nocoll drew. Every variant with
+  SimpleCollision (even at 20 m/s, fired up into open sky) died before it was ever drawn: particle collision kills our
+  tracers at once (cause unknown; terrain / static / dynamic not split yet). A stretched particle's streak grows with
+  its age: the still trail piece (1 m/s, Stretch 0.5, 0.12 s life) drew only as a ~0.15 m dash, while the same at 1.5 s
+  life reached the full metre. CryEngine keeps a streak from reaching back past where the particle started (KCD2 has
+  Stretch "...,OffsetRatio=1" in one effect: a forward-only stretch may avoid it; to test). The emitter scale scales
+  both length and speed (scale 3 = 3x longer). Facing="CameraX" quads (OrientToVelocity, Speed 0.01) drew nothing.
+  Lua-spawned pieces do draw (thousands of them, no trouble).

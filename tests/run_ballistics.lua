@@ -208,9 +208,10 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		local out = {}
 		for _, f in ipairs(M.fxLog or {}) do
 			if f.n == tc.fx then
-				local h = tc.dash * f.scale / 2
-				out[#out + 1] = { a = vec(f.pos.x - f.dir.x * h, f.pos.y - f.dir.y * h, f.pos.z - f.dir.z * h),
-					b = vec(f.pos.x + f.dir.x * h, f.pos.y + f.dir.y * h, f.pos.z + f.dir.z * h), dir = f.dir, t = f.t }
+				local l = tc.dash * f.scale
+				local back = tc.anchor == "start" and 0 or tc.anchor == "end" and l or l / 2   -- from the effect to the piece's start
+				local a = vec(f.pos.x - f.dir.x * back, f.pos.y - f.dir.y * back, f.pos.z - f.dir.z * back)
+				out[#out + 1] = { a = a, b = vec(a.x + f.dir.x * l, a.y + f.dir.y * l, a.z + f.dir.z * l), dir = f.dir, t = f.t }
 			end
 		end
 		table.sort(out, function(x, y) return x.b.y < y.b.y end)
@@ -218,10 +219,17 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	end
 	local function dist(a, b) return math.sqrt((a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 + (a.z - b.z) ^ 2) end
 	world.wallY = 300
-	landed, M.fxLog = {}, {}
-	fire()
-	M.advance(1.0, 60)
-	local ps, hit = pieces(), landed[1] and landed[1].hit
+	local ps, hit
+	for _, anchor in ipairs({ "start", "end", "mid" }) do   -- every anchor lays the same pieces (checked for mid below)
+		tc.anchor = anchor
+		landed, M.fxLog = {}, {}
+		fire()
+		M.advance(1.0, 60)
+		ps, hit = pieces(), landed[1] and landed[1].hit
+		local q = ps[#ps]
+		check(string.format("%s: trail anchor %s: %d pieces, the last ends on the hit (%.4f m)", id, anchor, #ps, q and hit and dist(q.b, hit.pos) or -1),
+			#ps >= 99 and q and hit and dist(q.b, hit.pos) < 1e-3, #ps)
+	end
 	local gap, along = 0, true
 	for i = 2, #ps do gap = math.max(gap, ps[i].a.y - ps[i - 1].b.y) end
 	for _, q in ipairs(ps) do along = along and q.dir.y > 0.99 end

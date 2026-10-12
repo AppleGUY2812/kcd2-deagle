@@ -22,8 +22,9 @@ Deagle.cfg = {
 	tracers = true,           -- a glowing tracer on every round (deagle_tracers 0 / 1)
 	-- mode "trail": the round's path drawn as it flies, from the muzzle to what it hit (Deagle:TrailAdd; fx pieces dash
 	-- m long at scale 1, tools/gen_tracers.py DASH), from start m out; "flying": one particle per round flying by itself
-	-- (deagle_tracers.v<speed>; not seen in game 2026-10-12). scaled: a piece's scale sets its length (to check live)
-	tracer = { mode = "trail", fx = "deagle_tracers.trail", dash = 1.0, start = 1.0, scaled = false },
+	-- (deagle_tracers.v<speed>; not seen in game 2026-10-12). scaled: a piece's scale sets its length (seen in game:
+	-- scale 3 = 3x longer). anchor: where the effect sits on its piece (mid / start / end, by how its streak extends)
+	tracer = { mode = "trail", fx = "deagle_tracers.trail", dash = 1.0, start = 1.0, scaled = true, anchor = "mid" },
 	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
 	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
 	accuracy = { scale = 1, crouchEye = 1.27, crouchBand = 0.05 },
@@ -1385,7 +1386,10 @@ function Deagle:TrailAdd(r, a, b, d0)
 			local p0 = self:TrailPoint(trail, vadd(a, vscale(u, e - l)), d0 + e - l)
 			local p1 = self:TrailPoint(trail, vadd(a, vscale(u, e)), d0 + e)
 			local dir = vnorm(vsub(p1, p0))
-			self:SpawnFx(c.fx, vsub(p1, vscale(dir, l / 2)), dir, l / dash)   -- its end exactly on p1
+			-- where the effect sits on its piece: the middle (a streak both ways), its start (a streak reaching forward
+			-- only) or its end; the piece's end is exactly p1
+			local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2
+			self:SpawnFx(c.fx, vsub(p1, vscale(dir, back)), dir, l / dash)
 		end
 	end
 end

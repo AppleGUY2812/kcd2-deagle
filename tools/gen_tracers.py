@@ -111,6 +111,20 @@ def main(repo):
         effect("quad_long", dict(quad, Size="0.005", Aspect="100", MinPixels="1.2")),   # long if Aspect stretches along the motion
         effect("quad_wide", dict(quad, Size="0.5", Aspect="0.01")),                     # long if Aspect squashes along it
     ]
+    # trail piece candidates (life TRAIL_LIFE, fading): the 0.12 s piece drew as a ~0.15 m dash (a streak can't reach
+    # back past where its particle started). KCD2's own shooting star (WH_Particels, meteor) streaks forward only:
+    # Facing Velocity + Stretch OffsetRatio=1.
+    core = piece(TRAIL_LIFE)[0][1]
+    lab += [
+        effect("pc_ref", core),
+        effect("pc_off1", dict(core, Stretch=f"{DASH / 2:.3f},OffsetRatio=1")),
+        effect("pc_offm1", dict(core, Stretch=f"{DASH / 2:.3f},OffsetRatio=-1")),
+        effect("pc_vel_off1", dict(core, Facing="Velocity", Stretch=f"{DASH / 2:.3f},OffsetRatio=1")),
+        effect("pc_fast", dict(core, Speed="30", Stretch=f"{DASH / 2 / 30:.4f}")),
+        effect("pc_vel_quad", dict(drop(core, "Stretch", "MinPixels"), Facing="Velocity", Speed="0.01", Size="0.5", Aspect="0.02")),
+        effect("pc_vel_quad2", dict(drop(core, "Stretch", "MinPixels"), Facing="Velocity", Speed="0.01", Size="0.01", Aspect="50")),
+        effect("pc_tail", dict(core, Speed="30", Stretch="0", TailLength=f"{DASH / 30:.4f},TailSteps=4")),
+    ]
     library(os.path.join(pdir, "deagle_lab.xml"), "deagle_lab", "variants to look at live (see the script)", lab)
     print(f"TRACERS trail + {len(SPEEDS)} flying, LAB {len(lab)} effects")
 
