@@ -26,6 +26,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_arms medieval` / `mw` | sleeve and glove look |
 | `deagle_ads 1` / `0` | aim down sights on / off |
 | `deagle_motion 0`..`2` | gun bob / sway / sprint pose strength (0 = off, 1 = normal) |
+| `deagle_tracers 0` / `1` | glowing tracer on every round off / on |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 | Setting | Default | What it changes |
@@ -49,6 +50,14 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `physics.gunFlipPerFlip` | `0.467` | gun model flip per unit of muzzle flip (Deagle 9.5 deg) |
 | `physics.gunBackPerVel` | `0.0113` | gun model push-back per m/s of recoil (Deagle 5.5 cm) |
 | `physics.flashPerUnit` | `0.30` | flash size per unit of blast (Deagle 0.63, Glock 0.30) |
+| `tracers` | `true` | a tracer on every round (same as `deagle_tracers`) |
+| `range` | `250` | metres a round flies before it's dropped |
+| `holeSize` | `0.035` | bullet hole size in m for a 9 mm (bigger rounds scale it up) |
+| `holeLife` | `300` | seconds a bullet hole stays |
+| `hitReactions` | `true` | NPCs flinch / stagger when hit (KCD2's own reactions, needs the plugin) |
+| `hitReactType` | `0` | which of KCD2's reaction sets plays (0 = normal hits; 3 = collision, big staggers only) |
+| `hitReactMajor` | `50` | health lost from which a hit is a big stagger instead of a flinch |
+| `hitReactFlags` | `0x3F` | reaction event flags (plugin bits 0x100 / 0x200 / 0x400 flip direction / body part handling) |
 
 Examples: `deagle_set physics.camPerFlip 0.3` (bigger kick for every gun), `deagle_set flashMode world`,
 `deagle_set muzzleFxScale 0.5`.

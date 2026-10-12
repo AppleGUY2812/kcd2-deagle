@@ -53,11 +53,13 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
   log health / armor / reaction, then compare with soul:DealDamage.
 
 ## Phase 1: flight
-- [ ] Projectile per round: position, velocity, gravity, air drag (ballistic coefficient), time of flight, max range
-- [ ] Hit test each frame along the path (segment ray from last position to new position)
+- [x] Projectile per round: position, velocity, gravity, air drag (ballistic coefficient), time of flight, max range
+      (2026-10-12: deagle_main.lua LaunchRound / MoveRound; tests/run_ballistics.lua vs a reference integration)
+- [x] Hit test each frame along the path (segment ray from last position to new position; long frames cut into 20 ms steps)
 - [ ] Tarkov ammo import: tools script -> per-calibre table (.50 AE, 9x19, 7.62x39, 5.56...) like cs2.lua
 - [ ] Each gun's calibre / default ammo in its profile; ammo types later (FMJ, hollow point, AP, tracer)
-- [ ] Tracers: glowing streak + small light following the round; every round or every Nth; burn-out distance; colour
+- [x] Tracers: one particle per round with the round's own flight (deagle_tracers.v<speed>, tools/gen_tracers.py), dies on
+      contact, ~5 m streak, MinPixels, toggle deagle_tracers (no light yet)
 - [ ] Performance caps: rounds in flight, lifetime, decals and particles per second
 
 ## Phase 2: hitting people
@@ -81,10 +83,10 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 - [ ] Shields: wood stops small rounds, big rounds go through with splinters
 
 ## Phase 3: hitting the world
-- [ ] **Sparks on metal** (your idea): armor, weapons, metal props; size by energy
+- [x] **Sparks on metal** (your idea): armor, weapons, metal props; size by energy
 - [ ] **Water** (your idea): splash column scaled by energy; bullets slow fast in water (about 1 m to stop)
 - [ ] **Dirt / grass** (your idea): dust and debris kick scaled by energy
-- [ ] **Our own impact effects replace the hand-cannon ones** (user, 2026-10-12): today every hit plays KCD2's
+- [x] **Our own impact effects replace the hand-cannon ones** (user, 2026-10-12): today every hit plays KCD2's
       `collisions.destructibles.bullet_*`; v1 plays per-surface effects built for bullets (RoN's as the bar,
       docs/ron/ron_impact_fx.md), sized by the round's energy
 - [ ] **Wallbang / material penetration** (user, 2026-10-12): every surface gets a density (RoN's PenetrationData:
@@ -94,7 +96,7 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 - [ ] Wood: splinters; stone: chips + dust (thick stone stops everything)
 - [ ] **Ricochets**: chance by angle + material (stone, metal, water at shallow angles) and **off armor on people**; the
       deflected round flies on with less energy and can hit something else (tracer ricochets look great)
-- [ ] **Bullet holes / dents** (your idea): decals per material (wood splinter hole, stone chip, metal dent / hole, cloth
+- [x] **Bullet holes / dents** (your idea): decals per material (wood splinter hole, stone chip, metal dent / hole, cloth
       tear), with a cap so they don't pile up
 - [ ] Impact sounds per material (thud, ping, splash, crack)
 

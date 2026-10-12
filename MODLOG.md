@@ -298,3 +298,25 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
 - Also found: a new emitter's particles are aged by a whole frame at their first update (CParticleEmitter starts at
   the frame start), so flash parts must outlive ~2 frames (tools/check_fx.py). Research notes: CryEngine GameSDK keeps
   one emitter on the weapon and calls EmitParticle per shot (particles born at age 0).
+
+## 2026-10-12 (day) — bullets fly, tracers, impacts, hit reactions (parallel sessions)
+Research by two other Claude sessions + a background agent (docs/ron/*, docs/kcd2_*.md, docs/cartridges.md); code and
+live probes here. Facts found:
+- Lua hit API (live dump): `g_gameRules:CreateHit` -> `game:ServerHit` (no effect on souls), `soul:DealDamage(stamina,
+  health, attackerId, suppress, bodyPartName)`. DealDamage ignores armor; tested 5 hp on torso / leg / head = 5 each.
+  It tags every hit as HitReactionType Fall (5), which has no reaction rows, so a small hit shows nothing (user
+  watched). A full Deagle hit knocked a story NPC unconscious (ragdoll).
+- Hit reactions: S_HitReactionEvent (ctor RVA 0xB2454C writes up to +0x9B) -> HitReactionComponent::ProcessHit; hitType
+  0 has the living rows (weak / minor / major x 4 directions); strength by the game's rule (health lost = minor 5,
+  >= 50 = major 6). Plugin command `hitreact` (docs/kcd2_hit_reaction_re.md). Live test pending.
+- Particles: EFinalCollision = "Die, Ignore, Stop" (needs MaxCollisionEvents > 0), EPhysicsType "None, SimpleCollision,
+  SimplePhysics, RigidBody"; params Stretch / TailLength / MinPixels / Connection / MaintainDensity exist (KCD2's libs
+  use them). e_ParticlesObjectCollisions = 2 (particles collide with dynamic objects too).
+- SurfaceTypes.xml: 74 entries (73 names). Invisible helpers (mat_window "prevents interaction through windows",
+  level / water / corpse barriers, player / NPC / horse-only colliders, designer nodraw, raycast, slope) and foliage
+  stop rays: rounds now fly through them (deagle_main.lua SURFACES "pass").
+- KCD2 has no round bullet-hole decal and no plate-hit spark effect (collisions.combat.hit_stopped_bullet_plate is
+  referenced but missing): Ready or Not's holes / impacts fill it (private textures, gitignored DDS).
+Built: rounds with speed / gravity / drag (first step covers one frame: close hits land the frame they're fired);
+tracer per round (one self-flying particle per muzzle-speed bucket); impacts + holes per surface sized by landing
+energy^(1/3); hit reactions wired. tests/run_ballistics.lua 40 checks. User in game: "spread and bullet drop looks good".

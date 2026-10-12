@@ -12,6 +12,12 @@
   gun loading fix.
 - After the install: R with a gun out = reload, never the torch; flash lights the room (Glock smaller than the Deagle).
 
+## Built 2026-10-12 (day), installs at the next "closed" (rounds fly is live via hot reload)
+- Rounds fly (speed, drop, drag; user: "bullet drop looks good"), tracers (deagle_tracers 0/1), our impacts + bullet
+  holes on every surface (Ready or Not's), rounds pass invisible blockers / foliage, NPC flinch / stagger (plugin).
+- After the install, check in game: tracer look, impact + hole size per surface (stone / wood / plaster / metal / soil),
+  hit reaction on a bandit (direction right? stagger on a Deagle chest hit?).
+
 ## Next (user's list 2026-10-12, ordered: each builds on the one before)
 1. Bullet system v1 (BALLISTICS.md): a real projectile (speed, drop, drag), tracer, impacts per surface (holes / decals,
    sparks, dirt, water), armor vs flesh vs clothes (plate deflects small rounds), knockback from momentum.
