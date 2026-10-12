@@ -24,7 +24,6 @@ static FrustumFn g_origFrustum = nullptr;
 static uintptr_t g_cviewVtbl = 0;
 static std::atomic<uint64_t> g_viewFrames{ 0 };
 static float g_cam[12];                      // Matrix34 rows (right/forward/up columns, translation in [3],[7],[11])
-static uint64_t ViewFrames() { return g_viewFrames.load(); }
 
 // guarded pointer read (no C++ objects in here: MSVC forbids __try next to unwinding)
 static bool ReadPtr(uintptr_t addr, uintptr_t& out) {
@@ -51,16 +50,16 @@ using FindEffectFn = uintptr_t(__fastcall*)(uintptr_t pm, const char* name, cons
 using SpawnFn = uintptr_t(__fastcall*)(uintptr_t effect, const float* loc, const void* spawnParams);
 using SetLocationFn = void(__fastcall*)(uintptr_t emitter, const float* loc);
 using DeleteThisFn = void(__fastcall*)(uintptr_t refBase);
-struct Flash { uintptr_t emitter; float scale; LARGE_INTEGER born; uint64_t frame; int probes; };
+struct Flash { uintptr_t emitter; float scale; LARGE_INTEGER born; };
 static Flash g_flashes[8];
 static int g_nFlashes = 0;
 static float g_flashPos[3] = {}, g_flashDir[3] = { 0, 1, 0 };
 static float g_vmTM[12]; static bool g_haveVmTM = false;
-// diagnosis (flashmove <n>): 0 = spawn only, never moved; 1 = moved every camera step; 2 = moved, then the bounding
-// box the move empties is put back (shifted by the move). Each flash logs, for its first frames, whether its bounding
-// box is valid when Lua runs (flashprobe, game logic) and when the camera step runs: that shows when in the frame the
-// engine updates particles.
-static int g_flashMove = 1;
+// Moving an emitter empties its bounding box (SetLocation resets the AABB at +0x1A8..+0x1BC to +-1e15) until the
+// particle update rebuilds it. KCD2 updates particles BEFORE this camera step (in game 2026-10-12: Lua -> particle
+// update -> camera step x2 -> render; logged per frame), so a flash moved here was drawn with an empty box and culled
+// every frame. The box it had is put back, moved along with the emitter: drawn 5 / 5 shots and stayed on the muzzle
+// while turning (recorded); never moved = left behind in the world, moved without the box = 1 / 5 drawn.
 static bool BoxValid(uintptr_t em) { float x = 0; __try { x = *(float*)(em + 0x1A8); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } return x < 1e14f; }
 static bool ReadBox(uintptr_t em, float* box) { __try { memcpy(box, (void*)(em + 0x1A8), 24); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
 static void WriteBox(uintptr_t em, const float* box) { __try { memcpy((void*)(em + 0x1A8), box, 24); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
@@ -215,11 +214,9 @@ static void MoveFlashes() {
 	for (int i = 0; i < g_nFlashes; i++) {
 		Flash& fl = g_flashes[i];
 		if ((now.QuadPart - fl.born.QuadPart) > 5 * f.QuadPart) { SafeRelease(fl.emitter); continue; }
-		static int logged = 0;
-		if (fl.probes < 6 && logged < 120) { fl.probes++; logged++; Log("probe camera  frame +%llu box %s", ViewFrames() - fl.frame, BoxValid(fl.emitter) ? "valid" : "EMPTY"); }
 		float loc[8];
-		if (g_flashMove >= 1 && MuzzleLoc(g_vmTM, fl.scale, loc)) {
-			float box[6]; bool had = g_flashMove == 2 && BoxValid(fl.emitter) && ReadBox(fl.emitter, box);
+		if (MuzzleLoc(g_vmTM, fl.scale, loc)) {
+			float box[6]; bool had = BoxValid(fl.emitter) && ReadBox(fl.emitter, box);
 			float old[3] = {}; __try { memcpy(old, (void*)(fl.emitter + 0x80), 12); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 			SafeSetLocation(fl.emitter, loc);
 			if (had) {
@@ -358,19 +355,13 @@ static void Command(const char* line) {
 					memmove(g_flashes, g_flashes + 1, sizeof(Flash) * (g_nFlashes - 1)); g_nFlashes--;
 				}
 				Flash& fl = g_flashes[g_nFlashes++];
-				fl.emitter = em; fl.scale = scale; QueryPerformanceCounter(&fl.born); fl.frame = ViewFrames(); fl.probes = 0;
+				fl.emitter = em; fl.scale = scale; QueryPerformanceCounter(&fl.born);
 				static int said = 0;
 				if (said++ < 40) Log("flashfx %s effect %p emitter %p refs %ld at %.3f %.3f %.3f q %.3f %.3f %.3f %.3f s %.2f (gun at %.3f %.3f %.3f)",
 					effect, (void*)g_lastEffect, (void*)em, g_lastRefs, loc[4], loc[5], loc[6], loc[0], loc[1], loc[2], loc[3], loc[7],
 					g_vmTM[3], g_vmTM[7], g_vmTM[11]);
 			}
 		}
-	}
-	else if (!strcmp(cmd, "flashmove")) { g_flashMove = atoi(rest); Log("flashmove %d", g_flashMove); }
-	else if (!strcmp(cmd, "flashprobe")) {   // from Lua's frame (game logic): is each burning flash's box valid now?
-		static int logged = 0;
-		for (int i = 0; i < g_nFlashes && logged < 120; i++, logged++)
-			Log("probe lua     frame +%llu box %s", ViewFrames() - g_flashes[i].frame, BoxValid(g_flashes[i].emitter) ? "valid" : "EMPTY");
 	}
 	else if (!strcmp(cmd, "flashpos"))
 		sscanf_s(rest, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1], &g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);

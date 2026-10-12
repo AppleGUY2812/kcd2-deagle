@@ -284,3 +284,17 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
 - Notes for later (WHGame 1.5.6): IEntity::GetCharacter = vtable +0x328, GetSlotWorldTM +0x2D8;
   ICharacterInstance::SetAttachmentLocation_DEPRECATED = +0x190 (only stores m_location at +0xA08),
   FinishAnimationComputations +0x188, GetIAttachmentManager +0x40.
+
+## 2026-10-12 (late night) — why every glued flash vanished, and the fix
+- Plugin-spawned flash (FindEffect +0x30 / Spawn +0x30 / SetLocation +0x2B0, refcount at +0x58): spawned and never
+  moved = 5 / 5 drawn; moved every camera step = 0-1 / 5 (recorded, normal speed).
+- SetLocation, when the location changed, resets the emitter's AABB (+0x1A8..+0x1BC) to +-1e15 (empty) and queues it
+  for the particle update. Frame order logged per frame (flash box valid / empty): Lua -> particle update -> camera
+  step (twice) -> render. So a flash moved in the camera step was drawn with an empty box: culled every frame (the gun
+  always sways a little, so every frame moved it). The same thing hid entity and attachment flashes on moving frames.
+- Fix: put the box back after the move, shifted by it. Recorded with the user swinging the mouse: 5 / 5 drawn and the
+  flash stayed on the muzzle (centre steady within ~10 px while the view moved 12-16 px a frame); unmoved flashes
+  drifted with the world (51 px for a 45 px view move).
+- Also found: a new emitter's particles are aged by a whole frame at their first update (CParticleEmitter starts at
+  the frame start), so flash parts must outlive ~2 frames (tools/check_fx.py). Research notes: CryEngine GameSDK keeps
+  one emitter on the weapon and calls EmitParticle per shot (particles born at age 0).
