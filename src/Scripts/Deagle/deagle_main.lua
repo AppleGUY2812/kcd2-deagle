@@ -2333,6 +2333,9 @@ function Deagle:Toggle()
 	-- native maps on our keys stay off while the pistol is out: "combat" turns left click into a fist attack,
 	-- "draw_holster_torch" takes the torch out on R (reload)
 	for _, map in ipairs(GAME_MAPS_OFF) do try(map .. " map", ActionMapManager.EnableActionMap, map, not s.drawn) end
+	-- and R: the game's own no_torch filter while the gun is out (plugin; returning true from OnAction for
+	-- toggle_torch didn't stop it: the game takes the torch out elsewhere too, in game 2026-10-12)
+	self:Native("notorch " .. (s.drawn and "1" or "0"))
 	if not s.drawn then self:SetAim(false) end
 	log(s.drawn and "drawn" or "holstered")
 	self:ShowAmmo()
