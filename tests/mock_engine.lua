@@ -128,7 +128,8 @@ _G.Script = {
 _G.Game = { SendInfoText = function(t) M.info = t end, HideInfoText = function() end }
 _G.Particle = { SpawnEffect = function(n) M.fx = (M.fx or 0) + 1 M.lastFx = n; M.fxNames = M.fxNames or {}; M.fxNames[n] = (M.fxNames[n] or 0) + 1 end, CreateMatDecal = function() end }
 _G.Physics = { RayWorldIntersection = function() return 0 end }
-_G.ActionMapManager = { LoadFromXML = function() return true end, EnableActionMap = function() end }
+M.maps = {}
+_G.ActionMapManager = { LoadFromXML = function() return true end, EnableActionMap = function(name, on) M.maps[name] = on end }
 _G.UIAction = { RegisterEventSystemListener = function() end }
 _G.Sound = {}
 _G.AudioUtils = { LookupTriggerID = function() return 1 end, ExecuteAudioTrigger = function() M.gameShot = (M.gameShot or 0) + 1 end }
