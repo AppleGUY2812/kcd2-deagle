@@ -217,23 +217,6 @@ reset()
 local alive = newNpc(210)
 fire()
 check("a wound that doesn't kill: no ragdoll", alive.ragdoll == nil and alive.damage > 0 and alive.damage < 100, alive.ragdoll)
--- head pop: a Deagle kill to the head hides the head (plugin hideatt *head*); a Glock head kill doesn't
-local function headKill(id)
-	Deagle:UseGun(id); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
-	reset()
-	local v = newNpc(210)
-	v.z, v.damage = 31.75 - 1.75, 95
-	local n0 = #M.native
-	fire()
-	local pop = false
-	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] hideatt 0x%x+ %*head%* 1$") then pop = true end end
-	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
-	return pop, v
-end
-local dPop, dv = headKill("deagle")
-local gPop, gv = headKill("glock_17")
-check(string.format("head pop: Deagle %s, Glock %s (both kills)", tostring(dPop), tostring(gPop)), dPop and not gPop and dv.damage >= 100 and gv.damage >= 100, dPop)
-Deagle:UseGun("deagle"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 
 -- size: a 2.5 kg hare dies to one Glock round; a 500 kg horse takes less than a man (KCD2 gives all 100 HP)
@@ -274,8 +257,7 @@ check("the stone wall's impact sound played from the wall (" .. tostring(gSnd) .
 
 -- bullet paths (deagle_paths): a shot through a plank into stone leaves flight (yellow), inside (red), on (cyan)
 -- pieces and hit crosses, drawn every frame until cleared
-M.console("deagle_paths")
-Deagle:Paths("1")
+M.console("deagle_paths", "1")
 reset()
 world.slabs = { { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 240, y1 = 241, surface = 1 } }
 fire()
@@ -287,11 +269,12 @@ local drawn = (M.lines or 0) - l0
 check(string.format("bullet paths: %d pieces (yellow %d, red %d, cyan %d, crosses), %d lines drawn in 6 frames", #(Deagle.paths or {}),
 	kinds["1,0.9,0.1"] or 0, kinds["1,0.15,0.1"] or 0, kinds["0.2,0.9,1"] or 0, drawn),
 	(kinds["1,0.9,0.1"] or 0) > 0 and (kinds["1,0.15,0.1"] or 0) > 0 and (kinds["0.2,0.9,1"] or 0) > 0 and drawn >= 6 * #Deagle.paths, drawn)
-Deagle:Paths("clear"); M.advance(0.1, 60)
+M.console("deagle_paths", "clear"); M.advance(0.1, 60)
 local afterClear = M.lines
 M.advance(0.1, 60)
-check("deagle_paths clear: nothing left, nothing drawn", #Deagle.paths == 0 and M.lines == afterClear, #Deagle.paths)
-Deagle:Paths("0")
+check("deagle_paths clear (quoted like the game's console): nothing left, nothing drawn", #Deagle.paths == 0 and M.lines == afterClear, #Deagle.paths)
+M.console("deagle_paths", "0")
+check("deagle_paths 0: off", Deagle.cfg.debugPaths == false, Deagle.cfg.debugPaths)
 
 -- the armour math on its own: punch vs a layer's stab defense, condition, angle, glance
 local phys9 = Deagle:ShotPhysics(Deagle.guns.glock_17)

@@ -104,6 +104,11 @@ Deagle:Set("accuracy.scale 0.5"); local sc = Deagle.cfg.accuracy.scale
 check("deagle_set: hitReactions 0 -> false, on -> true; flashGrow list; accuracy.scale 0.5",
 	off == false and on == true and type(grow) == "table" and #grow == 4 and grow[1] == 0.6 and sc == 0.5, tostring(off))
 Deagle:Set("accuracy.scale 1"); Deagle:Set("flashGrow 0.7,1,1.1")
+M.console("deagle_zoom", "6"); M.advance(0.5)
+local z6 = M.fov
+M.console("deagle_zoom", ""); M.advance(0.5)
+check(string.format("deagle_zoom 6 through the console (quoted arg): fov %.3f, then off %.3f", z6 or -1, M.fov or -1),
+	z6 and math.abs(z6 - base / 6) < 1e-6 and math.abs(M.fov - base) < 1e-6, z6)
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("accuracy: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

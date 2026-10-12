@@ -79,9 +79,7 @@ Deagle.cfg = {
 	hearing = { on = true, shot = 3.2, hit = 1.0 },
 	exitEnergy = 20,          -- J: a round leaving the body with less stays in it (no exit wound)
 	-- a killing round: ragdoll at once and a shove by its momentum (x killPush) pushDelay ms later, at the part it hit
-	-- head pop: a killing head shot landing with headPopEnergy J or more (Deagle out to ~100 m, never a 9 mm)
-	gore = { ragdollOnKill = true, killPush = 1.0, pushDelay = 60, headPop = true, headPopEnergy = 1200, headPopFx = 1.6,
-		neckPulses = 3, neckPulseGap = 0.35 },
+	gore = { ragdollOnKill = true, killPush = 1.0, pushDelay = 60 },
 	bodyExit = 0.35,          -- m from the entry where a through-and-through round goes on
 	holeLife = 300,           -- s a bullet hole stays
 	bloodPaint = 0.45,        -- actor:AddBlood amount per hit on that body part
@@ -255,6 +253,9 @@ local GAME_MAPS_OFF = { "combat", "draw_holster_torch" }   -- KCD2 action maps o
 -- helpers
 -- ---------------------------------------------------------------------------
 -- Console %line / %1 substitutions arrive wrapped in double quotes.
+-- console arguments arrive in quotes ("clear", checked live): the bare word, trimmed
+function Deagle.Arg(v) return (string.gsub(tostring(v or ""), '"', '')):match("^%s*(.-)%s*$") end
+
 local function unquote(str)
 	str = string.gsub(str or "", '^%s*"', "")
 	return (string.gsub(str, '"%s*$', ""))
@@ -1024,25 +1025,6 @@ function Deagle:KillShove(e, hit, dir, phys, energy)
 	end)
 end
 
--- Head pop: a killing head shot that lands with gore.headPopEnergy or more (a .50 AE out to ~100 m, never a 9 mm)
--- takes the head off. KCD2 has no dismemberment (docs/kcd2_gore_ragdoll_re.md): the plugin hides the head skin and
--- everything on the head (hair, beard, helmet, hood; hideatt *head*), the collar stays over the stump; a big burst
--- out the back and a few pulses from the neck.
-function Deagle:HeadPop(e, hit, dir, scale)
-	local g = self.cfg.gore
-	if not self.native then return end
-	self:Native("hideatt 0x" .. entityHex(e.id) .. " *head* 1")
-	self:SpawnFx(self.cfg.headFx, hit.pos, dir, scale * g.headPopFx)
-	for i = 1, g.neckPulses do
-		Script.SetTimer(math.floor(i * g.neckPulseGap * 1000), function()
-			local ok, neck = pcall(e.GetBonePos, e, "Neck")
-			local ok2, head = pcall(e.GetBonePos, e, "Head")
-			if ok and neck and ok2 and head then Deagle:SpawnFx(Deagle.cfg.bloodExitFx, head, vnorm(vsub(head, neck)), scale * (1 - 0.2 * i)) end
-		end)
-	end
-	log("head pop " .. tostring(e:GetName()))
-end
-
 -- A round hitting something. r = the round in flight (nil for an instant ray): true when it flies on (through a body
 -- or wall, or turned off armour / stone), with r moved to where it goes on from.
 function Deagle:ApplyHit(hit, dir, phys, r)
@@ -1125,13 +1107,7 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			self:HitReact(e, hit, dir, dmg, stam)
 			local killed = false
 			pcall(function() killed = e.actor:GetHealth() <= 0 end)
-			if killed and phys then
-				local energy = hit.energy or phys.energy
-				if part == "head" and not stopped and self.cfg.gore.headPop and energy >= self.cfg.gore.headPopEnergy then
-					self:HeadPop(e, hit, dir, self:ImpactScale(phys, hit.dist, energy))
-				end
-				self:KillShove(e, hit, dir, phys, hit.energy)
-			end
+			if killed and phys then self:KillShove(e, hit, dir, phys, hit.energy) end
 			local exits = through and through > c.exitEnergy
 			if not stopped then self:Bleed(e, hit, dir, exits == true, scale, padded) end
 			if exits and r then                         -- through and through: on with what's left, past this body
@@ -2343,14 +2319,14 @@ function Deagle:DevLua(line)
 	log("lua -> " .. tostring(ok) .. " " .. tostring(res))
 end
 
-System.AddCCommand("deagle_paths", "Deagle:Paths([[%1]])", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
-System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber([[%1]]))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F10 steps x4, x10, off")
+System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
+System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F10 steps x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")
 System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")
 System.AddCCommand("deagle_inspect", "Deagle:Inspect()", "Play the inspect animation")
 System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give()", "Add the Desert Eagle (if missing) and 49 cartridges")
-System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give([[%1]])", "deagle_give_ammo <n>: add n cartridges")
+System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give(Deagle.Arg([[%1]]))", "deagle_give_ammo <n>: add n cartridges")
 System.AddCCommand("deagle_arms", "Deagle.cfg.vm.arms = (([[%1]]):find('mw') and 'mw' or 'medieval') Deagle.vmArmsApplied = nil Deagle:VmApplyArms()", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
 System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber((([[%1]]):gsub('\"',''))) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
 System.AddCCommand("deagle_ads", "Deagle.cfg.vm.ads = (([[%1]]):find('0') == nil) Deagle:SetAim(false)", "deagle_ads 1|0: aim down sights on right click")
@@ -2361,7 +2337,7 @@ System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_status", "Deagle:EnsureInit() Deagle:Status()", "Print hook / input / ammo state")
 System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key bindings")
 System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.state.logActions", "Toggle logging of every input action")
-System.AddCCommand("deagle_fx", "Deagle:FxTest([[%1]])", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
+System.AddCCommand("deagle_fx", "Deagle:FxTest(Deagle.Arg([[%1]]))", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
 System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end", "internal: native plugin handshake")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")

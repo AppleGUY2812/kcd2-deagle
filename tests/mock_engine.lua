@@ -207,9 +207,12 @@ function M.advance(sec, fps)
 		end
 	end
 end
-function M.console(name)
+function M.console(name, arg)
 	local code = M.cmds[name]
 	if not code then table.insert(M.errors, "no console command " .. name) return end
+	-- like KCD2 (checked live): %1 / %line become the argument in quotes ("clear")
+	local quoted = '"' .. tostring(arg or "") .. '"'
+	code = code:gsub("%%1", function() return quoted end):gsub("%%line", function() return quoted end)
 	local f, err = loadstring(code)
 	if not f then table.insert(M.errors, "compile " .. name .. ": " .. err) return end
 	local ok, e = pcall(f); if not ok then table.insert(M.errors, "cmd " .. name .. ": " .. tostring(e)) end

@@ -33,6 +33,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_zoom <n>` | debug zoom (F10 steps x4 / x10 / off) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
+Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.on 0`) is an unknown command.
 On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list settings take numbers apart by commas.
 | Setting | Default | What it changes |
 |---|---|---|
@@ -75,8 +76,6 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |
 | `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
-| `gore.headPop` | `true` | a killing Deagle head shot takes the head off (head, hair, helmet hidden; blood burst, neck pulses) |
-| `gore.headPopEnergy` | `1200` | joules a round must land with to take a head off (Deagle out to ~100 m, never a 9 mm) |
 | `gore.ragdollOnKill` | `true` | a killing round drops the body at once instead of after KCD2's death animation |
 | `gore.killPush` | `1` | how hard a kill shoves the body (x the round's real momentum x punch) |
 
