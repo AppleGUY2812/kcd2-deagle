@@ -208,3 +208,16 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   from the game's img + the Deagle's only, so the Deagle rebuild after a Glock conversion dropped the Glock's CAF
   headers. build_vm.sh now merges assets/build/gun_imgs/*.img too, and build.sh runs tools/check_img.py (every
   src/Animations/**/*.caf must be in the img) before packing. Removed an unused leftover deagle_posetest.caf.
+
+## 2026-10-12 (later) — reload at the click, realistic cancel, magazines as pieces, flash findings
+- Seat = the mag-in click cue (clip_times.py; Deagle 1.375 / 1.125, Glock 1.167 / 0.733 clip s), HUD drops RELOADING.
+- Magazines (split_off: faces dominated by the mag bone subtree) and every modelled round (split_rounds: loose parts,
+  each part type's copies paired down the stack; Deagle 6 x 300 verts, Glock 2) are their own skins. Mid-swap cancel
+  hides both mags while the hands blend; realistic: only the chambered round is left and the gun stays without a mag
+  until the next reload (cfg.cancelKeepsRounds = arcade).
+- Flash: emitters in a slot of the viewmodel load and sit on the muzzle (GetSlotWorldPos) but never render; world
+  SpawnEffect and a separate BasicEntity's slot render. A slot that still holds the effect doesn't restart on a second
+  LoadParticleEffect: FreeSlot first, alternate two slots. In a dark room auto-exposure blows the additive flash out.
+- R in KCD2's draw_holster_torch map (toggle_torch) took the torch out: map off while drawn, like combat.
+- Fire rate from the mods' weapon scripts (Deagle 0.08, Glock 0.075); burst 0.05 s, burst clip played gun.burstGap /
+  gap faster.

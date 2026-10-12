@@ -28,6 +28,13 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- In-game check of the 2026-10-12 install: ammo at the mag click, reload cancel (old mag in: keep rounds / out: the
+  chambered round, no mag until the next reload), bullets in the mag, burst 0.05 s, R no torch, flash (world / entity)
+- Flash look: size (muzzleFxScale), brightness (deagle_test b100 / b50 / b25 + light), entity mode as default if it
+  stays on the gun; then drop the deagle_test library
+- Cartridge-driven handling (BALLISTICS.md): needs the user's Ready or Not recording (strong pistol slow / fast, rifle
+  full auto) to calibrate
+- Recoil recovery + CS2 spray patterns for automatics; camera sway in inspects / reloads (MWII clips move the view)
 - Recoil: kick is our hand-tuned 2.6 deg (Deagle) scaled by CS2's recoil magnitude, and never recovers; user finds the
   Deagle's too small -> tune kickPitch live (deagle_set kickPitch N), then add recovery (rise, settle partway back)
 - Spray patterns for automatic guns: CS2's per-gun seed + recoil angle / magnitude (+ variances) are already in
