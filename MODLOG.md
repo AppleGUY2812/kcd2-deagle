@@ -204,3 +204,7 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
 - Empty inspects: the loaded inspect's slide check (Glock 13 mm press check, Deagle 20 mm) left the locked slide
   frozen while the hand pulled; now it moves 6 mm past the lock with the pull and settles back (Deagle: j_safetylock
   follows along its own travel axis).
+- Broke the Glock in game (every clip "did not start", bind pose): tools/build_vm.sh rewrote src/Animations/Animations.img
+  from the game's img + the Deagle's only, so the Deagle rebuild after a Glock conversion dropped the Glock's CAF
+  headers. build_vm.sh now merges assets/build/gun_imgs/*.img too, and build.sh runs tools/check_img.py (every
+  src/Animations/**/*.caf must be in the img) before packing. Removed an unused leftover deagle_posetest.caf.
