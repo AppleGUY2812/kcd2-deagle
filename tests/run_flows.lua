@@ -34,13 +34,14 @@ step("hip fire x7", function() for i = 1, 7 do Deagle:OnAction("deagle_fire", "p
 print("   ammo:", Deagle.state.ammo, " anims:", lastAnims(4), " fx:", M.fx, M.lastFx)
 local fx = M.fxNames or {}
 print("   flash (" .. Deagle.cfg.flashMode .. "): on the muzzle attachment", M.attachFx, " attachments made", M.boneAttach, " in the world", fx["deagle.muzzle"], " smoke", fx["deagle.muzzle_smoke"])
-if (M.attachFx or 0) ~= 7 or (M.boneAttach or 0) ~= 1 or (fx["deagle.muzzle"] or 0) ~= 0 or (fx["deagle.muzzle_smoke"] or 0) ~= 7 then table.insert(M.errors, "flash not on the muzzle attachment every shot") end
+if (M.attachFx or 0) ~= 7 or (M.boneAttach or 0) ~= 1 or (fx["deagle.muzzle"] or 0) + (fx["deagle.muzzle_large"] or 0) ~= 0 or (fx["deagle.muzzle_smoke"] or 0) ~= 7 then table.insert(M.errors, "flash not on the muzzle attachment every shot") end
 step("flash left in the world", function()   -- flashMode world: spawned where it was fired
 	Deagle.cfg.flashMode = "world"; Deagle.state.ammo = 7; M.advance(0.5)
-	local w0 = (M.fxNames or {})["deagle.muzzle"] or 0
+	local function flashes() local f = M.fxNames or {} return (f["deagle.muzzle"] or 0) + (f["deagle.muzzle_large"] or 0) end
+	local w0 = flashes()
 	Deagle:OnAction("deagle_fire", "press"); M.advance(0.1)
-	print("   world flashes:", ((M.fxNames or {})["deagle.muzzle"] or 0) - w0)
-	if ((M.fxNames or {})["deagle.muzzle"] or 0) - w0 ~= 1 then error("world flash not spawned") end
+	print("   world flashes:", flashes() - w0)
+	if flashes() - w0 ~= 1 then error("world flash not spawned") end
 	Deagle.cfg.flashMode = "gun"; Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
 end)
 step("slow motion (F9)", function()
