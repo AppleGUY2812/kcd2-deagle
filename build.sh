@@ -6,6 +6,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 python3 "$here/tools/check_img.py" "$here" || { echo "animation index incomplete: rebuild it (tools/gb/gb_convert.sh or tools/build_vm.sh)" >&2; exit 1; }
 # every command Lua sends the plugin must have a handler there
 python3 "$here/tools/check_native.py" "$here" || { echo "the plugin lacks a handler Lua uses (native/src/main.cpp)" >&2; exit 1; }
+python3 "$here/tools/gen_tracers.py" "$here" >/dev/null   # deagle_tracers.xml: a tracer per muzzle speed
 python3 "$here/tools/check_fx.py" "$here" || { echo "a muzzle flash part dies before it can be drawn (src/Libs/Particles/deagle.xml)" >&2; exit 1; }
 out="$here/dist/deagle"
 rm -rf "$out" && mkdir -p "$out/data"

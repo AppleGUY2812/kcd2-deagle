@@ -114,6 +114,7 @@ player.soul = {}
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }
 _G.ent_all = 0xFFFF
+_G.ent_static, _G.ent_terrain = 1, 2
 _G.ENTITY_FLAG_CASTSHADOW = 2
 _G.ENTITY_FLAG_NO_SAVE = 32768
 _G.System = {

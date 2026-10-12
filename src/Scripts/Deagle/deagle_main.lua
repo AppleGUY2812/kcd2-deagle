@@ -18,7 +18,8 @@ Deagle.cfg = {
 	heatPerShot = 0.35,       -- degrees of extra spread per shot; cools at heatDecay deg/s (rapid fire opens the cone)
 	heatDecay = 4.0,
 	kickPitchVar = 0.0,
-	range = 250,
+	range = 250,              -- m a round flies before it's dropped (tools/gen_tracers.py RANGE matches)
+	tracers = true,           -- a glowing tracer on every round (deagle_tracers 0 / 1)
 	damage = 60,              -- health damage (game applies body_part coeff: head 1.5, limbs 0.7)
 	headshotMult = 3.0,       -- extra on top: .50 AE to the head should drop anyone
 	stamina = 40,
@@ -625,8 +626,9 @@ function Deagle:Bleed(e, hit, dir)
 	end
 end
 
-function Deagle:ApplyHit(hit, dir)
+function Deagle:ApplyHit(hit, dir, phys)
 	local c = self.cfg
+	phys = phys or self:ShotPhysics()
 	local e = hit.entity
 	local p = self:Player()
 	local dead = false
@@ -643,7 +645,6 @@ function Deagle:ApplyHit(hit, dir)
 		else
 			local part = bodyPartFor(e, hit.pos)
 			local dmg, stam
-			local phys = self:ShotPhysics()
 			if phys then        -- from the cartridge: energy left in the body, air drag over the distance
 				dmg, stam = self:Wound(phys, hit.dist)
 				if part == "head" then dmg = dmg * c.physics.headMult end
@@ -664,7 +665,6 @@ function Deagle:ApplyHit(hit, dir)
 		if self.state.logActions then log("impact " .. tostring(surface) .. " -> " .. fx) end
 	end
 	if e and e.AddImpulse and (not e.soul or (e.IsDead and e:IsDead())) then
-		local phys = self:ShotPhysics()
 		local push = phys and c.physics.punchPerMomentum * phys.momentum or c.impulse   -- the shove follows momentum
 		try("impulse", function() e:AddImpulse(hit.partid or -1, hit.pos, dir, push, 1) end)
 	end
@@ -673,6 +673,100 @@ end
 -- ---------------------------------------------------------------------------
 -- shooting, casings
 -- ---------------------------------------------------------------------------
+-- ---------------------------------------------------------------------------
+-- rounds in flight (BALLISTICS.md phase 1): a shot is a round with the cartridge's muzzle speed, gravity and air drag,
+-- moved every frame and checked against the world along the stretch it covered (a ray per step, so nothing is
+-- skipped however fast it flies). Air drag is the one Wound uses for energy: speed falls as e^(-distance / dragLength),
+-- dv/dt = -v|v| / dragLength. The first step covers one frame at the shot, so up close a round lands in the frame it's
+-- fired, like before; farther away it arrives late and low (a .50 AE at 100 m: ~0.24 s and ~27 cm under the line).
+-- ---------------------------------------------------------------------------
+local GRAVITY = 9.81             -- m/s^2
+local ROUND_STEP = 0.02          -- s: a longer frame is cut into steps this long, so the arc stays smooth
+local ROUND_LIFE = 3             -- s: a round that hit nothing is dropped after this, or past cfg.range
+local TRACER_SPEEDS = { 250, 1000, 25 }   -- deagle_tracers.v<speed> (tools/gen_tracers.py): first, last, step
+
+-- one step of h seconds: true when the round is done (it hit something, or flew out of range / time)
+function Deagle:MoveRound(r, h)
+	local speed = vlen(r.vel)
+	local v1 = vscale(r.vel, 1 / (1 + speed * h / r.phys.dragLength))
+	v1.z = v1.z - GRAVITY * h
+	local move = vscale(vadd(r.vel, v1), 0.5 * h)
+	local hits = {}
+	local p = self:Player()
+	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, move, 1, ent_all, p and p.id, nil, hits)
+	if not ok then
+		log("$4raycast failed: " .. tostring(n))
+		return true
+	end
+	if n and n > 0 and hits[1] then
+		local hit = hits[1]
+		hit.dist = r.dist + hit.dist            -- the ray's distance is from this step's start: the path flown so far
+		r.pos, r.landed = hit.pos, true
+		self:ApplyHit(hit, vnorm(move), r.phys)
+		return true
+	end
+	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
+	return r.dist > self.cfg.range or r.age > ROUND_LIFE
+end
+
+function Deagle:StepRound(r, dt)
+	while dt > 1e-6 do
+		local h = math.min(dt, ROUND_STEP)
+		dt = dt - h
+		if self:MoveRound(r, h) then return true end
+	end
+	return false
+end
+
+function Deagle:LaunchRound(pos, dir, phys)
+	local r = { pos = pos, vel = vscale(dir, phys.velocity), phys = phys, dist = 0, age = 0, t = System.GetCurrTime() }
+	if self:StepRound(r, self.frameDt or 1 / 30) then return r end   -- landed in this frame
+	self.rounds = self.rounds or {}
+	table.insert(self.rounds, r)
+	if not self.roundsToken then
+		local token = {}
+		self.roundsToken = token
+		Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
+	end
+	return r
+end
+
+-- every frame while rounds fly: each moves by the game time since its last move (a round fired this frame waits)
+function Deagle:RoundsTick(token)
+	if token ~= self.roundsToken then return end
+	local now, keep = System.GetCurrTime(), {}
+	for _, r in ipairs(self.rounds or {}) do
+		local dt = now - r.t
+		r.t = now
+		if not self:StepRound(r, dt) then keep[#keep + 1] = r end
+	end
+	self.rounds = keep
+	if #keep > 0 then Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
+	else self.roundsToken = nil end
+end
+
+-- The tracer: one glowing particle that flies by itself with the round's speed, gravity and drag
+-- (deagle_tracers.v<speed>, nearest 25 m/s) and dies on the first thing it touches. It leaves the muzzle aimed at the
+-- point the round is headed for (the first thing along the shot, or 100 m out), so it meets the round's path there.
+-- Ready or Not hides your own tracers; ours show (no NPC carries a gun yet). cfg.tracers / deagle_tracers turns them off.
+function Deagle:TracerFx(speed)
+	local first, last, step = TRACER_SPEEDS[1], TRACER_SPEEDS[2], TRACER_SPEEDS[3]
+	local v = math.max(first, math.min(last, step * math.floor(speed / step + 0.5)))
+	return string.format("deagle_tracers.v%d", v)
+end
+
+function Deagle:Tracer(from, dir, phys)
+	if not self.cfg.tracers then return end
+	local muzzle = self:VmBone(self.gun.bones.muzzle)
+	if not muzzle then return end
+	local reach = 100
+	local hits, p = {}, self:Player()
+	local ok, n = pcall(Physics.RayWorldIntersection, from, vscale(dir, reach), 1, ent_all, p and p.id, nil, hits)
+	if ok and n and n > 0 and hits[1] then reach = math.max(1, hits[1].dist) end
+	local aim = vnorm(vsub(vadd(from, vscale(dir, reach)), muzzle))
+	self:SpawnFx(self:TracerFx(phys.velocity), muzzle, aim, 1.0)
+end
+
 function Deagle:MuzzlePos()
 	return self:VmBone(self.gun.bones.muzzle) or vadd(System.GetViewCameraPos(), vscale(System.GetViewCameraDir(), 0.5))
 end
@@ -755,12 +849,18 @@ function Deagle:Shoot(force)
 	self:Recoil()
 	self:EjectCase()
 
-	local hits = {}
-	local ok, n = pcall(Physics.RayWorldIntersection, pos, vscale(dir, c.range), 1, ent_all, p.id, nil, hits)
-	if ok and n and n > 0 and hits[1] then
-		self:ApplyHit(hits[1], dir)
-	elseif not ok then
-		log("$4raycast failed: " .. tostring(n))
+	local phys = self:ShotPhysics()
+	if phys then                    -- a round that flies (speed, drop, drag) and its tracer
+		self:Tracer(pos, dir, phys)
+		self:LaunchRound(pos, dir, phys)
+	else                            -- a gun without cartridge data: an instant ray with its CS2 numbers
+		local hits = {}
+		local ok, n = pcall(Physics.RayWorldIntersection, pos, vscale(dir, c.range), 1, ent_all, p.id, nil, hits)
+		if ok and n and n > 0 and hits[1] then
+			self:ApplyHit(hits[1], dir)
+		elseif not ok then
+			log("$4raycast failed: " .. tostring(n))
+		end
 	end
 	if s.ammo == 0 then self:ShowAmmo() end
 	return true
@@ -1198,6 +1298,9 @@ end
 
 function Deagle:VmTick(token)
 	if token ~= self.vmToken or not self.vmShown then return end
+	local now = System.GetCurrTime()
+	if self.vmTickT and now > self.vmTickT then self.frameDt = math.min(0.1, now - self.vmTickT) end   -- a round's first step
+	self.vmTickT = now
 	self:VmPlace()
 	self:HoldGameMapsOff()
 	self:FlashFollow()
@@ -1595,6 +1698,7 @@ function Deagle:OnGameplayStarted()
 	self.inputLoaded = false
 	self:EnsureInit()
 	self.vmId, self.casePool, self.flashUntil = nil, nil, nil   -- a load ends the old world: its ids may now name other entities
+	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()
@@ -1664,6 +1768,7 @@ System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give([[%1]])"
 System.AddCCommand("deagle_arms", "Deagle.cfg.vm.arms = (([[%1]]):find('mw') and 'mw' or 'medieval') Deagle.vmArmsApplied = nil Deagle:VmApplyArms()", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
 System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber((([[%1]]):gsub('\"',''))) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
 System.AddCCommand("deagle_ads", "Deagle.cfg.vm.ads = (([[%1]]):find('0') == nil) Deagle:SetAim(false)", "deagle_ads 1|0: aim down sights on right click")
+System.AddCCommand("deagle_tracers", "Deagle.cfg.tracers = (([[%1]]):find('0') == nil) Deagle:Notify('tracers ' .. (Deagle.cfg.tracers and 'on' or 'off'))", "deagle_tracers 1|0: a glowing tracer on every round")
 System.AddCCommand("deagle_hud", "Deagle.cfg.hud.enabled = (([[%1]]):find('0') == nil) Deagle.hudOk = nil", "deagle_hud 1|0: ammo HUD on/off")
 System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting live")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")

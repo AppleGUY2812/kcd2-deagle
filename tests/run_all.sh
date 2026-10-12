@@ -6,6 +6,7 @@ luajit tests/run_flows.lua | grep -q "TOTAL ERRORS:	0$" || { echo "FAIL run_flow
 luajit tests/run_transitions.lua | tail -1 | grep -q "script errors: 0" && luajit tests/run_transitions.lua | tail -1 | awk '{split($1,a,"/"); exit !(a[1]==a[2])}' || { echo "FAIL run_transitions"; fail=1; }
 luajit tests/run_fallback.lua | grep -q "FALLBACK ERRORS:	0" || { echo "FAIL run_fallback"; fail=1; }
 for g in deagle glock_17; do luajit tests/run_gun.lua "$g" >/dev/null || { echo "FAIL run_gun $g"; fail=1; }; done
+luajit tests/run_ballistics.lua >/dev/null || { echo "FAIL run_ballistics"; fail=1; }
 python3 tests/test_profile_guess.py >/dev/null || { echo "FAIL test_profile_guess"; fail=1; }
 python3 tools/check_native.py . >/dev/null || { echo "FAIL check_native"; fail=1; }
 python3 tools/check_fx.py . >/dev/null || { echo "FAIL check_fx"; fail=1; }
