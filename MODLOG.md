@@ -329,3 +329,24 @@ energy^(1/3); hit reactions wired. tests/run_ballistics.lua 40 checks. User in g
 - Console commands: KCD2 passes %1 / %line QUOTED ("clear"); and System.AddCCommand doesn't replace a command that
   already exists, so a dev reload keeps the old command code until the game restarts (Lua functions it calls do update).
 - Debug lines (System.DrawLine) render in retail; at ~3000 per frame the newest weren't drawn (buffer limit): cap 600.
+
+## 2026-10-12 ~10:00 — tracers don't draw, the "fireball", settings kept
+Found live (probes over rcon, screenshots via `um win shot --exe KingdomCome.exe`, which captures the game window while
+it's behind other windows; the game kept running unfocused this time: timers fired, clouds moved):
+- Particle Lua API in KCD2: CreateEffect(name, params), SpawnEffect(effectName, pos, dir, [scale], [entityId],
+  [partId]), SpawnEffectLine(effectName, startPos, endPos, dir, scale, slices), SpawnParticles(params, pos, dir),
+  IsEffectAvailable, DeleteEffect, CreateDecal, CreateMatDecal. SpawnEffectLine works (user saw 5 flashes in a row).
+  CreateEffect returns nothing and IsEffectAvailable says true after it, but the effect drew nothing with XML-style
+  keys (numbers or strings): its param names are unknown (the old CE2 Lua keys aren't in WHGame.dll).
+- deagle_tracers.v250 spawned 3-4 m ahead, away / up into open sky, every 30 ms: never seen in any capture. The effect
+  exists (IsEffectAvailable true), its texture exists (IPL_Textures-part1.pak Textures/particles/spark_single_diff.dds).
+  Cause unknown: deagle_lab.xml has it with one thing changed each (collision, size / MinPixels, stretch, alpha, speed,
+  facing) to find out live. The tracer is now the trail (rounds lay still pieces along their path,
+  deagle_tracers.trail); flying kept as tracer.mode "flying".
+- The "fireball" floating in the air: a live-flash emitter (flashMode "live" was the default) left burning after a
+  save load. The plugin's ReleaseEmitter only drops our reference (refcount at +0x58); it never stops a continuous
+  emitter, and the hello after a load forgot it without even that. So flashdisarm never stopped the live flash either.
+  Stopping one needs IParticleEmitter::Kill / Activate(false) (vtable offsets not found yet). flashMode is "gun" by
+  default now.
+- Settings: Lua has no io in KCD2; the plugin keeps every deagle_set (native/src/settings.cpp,
+  Bin\...\deagle_settings.txt) and replays them as deagle_set lines after the hello handshake (console queue).

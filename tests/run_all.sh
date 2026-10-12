@@ -10,6 +10,7 @@ luajit tests/run_ballistics.lua >/dev/null || { echo "FAIL run_ballistics"; fail
 luajit tests/run_penetration.lua >/dev/null || { echo "FAIL run_penetration"; fail=1; }
 luajit tests/run_accuracy.lua >/dev/null || { echo "FAIL run_accuracy"; fail=1; }
 luajit tests/run_motion.lua >/dev/null || { echo "FAIL run_motion"; fail=1; }
+luajit tests/run_settings.lua >/dev/null || { echo "FAIL run_settings"; fail=1; }
 python3 tests/test_profile_guess.py >/dev/null || { echo "FAIL test_profile_guess"; fail=1; }
 python3 tools/check_native.py . >/dev/null || { echo "FAIL check_native"; fail=1; }
 python3 tools/check_fx.py . >/dev/null || { echo "FAIL check_fx"; fail=1; }

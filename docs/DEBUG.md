@@ -1,6 +1,9 @@
 # Deagle mod: keys, console commands and debug tools
 
-Open the console with the key under Esc (`~`). Settings changed with `deagle_set` last until the game restarts.
+Open the console with the key under Esc (`~`). Settings you change (`deagle_set`, `deagle_tracers`, `deagle_hud`,
+`deagle_ads`, `deagle_arms`, `deagle_motion`, `deagle_paths 1/0`, `deagle_gun`) are kept: they come back by themselves
+after a restart or a save load. `deagle_reset` puts everything back as shipped. (The plugin keeps them in
+`Bin\Win64MasterMasterSteamPGO\deagle_settings.txt`; installing the mod doesn't touch it.)
 
 ## Keys (gun drawn unless noted)
 | Key | What it does |
@@ -29,6 +32,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_motion 0`..`2` | gun bob / sway / sprint pose strength (0 = off, 1 = normal) |
 | `deagle_mparam <key> <value>` | weapon-movement tunable, kept until restart (`src/Scripts/Deagle/motion.lua`, `native/src/motion.h`). Keys (defaults = RoN G19; the Deagle overrides drag_aim_loc 0.875, drag_strafe_loc 0.05, move_rot_p 35, hang_k 80, land 1.2): `drag_aim_rot` 0.6 / `drag_aim_loc` 0.4 (look sway rotation / shift), `drag_strafe_rot` 0.4 / `drag_strafe_loc` 0.2 (strafe roll / shift), `move_scale_x/y/z` 10/10/5 and `move_rot_p` 60 (move inertia), `mesh_interp` 55 (sway follow speed), `hang_k` 100 / `hang_c` 8 / `hang_ads` 0.3 (the soft hang spring), `sprint_ron` 1 (0 = the old sprint pose), `sprint_x/y/z` m and `sprint_pitch/roll/yaw` deg (pose), `jump` / `land` / `crouch` / `dodge` / `bob` 1 (strengths), `test_roll` 0 (deg, a constant roll for the sign check) |
 | `deagle_tracers 0` / `1` | glowing tracer on every round off / on |
+| `deagle_reset` | every setting back as shipped, the kept ones forgotten |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
 | `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
 
@@ -37,7 +41,7 @@ Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.o
 On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list settings take numbers apart by commas.
 | Setting | Default | What it changes |
 |---|---|---|
-| `flashMode` | `live` | `live` = the flash is seen in the frame you fire, for 2 frames (1 under 40 fps), like Ready or Not; `gun` = a flash spawned per shot (shows a frame or two late, lasts longer); `world` = left where it was fired |
+| `flashMode` | `gun` | `gun` = a flash spawned per shot on the muzzle (shows a frame or two late); `world` = left where it was fired; `live` = experimental, don't use: its hide doesn't work and after a save load it kept burning in the air (the "fireball") |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
@@ -57,6 +61,8 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `physics.gunBackPerVel` | `0.0113` | gun model push-back per m/s of recoil (Deagle 5.5 cm) |
 | `physics.flashPerUnit` | `0.30` | flash size per unit of blast (Deagle 0.63, Glock 0.30) |
 | `tracers` | `true` | a tracer on every round (same as `deagle_tracers`) |
+| `tracer.mode` | `trail` | `trail`: the round's real path drawn as it flies, muzzle to hit (ricochets and wallbangs too); `flying`: the old self-flying particle |
+| `tracer.scaled` | `false` | the last piece of a trail shortened to end exactly on the hit (only once the scale-length check passes in game) |
 | `range` | `250` | metres a round flies before it's dropped |
 | `holeSize` | `0.035` | bullet hole size in m for a 9 mm (bigger rounds scale it up) |
 | `holeLife` | `300` | seconds a bullet hole stays |
@@ -71,7 +77,6 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `ricochetKeep` | `0.35` | energy a ricochet keeps |
 | `holeExitSize` | `0.09` | exit hole size in m |
 | `accuracy.scale` | `1` | CS2 guns: 1 = CS2's own accuracy (standing / crouched / moving / jumping / shots in a row), 0.5 = twice as tight, 0 = no spread |
-| `flashLive` | `0.8,1` | the live flash's size on each frame it's seen (more numbers = a longer flash: `deagle_set flashLive 0.7,1,1.2`) |
 | `impactVolume` | `1` | bullet impact / ricochet / armour sounds |
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |

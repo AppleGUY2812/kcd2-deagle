@@ -151,7 +151,7 @@ _G.Script = {
 	ReloadScript = function(path) if M.loaded[path] then return 1 end return M.loadScript(path) end,
 }
 _G.Game = { SendInfoText = function(t) M.info = t end, HideInfoText = function() end }
-_G.Particle = { SpawnEffect = function(n, pos, dir, scale) M.fx = (M.fx or 0) + 1 M.lastFx = n; M.lastFxScale = scale; M.fxNames = M.fxNames or {}; M.fxNames[n] = (M.fxNames[n] or 0) + 1; M.fxScale = M.fxScale or {}; M.fxScale[n] = scale end,
+_G.Particle = { SpawnEffect = function(n, pos, dir, scale) M.fx = (M.fx or 0) + 1 M.lastFx = n; M.fxLog = M.fxLog or {}; table.insert(M.fxLog, { n = n, pos = pos, dir = dir, scale = scale, t = M.t }); M.lastFxScale = scale; M.fxNames = M.fxNames or {}; M.fxNames[n] = (M.fxNames[n] or 0) + 1; M.fxScale = M.fxScale or {}; M.fxScale[n] = scale end,
 	CreateMatDecal = function(pos, normal, size, life, mat) M.decals = M.decals or {}; table.insert(M.decals, { pos = pos, size = size, life = life, mat = mat }) end }
 _G.Physics = { RayWorldIntersection = function() return 0 end }
 M.maps = {}

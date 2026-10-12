@@ -20,6 +20,10 @@ Deagle.cfg = {
 	kickPitchVar = 0.0,
 	range = 250,              -- m a round flies before it's dropped (tools/gen_tracers.py RANGE matches)
 	tracers = true,           -- a glowing tracer on every round (deagle_tracers 0 / 1)
+	-- mode "trail": the round's path drawn as it flies, from the muzzle to what it hit (Deagle:TrailAdd; fx pieces dash
+	-- m long at scale 1, tools/gen_tracers.py DASH), from start m out; "flying": one particle per round flying by itself
+	-- (deagle_tracers.v<speed>; not seen in game 2026-10-12). scaled: a piece's scale sets its length (to check live)
+	tracer = { mode = "trail", fx = "deagle_tracers.trail", dash = 1.0, start = 1.0, scaled = false },
 	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
 	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
 	accuracy = { scale = 1, crouchEye = 1.27, crouchBand = 0.05 },
@@ -43,8 +47,10 @@ Deagle.cfg = {
 	muzzleFxLarge = "deagle.muzzle_large",   -- the same flash burning longer, for big blasts (cfg.physics.largeFlashBlast)
 	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
 	-- "gun": the flash rides the muzzle, moved with the gun every frame (like CS2 / CoD / Ready or Not); "world": it stays
-	-- where it was fired
-	flashMode = "live",
+	-- where it was fired; "live": one never-stopping emitter shown for the frames of a shot. Not "live": its hide (a
+	-- size of nothing) didn't hide it, and letting it go doesn't stop it (the plugin only drops its reference): after
+	-- a save load one kept burning where the gun had been (in game 2026-10-12, the "fireball")
+	flashMode = "gun",
 	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)
 	muzzleLight = "deagle.muzzle_light", muzzleLightLarge = "deagle.muzzle_large_light",   -- its light, per shot
 	flashLive = { 0.8, 1.0 },  -- the live flash's size on each frame it's seen (2 frames; 1 frame under 40 fps)
@@ -180,6 +186,15 @@ Deagle.cfg.vm = {
 -- ammo HUD, drawn every frame with System.DrawText (bottom right); falls back to info text if DrawText is missing
 Deagle.cfg.hud = { enabled = true, x = 0.885, y = 0.86, size = 2.6, font = "default",
 	col = { 1.0, 0.95, 0.86, 0.92 }, empty = { 0.95, 0.35, 0.3, 0.95 } }
+
+-- the settings as shipped, for deagle_reset (the player's own are kept by the plugin and replayed at every load: Set)
+local function deepcopy(v)
+	if type(v) ~= "table" then return v end
+	local out = {}
+	for k, x in pairs(v) do out[k] = deepcopy(x) end
+	return out
+end
+Deagle.cfgDefaults = deepcopy(Deagle.cfg)
 
 Deagle.state = Deagle.state or {
 	ammo = 7,
@@ -937,7 +952,7 @@ function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip)
 	if vdot(out, normal) < 0.05 then out = vnorm(vadd(out, vscale(normal, 0.08))) end   -- never back into the surface
 	local speed = vlen(r.vel) * math.sqrt(keep)
 	r.pos, r.vel, r.skip = vadd(pos, vscale(normal, 0.01)), vscale(out, speed), skip
-	if c.tracers then self:SpawnFx(self:TracerFx(speed), r.pos, out, 1.0) end
+	if c.tracers and c.tracer.mode == "flying" then self:SpawnFx(self:TracerFx(speed), r.pos, out, 1.0) end
 	return out
 end
 
@@ -1046,7 +1061,7 @@ function Deagle:Impact(hit, dir, phys, r)
 	end
 	local left = energy * (1 - thick / depth)
 	r.pos, r.vel, r.dist = vadd(exitPos, vscale(dir, 0.002)), vscale(dir, math.sqrt(2 * left / phys.bullet)), r.dist + thick
-	if c.tracers then self:SpawnFx(self:TracerFx(vlen(r.vel)), r.pos, dir, 1.0) end
+	if c.tracers and c.tracer.mode == "flying" then self:SpawnFx(self:TracerFx(vlen(r.vel)), r.pos, dir, 1.0) end
 	if self.state.logActions then log(string.format("through %s %.1f cm (could %.1f), %.0f J left", name, thick * 100, depth * 100, left)) end
 	return true
 end
@@ -1223,8 +1238,7 @@ end
 function Deagle:Paths(arg)
 	arg = Deagle.Arg(arg)   -- here too: a command registered before a dev reload still passes it quoted
 	if arg == "clear" then self.paths = {}
-	else self.cfg.debugPaths = not arg:find("0") end
-	if not self.cfg.debugPaths then self.paths = {} end
+	else self:Set("debugPaths " .. (arg:find("0") and "0" or "1")) end
 	self:Notify("bullet paths " .. (self.cfg.debugPaths and "on" or "off") .. (arg == "clear" and " (cleared)" or ""))
 end
 
@@ -1261,6 +1275,7 @@ function Deagle:MoveRound(r, h)
 			local speed = vlen(r.vel)
 			hit.energy = 0.5 * r.phys.bullet * speed * speed
 			self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
+			self:TrailAdd(r, r.pos, hit.pos, r.dist)
 			self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
 			r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
 			if not self:ApplyHit(hit, vnorm(move), r.phys, r) then r.landed = true; return true end
@@ -1272,6 +1287,7 @@ function Deagle:MoveRound(r, h)
 		end
 	end
 	self:PathAdd(r.pos, vadd(r.pos, move), (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
+	self:TrailAdd(r, r.pos, vadd(r.pos, move), r.dist)
 	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
 	return r.dist > self.cfg.range or r.age > ROUND_LIFE
 end
@@ -1285,8 +1301,8 @@ function Deagle:StepRound(r, dt)
 	return false
 end
 
-function Deagle:LaunchRound(pos, dir, phys)
-	local r = { pos = pos, vel = vscale(dir, phys.velocity), phys = phys, dist = 0, age = 0, t = System.GetCurrTime() }
+function Deagle:LaunchRound(pos, dir, phys, trail)
+	local r = { pos = pos, vel = vscale(dir, phys.velocity), phys = phys, dist = 0, age = 0, t = System.GetCurrTime(), trail = trail }
 	if self:StepRound(r, self.frameDt or 1 / 30) then return r end   -- landed in this frame
 	self.rounds = self.rounds or {}
 	table.insert(self.rounds, r)
@@ -1313,26 +1329,65 @@ function Deagle:RoundsTick(token)
 	else self.roundsToken = nil end
 end
 
--- The tracer: one glowing particle that flies by itself with the round's speed, gravity and drag
--- (deagle_tracers.v<speed>, nearest 25 m/s) and dies on the first thing it touches. It leaves the muzzle aimed at the
--- point the round is headed for (the first thing along the shot, or 100 m out), so it meets the round's path there.
--- Ready or Not hides your own tracers; ours show (no NPC carries a gun yet). cfg.tracers / deagle_tracers turns them off.
+-- Tracers. cfg.tracers / deagle_tracers turns them off; Ready or Not hides your own tracers, ours show (no NPC carries
+-- a gun yet).
+-- "trail" (cfg.tracer.mode, the default): the path the round flies in each frame is laid with still glowing pieces
+-- (cfg.tracer.fx, cfg.tracer.dash m each, living 0.12 s and fading: tools/gen_tracers.py), so the streak is exactly
+-- where the round went, ricochets and wallbangs included, and ends on what it hit. The round leaves the eye; the
+-- streak leaves the muzzle and joins the round's path by the point the shot is headed for (the first thing along it,
+-- or 100 m out): Deagle:TrailPoint.
+-- "flying": one particle that flies by itself with the round's speed, gravity and drag (deagle_tracers.v<speed>,
+-- nearest 25 m/s), aimed from the muzzle at that same point; dies on the first thing it touches.
 function Deagle:TracerFx(speed)
 	local first, last, step = TRACER_SPEEDS[1], TRACER_SPEEDS[2], TRACER_SPEEDS[3]
 	local v = math.max(first, math.min(last, step * math.floor(speed / step + 0.5)))
 	return string.format("deagle_tracers.v%d", v)
 end
 
+-- at the shot: the flying tracer, or the trail's start (muzzle offset, where it joins the path) for the round to carry
 function Deagle:Tracer(from, dir, phys)
-	if not self.cfg.tracers then return end
+	if not self.cfg.tracers then return nil end
 	local muzzle = self:VmBone(self.gun.bones.muzzle)
-	if not muzzle then return end
+	if not muzzle then return nil end
 	local reach = 100
 	local hits, p = {}, self:Player()
 	local ok, n = pcall(Physics.RayWorldIntersection, from, vscale(dir, reach), 1, ent_all, p and p.id, nil, hits)
 	if ok and n and n > 0 and hits[1] then reach = math.max(1, hits[1].dist) end
-	local aim = vnorm(vsub(vadd(from, vscale(dir, reach)), muzzle))
-	self:SpawnFx(self:TracerFx(phys.velocity), muzzle, aim, 1.0)
+	if self.cfg.tracer.mode == "flying" then
+		local aim = vnorm(vsub(vadd(from, vscale(dir, reach)), muzzle))
+		self:SpawnFx(self:TracerFx(phys.velocity), muzzle, aim, 1.0)
+		return nil
+	end
+	return { off = vsub(muzzle, from), reach = reach }
+end
+
+-- where the streak is drawn for a point d m along the round's path: the muzzle's offset from the eye, shrinking to
+-- nothing at trail.reach
+function Deagle:TrailPoint(trail, p, d)
+	local w = math.max(0, 1 - d / trail.reach)
+	return w > 0 and vadd(p, vscale(trail.off, w)) or p
+end
+
+-- a bit of path the round just flew, from a (d0 m along its path) to b: pieces cfg.tracer.dash long end to end; the
+-- last one ends on b (shorter when cfg.tracer.scaled: a piece's length follows its scale; else a whole piece, over the
+-- one before it); none within cfg.tracer.start m of the muzzle (the flash is there)
+function Deagle:TrailAdd(r, a, b, d0)
+	local trail, c = r.trail, self.cfg.tracer
+	if not trail or not self.cfg.tracers then return end
+	local len = vlen(vsub(b, a))
+	if len < 1e-4 then return end
+	local u, dash = vscale(vsub(b, a), 1 / len), c.dash
+	local n = math.max(1, math.ceil(len / dash - 1e-6))
+	for k = 1, n do
+		local e = math.min(len, k * dash)                                -- this piece ends e m from a
+		local l = (k == n and c.scaled) and (e - (k - 1) * dash) or dash  -- and is l m long
+		if d0 + e - l / 2 >= c.start then
+			local p0 = self:TrailPoint(trail, vadd(a, vscale(u, e - l)), d0 + e - l)
+			local p1 = self:TrailPoint(trail, vadd(a, vscale(u, e)), d0 + e)
+			local dir = vnorm(vsub(p1, p0))
+			self:SpawnFx(c.fx, vsub(p1, vscale(dir, l / 2)), dir, l / dash)   -- its end exactly on p1
+		end
+	end
 end
 
 function Deagle:MuzzlePos()
@@ -1428,8 +1483,7 @@ function Deagle:Shoot(force)
 
 	local phys = self:ShotPhysics()
 	if phys then                    -- a round that flies (speed, drop, drag) and its tracer
-		self:Tracer(pos, dir, phys)
-		self:LaunchRound(pos, dir, phys)
+		self:LaunchRound(pos, dir, phys, self:Tracer(pos, dir, phys))
 	else                            -- a gun without cartridge data: an instant ray with its CS2 numbers
 		local hits = {}
 		local ok, n = pcall(Physics.RayWorldIntersection, pos, vscale(dir, c.range), 1, ent_all, p.id, nil, hits)
@@ -2306,10 +2360,28 @@ end
 -- ---------------------------------------------------------------------------
 -- console
 -- ---------------------------------------------------------------------------
+-- What a setting changes besides itself (the plugin holds some; others are applied when they change)
+local AFTER_SET = {
+	flashGrow = function(self) self:NativeSyncVm() end,
+	slowmo = function(self) self:NativeSyncVm() end,
+	["vm.motion"] = function(self) self:NativeSyncVm() end,
+	["vm.arms"] = function(self) self.vmArmsApplied = nil; self:VmApplyArms() end,
+	["vm.ads"] = function(self) self:SetAim(false) end,
+	["hud.enabled"] = function(self) self.hudOk = nil end,
+	tracers = function(self) self:Notify("tracers " .. (self.cfg.tracers and "on" or "off")) end,
+	debugPaths = function(self) if not self.cfg.debugPaths then self.paths = {} end end,
+}
+
+-- deagle_set <key> <value>: change a setting; the plugin keeps it (deagle_settings.txt next to it) and sets it again
+-- at every load, until deagle_reset. "gun <id>" picks the gun.
 function Deagle:Set(line)
 	local key, value = string.match(unquote(line), "^%s*(%S+)%s+(.-)%s*$")
 	if not key then
 		log("usage: deagle_set <key> <value>   (nested: deagle_set physics.camPerFlip 0.3)")
+		return
+	end
+	if key == "gun" then
+		if self:UseGun(value) then self:Native("cfgsave gun " .. value) end
 		return
 	end
 	local t, k = self.cfg, key
@@ -2318,6 +2390,10 @@ function Deagle:Set(line)
 	-- the value takes the setting's own type: on / off settings read 1 / 0 / true / false / on / off, lists read
 	-- numbers apart by commas or spaces (flashGrow 0.7,1,1.1), numbers read numbers
 	local cur, low = t[k], string.lower(value)
+	local function same(a, b)
+		if type(a) == "table" and type(b) == "table" then return table.concat(a, ",") == table.concat(b, ",") end
+		return a == b
+	end
 	if value == "nil" then t[k] = nil
 	elseif type(cur) == "boolean" then
 		if low == "1" or low == "true" or low == "on" or low == "yes" then t[k] = true
@@ -2333,9 +2409,35 @@ function Deagle:Set(line)
 		t[k] = list
 	elseif tonumber(value) then t[k] = tonumber(value)
 	else t[k] = value end
-	if k == "flashGrow" or k == "slowmo" then self:NativeSyncVm() end   -- settings the plugin holds
-	local shown = type(t[k]) == "table" and table.concat(t[k], ", ") or tostring(t[k])
+	local v = t[k]
+	if AFTER_SET[key] and not same(cur, v) then AFTER_SET[key](self) end   -- a load's replay of an unchanged one: nothing
+	local shown = type(v) == "table" and table.concat(v, ", ") or tostring(v)
 	log("cfg." .. key .. " = " .. shown)
+	local kept = type(v) == "boolean" and (v and "1" or "0") or type(v) == "table" and table.concat(v, ",") or tostring(v)
+	self:Native("cfgsave " .. key .. " " .. kept)
+end
+
+-- deagle_tracers / deagle_ads / deagle_hud ...: on unless the argument has a 0 (no argument = on), kept like deagle_set
+function Deagle:SetOnOff(key, arg)
+	self:Set(key .. " " .. (Deagle.Arg(arg):find("0") and "0" or "1"))
+end
+
+-- deagle_reset: every setting back as shipped, the kept ones forgotten
+function Deagle:ResetSettings()
+	for k in pairs(self.cfg) do if self.cfgDefaults[k] == nil then self.cfg[k] = nil end end
+	for k, v in pairs(self.cfgDefaults) do self.cfg[k] = deepcopy(v) end
+	self:Native("cfgreset")
+	if self.gun.id ~= "deagle" and self.guns.deagle then self:UseGun("deagle")   -- the gun as shipped too
+	else
+		local g = self.gun
+		self.cfg.vm.cdf, self.cfg.vm.anims, self.cfg.magSize = g.cdf, g.anims, g.magSize
+		self:ApplyGunStats(g)
+		if self.MotionParams then self:MotionParams(g) end
+	end
+	self.vmArmsApplied, self.hudOk = nil, nil
+	self:VmApplyArms()
+	self:NativeSyncVm()
+	self:Notify("Deagle settings reset")
 end
 
 function Deagle:Cfg()
@@ -2384,12 +2486,13 @@ System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")
 System.AddCCommand("deagle_inspect", "Deagle:Inspect()", "Play the inspect animation")
 System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give()", "Add the Desert Eagle (if missing) and 49 cartridges")
 System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give(Deagle.Arg([[%1]]))", "deagle_give_ammo <n>: add n cartridges")
-System.AddCCommand("deagle_arms", "Deagle.cfg.vm.arms = (([[%1]]):find('mw') and 'mw' or 'medieval') Deagle.vmArmsApplied = nil Deagle:VmApplyArms()", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
-System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber((([[%1]]):gsub('\"',''))) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
-System.AddCCommand("deagle_ads", "Deagle.cfg.vm.ads = (([[%1]]):find('0') == nil) Deagle:SetAim(false)", "deagle_ads 1|0: aim down sights on right click")
-System.AddCCommand("deagle_tracers", "Deagle.cfg.tracers = (([[%1]]):find('0') == nil) Deagle:Notify('tracers ' .. (Deagle.cfg.tracers and 'on' or 'off'))", "deagle_tracers 1|0: a glowing tracer on every round")
-System.AddCCommand("deagle_hud", "Deagle.cfg.hud.enabled = (([[%1]]):find('0') == nil) Deagle.hudOk = nil", "deagle_hud 1|0: ammo HUD on/off")
-System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting live")
+System.AddCCommand("deagle_arms", "Deagle:Set('vm.arms ' .. (Deagle.Arg([[%1]]):find('mw') and 'mw' or 'medieval'))", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
+System.AddCCommand("deagle_motion", "Deagle:Set('vm.motion ' .. (tonumber(Deagle.Arg([[%1]])) or 1))", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
+System.AddCCommand("deagle_ads", "Deagle:SetOnOff('vm.ads', [[%1]])", "deagle_ads 1|0: aim down sights on right click")
+System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")
+System.AddCCommand("deagle_hud", "Deagle:SetOnOff('hud.enabled', [[%1]])", "deagle_hud 1|0: ammo HUD on/off")
+System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting; kept across game starts (deagle_reset)")
+System.AddCCommand("deagle_reset", "Deagle:ResetSettings()", "deagle_reset: every Deagle setting back as shipped (forgets the kept ones)")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
 System.AddCCommand("deagle_status", "Deagle:EnsureInit() Deagle:Status()", "Print hook / input / ammo state")
 System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key bindings")
@@ -2556,6 +2659,6 @@ function Deagle:PrintPhysics()
 		hp, hp50, hp * m.headMult * 1.5, st))
 end
 System.AddCCommand("deagle_physics", "Deagle:PrintPhysics()", "deagle_physics: what the current gun's cartridge does (recoil, flip, flash, energy)")
-System.AddCCommand("deagle_gun", "Deagle:UseGun((([[%1]]):gsub('\"','')))", "deagle_gun <id>: which gun the pistol looks / sounds like (no id: list)")
+System.AddCCommand("deagle_gun", "local id = Deagle.Arg([[%1]]) if id == '' then Deagle:UseGun('') else Deagle:Set('gun ' .. id) end", "deagle_gun <id>: which gun the pistol looks / sounds like (no id: list)")
 
 log("loaded v2.1")

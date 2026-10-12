@@ -1,0 +1,64 @@
+-- Settings kept across game starts: every deagle_set and on / off command tells the plugin (cfgsave <key> <value>,
+-- native/src/settings.cpp), which replays them as deagle_set lines at the next load; replaying sets the same values
+-- again; deagle_reset puts every setting back as shipped and tells the plugin to forget them.
+-- usage: luajit tests/run_settings.lua   (from the repo root)
+local M = dofile("tests/mock_engine.lua")
+dofile("src/Scripts/Deagle/deagle_main.lua")
+Deagle:OnGameplayStarted(); M.console("deagle_native_ok")
+
+local n, fails = 0, 0
+local function check(label, ok, detail)
+	n = n + 1
+	if not ok then fails = fails + 1 end
+	print((ok and "PASS " or "FAIL ") .. label .. (ok and "" or ("  " .. tostring(detail))))
+end
+local function sent(from)   -- cfgsave lines the plugin got since index from, as "<key> <value>"
+	local out = {}
+	for i = from + 1, #M.native do
+		local kv = M.native[i]:match("^%[DN%] cfgsave (.+)$")
+		if kv then out[#out + 1] = kv end
+	end
+	return out
+end
+
+local n0 = #M.native
+M.console("deagle_set", "tracers 0")
+M.console("deagle_tracers", "1")
+M.console("deagle_tracers", "0")
+M.console("deagle_motion", "0.5")
+M.console("deagle_ads", "1")
+M.console("deagle_hud", "0")
+M.console("deagle_arms", "medieval")
+M.console("deagle_set", "flashGrow 0.7 1 1.1")
+M.console("deagle_set", "accuracy.scale 0.5")
+M.console("deagle_set", "hearing.on off")
+M.console("deagle_set", "tracer.mode flying")
+M.console("deagle_paths", "1")
+M.console("deagle_gun", "glock_17")
+local got = sent(n0)
+local want = { "tracers 0", "tracers 1", "tracers 0", "vm.motion 0.5", "vm.ads 1", "hud.enabled 0", "vm.arms medieval",
+	"flashGrow 0.7,1,1.1", "accuracy.scale 0.5", "hearing.on 0", "tracer.mode flying", "debugPaths 1", "gun glock_17" }
+check("every setting command is kept: " .. table.concat(got, " | "), table.concat(got, "|") == table.concat(want, "|"), #got)
+local c = Deagle.cfg
+check("and applied (tracers off, motion 0.5, ads on, hud off, medieval arms, flashGrow, accuracy 0.5, hearing off, flying, paths, Glock)",
+	c.tracers == false and c.vm.motion == 0.5 and c.vm.ads == true and c.hud.enabled == false and c.vm.arms == "medieval"
+	and #c.flashGrow == 3 and c.accuracy.scale == 0.5 and c.hearing.on == false and c.tracer.mode == "flying"
+	and c.debugPaths == true and Deagle.gun.id == "glock_17", Deagle.gun.id)
+
+-- a load: the plugin replays what it kept as deagle_set lines (settings.cpp SettingsReplay), after the handshake
+M.console("deagle_reset")
+check("deagle_reset: the plugin forgets them", M.native[#M.native] ~= nil and (function()
+	for i = n0 + 1, #M.native do if M.native[i] == "[DN] cfgreset" then return true end end end)(), M.native[#M.native])
+check("deagle_reset: shipped values back (Deagle, tracers on, motion 1, ads off, hud on, mw arms, accuracy 1, trail, no paths)",
+	Deagle.gun.id == "deagle" and c.tracers == true and c.vm.motion == 1 and c.vm.ads == false and c.hud.enabled == true and c.vm.arms == "mw"
+	and c.accuracy.scale == 1 and c.tracer.mode == "trail" and c.debugPaths == false and #c.flashGrow == 0, c.vm.motion)
+Deagle:OnGameplayStarted()
+local hello = M.native[#M.native]
+for _, kv in ipairs(want) do M.console("deagle_set", kv) end
+check("replayed at a load: " .. tostring(hello) .. ", then the same values again",
+	hello == "[DN] hello" and c.tracers == false and c.vm.motion == 0.5 and c.vm.arms == "medieval" and c.accuracy.scale == 0.5
+	and c.tracer.mode == "flying" and Deagle.gun.id == "glock_17" and table.concat(c.flashGrow, ",") == "0.7,1,1.1", c.vm.motion)
+M.console("deagle_reset")
+check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
+print(string.format("settings: %d/%d checks pass", n - fails, n))
+os.exit(fails == 0 and 0 or 1)

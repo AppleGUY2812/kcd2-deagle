@@ -141,11 +141,13 @@ end
 if recoil then
 	check(string.format("cartridge kick %.1f deg: climbs %.1f, settles at %.1f (keeps ~%d%%), gun kick sent %d", recoil.up, recoil.peak, recoil.final, recoil.keep * 100, recoil.kicks),
 		recoil.peak > recoil.final and recoil.peak < 1.05 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.1 * recoil.up + 0.02 and recoil.kicks == 1, recoil.final)
-	recoil.flashName, recoil.flashScale = string.match(recoil.flash or "", "^%[DN%] flasharm (%S+) ([%d.]+)")
+	-- flashMode "gun" (the default): the shot's flash spawned on the muzzle by the plugin at the cartridge's size; the
+	-- live flash is never armed (it kept burning after a load, in game 2026-10-12)
+	recoil.flashName, recoil.flashScale = string.match(recoil.light or "", "^%[DN%] flashfx (%S+) ([%d.]+)")
 	recoil.flashScale = tonumber(recoil.flashScale)
-	check(string.format("live flash armed on the muzzle at the cartridge size x%.2f (%s)", recoil.wantScale, tostring(recoil.flash)),
+	check(string.format("flash on the muzzle at the cartridge size x%.2f (%s)", recoil.wantScale, tostring(recoil.light)),
 		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-4, recoil.flashScale)
-	check("the shot shows it for 2 frames (" .. tostring(recoil.shot) .. ")", recoil.shot == "[DN] flashshot 0.8 1", recoil.shot)
+	check("no live flash armed or shown (" .. tostring(recoil.flash or recoil.shot) .. ")", recoil.flash == nil and recoil.shot == nil, recoil.flash)
 end
 if phys then   -- loudness: evened-out files x the blast level; the Glock plays ~0.83x the Deagle (a quarter of 6.5 dB)
 	local other = Deagle.guns[id == "deagle" and "glock_17" or "deagle"]
@@ -164,10 +166,8 @@ if phys then   -- the wound model: 9 mm torso 35 HP by definition, .50 AE ~1.8x 
 end
 if recoil then
 	local large = phys.blast >= Deagle.cfg.physics.largeFlashBlast
-	local wantFx = large and Deagle.cfg.muzzleFxLargeLive or Deagle.cfg.muzzleFxLive
-	local wantLight = large and Deagle.cfg.muzzleLightLarge or Deagle.cfg.muzzleLight
-	check(string.format("flash %s for blast x%.2f, light %s", tostring(recoil.flashName), phys.blast, tostring((recoil.light or ""):match("flashfx (%S+)"))),
-		recoil.flashName == wantFx and (recoil.light or ""):match("flashfx (%S+)") == wantLight, recoil.flashName)
+	local wantFx = large and Deagle.cfg.muzzleFxLarge or Deagle.cfg.muzzleFx
+	check(string.format("flash %s for blast x%.2f", tostring(recoil.flashName), phys.blast), recoil.flashName == wantFx, recoil.flashName)
 	check(string.format("5 fast shots climb %.1f deg, more than 5 single shots (%.1f)", recoil.string5, 5 * recoil.final), recoil.string5 > 1.1 * 5 * recoil.final, recoil.string5)   -- fast fire climbs noticeably more (a light 9 mm barely loads the grip)
 	check(string.format("the barrel is still kicked %.1f deg up 0.08 s after a shot (next bullet goes there)", recoil.kickNow or 0), (recoil.kickNow or 0) > 0.3, recoil.kickNow)
 	local a1, a2 = Deagle:SprayRand(3, 2), Deagle:SprayRand(3, 2)

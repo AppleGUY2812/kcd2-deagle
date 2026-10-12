@@ -48,7 +48,7 @@ Physics.RayWorldIntersection = function(pos, dir, _, _, _, _, hits)
 end
 local landed = {}
 local applyHit = Deagle.ApplyHit
-function Deagle:ApplyHit(hit, dir, phys) landed[#landed + 1] = { t = M.t, hit = hit }; return applyHit(self, hit, dir, phys) end
+function Deagle:ApplyHit(hit, dir, phys) landed[#landed + 1] = { t = M.t, hit = hit, at = vec(hit.pos.x, hit.pos.y, hit.pos.z) }; return applyHit(self, hit, dir, phys) end
 
 -- reference: the same physics (drag dv/dt = -v|v|/L, gravity) integrated in 10 us steps, straight ahead from the camera
 local function reference(phys, y)
@@ -83,6 +83,7 @@ end
 
 local tracerLib = io.open("src/Libs/Particles/deagle_tracers.xml"):read("*a")
 local genRange = tonumber(io.open("tools/gen_tracers.py"):read("*a"):match("\nRANGE = ([%d.]+)"))
+local genDash = tonumber(io.open("tools/gen_tracers.py"):read("*a"):match("\nDASH = ([%d.]+)"))
 check(string.format("tracers are made for cfg.range (%s m, tools/gen_tracers.py %s m)", Deagle.cfg.range, tostring(genRange)), genRange == Deagle.cfg.range, genRange)
 
 for _, id in ipairs({ "deagle", "glock_17" }) do
@@ -193,19 +194,75 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	M.advance(1.0, 60)
 	check(string.format("%s: two rounds in flight both land (%d)", id, #landed), #landed == 2, #landed)
 
-	-- tracer: the effect for this speed, from the muzzle; it exists in the generated library; none when turned off
-	landed = {}
+	-- tracer, "trail": the 100 m wall shot's path laid end to end with pieces from cfg.tracer.start m past the muzzle
+	-- to the hit, joining the round's path from the muzzle; every piece along the flight; none when off
+	local tc = Deagle.cfg.tracer
+	local shot
+	local tracer = Deagle.Tracer
+	function Deagle:Tracer(from, dir, ph)
+		local t = tracer(self, from, dir, ph)
+		shot = { from = from, dir = dir, trail = t, muzzle = self:VmBone(self.gun.bones.muzzle) }
+		return t
+	end
+	local function pieces()
+		local out = {}
+		for _, f in ipairs(M.fxLog or {}) do
+			if f.n == tc.fx then
+				local h = tc.dash * f.scale / 2
+				out[#out + 1] = { a = vec(f.pos.x - f.dir.x * h, f.pos.y - f.dir.y * h, f.pos.z - f.dir.z * h),
+					b = vec(f.pos.x + f.dir.x * h, f.pos.y + f.dir.y * h, f.pos.z + f.dir.z * h), dir = f.dir, t = f.t }
+			end
+		end
+		table.sort(out, function(x, y) return x.b.y < y.b.y end)
+		return out
+	end
+	local function dist(a, b) return math.sqrt((a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 + (a.z - b.z) ^ 2) end
+	world.wallY = 300
+	landed, M.fxLog = {}, {}
+	fire()
+	M.advance(1.0, 60)
+	local ps, hit = pieces(), landed[1] and landed[1].hit
+	local gap, along = 0, true
+	for i = 2, #ps do gap = math.max(gap, ps[i].a.y - ps[i - 1].b.y) end
+	for _, q in ipairs(ps) do along = along and q.dir.y > 0.99 end
+	local first, last = ps[1], ps[#ps]
+	check(string.format("%s: trail %d pieces, no gap (widest %.4f m), all along the shot", id, #ps, gap),
+		#ps >= 99 and #ps <= 115 and gap < 1e-3 and along, #ps)
+	check(string.format("%s: trail ends on the hit (%.4f m off) and starts %.2f m past the muzzle", id, hit and last and dist(last.b, hit.pos) or -1,
+		first and shot and shot.muzzle and dist(first.a, shot.muzzle) or -1),
+		hit and last and dist(last.b, hit.pos) < 1e-3 and first and shot and shot.muzzle and math.abs(dist(first.a, shot.muzzle) - tc.start) < 0.05,
+		hit and last and dist(last.b, hit.pos))
+	check(string.format("%s: %s is in deagle_tracers.xml, dash %.1f m = tools/gen_tracers.py", id, tc.fx, tc.dash),
+		tracerLib:find('Name="' .. tc.fx:match("%.(.+)$") .. '"', 1, true) ~= nil and tc.dash == genDash, genDash)
+	-- the NPC at 5 m: the whole streak is laid in the frame of the shot and ends on the hit
+	world.wallY, world.npcY = nil, 205
+	npc.damage = 0
+	landed, M.fxLog = {}, {}
+	local t1 = fire()
+	ps, hit = pieces(), landed[1] and { pos = landed[1].at }   -- where the round met the body (zones move hit.pos in)
+	local now = true
+	for _, q in ipairs(ps) do now = now and q.t == t1 end
+	check(string.format("%s: NPC at 5 m: %d pieces in the frame of the shot, ending on the hit (%.4f m off)", id, #ps,
+		hit and ps[#ps] and dist(ps[#ps].b, hit.pos) or -1), #ps >= 4 and #ps <= 5 and now and hit and dist(ps[#ps].b, hit.pos) < 1e-3, #ps)
+	world.npcY = nil
+	M.advance(1.0, 60)
+	-- off: nothing; "flying": the speed's own particle once, no pieces
+	world.wallY = 300
+	M.console("deagle_tracers", "0")
+	M.fxLog = {}
+	fire()
+	M.advance(1.0, 60)
+	check(string.format("%s: no tracer when tracers are off", id), #pieces() == 0 and not Deagle.cfg.tracers, #pieces())
+	M.console("deagle_tracers")      -- no argument: on
+	tc.mode = "flying"
+	M.fxLog = {}
 	fire()
 	local want = Deagle:TracerFx(phys.velocity)
-	check(string.format("%s: tracer %s spawned", id, want), (M.fxNames[want] or 0) == 1, M.fxNames[want])
-	check(string.format("%s: %s is in deagle_tracers.xml", id, want), tracerLib:find('Name="' .. want:match("%.(v%d+)") .. '"', 1, true) ~= nil, want)
 	M.advance(1.0, 60)
-	M.console("deagle_tracers")      -- no argument: on
-	Deagle.cfg.tracers = false
-	fire()
-	check(string.format("%s: no tracer when tracers are off", id), (M.fxNames[want] or 0) == 0, M.fxNames[want])
-	Deagle.cfg.tracers = true
-	M.advance(1.0, 60)
+	check(string.format("%s: flying mode: %s once, no trail", id, want), (M.fxNames[want] or 0) == 1 and #pieces() == 0
+		and tracerLib:find('Name="' .. want:match("%.(v%d+)") .. '"', 1, true) ~= nil, M.fxNames[want])
+	tc.mode = "trail"
+	Deagle.Tracer = tracer
 	world.wallY = nil
 	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 end

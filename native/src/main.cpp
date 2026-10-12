@@ -11,6 +11,9 @@
 #include "scan.h"
 #include "motion.h"
 #include "gore.h"
+#include "settings.h"
+#include <deque>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <cstdio>
@@ -76,7 +79,8 @@ static void WriteBox(uintptr_t em, const float* box) { __try { memcpy((void*)(em
 static bool g_follow = false;
 static float g_off[3] = { 0, 0, 0 };            // right, forward, up (m)
 static uint64_t g_placed = 0, g_repeats = 0;
-static std::string g_pendingConsole;           // console command to run next frame (native -> Lua)
+static std::deque<std::string> g_console;      // console commands to run next frame (native -> Lua), in order
+static std::mutex g_consoleMu;
 
 // ---- procedural motion: motion.cpp / motion.h (mo, UpdateMotion, ResetMotion)
 
@@ -473,7 +477,14 @@ static void Command(const char* line) {
 	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
 		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
 		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1;
-		g_pendingConsole = "deagle_native_ok"; Log("hello from Lua");
+		// the handshake, then the player's saved settings (settings.cpp)
+		std::vector<std::string> saved = SettingsReplay();
+		{
+			std::lock_guard<std::mutex> lk(g_consoleMu);
+			g_console.clear(); g_console.push_back("deagle_native_ok");
+			for (auto& c : saved) g_console.push_back(c);
+		}
+		Log("hello from Lua (%zu settings to replay)", saved.size());
 	}
 	else if (!strcmp(cmd, "vm")) {
 		unsigned long long id = 0;
@@ -569,6 +580,15 @@ static void Command(const char* line) {
 		for (int i = 0; i < g_flashGrowN; i++) g_flashGrow[i] = Finite(&v[i], 1) && v[i] >= 0 ? v[i] : 1.0f;
 		Log("flash grow %d frames", g_flashGrowN);
 	}
+	else if (!strcmp(cmd, "cfgsave")) {   // cfgsave <key> <value>: a deagle_set setting to keep (settings.cpp)
+		char key[96] = {};
+		if (sscanf_s(rest, "%95s", key, (unsigned)sizeof(key)) == 1) {
+			const char* v = rest + strlen(key);
+			while (*v == ' ') v++;
+			SettingsSave(key, v);
+		}
+	}
+	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
@@ -636,7 +656,11 @@ static void OnCamera(uintptr_t camera) {
 	UpdateMotion(g_cam);
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
 	if (g_fmod) { UpdateListener(g_cam); fm.update(g_fmod); }
-	if (!g_pendingConsole.empty() && g_env) { std::string c; c.swap(g_pendingConsole); SafeConsole(c.c_str()); }
+	if (g_env) {
+		std::deque<std::string> run;
+		{ std::lock_guard<std::mutex> lk(g_consoleMu); run.swap(g_console); }
+		for (auto& c : run) SafeConsole(c.c_str());
+	}
 	if (n == 1 || n % 3000 == 0)
 		Log("frames %llu placed %llu repeats skipped %llu cmds %llu sounds %zu", n, g_placed, g_repeats, g_cmds, g_sounds.size());
 	if (n == 1 || n % 600 == 0)
@@ -733,6 +757,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 		g_self = h;
 		DisableThreadLibraryCalls(h);
 		LogInit(h);
+		SettingsInit(h);
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
 	}
 	return TRUE;
