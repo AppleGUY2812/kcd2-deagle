@@ -72,6 +72,22 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 - [ ] Head pop when a round goes through the head (Phase 2 decides "through")
 - [ ] Exit-wound gore scaled by the energy left; dismemberment by big energy at limbs (native bone scaling)
 
+## Cartridge-driven handling (user, 2026-10-12): one system instead of hand-tuned numbers
+Each cartridge: bullet mass, muzzle velocity, powder charge. Each gun: mass, bore height over the grip (leverage),
+support (one hand / two hands / shoulder stock), mechanism (slide or bolt + spring: spreads the impulse), muzzle device,
+barrel length. Derived:
+- recoil impulse p = bullet mass x velocity + powder gas (~1.5x bullet velocity); recoil velocity = p / gun mass,
+  energy = p^2 / 2m (light guns snappy)
+- muzzle flip = p x bore height around the support pivot (wrist / elbows / shoulder); push-back along the bore;
+  side kick + twist small, by hand
+- recovery = a spring-damper pulling back on target, stiffer with two hands / stock / crouch / leaning; later KCD2
+  stamina + marksmanship skill. Full auto: kicks stack before recovery -> the spray pattern emerges
+- flash size + brightness + its light + smoke + loudness from the powder charge (short barrel: more unburnt powder);
+  damage + penetration from bullet energy (Phase 2)
+- one calibration constant (physics -> screen motion), set against the user's Ready or Not recording
+Games: Tarkov = per-gun vertical / horizontal recoil + ergonomics, modified by stock / muzzle / ammo (tuned stats);
+Arma 3 = weight -> inertia, resting / bipod cut recoil; Ready or Not = procedural recoil with visible recovery.
+
 ## Decided
 - **Small rounds bounce off plate** (2026-10-12, for fun, even though a 9 mm would often get through): plate deflects
   anything under an energy threshold with sparks, a ping and a ricochet; big rounds (.50 AE and up) go through.
