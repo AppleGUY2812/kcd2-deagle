@@ -65,7 +65,7 @@ local phys = Deagle:ShotPhysics()
 if phys then
 	while Deagle:FireMode() ~= "semi" do act("deagle_firemode"); M.advance(0.1) end
 	Deagle.state.ammo = g.magSize; M.advance(1.5)
-	local up = Deagle.cfg.physics.camPerFlip * phys.flip
+	local up = Deagle.cfg.physics.camPerFlip * (Deagle:FeltKick(phys))
 	local p0, n0, shotN = M.view.pitch, #M.native, Deagle.sprayN or 0
 	act("deagle_fire"); M.advance(0.1)
 	local peak = math.deg(M.view.pitch - p0)
@@ -143,13 +143,13 @@ if recoil then
 	check(string.format("flash spawned on the muzzle at the cartridge size x%.2f (%s)", recoil.wantScale, tostring(recoil.flash)),
 		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-4, recoil.flashScale)
 end
-if phys then   -- loudness: evened-out files x the blast level; the Glock plays ~0.69x the Deagle (half of 6.5 dB)
+if phys then   -- loudness: evened-out files x the blast level; the Glock plays ~0.83x the Deagle (a quarter of 6.5 dB)
 	local other = Deagle.guns[id == "deagle" and "glock_17" or "deagle"]
 	local mine = Deagle:ShotGain(g.shotSounds[1]) / Deagle.shotGain[g.shotSounds[1]]
 	local saved = Deagle.gun; Deagle.gun = other
 	local theirs = Deagle:ShotGain(other.shotSounds[1]) / Deagle.shotGain[other.shotSounds[1]]
 	Deagle.gun = saved
-	check(string.format("blast loudness x%.2f vs %s x%.2f", mine, other.id, theirs), math.max(mine, theirs) == 1 and math.abs(math.min(mine, theirs) - 0.69) < 0.02, mine)
+	check(string.format("blast loudness x%.2f vs %s x%.2f", mine, other.id, theirs), math.max(mine, theirs) == 1 and math.abs(math.min(mine, theirs) - 0.83) < 0.02, mine)
 end
 if phys then   -- the wound model: 9 mm torso 35 HP by definition, .50 AE ~1.8x (CS2 has 1.77x), little loss at 50 m
 	local hp, st = Deagle:Wound(phys, 0)

@@ -54,7 +54,7 @@ Deagle.cfg = {
 	splatRange = 3.0,         -- how far behind the target blood can land
 	splatSize = { 0.45, 0.9 },
 	splatLife = 180,
-	recoil = 1.0,
+	recoil = 1.0,              -- master kick: scales every recoil effect together (camera, sideways, gun model flip + push)
 	-- cartridge-driven handling (guns/calibers.lua -> ShotPhysics): physics -> screen. PROVISIONAL constants, set so the
 	-- .50 AE Deagle kicks ~4.5 deg; to be fitted to Ready or Not's values for the same guns. A gun with no cartridge
 	-- data keeps kickPitch / kickYaw below.
@@ -77,13 +77,19 @@ Deagle.cfg = {
 		adsMult = 0.7,          -- aimed: steadier
 		gunBackPerVel = 0.007,  -- gun pushed back (m) per m/s of free recoil (Deagle 4.95 -> 3.5 cm)
 		gunFlipPerFlip = 0.29,  -- gun model flip (deg) per rad/s, on top of the shot animation
+		-- felt kick: physics alone makes a 9 mm Glock kick a third of a .50 AE Deagle; shooters (and games like Ready or
+		-- Not) feel a much smaller gap. Kick goes as (flip / Deagle's flip)^kickExponent x Deagle's: the Deagle is
+		-- unchanged, smaller guns are lifted toward it, the order stays (1 = pure physics: Glock 0.35x; 0.6: 0.53x)
+		kickExponent = 0.6,
+		kickRefFlip = 20.26,    -- rad/s: the Deagle's muzzle flip (the gun whose kick the constants above are set on)
+		kickRefVel = 4.84,      -- m/s: the Deagle's free recoil speed
 		flashPerUnit = 0.30,    -- flash size per unit of blast scale G (9 mm = 1: Glock 0.30, Deagle 0.62)
 		damageRef = 35,         -- HP a 9 mm 124 gr FMJ at 360 m/s takes from the torso (3 hits on a 100 HP NPC)
 		staminaRef = 20,        -- stamina a 9 mm's shove takes; others by momentum
 		headMult = 2.0,         -- on a head hit, on top of KCD2's own x1.5: a round through the skull kills
 		punchPerMomentum = 25.6,-- physics push on bodies / props per kg m/s of bullet momentum (Deagle 8.6 -> 220)
 		largeFlashBlast = 1.5,  -- blast scale from which the flash burns longer (0.13 s instead of 0.1; Deagle 2.08)
-		loudnessSpan = 0.5,     -- share of the real loudness difference played (Deagle +6.5 dB over the Glock -> 0.69x)
+		loudnessSpan = 0.25,    -- share of the real loudness difference played (Deagle +6.5 dB over the Glock -> Glock 0.83x)
 	},
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
@@ -453,7 +459,8 @@ function Deagle:PhysicsRecoil(phys)
 	local ph = self.gun.physics or self.gunPhysics[self.gun.cs2]
 	local aim = s.aiming and m.adsMult or 1
 	local n = self.sprayN or 0; self.sprayN = n + 1
-	local up = m.camPerFlip * phys.flip * (1 + m.vary * self:SprayRand(n, 1)) * aim * self.cfg.recoil
+	local feltFlip, feltVel = self:FeltKick(phys)
+	local up = m.camPerFlip * feltFlip * (1 + m.vary * self:SprayRand(n, 1)) * aim * self.cfg.recoil
 	local side = up * ((ph.side or 0) + m.sideSigma * self:SprayRand(n, 2))
 	local range = m.holdRange * m.holds[ph.hold] * (s.aiming and m.adsHold or 1)
 	local r = self.camRecoil or { pitch = 0, yaw = 0, applied = { pitch = 0, yaw = 0 }, perm = { pitch = 0, yaw = 0 } }
@@ -466,12 +473,19 @@ function Deagle:PhysicsRecoil(phys)
 	r.yaw, r.perm.yaw = r.yaw + sideBack, r.perm.yaw + side - sideBack
 	self.camRecoilT = System.GetCurrTime()
 	if self.native then
-		local flip = m.gunFlipPerFlip * phys.flip * aim
+		local flip = m.gunFlipPerFlip * feltFlip * aim * self.cfg.recoil
 		local yaw = up > 0 and flip * side / up or 0
-		self:Native(string.format("kick %.4f %.3f %.3f %.3f", m.gunBackPerVel * phys.recoilVel * aim, flip, yaw, m.gunRollPerYaw * yaw))
+		self:Native(string.format("kick %.4f %.3f %.3f %.3f", m.gunBackPerVel * feltVel * aim * self.cfg.recoil, flip, yaw, m.gunRollPerYaw * yaw))
 		self.gunKicks = self.gunKicks or {}
 		table.insert(self.gunKicks, { t = self.camRecoilT, pitch = flip, yaw = yaw })
 	end
+end
+
+-- the muzzle flip and recoil speed as they're felt (cfg.physics.kickExponent): the reference gun keeps its numbers,
+-- smaller ones are lifted toward it
+function Deagle:FeltKick(phys)
+	local m = self.cfg.physics
+	return m.kickRefFlip * (phys.flip / m.kickRefFlip) ^ m.kickExponent, m.kickRefVel * (phys.recoilVel / m.kickRefVel) ^ m.kickExponent
 end
 
 -- the same pseudo-random number for the same gun, shot of the string and channel: a learnable spray (CS2-style).
