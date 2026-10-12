@@ -94,3 +94,19 @@ Handling comes from **CS2**: each profile names its closest CS2 weapon (`"cs2": 
 title). `tools/gb/cs2_fetch.sh` downloads CS2's current `weapons.vdata` (SteamDB GameTracking-CS2) and
 `python3 tools/gb/cs2_apply.py .` writes `Scripts/Deagle/guns/cs2.lua`; the script takes damage, headshot multiplier,
 range falloff, fire rate, recoil and fire modes (semi / burst / auto) from it.
+
+## How a gun plugs in (the contract)
+The gameplay script doesn't care where a gun came from, but it needs per-gun knowledge that lives in the animations and
+the model, so every importer has to produce it (tools/gb does for GameBanana CS:S guns):
+- clips by role (idle, shoot, shoot_empty, reload, reload_empty, inspect(_empty), draw(_empty), holster, burst) with
+  their frame rates;
+- moments inside them (tools/clip_times.py): old mag out, new mag clicked in (the mag-in sound), gun back up, settled;
+- named parts: muzzle and ejection bones, slide (+ parts riding it), both magazines and every modelled round as their
+  own attachments;
+- sound cues (file + time per clip).
+Lua runs the gameplay (input, ammo, reloads, damage, which clip plays); the native plugin does what has to happen on
+the final camera every frame (placing the gun, keeping the flash on it), sounds and procedural motion. They talk through
+"[DN] ..." log lines and the deagle_native_ok handshake; without the plugin Lua falls back (tests/run_fallback.lua).
+A new source (Ready or Not: FModel -> Blender, anim notifies give the moments exactly) needs its own importer front end
+filling this contract, not a different gameplay system. Take gun, animations and arms from the same source: animations
+are bound to one skeleton and the hands to the gun's grip (mixing sources means re-rigging by hand).

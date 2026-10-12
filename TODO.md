@@ -28,6 +28,8 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- Later: Ready or Not importer front end (FModel .psk/.psa -> Blender -> the gun contract in README; anim notifies for
+  the mag / slide moments); gun + animations + arms from the same source
 - In-game check of the 2026-10-12 install: ammo at the mag click, reload cancel (old mag in: keep rounds / out: the
   chambered round, no mag until the next reload), bullets in the mag, burst 0.05 s, R no torch, flash (world / entity)
 - Flash look: size (muzzleFxScale), brightness (deagle_test b100 / b50 / b25 + light), entity mode as default if it
