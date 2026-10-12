@@ -78,6 +78,8 @@ Deagle.cfg = {
 	-- GUESS ~80 m, calibrate live), hit = bullet_hit multiplier at an impact for a 9 mm
 	hearing = { on = true, shot = 3.2, hit = 1.0 },
 	exitEnergy = 20,          -- J: a round leaving the body with less stays in it (no exit wound)
+	-- a killing round: ragdoll at once and a shove by its momentum (x killPush) pushDelay ms later, at the part it hit
+	gore = { ragdollOnKill = true, killPush = 1.0, pushDelay = 60 },
 	bodyExit = 0.35,          -- m from the entry where a through-and-through round goes on
 	holeLife = 300,           -- s a bullet hole stays
 	bloodPaint = 0.45,        -- actor:AddBlood amount per hit on that body part
@@ -1002,6 +1004,24 @@ function Deagle:Impact(hit, dir, phys, r)
 	return true
 end
 
+-- A killing round drops the body at once (KCD2 would play a death animation first and ragdoll ~1 s later,
+-- docs/kcd2_gore_ragdoll_re.md) and shoves it by the round's momentum at the part it hit: a ray along the round
+-- against the fresh ragdoll returns that part. punch per momentum like corpses, x cfg.gore.killPush.
+function Deagle:KillShove(e, hit, dir, phys, energy)
+	local g = self.cfg.gore
+	if not g.ragdollOnKill then return end
+	try("ragdoll on kill", function() e.actor:RagDollize() end)
+	local speed = math.sqrt(2 * (energy or phys.energy) / phys.bullet)
+	local push = self.cfg.physics.punchPerMomentum * phys.bullet * speed * g.killPush
+	Script.SetTimer(g.pushDelay, function()
+		local part, hits = -1, {}
+		local ok, n = pcall(Physics.RayWorldIntersection, vsub(hit.pos, vscale(dir, 0.6)), vscale(dir, 1.2), 1, ent_all, Deagle:Player().id, nil, hits)
+		if ok and n and n > 0 and hits[1] and hits[1].entity == e and hits[1].partid then part = hits[1].partid end
+		try("kill shove", function() e:AddImpulse(part, hit.pos, dir, push, 1) end)
+		log(string.format("kill shove %s part %s push %.0f", tostring(e:GetName()), tostring(part), push))
+	end)
+end
+
 -- A round hitting something. r = the round in flight (nil for an instant ray): true when it flies on (through a body
 -- or wall, or turned off armour / stone), with r moved to where it goes on from.
 function Deagle:ApplyHit(hit, dir, phys, r)
@@ -1082,6 +1102,9 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			end
 			try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end)
 			self:HitReact(e, hit, dir, dmg, stam)
+			local killed = false
+			pcall(function() killed = e.actor:GetHealth() <= 0 end)
+			if killed and phys then self:KillShove(e, hit, dir, phys, hit.energy) end
 			local exits = through and through > c.exitEnergy
 			if not stopped then self:Bleed(e, hit, dir, exits == true, scale, padded) end
 			if exits and r then                         -- through and through: on with what's left, past this body

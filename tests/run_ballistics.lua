@@ -14,6 +14,8 @@ local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0 }
 function npc:GetName() return "target" end
 function npc:GetWorldPos() return vec(100, world.npcY or 0, 30.3) end   -- the shot (z 31.75) lands on the torso
 npc.GetBonePos = M.skeleton
+function npc.actor:RagDollize() end
+function npc:AddImpulse() end
 function npc:GetDirectionVector() return vec(0, -1, 0) end
 function npc.soul:DealDamage(st, hp) npc.damage = npc.damage + hp; npc.hitAt = M.t end
 function npc.actor:IsDead() return false end

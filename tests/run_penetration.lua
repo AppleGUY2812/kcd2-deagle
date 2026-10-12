@@ -29,6 +29,8 @@ local function newNpc(y, outfit)
 	function n.soul:DealDamage(st, hp) n.damage = n.damage + hp; n.stamina = n.stamina + st; n.hits = (n.hits or 0) + 1 end
 	function n.soul:AddBuff() end
 	function n:GetMass() return self.mass or 80 end
+	function n.actor:RagDollize() n.ragdoll = M.t end
+	function n:AddImpulse(part, pos, dir, push) n.push = push end
 	function n.actor:IsDead() return n.damage >= 100 end
 	function n.actor:GetHealth() return 100 - n.damage end
 	function n.actor:GetMaxHealth() return 100 end
@@ -201,6 +203,21 @@ check(string.format("40 cm out: past the arm, into the wall behind (man %d hits,
 	(man.hits or 0) == 0 and hits[#hits] and hits[#hits].surface == "mat_rock", man.hits)
 part = zoneShot(0.10, 0.75)
 check("thigh height, 10 cm out -> leg_left (" .. tostring(part) .. ")", part == "leg_left", part)
+
+-- a killing round drops the body at once and shoves it by the round's momentum a moment later
+Deagle:UseGun("deagle"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+reset()
+local victim = newNpc(210)
+victim.damage = 90
+local t0 = M.t
+fire()
+check(string.format("a kill: ragdoll at once (%s), shoved %.0f a moment later", tostring(victim.ragdoll and victim.ragdoll - t0 < 0.05), victim.push or -1),
+	victim.ragdoll and victim.ragdoll - t0 < 0.05 and victim.push and victim.push > 100, victim.push)
+reset()
+local alive = newNpc(210)
+fire()
+check("a wound that doesn't kill: no ragdoll", alive.ragdoll == nil and alive.damage > 0 and alive.damage < 100, alive.ragdoll)
+Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 
 -- size: a 2.5 kg hare dies to one Glock round; a 500 kg horse takes less than a man (KCD2 gives all 100 HP)
 Deagle:UseGun("glock_17"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
