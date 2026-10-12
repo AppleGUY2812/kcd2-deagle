@@ -13,7 +13,7 @@ Deagle.cfg = {
 	interval = 0.22,          -- seconds between shots (the gun's own / CS2 cycle time replaces it)
 	fireRate = "mod",         -- "mod": the GameBanana mod's own cycle time (as fast as you click); "cs2": CS2's
 	rangeMod = 1.0,           -- damage x rangeMod per 12.7 m (CS2: per 500 units)
-	burstShotGap = 0.06,      -- seconds between the rounds of a burst
+	burstShotGap = 0.05,       -- seconds between a burst's rounds (a Glock 18 fires ~1,100-1,200 rounds a minute)
 	burstInterval = 0.3,      -- after a burst
 	heatPerShot = 0.35,       -- degrees of extra spread per shot; cools at heatDecay deg/s (rapid fire opens the cone)
 	heatDecay = 4.0,
@@ -517,7 +517,8 @@ function Deagle:Fire(force, burstRound)
 		-- the gun cuts it with the last shot (slide locks back)
 		if wasLast then self:VmPlay("shootEmpty", false)                 -- its cue is the gunshot
 		else
-			if burstRound == 1 then self:VmPlay("shootBurst", false) end
+			-- the burst clip's slide cycles are gun.burstGap apart: play it at the speed that lands them on the rounds
+			if burstRound == 1 then self:VmPlay("shootBurst", false, (self.gun.burstGap or self.cfg.burstShotGap) / self.cfg.burstShotGap) end
 			self:PlayCues("shoot")                                       -- every round's gunshot (the clip has none)
 		end
 	elseif aimed or (self:FireMode() ~= "semi" and anims.shootAdd) then
@@ -1409,7 +1410,7 @@ function Deagle:TriggerPress()
 		shot()
 	elseif mode == "burst" then
 		local now = System.GetCurrTime()
-		local gap = self.gun.burstGap or c.burstShotGap      -- the gun's burst clip sets the rhythm
+		local gap = c.burstShotGap
 		if now < (s.burstReady or 0) or now - s.lastShot < c.interval - 0.005 then return end
 		s.burstReady = now + 2 * gap + c.burstInterval
 		self:Fire(false, 1)
