@@ -84,7 +84,7 @@ if phys then
 	M.advance(2.0)
 	local string5 = math.deg(M.view.pitch - p1)
 	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = keep, string5 = string5, kickNow = kickNow,
-		flashName = M.lastSlotFx, flashScale = M.lastSlotScale, flashPrime = M.lastSlotPrime, flashOn = M.lastSlotEntity, wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
+		flash = (function() local l for _, c in ipairs(M.native) do if c:find("^%[DN%] flashfx ") then l = c end end return l end)(), wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
@@ -138,8 +138,10 @@ end
 if recoil then
 	check(string.format("cartridge kick %.1f deg: climbs %.1f, settles at %.1f (keeps ~%d%%), gun kick sent %d", recoil.up, recoil.peak, recoil.final, recoil.keep * 100, recoil.kicks),
 		recoil.peak > recoil.final and recoil.peak < 1.05 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.1 * recoil.up + 0.02 and recoil.kicks == 1, recoil.final)
-	check(string.format("flash on its entity at the cartridge size x%.2f (got %s on %s)", recoil.wantScale, tostring(recoil.flashScale), tostring(recoil.flashOn)),
-		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-6 and recoil.flashPrime == false and recoil.flashOn == "deagle_flash", recoil.flashScale)
+	recoil.flashName, recoil.flashScale = string.match(recoil.flash or "", "^%[DN%] flashfx (%S+) ([%d.]+)")
+	recoil.flashScale = tonumber(recoil.flashScale)
+	check(string.format("flash spawned on the muzzle at the cartridge size x%.2f (%s)", recoil.wantScale, tostring(recoil.flash)),
+		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-4, recoil.flashScale)
 end
 if phys then   -- loudness: evened-out files x the blast level; the Glock plays ~0.69x the Deagle (half of 6.5 dB)
 	local other = Deagle.guns[id == "deagle" and "glock_17" or "deagle"]

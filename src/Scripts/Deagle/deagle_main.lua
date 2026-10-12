@@ -279,15 +279,13 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
 end
 
--- The flash rides the gun on a small entity of its own: the plugin moves it onto the muzzle in the same call that
--- places the gun, so it sits on the muzzle in every frame drawn (Lua runs before the camera is final, so whatever Lua
--- alone puts on the gun trails it by a frame). Checked in game 2026-10-12 (slow motion, scripted camera turns, recorded):
--- effects attached to the viewmodel character (bone attachments) showed on some shots only, never on the Deagle, and
--- trailed by a frame; an emitter in a slot of the viewmodel entity never renders; an emitter on a separate entity
--- renders every time. KCD2's LoadParticleEffect takes CryEngine's table (slot, effect, { Scale = ... }): plain
--- arguments create no slot. A slot still holding the last flash doesn't restart: two slots, the older one cleared.
--- flashMode "world" leaves the flash where the muzzle was instead. No fallback: a failure is logged. Smoke stays in
--- the world.
+-- The flash rides the gun: the plugin spawns it the way Particle.SpawnEffect does (a free emitter: the only kind that
+-- drew every time in game) and moves it onto the muzzle right after placing the gun in every camera step, so it sits
+-- on the muzzle in every frame drawn. Lua sends the muzzle (position + barrel direction in the viewmodel's axes) at the
+-- shot and every frame while it burns. Checked in game 2026-10-12 (slow motion, scripted turns, recorded): effects on
+-- entities (bone attachments, viewmodel slots, a helper entity) drew on some shots only, never on the Deagle, and
+-- trailed by a frame. flashMode "world" leaves the flash where the muzzle was instead. No fallback: without the plugin
+-- the flash is an error in the log. Smoke stays in the world.
 local FLASH_FOLLOW = 0.3   -- s of game time the flash entity keeps following the muzzle (the longest flash part lives 0.11)
 local function vsub(a, b) return { x = a.x - b.x, y = a.y - b.y, z = a.z - b.z } end
 local function vdot(a, b) return a.x * b.x + a.y * b.y + a.z * b.z end
@@ -305,33 +303,21 @@ function Deagle:MuzzleFlash(dir)
 		try("fx", Particle.SpawnEffect, fx, pos, dir, scale)
 	elseif self.vmInFp and self.vmShown then
 		local vm = self.vmId and System.GetEntity(self.vmId)
-		local e = vm and self:FlashEntity()
-		local okM, lp, ld = false, nil, nil
-		if e then okM, lp, ld = pcall(self.MuzzleLocal, self, vm) end
-		if not (e and okM) then
-			log("$4muzzle flash: " .. (e and ("no muzzle on the gun: " .. tostring(lp)) or "no flash entity"))
+		local okM, lp, ld = false, "no viewmodel", nil
+		if vm then okM, lp, ld = pcall(self.MuzzleLocal, self, vm) end
+		if not self.native then
+			if not self.flashNoNativeSaid then   -- once: every shot would flood the log
+				self.flashNoNativeSaid = true
+				log("$4muzzle flash: the native plugin isn't running (deagle_native.asi): no flash on the gun")
+			end
+		elseif not okM then
+			log("$4muzzle flash: no muzzle on the gun: " .. tostring(lp))
 		else
-			self:FlashPlace(e, vm, lp, ld)
-			self.flashSlot = self.flashSlot == 0 and 1 or 0
-			e:FreeSlot(self.flashSlot)
-			local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlot, fx, { Scale = scale, bPrime = false })
-			if not okL or type(slot) ~= "number" then log("$4muzzle flash: " .. fx .. " didn't load: " .. tostring(slot)) end
+			self:Native(string.format("flashfx %s %.4f %.4f %.4f %.4f %.4f %.4f %.4f", fx, scale, lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
 			self.flashUntil = System.GetCurrTime() + FLASH_FOLLOW
-			self:Native(string.format("flash 0x%s %.4f %.4f %.4f %.4f %.4f %.4f", entityHex(e.id), lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
 		end
 	end
 	try("fx", Particle.SpawnEffect, c.muzzleSmokeFx, pos, dir, scale / 0.6)
-end
-
-function Deagle:FlashEntity()
-	local e = self.flashId and System.GetEntity(self.flashId)
-	if e then return e end
-	e = System.SpawnEntity({ class = "BasicEntity", name = "deagle_flash", position = System.GetViewCameraPos(),
-		flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = "" } })
-	if not e then return nil end
-	e:SetFlags(ENTITY_FLAG_NO_SAVE, 0)   -- never into a save
-	self.flashId, self.flashSlot = e.id, nil
-	return e
 end
 
 -- the muzzle in the viewmodel entity's own axes: where the muzzle bone is and which way the barrel points (the bone's
@@ -348,26 +334,17 @@ function Deagle:MuzzleLocal(vm)
 	return { x = vdot(r, X), y = vdot(r, Y), z = vdot(r, Z) }, vnorm({ x = vdot(d, X), y = vdot(d, Y), z = vdot(d, Z) })
 end
 
--- put the flash entity on the muzzle from Lua (the plugin, when it places the gun, does it again later in the frame)
-function Deagle:FlashPlace(e, vm, lp, ld)
-	local o, X, Y, Z = vm:GetWorldPos(), vm:GetDirectionVector(0), vm:GetDirectionVector(1), vm:GetDirectionVector(2)
-	local function world(v) return vadd(vadd(vscale(X, v.x), vscale(Y, v.y)), vscale(Z, v.z)) end
-	e:SetWorldPos(vadd(o, world(lp)))
-	e:SetDirectionVector(world(ld))
-end
-
 -- every frame while a flash burns: the muzzle moves with the shot animation; afterwards the plugin lets go
 function Deagle:FlashFollow()
 	if not self.flashUntil then return end
-	local e, vm = self.flashId and System.GetEntity(self.flashId), self.vmId and System.GetEntity(self.vmId)
-	if System.GetCurrTime() >= self.flashUntil or not (e and vm) then
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if System.GetCurrTime() >= self.flashUntil or not vm then
 		self.flashUntil = nil
 		self:Native("flashoff")
 		return
 	end
 	local ok, lp, ld = pcall(self.MuzzleLocal, self, vm)
 	if not ok then log("$4muzzle flash: lost the muzzle: " .. tostring(lp)) self.flashUntil = nil self:Native("flashoff") return end
-	self:FlashPlace(e, vm, lp, ld)
 	self:Native(string.format("flashpos %.4f %.4f %.4f %.4f %.4f %.4f", lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
 end
 
@@ -1000,8 +977,7 @@ function Deagle:RemoveStaleEntities()
 	local n = 0
 	for _, e in pairs(System.GetEntitiesByClass("BasicEntity") or {}) do
 		local ok, name = pcall(e.GetName, e)
-		if ok and type(name) == "string" and name:find("^deagle_") and not name:find("^deagle_case_") and e.id ~= self.vmId
-			and e.id ~= self.flashId then
+		if ok and type(name) == "string" and name:find("^deagle_") and not name:find("^deagle_case_") and e.id ~= self.vmId then
 			pcall(System.RemoveEntity, e.id); n = n + 1
 		end
 	end
@@ -1591,7 +1567,7 @@ function Deagle:OnGameplayStarted()
 	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
-	self.vmId, self.casePool, self.flashId, self.flashUntil = nil, nil, nil, nil   -- a load ends the old world: its ids may now name other entities
+	self.vmId, self.casePool, self.flashUntil = nil, nil, nil   -- a load ends the old world: its ids may now name other entities
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()

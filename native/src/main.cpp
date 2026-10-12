@@ -38,13 +38,23 @@ using ExecFn = void(__fastcall*)(uintptr_t con, const char* cmd, bool silent, bo
 
 // ---- viewmodel follow
 static uint32_t g_vmId = 0;
-// The muzzle flash burns on a small entity of its own, put on the muzzle in the same step that places the gun: Lua sends
-// the muzzle (position and barrel direction in the viewmodel's own axes) every frame while the flash burns. Effects
-// attached to the viewmodel itself trail it by a frame (the engine positions them before this camera step) or don't
-// render at all (tested in game 2026-10-12).
-static uint32_t g_flashId = 0;
+// The muzzle flash: the plugin spawns the emitter itself, the way Particle.SpawnEffect does (FindEffect + Spawn: a free
+// emitter, the only kind that drew every time in game), holds a reference to it, and moves it onto the muzzle right
+// after placing the gun in every camera step. Lua sends the muzzle (position + barrel direction in the viewmodel's
+// axes) at the shot and every frame while the flash burns, then "flashoff". Effects on entities (bone attachments,
+// viewmodel slots, a helper entity) drew on some shots only (tested in game 2026-10-12).
+// WHGame 1.5.6: IParticleManager (gEnv+0x68) FindEffect +0x30; IParticleEffect Spawn(const QuatTS*, SpawnParams*) +0x30
+// (from ScriptBind_Particle::SpawnEffect); IParticleEmitter SetLocation(const QuatTS*) +0x2B0 (stores at +0x70);
+// reference count at emitter+0x58 (Spawn's lock inc), its CMultiThreadRefCount base at +0x50, DeleteThis = vtable +0x08.
+using FindEffectFn = uintptr_t(__fastcall*)(uintptr_t pm, const char* name, const char* source, bool load);
+using SpawnFn = uintptr_t(__fastcall*)(uintptr_t effect, const float* loc, const void* spawnParams);
+using SetLocationFn = void(__fastcall*)(uintptr_t emitter, const float* loc);
+using DeleteThisFn = void(__fastcall*)(uintptr_t refBase);
+struct Flash { uintptr_t emitter; float scale; LARGE_INTEGER born; };
+static Flash g_flashes[8];
+static int g_nFlashes = 0;
 static float g_flashPos[3] = {}, g_flashDir[3] = { 0, 1, 0 };
-static bool g_flashOn = false;
+static float g_vmTM[12]; static bool g_haveVmTM = false;
 static bool g_follow = false;
 static float g_off[3] = { 0, 0, 0 };            // right, forward, up (m)
 static uint64_t g_placed = 0, g_repeats = 0;
@@ -129,29 +139,76 @@ static void LocalRot(const float* deg, float* R) {   // R = Rz(yaw) * Rx(pitch) 
 static bool Finite(const float* f, int n) { for (int i = 0; i < n; i++) if (!std::isfinite(f[i])) return false; return true; }
 static void ResetMotion() { mo.yaw = mo.pitch = mo.land = mo.aimK = mo.kickBack = mo.kickPitch = mo.kickYaw = mo.kickRoll = Spring{}; memset(mo.off, 0, sizeof(mo.off)); memset(mo.rot, 0, sizeof(mo.rot)); }
 
-// the flash entity on the muzzle of the gun just placed (vm = its transform): forward (y) down the barrel, no roll
-static void PlaceFlash(uintptr_t es, GetEntityFn getEntity, const float* vm) {
-	uintptr_t f = getEntity(es, g_flashId);
-	auto setTM = f ? (SetWorldTMFn)VFn(f, 0xF0) : nullptr;
-	if (!setTM) return;
+// world location of the muzzle on the gun placed last (vm), as CryEngine's QuatTS {q.xyz, q.w, t.xyz, s}: forward (y)
+// down the barrel, no roll (x = y x the gun's up), like Matrix33::CreateRotationVDir
+static bool MuzzleLoc(const float* vm, float scale, float* loc) {
 	float y[3] = { g_flashDir[0], g_flashDir[1], g_flashDir[2] };
 	float ly = sqrtf(y[0] * y[0] + y[1] * y[1] + y[2] * y[2]);
-	if (ly < 1e-6f) return;
+	if (ly < 1e-6f) return false;
 	for (float& v : y) v /= ly;
-	float x[3] = { y[1], -y[0], 0 };                       // y x up (viewmodel's up), like CryEngine's CreateRotationVDir
+	float x[3] = { y[1], -y[0], 0 };
 	float lx = sqrtf(x[0] * x[0] + x[1] * x[1]);
 	if (lx < 1e-6f) { x[0] = 1; x[1] = 0; lx = 1; }
 	x[0] /= lx; x[1] /= lx;
 	float z[3] = { x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0] };
-	float ft[12];
+	float m[3][3], t[3];
 	for (int r = 0; r < 3; r++) {
 		const float* row = vm + r * 4;
-		ft[r * 4 + 0] = row[0] * x[0] + row[1] * x[1] + row[2] * x[2];
-		ft[r * 4 + 1] = row[0] * y[0] + row[1] * y[1] + row[2] * y[2];
-		ft[r * 4 + 2] = row[0] * z[0] + row[1] * z[1] + row[2] * z[2];
-		ft[r * 4 + 3] = row[3] + row[0] * g_flashPos[0] + row[1] * g_flashPos[1] + row[2] * g_flashPos[2];
+		m[r][0] = row[0] * x[0] + row[1] * x[1] + row[2] * x[2];
+		m[r][1] = row[0] * y[0] + row[1] * y[1] + row[2] * y[2];
+		m[r][2] = row[0] * z[0] + row[1] * z[1] + row[2] * z[2];
+		t[r] = row[3] + row[0] * g_flashPos[0] + row[1] * g_flashPos[1] + row[2] * g_flashPos[2];
 	}
-	if (Finite(ft, 12)) setTM(f, ft, 0);
+	float qw, qx, qy, qz, tr = m[0][0] + m[1][1] + m[2][2];
+	if (tr > 0) { float k = sqrtf(tr + 1) * 2; qw = 0.25f * k; qx = (m[2][1] - m[1][2]) / k; qy = (m[0][2] - m[2][0]) / k; qz = (m[1][0] - m[0][1]) / k; }
+	else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) { float k = sqrtf(1 + m[0][0] - m[1][1] - m[2][2]) * 2; qw = (m[2][1] - m[1][2]) / k; qx = 0.25f * k; qy = (m[0][1] + m[1][0]) / k; qz = (m[0][2] + m[2][0]) / k; }
+	else if (m[1][1] > m[2][2]) { float k = sqrtf(1 + m[1][1] - m[0][0] - m[2][2]) * 2; qw = (m[0][2] - m[2][0]) / k; qx = (m[0][1] + m[1][0]) / k; qy = 0.25f * k; qz = (m[1][2] + m[2][1]) / k; }
+	else { float k = sqrtf(1 + m[2][2] - m[0][0] - m[1][1]) * 2; qw = (m[1][0] - m[0][1]) / k; qx = (m[0][2] + m[2][0]) / k; qy = (m[1][2] + m[2][1]) / k; qz = 0.25f * k; }
+	float out[8] = { qx, qy, qz, qw, t[0], t[1], t[2], scale };
+	if (!Finite(out, 8)) return false;
+	memcpy(loc, out, sizeof(out));
+	return true;
+}
+
+static uintptr_t SpawnFlash(const char* effect, const float* loc) {
+	uintptr_t pm; if (!ReadPtr(g_env + 0x68, pm) || !pm) return 0;
+	auto find = (FindEffectFn)VFn(pm, 0x30);
+	uintptr_t eff = find ? find(pm, effect, "deagle_native", true) : 0;
+	if (!eff) return (uintptr_t)-1;
+	auto spawn = (SpawnFn)VFn(eff, 0x30);
+	uintptr_t em = spawn ? spawn(eff, loc, nullptr) : 0;
+	if (em) InterlockedIncrement((volatile LONG*)(em + 0x58));   // ours until flashoff, so the pointer stays valid
+	return em;
+}
+static uintptr_t SafeSpawnFlash(const char* effect, const float* loc) {
+	__try { return SpawnFlash(effect, loc); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+static void ReleaseEmitter(uintptr_t em) {
+	if (InterlockedDecrement((volatile LONG*)(em + 0x58)) == 0)
+		if (auto del = (DeleteThisFn)VFn(em + 0x50, 0x08)) del(em + 0x50);
+}
+static void SafeRelease(uintptr_t em) { __try { ReleaseEmitter(em); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+static void SafeSetLocation(uintptr_t em, const float* loc) {
+	__try { if (auto set = (SetLocationFn)VFn(em, 0x2B0)) set(em, loc); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+static void ReleaseFlashes() {
+	for (int i = 0; i < g_nFlashes; i++) SafeRelease(g_flashes[i].emitter);
+	g_nFlashes = 0;
+}
+
+// every camera step, after the gun: the burning flashes onto its muzzle. One held over 5 s (Lua never said flashoff)
+// is let go.
+static void MoveFlashes() {
+	LARGE_INTEGER now, f; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&f);
+	int keep = 0;
+	for (int i = 0; i < g_nFlashes; i++) {
+		Flash& fl = g_flashes[i];
+		if ((now.QuadPart - fl.born.QuadPart) > 5 * f.QuadPart) { SafeRelease(fl.emitter); continue; }
+		float loc[8];
+		if (MuzzleLoc(g_vmTM, fl.scale, loc)) SafeSetLocation(fl.emitter, loc);
+		g_flashes[keep++] = fl;
+	}
+	g_nFlashes = keep;
 }
 
 static bool PlaceViewmodel(const float* cam) {
@@ -177,7 +234,8 @@ static bool PlaceViewmodel(const float* cam) {
 		return false;
 	}
 	setTM(e, tm, 0);
-	if (g_flashOn && g_flashId) PlaceFlash(es, getEntity, tm);
+	memcpy(g_vmTM, tm, sizeof(tm)); g_haveVmTM = true;
+	if (g_nFlashes) MoveFlashes();
 	return true;
 }
 
@@ -245,7 +303,8 @@ static void Command(const char* line) {
 	const char* rest = line + strlen(cmd);
 	while (*rest == ' ') rest++;
 	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
-		g_follow = false; g_vmId = 0; mo.aiming = false; g_flashOn = false; g_flashId = 0;
+		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
+		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false;
 		g_pendingConsole = "deagle_native_ok"; Log("hello from Lua");
 	}
 	else if (!strcmp(cmd, "vm")) {
@@ -254,19 +313,38 @@ static void Command(const char* line) {
 		if (sscanf_s(hex, "%llx", &id) == 1) { g_vmId = (uint32_t)id; Log("viewmodel entity %08X", g_vmId); }
 	}
 	else if (!strcmp(cmd, "follow")) { g_follow = atoi(rest) != 0; Log("follow %d", (int)g_follow); }
-	else if (!strcmp(cmd, "flash")) {    // flash 0x<entity> <pos xyz> <dir xyz>: the flash entity, the muzzle in viewmodel axes
-		unsigned long long id = 0;
-		const char* hex = strstr(rest, "0x"); hex = hex ? hex + 2 : rest;
-		const char* nums = strchr(hex, ' ');
-		if (sscanf_s(hex, "%llx", &id) == 1 && nums && sscanf_s(nums, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1],
-				&g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]) == 6) {
-			g_flashId = (uint32_t)id; g_flashOn = true;
+	else if (!strcmp(cmd, "flashfx")) {   // flashfx <effect> <scale> <pos xyz> <dir xyz>: a flash on the muzzle (viewmodel axes)
+		char effect[96] = {}; float scale = 1;
+		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &g_flashPos[0], &g_flashPos[1],
+			&g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);
+		float loc[8];
+		if (n != 8) Log("bad flashfx command: %s", rest);
+		else if (!g_haveVmTM || !MuzzleLoc(g_vmTM, scale, loc)) Log("flashfx: the gun isn't placed yet");
+		else {
+			static bool told = false;
+			if (!told) {
+				told = true;
+				uintptr_t pm = 0, vt = 0;
+				ReadPtr(g_env + 0x68, pm); if (pm) ReadPtr(pm, vt);
+				Log("flashfx: particle manager %p %s", (void*)pm, vt ? RttiName(g_game, vt).c_str() : "?");
+			}
+			uintptr_t em = SafeSpawnFlash(effect, loc);
+			if (em == (uintptr_t)-1) Log("flashfx: no effect %s", effect);
+			else if (!em) Log("flashfx: %s didn't spawn", effect);
+			else {
+				if (g_nFlashes == (int)(sizeof(g_flashes) / sizeof(g_flashes[0]))) {   // full: the oldest goes
+					SafeRelease(g_flashes[0].emitter);
+					memmove(g_flashes, g_flashes + 1, sizeof(Flash) * (g_nFlashes - 1)); g_nFlashes--;
+				}
+				Flash& fl = g_flashes[g_nFlashes++];
+				fl.emitter = em; fl.scale = scale; QueryPerformanceCounter(&fl.born);
+				static int said = 0; if (said++ < 3) Log("flashfx %s scale %.2f emitter %p", effect, scale, (void*)em);
+			}
 		}
-		else Log("bad flash command: %s", rest);
 	}
 	else if (!strcmp(cmd, "flashpos"))
 		sscanf_s(rest, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1], &g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);
-	else if (!strcmp(cmd, "flashoff")) g_flashOn = false;
+	else if (!strcmp(cmd, "flashoff")) ReleaseFlashes();
 	else if (!strcmp(cmd, "kick")) {     // kick <back m> <pitch deg> <yaw deg> [<roll deg>]: peaks of the shot's push
 		float b = 0, pt = 0, yw = 0, rl = 0;
 		if (sscanf_s(rest, "%f %f %f %f", &b, &pt, &yw, &rl) >= 3) {
