@@ -89,7 +89,6 @@ Deagle.cfg = {
 	kickYaw = 0.8,
 	modelDir = "objects/manmade/weapons/deagle/",
 	ejectImpulse = 0.035,     -- casing (20 g) out at ~1.75 m/s, up and to the right
-	caseLifeMs = 20000,
 }
 
 -- The viewmodel: its own character placed on the camera (its camera bone tag_view is the model origin, +Y forward),
@@ -645,25 +644,41 @@ function Deagle:MuzzlePos()
 end
 
 -- casing out of the viewmodel's ejection port: random cone, speed and spin so no two take the same path; port smoke
+-- Casings come from a pool: CASE_POOL of them are made once, then the oldest is picked up again (its motion stopped
+-- with ResetPhysics and thrown anew). Spawning a physics entity every shot made ~10 a second at 750 rpm and left up to
+-- 200 rigid bodies lying around for 20 s; now at most CASE_POOL exist.
+local CASE_POOL = 12
+function Deagle:CaseEntity()
+	self.casePool = self.casePool or {}
+	self.caseNext = (self.caseNext or 0) % CASE_POOL + 1
+	local id = self.casePool[self.caseNext]
+	local e = id and System.GetEntity(id)
+	if e then
+		e:ResetPhysics()
+		return e
+	end
+	e = System.SpawnEntity({
+		class = "BasicEntity", name = "deagle_case_" .. self.caseNext, position = { x = 0, y = 0, z = -1000 },
+		flags = ENTITY_FLAG_NO_SAVE,
+		properties = { object_Model = self.cfg.modelDir .. "deagle_case.cgf", Physics = { bPhysicalize = true, bRigidBody = true, bPushableByPlayers = false, Density = -1, Mass = 0.02 } },
+	})
+	e:SetFlags(ENTITY_FLAG_NO_SAVE, 0)   -- never into a save
+	self.casePool[self.caseNext] = e.id
+	return e
+end
+
 function Deagle:EjectCase()
 	local port = self:VmBone(self.gun.bones.brass)
 	if not port then return end
 	local c = self.cfg
 	try("eject case", function()
 		local _, f, r, u = camBasis()
-		local case = System.SpawnEntity({
-			class = "BasicEntity", name = "deagle_case_" .. tostring(math.random(1, 1e9)), position = { x = 0, y = 0, z = -1000 },
-			flags = ENTITY_FLAG_NO_SAVE,
-			properties = { object_Model = c.modelDir .. "deagle_case.cgf", Physics = { bPhysicalize = true, bRigidBody = true, bPushableByPlayers = false, Density = -1, Mass = 0.02 } },
-		})
-		pcall(case.SetFlags, case, ENTITY_FLAG_NO_SAVE, 0)   -- casings live for seconds; never into a save
+		local case = self:CaseEntity()
 		case:SetWorldPos(port)
 		local jr, ju, jf = 0.7 + math.random() * 0.4, 0.9 + math.random() * 0.5, -0.3 + math.random() * 0.4
 		local dir = vnorm(vadd(vscale(r, jr), vadd(vscale(u, ju), vscale(f, jf))))
 		local spinAt = vadd(port, { x = (math.random() - 0.5) * 0.02, y = (math.random() - 0.5) * 0.02, z = (math.random() - 0.5) * 0.02 })
 		case:AddImpulse(-1, spinAt, dir, c.ejectImpulse * (0.8 + math.random() * 0.45), 1)
-		local id = case.id
-		Script.SetTimer(c.caseLifeMs, function() pcall(System.RemoveEntity, id) end)
 	end)
 	self:SpawnFx(c.portFx, port, System.GetViewCameraUpDir(), 1.0)
 end
@@ -945,7 +960,7 @@ function Deagle:RemoveStaleEntities()
 	local n = 0
 	for _, e in pairs(System.GetEntitiesByClass("BasicEntity") or {}) do
 		local ok, name = pcall(e.GetName, e)
-		if ok and type(name) == "string" and name:find("^deagle_") and e.id ~= self.vmId then
+		if ok and type(name) == "string" and name:find("^deagle_") and not name:find("^deagle_case_") and e.id ~= self.vmId then
 			pcall(System.RemoveEntity, e.id); n = n + 1
 		end
 	end
@@ -1534,7 +1549,7 @@ function Deagle:OnGameplayStarted()
 	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
-	self.vmId = nil
+	self.vmId, self.casePool = nil, nil      -- a load ends the old world: its ids may now name other entities
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()

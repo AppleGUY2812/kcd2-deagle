@@ -50,6 +50,15 @@ step("slow motion (F9)", function()
 	print("   t_Scale on/off:", on, off)
 	if on ~= 0.1 or off ~= 1 then error("slow motion toggle") end
 end)
+step("casings come from a pool", function()   -- 20 shots, at most 12 casings ever exist
+	Deagle.state.ammo = 7
+	for i = 1, 20 do if Deagle.state.ammo == 0 then Deagle.state.ammo = 7 end Deagle:OnAction("deagle_fire", "press"); M.advance(0.12) end
+	local n = 0
+	for k, e in pairs(M.entities()) do if type(k) ~= "string" and e.name and e.name:find("^deagle_case_") then n = n + 1 end end
+	print("   casings in the world after 20 more shots:", n)
+	if n > 12 then error(n .. " casings: the pool isn't reused") end
+	Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
+end)
 step("empty idle", function() M.advance(1.0) end)
 print("   rest:", lastAnims(1))
 print("   mag rounds shown:", tostring(Deagle.vmRoundsShown))
