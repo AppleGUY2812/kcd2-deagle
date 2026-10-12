@@ -101,6 +101,11 @@ Arma 3 = weight -> inertia, resting / bipod cut recoil; Ready or Not = procedura
   ricochet chance, armor-piercing, armor coverage / level, an ammo data table per caliber: same shape as our plan.
 
 ## Decided
+- **Ready or Not guns keep Ready or Not's feel** (user, 2026-10-12): our recoil model uses Ready or Not's parameter set
+  (fire / first-shot strength, angle strength, pitch / yaw multipliers, buildup, damping, return percentage / rate /
+  interp speed, randomness, ADS multiplier, movement multiplier). Guns imported from Ready or Not use their own values
+  1:1 (read from their files); every other gun derives the same parameters from the cartridge + mass + leverage, scaled
+  to Ready or Not's range. Their exact math isn't in the files (names only): match it against the user's recordings.
 - **Small rounds bounce off plate** (2026-10-12, for fun, even though a 9 mm would often get through): plate deflects
   anything under an energy threshold with sparks, a ping and a ricochet; big rounds (.50 AE and up) go through.
 - **Shove = momentum (mass x speed)**; penetration and wound size = energy (1/2 x mass x speed^2). Real momentum barely
