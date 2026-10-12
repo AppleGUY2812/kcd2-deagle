@@ -48,9 +48,11 @@ Deagle.cfg = {
 	cancelKeepsRounds = false,
 	muzzleFxScale = 1.0,      -- multiplier on the flash size the cartridge gives (cfg.physics.flashPerUnit)
 	portFx = "deagle.port_smoke",
-	bloodFx = "collisions.combat.hit_passed_bullet_fabric",
+	bloodFx = "deagle_blood.entry",           -- Ready or Not's blood (deagle_blood.xml): entry splash, back toward the shooter
+	bloodArmorFx = "deagle_blood.armor_entry",  -- through padding / mail / plate: a cloth tuft and less blood
+	bloodExitFx = "deagle_blood.exit",        -- out the back, along the round
 	armorFx = "deagle_impacts.metal",   -- a round on plate / mail sparks like any metal (KCD2's plate hit effect doesn't exist)
-	headFx = "collisions.combat.blood_head",
+	headFx = "deagle_blood.head",             -- burst out of the back of a head
 	holeSize = 0.035,         -- m, a 9 mm's bullet hole (Ready or Not's pistol holes: 3-4 cm); x the impact scale
 	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)
 	wallbang = { budget = 0.10 },  -- m of density-1 material (plywood) a 9 mm at the muzzle gets through (Ready or Not's
@@ -70,9 +72,7 @@ Deagle.cfg = {
 	bleeding = true,          -- non-lethal hits apply the game's bleeding buff
 	bleedingBuff = "0c903899-fcc9-4cf2-9ee3-1130ac08b0fc",
 	armorFxThreshold = 0.5,   -- armor ratio above which hits spark instead of splash
-	splatMaterials = { "Materials/particles/blood_decalshoot", "Materials/particles/blood_decalgun", "Materials/particles/blood_decal" },
 	splatRange = 3.0,         -- how far behind the target blood can land
-	splatSize = { 0.45, 0.9 },
 	splatLife = 180,
 	recoil = 1.0,              -- master kick: scales every recoil effect together (camera, sideways, gun model flip + push)
 	-- cartridge-driven handling (guns/calibers.lua -> ShotPhysics): physics -> screen. PROVISIONAL constants, set so the
@@ -626,32 +626,45 @@ local function bodyPartFor(e, pos)
 	return "torso"
 end
 
--- Blood on whatever is behind the target (wall, floor) plus a pool under the hit point.
-function Deagle:Splatter(e, hit, dir)
+-- Blood on what's behind the target and under it, Ready or Not's way: a spray on a wall within splatRange (3 m) behind
+-- when the round came out the back (a burst behind a head), drips on the floor under the wound. Their decals at natural
+-- size (m, docs/impact_fx_build.md section 6) x the round's impact scale, +-15 %, turned at random.
+local SPATTER = {
+	wall = { { "blood_spatter_1", 0.45 }, { "blood_spatter_2", 0.5 }, { "blood_spatter_3", 0.4 } },
+	head = { { "blood_spatter_5", 1.0 } },
+	floor = { { "blood_spatter_6", 0.18 }, { "blood_spatter_7", 0.18 } },
+}
+function Deagle:Splatter(e, hit, dir, scale, exits)
 	local c = self.cfg
-	local function decal(pos, normal, scale)
-		local size = (c.splatSize[1] + math.random() * (c.splatSize[2] - c.splatSize[1])) * (scale or 1)
-		for _, mat in ipairs(c.splatMaterials) do
-			local ok = pcall(Particle.CreateMatDecal, vadd(pos, vscale(normal, 0.01)), normal, size, c.splatLife, mat)
-			if ok then return end
-		end
+	local function decal(at, set)
+		local d = set[math.random(#set)]
+		local size = d[2] * scale * (0.85 + 0.3 * math.random())
+		try("blood decal", Particle.CreateMatDecal, vadd(at.pos, vscale(at.normal, 0.01)), at.normal, size, c.splatLife,
+			"Materials/deagle/decals/" .. d[1], math.random() * 360, dir)
 	end
-	local from = vadd(hit.pos, vscale(dir, 0.15))
 	local hits = {}
-	local ok, n = pcall(Physics.RayWorldIntersection, from, vscale(dir, c.splatRange), 1, ent_all, e.id, self:Player().id, hits)
-	if ok and n and n > 0 and hits[1] then decal(hits[1].pos, hits[1].normal, 1) end
+	if exits then
+		local ok, n = pcall(Physics.RayWorldIntersection, vadd(hit.pos, vscale(dir, 0.15)), vscale(dir, c.splatRange), 1, ent_all, e.id, self:Player().id, hits)
+		if ok and n and n > 0 and hits[1] then decal(hits[1], hit.bodyPart == "head" and SPATTER.head or SPATTER.wall) end
+	end
 	hits = {}
-	ok, n = pcall(Physics.RayWorldIntersection, hit.pos, { x = dir.x * 0.4, y = dir.y * 0.4, z = -2.5 }, 1, ent_static + ent_terrain, e.id, nil, hits)
-	if ok and n and n > 0 and hits[1] then decal(hits[1].pos, hits[1].normal, 0.6) end
+	local ok, n = pcall(Physics.RayWorldIntersection, hit.pos, { x = dir.x * 0.4, y = dir.y * 0.4, z = -2.5 }, 1, ent_static + ent_terrain, e.id, nil, hits)
+	if ok and n and n > 0 and hits[1] then decal(hits[1], SPATTER.floor) end
 end
 
-function Deagle:Bleed(e, hit, dir, exits)
+-- A wound's blood (deagle_blood.xml, Ready or Not's): the entry splash back toward the shooter (with a cloth tuft when
+-- the round came through padding / mail / plate), the exit spray along the round only when it came out the back (a
+-- burst out of the back of a head), blood on the wall behind and the floor, KCD2's blood paint and bleeding.
+function Deagle:Bleed(e, hit, dir, exits, scale, padded)
 	local c = self.cfg
 	local part = hit.bodyPart
-	self:SpawnFx(c.bloodFx, hit.pos, dir)
-	if exits ~= false then self:SpawnFx(c.bloodFx, vadd(hit.pos, vscale(dir, 0.25)), dir, 1.3) end  -- exit wound
-	if part == "head" then self:SpawnFx(c.headFx, hit.pos, dir) end
-	self:Splatter(e, hit, dir)
+	scale = scale or 1
+	exits = exits ~= false
+	self:SpawnFx(padded and c.bloodArmorFx or c.bloodFx, hit.pos, hit.normal or vscale(dir, -1), scale)
+	if exits then
+		self:SpawnFx(part == "head" and c.headFx or c.bloodExitFx, vadd(hit.pos, vscale(dir, part == "head" and 0.15 or 0.25)), dir, scale)
+	end
+	self:Splatter(e, hit, dir, scale, exits)
 	if part and c.bloodPaint > 0 then
 		try("paint blood", function() e.actor:AddBlood(c.bloodPaint, part) end)
 	end
@@ -843,7 +856,7 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 	if e and e.actor then pcall(function() dead = e.actor:IsDead() end) end
 	if e and e ~= p and (dead or (e.class and string.find(string.lower(e.class), "dead"))) then
 		hit.bodyPart = bodyPartFor(e, hit.pos)
-		self:Bleed(e, hit, dir)
+		self:Bleed(e, hit, dir, true, self:ImpactScale(phys, hit.dist, hit.energy))
 		log("corpse hit " .. tostring(e:GetName()))
 	elseif e and e.soul and e ~= p then
 		if c.hitMode == "hit" then
@@ -855,12 +868,15 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			local part = bodyPartFor(e, hit.pos)
 			hit.bodyPart = part
 			local dmg, stam, through = 0, 0, nil
-			local stopped, hard, glance
+			local stopped, hard, glance, padded, scale
 			if phys then        -- from the cartridge: through what's worn there, then the energy left in the body
 				local energy = hit.energy or phys.energy * math.exp(-2 * (hit.dist or 0) / phys.dragLength)
 				local cosI = hit.normal and math.abs(vdot(dir, hit.normal)) or 1
 				local left
-				left, stopped, hard, glance = self:ThroughArmor(self:ArmorOn(e, part), phys, energy, cosI)
+				local layers = self:ArmorOn(e, part)
+				for _, l in ipairs(layers) do padded = padded or l.a.layer == "padding" or l.a.layer == "mail" or l.a.layer == "plate" end
+				left, stopped, hard, glance = self:ThroughArmor(layers, phys, energy, cosI)
+				scale = self:ImpactScale(phys, hit.dist, energy)
 				local bare, shove = self:Wound(phys, hit.dist, energy)
 				stam = shove                                  -- the shove lands whatever stops the round
 				if stopped then
@@ -884,7 +900,7 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end)
 			self:HitReact(e, hit, dir, dmg, stam)
 			local exits = through and through > c.exitEnergy
-			if not stopped then self:Bleed(e, hit, dir, exits == true) end
+			if not stopped then self:Bleed(e, hit, dir, exits == true, scale, padded) end
 			if exits and r then                         -- through and through: on with what's left, past this body
 				r.pos, r.vel, r.skip = vadd(hit.pos, vscale(dir, c.bodyExit)), vscale(dir, math.sqrt(2 * through / phys.bullet)), e.id
 				r.dist = r.dist + c.bodyExit

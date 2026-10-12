@@ -145,13 +145,21 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		check(string.format("%s: worn cuirass at %d m: %s (%.1f HP, %.0f stamina), sparks %s, ricochet fx %s", id, dist,
 			through and "through" or "stopped: a bruise", guard.damage, guard.stamina, tostring(sparks), tostring(M.fxNames["deagle_impacts.ricochet_metal"])),
 			through == want and sparks and guard.stamina > 0 and (through or (guard.damage > 0 and (M.fxNames["deagle_impacts.ricochet_metal"] or 0) == 1)), guard.damage)
+		local bled = (M.fxNames["deagle_blood.armor_entry"] or 0) + (M.fxNames["deagle_blood.entry"] or 0)
+		check(string.format("%s: cuirass at %d m: %s", id, dist, through and "blood through the armour (cloth tuft entry)" or "no blood"),
+			through and (M.fxNames["deagle_blood.armor_entry"] or 0) == 1 or (not through and bled == 0), bled)
 	end
 
 	-- the same NPC unarmoured: a full wound, no sparks
 	reset()
 	local peasant = newNpc(230)
+	world.slabs = { { y0 = 232, y1 = 233, surface = 1 } }      -- a wall 2 m behind him
 	fire()
 	check(string.format("%s: no armour at 30 m: %.1f HP, no sparks", id, peasant.damage), peasant.damage > 20 and not M.fxNames["deagle_impacts.metal"], peasant.damage)
+	local spray
+	for _, d in ipairs(M.decals) do if d.mat:find("blood_spatter_[123]$") and d.pos.y < 232.1 then spray = d end end
+	check(string.format("%s: entry + exit blood, spray on the wall behind (%s %.2f m)", id, spray and spray.mat:match("[^/]+$") or "none", spray and spray.size or -1),
+		(M.fxNames["deagle_blood.entry"] or 0) == 1 and (M.fxNames["deagle_blood.exit"] or 0) == 1 and spray ~= nil, M.fxNames["deagle_blood.exit"])
 
 	-- through and through: two unarmoured men in a line, 5 m and 8 m; the round goes through the first into the second
 	reset()
