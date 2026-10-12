@@ -37,10 +37,12 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `cancelKeepsRounds` | `0` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
 | `recoil` | `1` | multiplier on all recoil |
 | `physics.camPerFlip` | `0.217` | camera kick per unit of muzzle flip (all guns in proportion) |
-| `physics.returnPct` | `0.65` | share of each kick that settles back by itself |
-| `physics.returnRate` | `5` | how fast that share settles (higher = faster) |
+| `physics.holdRange` | `2.9` | degrees of kick your grip takes back by itself (more = more of each kick returns) |
+| `physics.returnRate` | `5` | how fast the held part settles (higher = faster; heavier guns slower) |
+| `physics.adsHold` | `1.3` | aiming tightens the grip by this much |
 | `physics.riseRate` | `70` | how fast a kick lands |
-| `physics.sidePct` | `0.25` | sideways kick, +- this share of the climb |
+| `physics.sideSigma` | `0.15` | sideways kick, random share of the climb (same pattern every time per gun) |
+| `physics.barrelAim` | `1` | shots fired while the gun is still kicked go where the barrel points (0 = straight) |
 | `physics.gunFlipPerFlip` | `0.29` | gun model flip per unit of muzzle flip |
 | `physics.gunBackPerVel` | `0.007` | gun model push-back per m/s of recoil |
 | `physics.flashPerUnit` | `0.476` | flash size per unit of powder |

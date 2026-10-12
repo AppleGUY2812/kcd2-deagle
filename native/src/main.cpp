@@ -60,7 +60,7 @@ static struct {
 	float lastPos[3]{}, lastFwd[3]{}; bool have = false;
 	float speed = 0, vz = 0, phase = 0, sprint = 0, airTime = 0;
 	Spring yaw, pitch, land, aimK;
-	Spring kickBack, kickPitch, kickYaw;   // the shot's push on the gun model (Lua sends it from the cartridge physics)
+	Spring kickBack, kickPitch, kickYaw, kickRoll;   // the shot's push on the gun model (Lua sends it from the cartridge physics)
 	float off[3]{}, rot[3]{};           // results: offset (m), rotation (deg: pitch about x, roll about y, yaw about z)
 } mo;
 
@@ -98,13 +98,13 @@ static void UpdateMotion(const float* cam) {
 	mo.vz = vz;
 	mo.land.step(0, 160, 16, dt);
 	// shot kick: slightly underdamped springs, so the gun snaps back and settles
-	mo.kickBack.step(0, 784, 50, dt); mo.kickPitch.step(0, 784, 50, dt); mo.kickYaw.step(0, 784, 50, dt);
+	mo.kickBack.step(0, 784, 50, dt); mo.kickPitch.step(0, 784, 50, dt); mo.kickYaw.step(0, 784, 50, dt); mo.kickRoll.step(0, 784, 50, dt);
 	float k = mo.enabled ? mo.scale : 0.0f;
 	mo.off[0] = k * (bobX * hip + 0.015f * mo.sprint);
 	mo.off[1] = k * (-0.01f * mo.sprint) - mo.kickBack.x;
 	mo.off[2] = k * (bobZ * hip - 0.03f * mo.sprint + mo.land.x * 0.15f);
 	mo.rot[0] = k * (mo.pitch.x * hip - 14.0f * mo.sprint) + mo.kickPitch.x;  // pitch (x)
-	mo.rot[1] = k * (mo.yaw.x * 0.5f * hip + 12.0f * mo.sprint + sinf(mo.phase) * 0.6f * a * hip);   // roll (y)
+	mo.rot[1] = k * (mo.yaw.x * 0.5f * hip + 12.0f * mo.sprint + sinf(mo.phase) * 0.6f * a * hip) + mo.kickRoll.x;   // roll (y)
 	mo.rot[2] = k * (mo.yaw.x * hip + 6.0f * mo.sprint) + mo.kickYaw.x;     // yaw (z)
 }
 
@@ -120,7 +120,7 @@ static void LocalRot(const float* deg, float* R) {   // R = Rz(yaw) * Rx(pitch) 
 }
 
 static bool Finite(const float* f, int n) { for (int i = 0; i < n; i++) if (!std::isfinite(f[i])) return false; return true; }
-static void ResetMotion() { mo.yaw = mo.pitch = mo.land = mo.aimK = mo.kickBack = mo.kickPitch = mo.kickYaw = Spring{}; memset(mo.off, 0, sizeof(mo.off)); memset(mo.rot, 0, sizeof(mo.rot)); }
+static void ResetMotion() { mo.yaw = mo.pitch = mo.land = mo.aimK = mo.kickBack = mo.kickPitch = mo.kickYaw = mo.kickRoll = Spring{}; memset(mo.off, 0, sizeof(mo.off)); memset(mo.rot, 0, sizeof(mo.rot)); }
 
 static bool PlaceViewmodel(const float* cam) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
@@ -221,6 +221,13 @@ static void Command(const char* line) {
 		if (sscanf_s(hex, "%llx", &id) == 1) { g_vmId = (uint32_t)id; Log("viewmodel entity %08X", g_vmId); }
 	}
 	else if (!strcmp(cmd, "follow")) { g_follow = atoi(rest) != 0; Log("follow %d", (int)g_follow); }
+	else if (!strcmp(cmd, "kick")) {     // kick <back m> <pitch deg> <yaw deg> [<roll deg>]: peaks of the shot's push
+		float b = 0, pt = 0, yw = 0, rl = 0;
+		if (sscanf_s(rest, "%f %f %f %f", &b, &pt, &yw, &rl) >= 3) {
+			const float w = 28.0f * 2.71828f;   // velocity that peaks at the given displacement (spring w = 28 rad/s)
+			mo.kickBack.v += b * w; mo.kickPitch.v += pt * w; mo.kickYaw.v += yw * w; mo.kickRoll.v += rl * w;
+		}
+	}
 	else if (!strcmp(cmd, "off")) sscanf_s(rest, "%f %f %f", &g_off[0], &g_off[1], &g_off[2]);
 	else if (!strcmp(cmd, "snd")) {
 		char file[260] = {}; float v = 1.0f;

@@ -59,21 +59,31 @@ if g.anims.shootBurst then
 	burstCut = M.anims[a0 + 1] and (M.anims[a0 + 1].name .. "/" .. string.format("%.2f", M.anims[a0 + 1].blend or -1)) or "nothing"
 	M.advance(1.0)
 end
--- cartridge recoil: one shot climbs the view by the physics kick, about returnPct of it settles back by itself
+-- cartridge recoil: one shot climbs the view by the physics kick; the elastic hold takes back what fits in its range
 local recoil
 local phys = Deagle:ShotPhysics()
 if phys then
 	while Deagle:FireMode() ~= "semi" do act("deagle_firemode"); M.advance(0.1) end
 	Deagle.state.ammo = g.magSize; M.advance(1.5)
 	local up = Deagle.cfg.physics.camPerFlip * phys.flip
-	local p0, n0 = M.view.pitch, #M.native
+	local p0, n0, shotN = M.view.pitch, #M.native, Deagle.sprayN or 0
 	act("deagle_fire"); M.advance(0.1)
 	local peak = math.deg(M.view.pitch - p0)
 	M.advance(1.5)
 	local final = math.deg(M.view.pitch - p0)
 	local kicks = 0
 	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] kick ") then kicks = kicks + 1 end end
-	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = 1 - Deagle.cfg.physics.returnPct,
+	local hold = Deagle.cfg.physics
+	up = up * (1 + hold.vary * Deagle:SprayRand(shotN, 1))     -- this shot's kick (the learnable pattern varies it)
+	local keep = 1 - math.min(hold.holdMax * up, hold.holdRange) / up
+	-- a fast string (0.08 s apart) finds the hold still loaded: it climbs far more than single shots would
+	M.advance(2.0)
+	local p1 = M.view.pitch
+	local kickNow
+	for i = 1, 5 do act("deagle_fire"); M.advance(0.08); if i == 1 then kickNow = select(1, Deagle:GunKickNow()) end end
+	M.advance(2.0)
+	local string5 = math.deg(M.view.pitch - p1)
+	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = keep, string5 = string5, kickNow = kickNow,
 		flashScale = M.lastAttachScale, flashPrime = false, wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
@@ -127,7 +137,7 @@ if w then
 end
 if recoil then
 	check(string.format("cartridge kick %.1f deg: climbs %.1f, settles at %.1f (keeps ~%d%%), gun kick sent %d", recoil.up, recoil.peak, recoil.final, recoil.keep * 100, recoil.kicks),
-		recoil.peak > 0.5 * recoil.up and recoil.peak < 1.2 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.2 * recoil.up and recoil.kicks == 1, recoil.peak)
+		recoil.peak > recoil.final and recoil.peak < 1.05 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.1 * recoil.up + 0.02 and recoil.kicks == 1, recoil.final)
 	check(string.format("flash on the muzzle at the cartridge size x%.2f (got %s)", recoil.wantScale, tostring(recoil.flashScale)),
 		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-6 and recoil.flashPrime == false, recoil.flashScale)
 end
@@ -137,6 +147,12 @@ if phys then   -- the wound model: 9 mm torso 35 HP by definition, .50 AE ~1.8x 
 	local want = ({ ["9x19mm"] = 35, [".50 AE"] = 62 })[phys.caliber]
 	check(string.format("%s torso hit %.1f HP (%.1f at 50 m), stamina %.0f", phys.caliber, hp, hp50, st),
 		(not want or math.abs(hp - want) < 1.5) and hp50 < hp and hp50 > 0.85 * hp, hp)
+end
+if recoil then
+	check(string.format("5 fast shots climb %.1f deg, more than 5 single shots (%.1f)", recoil.string5, 5 * recoil.final), recoil.string5 > 1.2 * 5 * recoil.final, recoil.string5)
+	check(string.format("the barrel is still kicked %.1f deg up 0.08 s after a shot (next bullet goes there)", recoil.kickNow or 0), (recoil.kickNow or 0) > 0.3, recoil.kickNow)
+	local a1, a2 = Deagle:SprayRand(3, 2), Deagle:SprayRand(3, 2)
+	check("the spray pattern is the same every time (learnable)", a1 == a2 and Deagle:SprayRand(3, 2) ~= Deagle:SprayRand(4, 2), a1)
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))

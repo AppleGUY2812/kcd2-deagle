@@ -59,10 +59,19 @@ Deagle.cfg = {
 	-- data keeps kickPitch / kickYaw below.
 	physics = {
 		camPerFlip = 0.217,     -- camera kick (deg) per rad/s of muzzle flip (Deagle 20.7 rad/s -> 4.5 deg, Glock 7.1 -> 1.5)
-		returnPct = 0.65,       -- share of each kick the aim returns by itself (Ready or Not: RecoilReturnPercentage)
-		returnRate = 5,         -- 1/s, how fast that part settles
+		-- elastic hold (design 1): the grip springs back up to holdRange degrees of camera kick; what goes past it
+		-- stays (you pull it down). A calm Deagle shot returns 65 %, fast follow-ups much less, a Glock ~95 %.
+		holdRange = 2.9,        -- deg, two hands, hip (Ready or Not's RecoilReturnPercentage calibrates it)
+		holdMax = 0.95,         -- most of a kick that ever comes back by itself
+		holdYaw = 0.5,          -- the sideways range is half the vertical one (sideways control is weaker)
+		holds = { pistol = 1.0, pistol1h = 0.5, rifle = 1.2 },
+		adsHold = 1.3,          -- aiming tightens the grip
+		returnRate = 5,         -- 1/s, how fast the held part settles for the reference gun (Deagle); heavier = slower
+		returnInertia = 0.0245, -- kg m^2 of that reference (gun + hand); rate x sqrt(ref / inertia)
 		riseRate = 70,          -- 1/s, how fast the kick lands (not a one-frame jump)
-		sidePct = 0.25,         -- sideways kick, +- this share of the climb
+		sideSigma = 0.15,       -- sideways kick: random share of the climb (normal, clamped at 2 sigma); per-gun bias 0 for pistols
+		gunRollPerYaw = 0.5,    -- the gun model twists with its sideways kick (cosmetic)
+		barrelAim = 1.0,        -- shots leave along the gun's un-returned kick (1 = physical, 0 = along the camera)
 		vary = 0.15,            -- +- per shot
 		adsMult = 0.7,          -- aimed: steadier
 		gunBackPerVel = 0.007,  -- gun pushed back (m) per m/s of free recoil (Deagle 4.95 -> 3.5 cm)
@@ -393,24 +402,68 @@ function Deagle:Recoil()
 	end)
 end
 
--- Kick from the physics: the camera climbs by the muzzle flip, a share of it (returnPct) settles back by itself, the rest
--- stays (you pull it down); fast shots stack before they settle. The gun model is pushed back and flipped by the
--- plugin's spring on top of the shot animation.
+-- Kick from the physics. The camera climbs by the muzzle flip and kicks sideways by a share of it (a learnable
+-- pattern per gun, CS2-style: the same random numbers for the same shot of a string). The elastic hold takes back what
+-- fits in its range and keeps the rest; a shot fired while the last one is still springing back finds less room, so
+-- fast fire climbs. The gun model is pushed back, flipped, kicked sideways and twisted by the plugin's springs.
 function Deagle:PhysicsRecoil(phys)
 	local m, s = self.cfg.physics, self.state
+	local ph = self.gun.physics or self.gunPhysics[self.gun.cs2]
 	local aim = s.aiming and m.adsMult or 1
-	local up = m.camPerFlip * phys.flip * (1 + m.vary * (math.random() * 2 - 1)) * aim * self.cfg.recoil
-	local side = up * m.sidePct * (math.random() * 2 - 1)
+	local n = self.sprayN or 0; self.sprayN = n + 1
+	local up = m.camPerFlip * phys.flip * (1 + m.vary * self:SprayRand(n, 1)) * aim * self.cfg.recoil
+	local side = up * ((ph.side or 0) + m.sideSigma * self:SprayRand(n, 2))
+	local range = m.holdRange * m.holds[ph.hold] * (s.aiming and m.adsHold or 1)
 	local r = self.camRecoil or { pitch = 0, yaw = 0, applied = { pitch = 0, yaw = 0 }, perm = { pitch = 0, yaw = 0 } }
 	self.camRecoil = r
-	-- target = permanent climb + a transient part that decays; the applied offset chases the target (riseRate)
-	r.perm.pitch, r.perm.yaw = r.perm.pitch + up * (1 - m.returnPct), r.perm.yaw + side * (1 - m.returnPct)
-	r.pitch, r.yaw = r.pitch + up * m.returnPct, r.yaw + side * m.returnPct
+	r.rate = m.returnRate * math.sqrt(m.returnInertia / phys.inertia)
+	local back = math.min(m.holdMax * up, math.max(0, range - r.pitch))
+	r.pitch, r.perm.pitch = r.pitch + back, r.perm.pitch + up - back
+	local sideBack = math.min(m.holdMax * math.abs(side), math.max(0, range * m.holdYaw - math.abs(r.yaw)))
+	if side < 0 then sideBack = -sideBack end
+	r.yaw, r.perm.yaw = r.yaw + sideBack, r.perm.yaw + side - sideBack
 	self.camRecoilT = System.GetCurrTime()
 	if self.native then
-		self:Native(string.format("kick %.4f %.3f %.3f", m.gunBackPerVel * phys.recoilVel * aim,
-			m.gunFlipPerFlip * phys.flip * aim, (math.random() * 2 - 1) * m.gunFlipPerFlip * phys.flip * m.sidePct * aim))
+		local flip = m.gunFlipPerFlip * phys.flip * aim
+		local yaw = up > 0 and flip * side / up or 0
+		self:Native(string.format("kick %.4f %.3f %.3f %.3f", m.gunBackPerVel * phys.recoilVel * aim, flip, yaw, m.gunRollPerYaw * yaw))
+		self.gunKicks = self.gunKicks or {}
+		table.insert(self.gunKicks, { t = self.camRecoilT, pitch = flip, yaw = yaw })
 	end
+end
+
+-- the same pseudo-random number for the same gun, shot of the string and channel: a learnable spray (CS2-style).
+-- Roughly normal (sum of three uniforms), clamped to +-2.
+function Deagle:SprayRand(n, ch)
+	local seed = 0
+	for i = 1, #self.gun.id do seed = (seed * 31 + string.byte(self.gun.id, i)) % 1000003 end
+	local sum = 0
+	for k = 1, 3 do
+		local x = math.sin(seed * 12.9898 + n * 78.233 + ch * 37.719 + k * 4.581) * 43758.5453
+		sum = sum + (x - math.floor(x))
+	end
+	return math.max(-2, math.min(2, (sum - 1.5) * 2))
+end
+
+-- where the barrel points right now, relative to the camera (deg up, deg right): the plugin's gun-kick springs
+-- (w = 28 rad/s, damping 0.89) still hold part of each recent kick; the next bullet leaves along it
+local KICK_W, KICK_ZETA = 28, 50 / (2 * 28)
+function Deagle:GunKickNow()
+	local kicks = self.gunKicks
+	if not kicks then return 0, 0 end
+	local now = System.GetCurrTime()
+	local wd = KICK_W * math.sqrt(1 - KICK_ZETA * KICK_ZETA)
+	local p, y, keep = 0, 0, {}
+	for _, k in ipairs(kicks) do
+		local t = now - k.t
+		if t < 0.6 then
+			local f = KICK_W * math.exp(1) / wd * math.exp(-KICK_ZETA * KICK_W * t) * math.sin(wd * t)
+			p, y = p + k.pitch * f, y + k.yaw * f
+			keep[#keep + 1] = k
+		end
+	end
+	self.gunKicks = keep
+	return p, y
 end
 
 -- every frame: move the view by how much the recoil offset changed (never sets the aim outright)
@@ -421,13 +474,13 @@ function Deagle:CamRecoilTick()
 	local dt = math.min(0.1, now - (self.camRecoilLast or now)); self.camRecoilLast = now
 	if dt <= 0 then return end
 	local m = self.cfg.physics
-	local decay = math.exp(-m.returnRate * dt)
+	local decay = math.exp(-(r.rate or m.returnRate) * dt)
 	r.pitch, r.yaw = r.pitch * decay, r.yaw * decay
 	local tp, ty = r.perm.pitch + r.pitch, r.perm.yaw + r.yaw
 	local k = 1 - math.exp(-m.riseRate * dt)
 	local dp, dy = (tp - r.applied.pitch) * k, (ty - r.applied.yaw) * k
 	if math.abs(dp) < 1e-4 and math.abs(dy) < 1e-4 then
-		if math.abs(r.pitch) < 1e-3 and math.abs(r.yaw) < 1e-3 then self.camRecoil = nil end   -- settled: start fresh
+		if math.abs(r.pitch) < 1e-3 and math.abs(r.yaw) < 1e-3 then self.camRecoil, self.sprayN = nil, 0 end   -- settled: a new string
 		return
 	end
 	r.applied.pitch, r.applied.yaw = r.applied.pitch + dp, r.applied.yaw + dy
@@ -613,6 +666,13 @@ function Deagle:Shoot(force)
 
 	local pos = System.GetViewCameraPos()
 	local dir = coneDir(System.GetViewCameraDir(), (s.aiming and c.spreadAim or c.spreadHip) + s.heat)
+	-- the bullet leaves along the barrel, which may still be kicked up / sideways from the last shot
+	local kp, ky = self:GunKickNow()
+	if kp ~= 0 or ky ~= 0 then
+		local _, _, right, upv = camBasis()
+		local k = c.physics.barrelAim
+		dir = vnorm(vadd(dir, vadd(vscale(upv, math.rad(kp) * k), vscale(right, math.rad(ky) * k))))
+	end
 	s.heat = s.heat + c.heatPerShot
 
 	self:PlayTrigger(c.shotTrigger)

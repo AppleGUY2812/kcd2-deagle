@@ -4,6 +4,8 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 # every shipped clip must be in the merged animation index, or the game can't play it (a gun in bind pose)
 python3 "$here/tools/check_img.py" "$here" || { echo "animation index incomplete: rebuild it (tools/gb/gb_convert.sh or tools/build_vm.sh)" >&2; exit 1; }
+# every command Lua sends the plugin must have a handler there
+python3 "$here/tools/check_native.py" "$here" || { echo "the plugin lacks a handler Lua uses (native/src/main.cpp)" >&2; exit 1; }
 out="$here/dist/deagle"
 rm -rf "$out" && mkdir -p "$out/data"
 cp "$here/mod.manifest" "$out/"
