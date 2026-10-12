@@ -33,6 +33,10 @@ Deagle.cfg = {
 	reloadTrigger = nil,
 	muzzleFx = "deagle.muzzle",         -- Libs/Particles/deagle.xml (preloaded via PreloadList.txt): the flash, rides on the gun
 	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
+	-- "world": the flash stays where it was fired; "entity": it rides a small entity kept on the muzzle every frame (so
+	-- walking forward doesn't walk into it). A viewmodel slot can't be used: emitters there never render.
+	flashMode = "world",
+	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	muzzleFxScale = 1.0,
 	portFx = "deagle.port_smoke",
 	bloodFx = "collisions.combat.hit_passed_bullet_fabric",
@@ -242,28 +246,47 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
 end
 
--- The flash rides on the gun (CS2 / CoD attach it to the weapon too): an emitter in a slot of the viewmodel, put back
--- on the muzzle every frame while it burns, so walking forward never walks into it. Smoke stays where it was made.
--- Third person (no viewmodel drawn): both in the world.
+-- The flash: flashMode "world" leaves it where it was fired; "entity" puts it on a small entity of its own that is
+-- kept on the muzzle every frame (CS2 / CoD attach the flash to the weapon), so walking forward never walks into it.
+-- (An emitter in a slot of the viewmodel itself loads fine but never renders.) Smoke always stays in the world.
+-- Third person (no viewmodel drawn): in the world.
 function Deagle:MuzzleFlash(dir)
 	local c = self.cfg
 	local pos = self:MuzzlePos()
-	local vm = self.vmInFp and self.vmShown and self.vmId and System.GetEntity(self.vmId)
-	local ok, slot = false, nil
-	if vm then ok, slot = pcall(vm.LoadParticleEffect, vm, self.flashSlot or -1, c.muzzleFx, { Scale = c.muzzleFxScale }) end
-	if ok and type(slot) == "number" and slot >= 0 then
-		self.flashSlot, self.flashUntil = slot, System.GetCurrTime() + 0.2
-		pcall(vm.SetSlotWorldTM, vm, slot, pos, dir)
-	else
-		self:SpawnFx(c.muzzleFx, pos, dir, 0.6)
+	local e = c.flashMode == "entity" and self.vmInFp and self.vmShown and self:FlashEntity()
+	local ok = false
+	if e then
+		pcall(e.SetWorldPos, e, pos); pcall(e.SetDirectionVector, e, dir)
+		local okL, slot = pcall(e.LoadParticleEffect, e, 0, c.muzzleFx, { Scale = c.muzzleFxScale })
+		ok = okL and type(slot) == "number" and slot >= 0
+		if ok then self.flashUntil = System.GetCurrTime() + 0.2 end
 	end
+	if not ok then self:SpawnFx(c.muzzleFx, pos, dir, 0.6) end
 	self:SpawnFx(c.muzzleSmokeFx, pos, dir, 1.0)
 end
 
+function Deagle:FlashEntity()
+	local e = self.flashEntId and System.GetEntity(self.flashEntId)
+	if e then return e end
+	e = System.SpawnEntity({ class = "BasicEntity", name = "deagle_flash", position = System.GetViewCameraPos(),
+		flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = "" } })
+	if not e then return nil end
+	pcall(e.SetFlags, e, ENTITY_FLAG_NO_SAVE, 0)
+	self.flashEntId = e.id
+	return e
+end
+
 function Deagle:FlashFollow()
-	if not self.flashSlot or System.GetCurrTime() > (self.flashUntil or 0) then return end
-	local vm = self.vmId and System.GetEntity(self.vmId)
-	if vm then pcall(vm.SetSlotWorldTM, vm, self.flashSlot, self:MuzzlePos(), System.GetViewCameraDir()) end
+	if not self.flashEntId or System.GetCurrTime() > (self.flashUntil or 0) then return end
+	local e = System.GetEntity(self.flashEntId)
+	if e then pcall(e.SetWorldPos, e, self:MuzzlePos()); pcall(e.SetDirectionVector, e, System.GetViewCameraDir()) end
+end
+
+-- slow motion for checking effects (F9): KCD2 has CryEngine's t_Scale
+function Deagle:SlowMo(on)
+	self.slowOn = on and true or false
+	pcall(System.SetCVar, "t_Scale", on and self.cfg.slowmo or 1)
+	log("slow motion " .. (on and ("x" .. tostring(self.cfg.slowmo)) or "off"))
 end
 
 function Deagle:Recoil()
@@ -674,7 +697,7 @@ function Deagle:RemoveStaleEntities()
 	local n = 0
 	for _, e in pairs(System.GetEntitiesByClass("BasicEntity") or {}) do
 		local ok, name = pcall(e.GetName, e)
-		if ok and type(name) == "string" and name:find("^deagle_") and e.id ~= self.vmId then
+		if ok and type(name) == "string" and name:find("^deagle_") and e.id ~= self.vmId and e.id ~= self.flashEntId then
 			pcall(System.RemoveEntity, e.id); n = n + 1
 		end
 	end
@@ -698,7 +721,7 @@ function Deagle:VmEntity()
 		log("viewmodel fallback chr " .. tostring(ok2) .. " " .. tostring(slot2) .. " skin " .. tostring(ok3))
 	end
 	pcall(vm.SetViewDistRatio, vm, 255)
-	self.vmId, self.vmRoundsShown, self.flashSlot = vm.id, nil, nil
+	self.vmId, self.vmRoundsShown = vm.id, nil
 	vm.OnUpdate = function() Deagle:VmPlace() end    -- per-frame follow (entity update); VmTick timer as well
 	pcall(vm.Activate, vm, 1)
 	return vm
@@ -1160,6 +1183,10 @@ function Deagle:OnAction(action, activation)
 		if activation == "press" then self:Toggle() end
 		return true
 	end
+	if action == "deagle_slowmo" then
+		if activation == "press" then self:SlowMo(not self.slowOn) end
+		return true
+	end
 	if not s.drawn then return false end
 	if action == "deagle_fire" then
 		if activation == "press" then self:TriggerPress() else self.state.trigger = false end
@@ -1230,7 +1257,8 @@ function Deagle:OnGameplayStarted()
 	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
-	self.vmId = nil
+	self.vmId, self.flashEntId = nil, nil
+	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()
 end
