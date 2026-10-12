@@ -87,3 +87,60 @@ Texture list: `imp_dust` (thinSmoke 8x4), `imp_dustjet` (dustImpact 16x2), `imp_
 `imp_spray` (debrisSpray 4x1), `imp_sparks` (longSpark 4x2, additive), `imp_glow` (additive), `imp_stones` (2x2),
 `imp_splinters` (2x2), `imp_glass` (3x3), `imp_fabric` (2x2), `imp_straw` (2x2), `imp_drop`; `hole_<surface>_diff` /
 `_ddna` for the 10 decals.
+
+## 5. Wallbangs, exits and ricochets
+### Data: `src/Scripts/Deagle/guns/penetration.lua`
+`Deagle.penetration[<family or mat_* surface>] = { family, ron, density, armour, penetrable, maxDepth = { mm9, ae50 }, ricochetChance, ricochetMaxAngle, spall }`,
+plus `Deagle.penetrationAmmo["9x19" / "50ae"]` and `Deagle.ricochetMaxAngle = 30`. The file only fills tables. It has
+to be loaded next to `calibers.lua` (not done here: `deagle_main.lua` is off limits for me).
+
+What the values mean (RoN's combining code is native and was **not read**; this is the inferred model):
+- **Gets in?** Only if `penetrable` and the round's level is at least `armour`. 9x19 FMJ is level 2, .50 AE FMJ level
+  3, JHP 0 (RoN AmmoDataTable). Surfaces from RoN PenetrationData: steel 4, concrete strong / sheet metal 3,
+  concrete soft 2, everything else 0.
+- **How far?** `maxDepth = budget / density` (m). The budget is RoN's per-weapon `PenetrationDistance`: 9 mm guns
+  ~10 cm (MP5, M92). For the .50 AE I **guessed** 30 cm, since RoN has no .50 AE gun (.45 = 8, .357 Python = 55). Examples:
+
+| surface (RoN) | density | armour | 9 mm | .50 AE | ricochet (9 mm, < 30 deg) | spall |
+|---|---|---|---|---|---|---|
+| drywall | 0.6 | 0 | 17 cm | 50 cm | no | 0 |
+| plaster | 0.8 | 0 | 12.5 cm | 37.5 cm | 0.1 | 0 |
+| wood (plywood / pine) | 1 (default, guess) | 0 | 10 cm | 30 cm | plywood no / pine 0.1 | 0 |
+| brick | 1.95 | 0 | 5.1 cm | 15 cm | 0.1 | 0 |
+| stone (concrete strong) | 5.5 | 3 | stopped | 5.5 cm | 0.1 | 0.3 |
+| sheet metal / plate armour (galvanized) | 2 | 3 | stopped | 15 cm | 0.125 | 0.7 |
+| solid metal (steel) | 8 | 4 | stopped | stopped | 0.1 | 0.2 |
+| glass | 0.6 | 0 | 17 cm | 50 cm | no | 0 |
+| flesh | 3 | 0 | 3.3 cm | 10 cm | no | 0 |
+| soil / sand / grass ground | - | - | not penetrable | not penetrable | no | 0 |
+
+- **What's left after a wallbang:** RoN's speed / damage loss per surface is C++. **Guess:** keep
+  `1 - depth / maxDepth` of the energy.
+- **Ricochet:** only if the surface can ricochet and the shot hits within `ricochetMaxAngle` (30 deg, Projectile_Base
+  RequiredAngleToDeflect) of the surface. Chance = ammo RicochetChance (9 mm FMJ 0.1; RoN gives the .50 AE 0) x the
+  surface multiplier (sheet metal 1.25).
+- **Spall:** a stopped round on an armoured surface throws fragments with probability `spall` (RoN SpallingChance),
+  with ammo SpallingDamage 10-15 within 0.6 m.
+
+### Exit effects (`deagle_impacts.xml`): emitter +Y = the round's travel direction out of the far side
+| effect | use for | RoN source |
+|---|---|---|
+| `stone_exit` | stone, brick, ceramic, rock | `P_VFX_Impact_Brick_Exit`, `Concrete_Soft_Exit`: fast dust jet (7 m/s, 0.28 s), wide puff, hot fragments, chips |
+| `plaster_exit` | plaster, drywall | `P_VFX_Impact_Plaster_Exit` + `Drywall_Exit`: white whisps, slower cloud, sparks, bits |
+| `wood_exit` | wood, wood_soft, doors, shields | `P_VFX_Impact_Pine_Exit`: brown smokeball, squib, spatters + splinters |
+| `metal_exit` | sheet metal, plate armour | `P_VFX_Impact_Steel_Exit`: sparks, tiny-spark burst, red-hot bits, smoke, shards |
+| `glass_exit` | glass, windows | `P_VFX_Impact_Glass_Plate_Exit`: glass bits, bright whisp, sparks |
+| `cloth_exit` | cloth, sack, straw, flesh-free fabric | `P_VFX_Impact_FabricThin_Exit`: smoke, fibres, tiny flash |
+
+**Exit holes:** RoN's ExitImpactEffects use the same `Decal_Impact_Inst_*` textures as our holes, just bigger:
+**6-12 cm** (DecalMinSize 6 / Max 12) versus 3-4 cm on entry. So there are no separate `_exit` materials: reuse
+`bullet_hole_<surface>` on the far side, at `size = 0.06 + 0.06 * random` at scale 1.
+
+### Ricochet effects: emitter +Y = the round's NEW direction
+| effect | use for | RoN source |
+|---|---|---|
+| `ricochet_metal` | metal, plate armour on people, chainmail | Projectile_Base `RichochetParticle` = `Electrical_impact_Large`: 55 sparks in a 0-45 deg cone at 5-25 m/s, a 10-spark burst with light, two 0.2 s flashes, smoke along the new path. RoN's colour is electric blue; ours is hot-metal orange |
+| `ricochet_stone` | stone, brick, plaster, wood_soft | RoN replays the concrete impact at ParticleScale 0.33: small spark flash + streaks, a little dust, chips |
+
+No new textures were needed: the hot fragments use `imp_glow`, and everything else reuses the impact set. All parts
+live >= 0.08 s (checked by script) and scale 1 = 9 mm.
