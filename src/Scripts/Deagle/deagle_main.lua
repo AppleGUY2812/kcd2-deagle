@@ -2400,6 +2400,10 @@ function Deagle:OnAction(action, activation)
 		if activation == "press" then self:SlowMo(not self.slowOn) end
 		return true
 	end
+	if action == "deagle_freecam_aim" then   -- right mouse in the free camera: the mouse aims Henry while held
+		self.fcAim = activation == "press"
+		return self.fc ~= nil
+	end
 	if action == "deagle_zoom" or action == "deagle_zoom_mouse" then   -- F2 / mouse side button (KCD2 uses F10)
 		if activation == "press" then self:CycleZoom() end
 		return true
@@ -2479,9 +2483,60 @@ function Deagle:OnGameplayStarted()
 	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	self.paths, self.pathsToken = nil, nil
+	self.fc, self.fcAim = nil, nil                          -- the plugin turns the free camera off at the hello
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()
+end
+
+-- ---------------------------------------------------------------------------
+-- free camera look (the plugin flies the camera: freecam.cpp). While it's on, the mouse turns the camera and Henry's
+-- aim stays where it was; holding right mouse aims Henry instead (the camera stays). A line from Henry's eye shows
+-- where a shot goes. The plugin tells us when it starts and stops (deagle_freecam_state).
+-- ---------------------------------------------------------------------------
+local function viewAngles()
+	local d = System.GetViewCameraDir()   -- Henry's real eye, not the free camera
+	return math.asin(math.max(-1, math.min(1, d.z))), math.atan2(-d.x, d.y)
+end
+local function wrap(a) return (a + math.pi) % (2 * math.pi) - math.pi end
+function Deagle:FreecamState(on)
+	on = Deagle.Arg(on) ~= "0"
+	if on then
+		local p, y = viewAngles()
+		self.fc = { lockP = p, lockY = y, camP = p, camY = y, token = {} }
+		local tok = self.fc.token
+		Script.SetTimer(0, function() Deagle:FreecamTick(tok) end)
+	else
+		self.fc = nil
+		self:Native("freecam rotoff")
+	end
+end
+function Deagle:FreecamTick(token)
+	local fc = self.fc
+	if not fc or fc.token ~= token then return end
+	local p, y = viewAngles()
+	if self.fcAim then
+		fc.lockP, fc.lockY = p, y                               -- the mouse aims Henry; the camera stays
+	else
+		fc.camP = math.max(-1.55, math.min(1.55, fc.camP + (p - fc.lockP)))
+		fc.camY = wrap(fc.camY + wrap(y - fc.lockY))
+		if math.abs(p - fc.lockP) > 1e-5 or math.abs(wrap(y - fc.lockY)) > 1e-5 then
+			local pl = self:Player()
+			if pl then pcall(pl.actor.PlayerSetViewAngles, pl.actor, { x = fc.lockP, y = 0, z = fc.lockY }) end
+		end
+	end
+	self:Native(string.format("freecam rot %.5f %.5f", fc.camP, fc.camY))
+	-- where a shot goes: Henry's eye along his aim to the first thing it meets (or 150 m)
+	local eye, d = System.GetViewCameraPos(), System.GetViewCameraDir()
+	local hits, pl, reach = {}, self:Player(), 150
+	local ok, n = pcall(Physics.RayWorldIntersection, eye, vscale(d, reach), 1, ent_all, pl and pl.id, nil, hits)
+	if ok and n and n > 0 and hits[1] then reach = hits[1].dist end
+	local tip = vadd(eye, vscale(d, reach))
+	pcall(System.DrawLine, vadd(eye, vscale(d, 0.3)), tip, 1, 0.25, 0.1, 1)
+	for _, a in ipairs({ { x = 0.15, y = 0, z = 0 }, { x = 0, y = 0.15, z = 0 }, { x = 0, y = 0, z = 0.15 } }) do
+		pcall(System.DrawLine, vsub(tip, a), vadd(tip, a), 1, 0.25, 0.1, 1)
+	end
+	Script.SetTimer(0, function() Deagle:FreecamTick(token) end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -2608,6 +2663,7 @@ end
 
 System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
 System.AddCCommand("deagle_freecam", "Deagle:Native('freecam ' .. Deagle.Arg([[%line]]))", "deagle_freecam [on|off|status|speed <m/s>|fast <x>|max <m>|keys wasd|nav|arrows|key <vk>]: free camera (time runs, Henry still aims and shoots, and doesn't walk). \\ toggles; WASD fly, Space up, Left Ctrl down, Shift faster")
+System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "internal: the plugin's free camera came on (1) or went off (0)")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")

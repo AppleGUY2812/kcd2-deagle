@@ -59,6 +59,17 @@ check("replayed at a load: " .. tostring(hello) .. ", then the same values again
 	hello == "[DN] hello" and c.tracers == false and c.vm.motion == 0.5 and c.vm.arms == "medieval" and c.accuracy.scale == 0.5
 	and c.tracer.mode == "flying" and Deagle.gun.id == "glock_17" and table.concat(c.flashGrow, ",") == "0.7,1,1.1", c.vm.motion)
 M.console("deagle_reset")
+-- the free camera's look mode: the plugin says it's on; Lua aims the camera every frame (freecam rot) and stops at off
+local nf = #M.native
+M.console("deagle_freecam_state", "1"); M.advance(0.1)
+local rots = 0
+for i = nf + 1, #M.native do if M.native[i]:find("^%[DN%] freecam rot ") then rots = rots + 1 end end
+M.console("deagle_freecam_state", "0"); M.advance(0.1)
+local after = 0
+for i = nf + 1, #M.native do if M.native[i]:find("^%[DN%] freecam rot ") then after = after + 1 end end
+check(string.format("freecam look: %d frames aimed while on, none after off, rotoff sent", rots),
+	rots >= 5 and after == rots and M.native[#M.native] == "[DN] freecam rotoff" or (function()
+		for i = #M.native, nf + 1, -1 do if M.native[i] == "[DN] freecam rotoff" then return after == rots and rots >= 5 end end end)(), rots)
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("settings: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

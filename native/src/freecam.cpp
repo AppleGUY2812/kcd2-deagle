@@ -44,6 +44,9 @@ float g_pos[3] = {};
 float g_real[12] = {}, g_free[12] = {};
 float g_lastEye[3] = {}; bool g_haveLastEye = false;
 
+// the camera's own aim (Lua's freecam look: the mouse turns the camera, Henry's aim stays): pitch / yaw in radians
+// as Lua reads them from a view direction (yaw = atan2(-x, y), pitch = asin(z)); off = the game camera's rotation
+bool g_rotOn = false; float g_rotPitch = 0, g_rotYaw = 0;
 float g_speed = 4.0f;                     // m/s, wall-clock (the same in F9 slow motion)
 float g_fast = 5.0f;                      // x speed while Shift is held
 float g_maxDist = 500.0f;                 // from Henry's eye
@@ -97,6 +100,7 @@ void Restore() {
 
 void TurnOff(const char* why) {
 	g_want = false;
+	g_rotOn = false;
 	if (g_on) Log("freecam off (%s)", why);
 	g_on = false;
 	g_haveLastEye = false;
@@ -142,7 +146,9 @@ void AfterSetView() {
 
 	if (focus) {
 		// right = column 0, forward = column 1 of the camera matrix (CryEngine: Y forward, Z up); up/down = world Z
-		const float R[3] = { m[0], m[4], m[8] }, F[3] = { m[1], m[5], m[9] };
+		const float R[3] = { g_rotOn ? cosf(g_rotYaw) : m[0], g_rotOn ? sinf(g_rotYaw) : m[4], g_rotOn ? 0.f : m[8] };
+		const float F[3] = { g_rotOn ? -sinf(g_rotYaw) * cosf(g_rotPitch) : m[1], g_rotOn ? cosf(g_rotYaw) * cosf(g_rotPitch) : m[5],
+			g_rotOn ? sinf(g_rotPitch) : m[9] };
 		float f = (Down(g_keys[0]) ? 1.f : 0.f) - (Down(g_keys[1]) ? 1.f : 0.f);
 		float r = (Down(g_keys[3]) ? 1.f : 0.f) - (Down(g_keys[2]) ? 1.f : 0.f);
 		float u = (Down(g_keys[4]) ? 1.f : 0.f) - (Down(g_keys[5]) ? 1.f : 0.f);
@@ -156,6 +162,12 @@ void AfterSetView() {
 	if (len > g_maxDist && len > 0) for (int k = 0; k < 3; k++) g_pos[k] = eye[k] + d[k] * (g_maxDist / len);
 
 	memcpy(g_free, m, sizeof(m));
+	if (g_rotOn) {   // columns: right, forward, up (CryEngine: Y forward, Z up)
+		float cp = cosf(g_rotPitch), sp = sinf(g_rotPitch), cy = cosf(g_rotYaw), sy = sinf(g_rotYaw);
+		const float F[3] = { -sy * cp, cy * cp, sp }, R[3] = { cy, sy, 0 };
+		const float U[3] = { R[1] * F[2] - R[2] * F[1], R[2] * F[0] - R[0] * F[2], R[0] * F[1] - R[1] * F[0] };
+		for (int r = 0; r < 3; r++) { g_free[r * 4 + 0] = R[r]; g_free[r * 4 + 1] = F[r]; g_free[r * 4 + 2] = U[r]; }
+	}
 	g_free[3] = g_pos[0]; g_free[7] = g_pos[1]; g_free[11] = g_pos[2];
 	if (!Finite(g_free, 12)) { TurnOff("non-finite position"); return; }
 	if (SafeSetMatrix(cam, g_free)) g_applied = true;
@@ -245,6 +257,12 @@ void Freecam_Command(const char* args) {
 	else if (!strcmp(w, "off") || !strcmp(w, "0")) g_want = false;
 	else if (!strcmp(w, "speed")) { float v = (float)atof(rest); if (v > 0 && v < 1000) g_speed = v; }
 	else if (!strcmp(w, "fast")) { float v = (float)atof(rest); if (v >= 1 && v < 100) g_fast = v; }
+	else if (!strcmp(w, "rot")) {   // rot <pitch> <yaw> (radians): the camera aims by itself (Lua's look mode)
+		float p = 0, y = 0;
+		if (sscanf_s(rest, "%f %f", &p, &y) == 2 && std::isfinite(p) && std::isfinite(y)) { g_rotPitch = p; g_rotYaw = y; g_rotOn = true; }
+		return;   // every frame: no log
+	}
+	else if (!strcmp(w, "rotoff")) { g_rotOn = false; return; }
 	else if (!strcmp(w, "nudge")) {   // nudge <x> <y> <z>: move the camera by metres (world), for tests without keys
 		float d[3] = {}; if (sscanf_s(rest, "%f %f %f", &d[0], &d[1], &d[2]) == 3 && g_on) for (int k = 0; k < 3; k++) g_pos[k] += d[k];
 	}
@@ -262,6 +280,7 @@ void Freecam_Command(const char* args) {
 }
 
 void Freecam_Reset(const char* why) {
+	g_rotOn = false;
 	Restore();                 // only does something if called between SetViewCamera and Render
 	TurnOff(why ? why : "reset");
 	g_toggleHeld = true;

@@ -175,6 +175,22 @@ static bool LocFromDir(const float* pos, const float* dir, float scale, float* l
 	return true;
 }
 
+// tracer pieces spawned by fxs: held 2 s, then let go (oldest first; a full ring lets the oldest go early)
+struct HeldPiece { uintptr_t em; LARGE_INTEGER born; };
+static HeldPiece g_held[1024]; static int g_heldHead = 0, g_heldN = 0;
+static void HoldPiece(uintptr_t em) {
+	if (g_heldN == 1024) { SafeRelease(g_held[g_heldHead].em); g_heldHead = (g_heldHead + 1) % 1024; g_heldN--; }
+	int i = (g_heldHead + g_heldN) % 1024;
+	g_held[i].em = em; QueryPerformanceCounter(&g_held[i].born); g_heldN++;
+}
+static void ReleaseOldPieces(bool all) {
+	LARGE_INTEGER now, f; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&f);
+	while (g_heldN > 0 && (all || now.QuadPart - g_held[g_heldHead].born.QuadPart > 2 * f.QuadPart)) {
+		SafeRelease(g_held[g_heldHead].em);
+		g_heldHead = (g_heldHead + 1) % 1024; g_heldN--;
+	}
+}
+
 static void ReleaseFlashes() {
 	for (int i = 0; i < g_nFlashes; i++) SafeRelease(g_flashes[i].emitter);
 	g_nFlashes = 0;
@@ -618,7 +634,8 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "fxs")) {   // fxs <effect> <scale> <len m> <pos xyz> <dir xyz>: a world effect (a tracer piece) seen
 		// from its first frame: a new emitter starts with an empty bounding box and is skipped until an update gives it
 		// one, which a 0.12 s piece may never get (Lua-spawned single pieces never showed, 2026-10-12): it gets the box
-		// from pos to pos + dir x len (+ 0.15 m) at once. Fire and forget: our reference goes straight away.
+		// from pos to pos + dir x len (+ 0.15 m) at once. Our reference is kept 2 s (HoldPiece): letting it go at once
+		// showed one tracer, then none (the manager holds none of its own: the release deleted them).
 		char effect[96] = {}; float scale = 1, len = 1, p[3] = {}, d[3] = {}, loc[8];
 		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &len, &p[0], &p[1], &p[2], &d[0], &d[1], &d[2]);
 		if (n == 9 && Finite(p, 3) && Finite(d, 3) && Finite(&len, 1) && LocFromDir(p, d, scale, loc)) {
@@ -630,7 +647,7 @@ static void Command(const char* line) {
 					box[k] = (p[k] < e ? p[k] : e) - 0.15f; box[3 + k] = (p[k] > e ? p[k] : e) + 0.15f;
 				}
 				WriteBox(em, box);
-				SafeRelease(em);
+				HoldPiece(em);
 			}
 			else { static int said = 0; if (said++ < 5) Log("fxs: %s didn't spawn", effect); }
 		}
@@ -771,6 +788,16 @@ static void OnCamera(uintptr_t camera) {
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
 	if (g_fmod) { UpdateListener(g_cam); fm.update(g_fmod); }
 	ApplyFilters();
+	ReleaseOldPieces(false);
+	{   // tell Lua when the free camera comes and goes (its look mode, the aim line)
+		static bool fcWas = false;
+		bool fc = Freecam_Active();
+		if (fc != fcWas) {
+			fcWas = fc;
+			std::lock_guard<std::mutex> lk(g_consoleMu);
+			g_console.push_back(fc ? "deagle_freecam_state 1" : "deagle_freecam_state 0");
+		}
+	}
 	if (g_env) {
 		std::deque<std::string> run;
 		{ std::lock_guard<std::mutex> lk(g_consoleMu); run.swap(g_console); }
