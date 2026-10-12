@@ -517,7 +517,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
-	else if (!strcmp(cmd, "vel")) { float r = 0, f = 0, u = 0; if (sscanf_s(rest, "%f %f %f", &r, &f, &u) == 3) MotionVel(r, f, u); }   // camera-relative m/s
+	else if (!strcmp(cmd, "vel")) { float r = 0, f = 0, u = 0; if (sscanf_s(rest, "%f %f %f", &r, &f, &u) == 3) MotionVel(r, f, u); }   // world m/s (player:GetVelocity), every frame
 	else if (!strcmp(cmd, "air")) MotionAir(atoi(rest) != 0);
 	else if (!strcmp(cmd, "stance")) MotionStance(atoi(rest) != 0);        // 1 = crouched
 	else if (!strcmp(cmd, "dodge")) { float sd = 0, k = 1; if (sscanf_s(rest, "%f %f", &sd, &k) >= 1) MotionDodge(sd, k); }

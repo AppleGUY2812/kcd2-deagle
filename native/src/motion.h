@@ -32,8 +32,11 @@ struct MotionState {
 	bool enabled = true, aiming = false;
 	float scale = 1.0f;                                  // global multiplier (motion <scale>, deagle_motion)
 	MotionParams p;
-	// inputs from Lua (vel / air / stance / dodge); vel is camera-relative (right, forward, up) m/s
-	float vel[3]{}; double velAge = 1e9;                 // seconds since the last vel command (native fallback when stale)
+	// inputs from Lua (vel / air / stance / dodge); vel is WORLD velocity m/s (player:GetVelocity), sent every frame and
+	// turned camera-relative here with the current camera; stale -> decays to 0 (the camera's own motion is never used:
+	// it carries KCD2's head bob and frame-time noise)
+	float velW[3]{}, velS[3]{}; double velAge = 1e9;   // last sent / smoothed (tau 0.06 s), seconds since the last vel
+	float yawF = 0, pitchF = 0;                         // turn rates (deg/s), low-passed (uneven frame times)
 	bool air = false, airFromLua = false, crouched = false;
 	float airTime = 0, vzAir = 0;                        // time in the air, the fall speed at landing
 	// internal
@@ -41,7 +44,7 @@ struct MotionState {
 	float speed = 0, vz = 0, phase = 0, stride = 0, sprintT = 0;
 	bool sprinting = false;
 	Spring yaw, pitch, swayX, swayZ, aimK, sprint, airK;
-	Spring hang[3], rotImp[3], strafeRoll, strafeYaw;
+	Spring hang[3], rotImp[3], strafeRoll, strafeYaw, moveP;
 	Spring kickBack, kickPitch, kickYaw, kickRoll;       // the shot's push on the gun model (Lua sends it from the cartridge physics)
 	float off[3]{}, rot[3]{};                            // results
 };
@@ -50,7 +53,7 @@ extern MotionState mo;
 void UpdateMotion(const float* cam);                    // per processed frame: dt from the performance counter
 void MotionStep(const float* cam, float dt);             // portable core (also used by the offline stability test)
 void ResetMotion();
-void MotionVel(float right, float fwd, float up);
+void MotionVel(float x, float y, float z);              // world m/s
 void MotionAir(bool inAir);
 void MotionStance(bool crouched);
 void MotionDodge(float side, float strength);

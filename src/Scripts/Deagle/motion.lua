@@ -1,14 +1,15 @@
 -- Weapon-movement inputs for the native motion layer (native/src/motion.cpp; docs/weapon_movement_design.md).
 -- Deagle:MotionTick() runs every frame (from VmTick) and sends the plugin what Lua knows better than the camera:
---   vel <right> <fwd> <up>   camera-relative velocity m/s (player:GetVelocity: no head bob); sent on change (> velStep)
---                            or every velRefresh s while moving, at most every velMinDt s, so kcd.log isn't flooded
+--   vel <x> <y> <z>          WORLD velocity m/s (player:GetVelocity: no head bob), lightly smoothed (velSmooth s), sent
+--                            EVERY frame; the plugin turns it camera-relative with the current camera every sub-step
+--                            ([DN] lines are swallowed by the plugin's LogAlways hook, so this doesn't touch kcd.log)
 --   air 0|1                  in the air (player.actor:IsFlying), on change
 --   stance 0|1               crouched = eye under cfg.accuracy.crouchEye +- crouchBand (the CsAccuracy rule), on change
 --   dodge <side> <strength>  KCD2 gives no dodge flag: a sideways (or backwards) speed spike, see motionCfg.dodge*
 -- Nothing is sent while deagle_motion is 0. Deagle:MotionParams(gun) sends the gun's tunables (mparams <key> <value>).
 
 Deagle.motionCfg = {
-	velStep = 0.25, velRefresh = 0.3, velMinDt = 0.05, moving = 0.3,   -- m/s, s
+	velSmooth = 0.08,                                                    -- s (exponential smoothing of GetVelocity)
 	dodgeSpeed = 3.5, dodgeRise = 3.0, dodgeWindow = 0.2, dodgeCooldown = 0.6, dodgeSprintFwd = 4.0,
 }
 
@@ -49,23 +50,23 @@ function Deagle:MotionTick()
 	if not p then return end
 	local c, now = self.motionCfg, System.GetCurrTime()
 	local m = self.motionIn
-	if not m then m = { velT = -1e9, hist = {}, dodgeT = -1e9 }; self.motionIn = m end
-	-- camera-relative velocity (horizontal right / forward, world up)
+	if not m then m = { hist = {}, dodgeT = -1e9 }; self.motionIn = m end
+	-- world velocity, smoothed, every frame
 	local ok, v = pcall(p.GetVelocity, p)
 	if not ok or type(v) ~= "table" then v = { x = 0, y = 0, z = 0 } end
+	local dt = m.t and math.max(0, math.min(0.25, now - m.t)) or 0
+	m.t = now
+	local k = m.vx and (1 - math.exp(-dt / c.velSmooth)) or 1
+	m.vx = (m.vx or 0) + ((v.x or 0) - (m.vx or 0)) * k
+	m.vy = (m.vy or 0) + ((v.y or 0) - (m.vy or 0)) * k
+	m.vz = (m.vz or 0) + ((v.z or 0) - (m.vz or 0)) * k
+	self:Native(string.format("vel %.3f %.3f %.3f", m.vx, m.vy, m.vz))
+	-- camera-relative (horizontal right / forward) for the dodge detector
 	local f = System.GetViewCameraDir()
 	local fl = math.sqrt(f.x * f.x + f.y * f.y)
 	local fx, fy = 0, 1
 	if fl > 1e-4 then fx, fy = f.x / fl, f.y / fl end
-	local vr, vf, vu = v.x * fy - v.y * fx, v.x * fx + v.y * fy, v.z or 0
-	local speed = math.sqrt(vr * vr + vf * vf)
-	local changed = not m.vr or math.abs(vr - m.vr) > c.velStep or math.abs(vf - m.vf) > c.velStep or math.abs(vu - m.vu) > c.velStep
-	local refresh = (speed > c.moving or math.abs(vu) > c.moving) and now - m.velT >= c.velRefresh
-	local stopped = speed <= c.moving and math.abs(vu) <= c.moving
-	if (changed or refresh) and now - m.velT >= c.velMinDt and not (stopped and m.sentStop) then
-		self:Native(string.format("vel %.2f %.2f %.2f", vr, vf, vu))
-		m.vr, m.vf, m.vu, m.velT, m.sentStop = vr, vf, vu, now, stopped
-	end
+	local vr, vf = (v.x or 0) * fy - (v.y or 0) * fx, (v.x or 0) * fx + (v.y or 0) * fy
 	-- air
 	local air = false
 	pcall(function() air = p.actor:IsFlying() and true or false end)

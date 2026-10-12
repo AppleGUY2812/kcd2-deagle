@@ -36,44 +36,46 @@ local function run(sec, fps)
 end
 local function count(list, prefix) local k = 0 for _, c in ipairs(list) do if c:sub(1, #prefix) == prefix then k = k + 1 end end return k end
 local function last(list, prefix) for i = #list, 1, -1 do if list[i]:sub(1, #prefix) == prefix then return list[i] end end end
-local function vel(cmd) local r, f, u = cmd:match("vel (%S+) (%S+) (%S+)") return tonumber(r), tonumber(f), tonumber(u) end
+local function vel(cmd) local r, f, u = (cmd or ""):match("vel (%S+) (%S+) (%S+)") return tonumber(r), tonumber(f), tonumber(u) end
 
 Deagle:UseGun("deagle")
 Deagle.cfg.vm.motion = 1
 Deagle.motionIn = nil
--- standing: the first tick says air 0 / stance 0 and one vel 0; then silence
+-- standing: the first tick says air 0 / stance 0; vel goes out EVERY frame (world m/s, smoothed), 0 while standing
 local c = run(0.05)
-check("first tick sends air 0 + stance 0 + vel 0 0 0", count(c, "air 0") == 1 and count(c, "stance 0") == 1 and count(c, "vel 0.00 0.00 0.00") == 1, table.concat(c, " | "))
+check("first tick sends air 0 + stance 0 + vel 0 0 0", count(c, "air 0") == 1 and count(c, "stance 0") == 1 and last(c, "vel") == "vel 0.000 0.000 0.000", table.concat(c, " | "))
 c = run(2)
-check("standing still 2 s: nothing more sent", #c == 0, table.concat(c, " | "))
--- walking forward 1.8 m/s: vel 0 1.8 0, refreshed every ~0.3 s (not every frame)
+check(string.format("standing still 2 s: vel every frame (%d), all 0, nothing else", count(c, "vel")), count(c, "vel") == 120 and #c == 120 and last(c, "vel") == "vel 0.000 0.000 0.000", table.concat(c, " | "):sub(1, 200))
+-- walking forward 1.8 m/s: world vel, smoothed (reaches 1.8 within a fraction of a second)
 st.vel = { x = 0, y = 1.8, z = 0 }
+c = run(0.05)
+local x0, y0 = vel(last(c, "vel"))
+check(string.format("walking: smoothed, not a jump (%.3f after 3 frames)", y0), y0 > 0.3 and y0 < 1.7, last(c, "vel"))
 c = run(2)
-local r, f = vel(last(c, "vel") or "vel 0 0 0")
-check(string.format("walking: vel right %.2f fwd %.2f", r or 0, f or 0), r == 0 and math.abs(f - 1.8) < 1e-6, last(c, "vel"))
-check(string.format("walking 2 s: %d vel commands (refresh 0.3 s, not 120 frames)", count(c, "vel")), count(c, "vel") >= 6 and count(c, "vel") <= 8, count(c, "vel"))
--- turned 90 deg left (looking down -x): forward speed becomes rightward speed in camera space
+local x, y = vel(last(c, "vel") or "vel 0 0 0")
+check(string.format("walking 2 s: vel x %.3f y %.3f (world), %d commands (every frame)", x, y, count(c, "vel")), x == 0 and math.abs(y - 1.8) < 1e-3 and count(c, "vel") == 120, last(c, "vel"))
+-- turned 90 deg left: Lua keeps sending WORLD velocity (the plugin makes it camera-relative itself)
 M.view.yaw = math.pi / 2
 c = run(0.1)
-r, f = vel(last(c, "vel") or "vel 0 0 0")
-check(string.format("turned 90 deg: the same world velocity is right %.2f fwd %.2f", r or 0, f or 0), math.abs(r - 1.8) < 0.01 and math.abs(f) < 0.01, last(c, "vel"))
+x, y = vel(last(c, "vel") or "vel 0 0 0")
+check(string.format("turned 90 deg: still world x %.3f y %.3f", x, y), x == 0 and math.abs(y - 1.8) < 1e-3, last(c, "vel"))
 M.view.yaw = 0
--- sprinting 5.5 m/s (the plugin's hysteresis decides the pose; Lua just reports speed)
+-- sprinting 5.5 m/s (the plugin's hysteresis decides the pose)
 st.vel = { x = 0, y = 5.5, z = 0 }
 c = run(1)
-r, f = vel(last(c, "vel") or "vel 0 0 0")
-check("sprinting: vel fwd 5.50, no dodge", math.abs(f - 5.5) < 1e-6 and count(c, "dodge") == 0, table.concat(c, " | "))
--- stopping: one vel 0 and silence
+x, y = vel(last(c, "vel") or "vel 0 0 0")
+check("sprinting: vel y 5.500, no dodge", math.abs(y - 5.5) < 1e-3 and count(c, "dodge") == 0, table.concat(c, " | "):sub(1, 200))
+-- stopping: vel eases to 0
 st.vel = { x = 0, y = 0, z = 0 }
 c = run(1)
-check("stopping: one vel 0.00 0.00 0.00, then nothing", count(c, "vel") == 1 and last(c, "vel") == "vel 0.00 0.00 0.00", table.concat(c, " | "))
+check("stopping: vel eases to 0.000", last(c, "vel") == "vel 0.000 0.000 0.000", last(c, "vel"))
 -- jump: air 1 once, vel up, landing air 0 once
 st.air, st.vel = true, { x = 0, y = 0, z = 3.5 }
 c = run(0.3)
 check("takeoff: air 1 once", count(c, "air 1") == 1 and count(c, "air 0") == 0, table.concat(c, " | "))
 st.vel = { x = 0, y = 0, z = -4.5 }
 c = run(0.3)
-check("falling: no repeat of air 1", count(c, "air") == 0, table.concat(c, " | "))
+check("falling: no repeat of air 1", count(c, "air") == 0, table.concat(c, " | "):sub(1, 200))
 st.air, st.vel = false, { x = 0, y = 0, z = 0 }
 c = run(0.2)
 check("landing: air 0 once", count(c, "air 0") == 1, table.concat(c, " | "))

@@ -27,9 +27,9 @@ void ResetMotion() {
 	mo.p = keep; mo.enabled = en; mo.aiming = aim; mo.scale = sc;
 }
 
-void MotionVel(float right, float fwd, float up) {
-	if (!std::isfinite(right) || !std::isfinite(fwd) || !std::isfinite(up)) return;
-	mo.vel[0] = clampf(right, -15, 15); mo.vel[1] = clampf(fwd, -15, 15); mo.vel[2] = clampf(up, -30, 30); mo.velAge = 0;
+void MotionVel(float x, float y, float z) {
+	if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) return;
+	mo.velW[0] = clampf(x, -15, 15); mo.velW[1] = clampf(y, -15, 15); mo.velW[2] = clampf(z, -30, 30); mo.velAge = 0;
 }
 
 static void Takeoff() {
@@ -103,42 +103,48 @@ void MotionStep(const float* cam, float dt) {
 	mo.t += dt; mo.velAge += dt;
 	float dx = pos[0] - mo.lastPos[0], dy = pos[1] - mo.lastPos[1], dz = pos[2] - mo.lastPos[2];
 	float hs = sqrtf(dx * dx + dy * dy) / dt, vz = dz / dt;
-	bool cut = hs > 15;
-	if (cut) hs = 0;                                                             // teleports / cutscene cuts
-	// camera-relative velocity: from Lua (no head bob) while fresh, else from the camera
-	float vr, vf, vu;
-	if (mo.velAge < 0.5) { vr = mo.vel[0]; vf = mo.vel[1]; vu = mo.vel[2]; }
-	else if (cut) { vr = vf = vu = 0; }
-	else {
-		float rl = sqrtf(right[0] * right[0] + right[1] * right[1]) + 1e-6f, fl = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1]) + 1e-6f;
-		vr = (dx * right[0] + dy * right[1]) / rl / dt; vf = (dx * fwd[0] + dy * fwd[1]) / fl / dt; vu = vz;
-	}
-	float hsLua = sqrtf(vr * vr + vf * vf);
-	float speedIn = mo.velAge < 0.5 ? hsLua : hs;
-	// turn rates (deg/s) from the forward vector change
+	bool cut = hs > 15;                                                          // teleports / cutscene cuts
+	// velocity: Lua's world velocity only; stale (no vel for 0.25 s) -> fades to 0 over ~0.2 s
+	if (mo.velAge > 0.25) for (int c = 0; c < 3; c++) mo.velW[c] *= expf(-dt / 0.1f);
+	// soft deadband: GetVelocity noise while standing (< 0.1 m/s) can't move the gun; full response from 0.2 m/s
+	float vw[3] = { mo.velW[0], mo.velW[1], mo.velW[2] };
+	{ float m = sqrtf(vw[0] * vw[0] + vw[1] * vw[1] + vw[2] * vw[2]), g = clampf((m - 0.1f) / 0.1f, 0, 1); for (int c = 0; c < 3; c++) vw[c] *= g; }
+	if (cut) for (int c = 0; c < 3; c++) mo.velW[c] = mo.velS[c] = 0;
+	// camera horizontal axes for the camera-relative velocity (current camera, every sub-step)
+	float rl = sqrtf(right[0] * right[0] + right[1] * right[1]), fl = sqrtf(fwd[0] * fwd[0] + fwd[1] * fwd[1]);
+	float rH[2] = { rl > 1e-4f ? right[0] / rl : 1, rl > 1e-4f ? right[1] / rl : 0 }, fH[2] = { fl > 1e-4f ? fwd[0] / fl : 0, fl > 1e-4f ? fwd[1] / fl : 1 };
+	// turn rates (deg/s) from the forward vector change, low-passed (tau 30 ms): mouse deltas don't follow frame time,
+	// so delta / dt jitters with uneven frames (the old "micro jitter")
 	float yawNow = atan2f(fwd[1], fwd[0]), yawLast = atan2f(mo.lastFwd[1], mo.lastFwd[0]);
 	float dyaw = yawNow - yawLast; if (dyaw > 3.14159f) dyaw -= 6.28318f; if (dyaw < -3.14159f) dyaw += 6.28318f;
 	float dpitch = asinf(clampf(fwd[2], -1, 1)) - asinf(clampf(mo.lastFwd[2], -1, 1));
-	float yawRate = dyaw / dt * 57.3f, pitchRate = dpitch / dt * 57.3f;
-	if (cut) yawRate = pitchRate = 0;
+	float yawRate = cut ? 0 : dyaw / dt * 57.3f, pitchRate = cut ? 0 : dpitch / dt * 57.3f;
+	float fa = 1 - expf(-dt / 0.03f);
+	mo.yawF += (yawRate - mo.yawF) * fa; mo.pitchF += (pitchRate - mo.pitchF) * fa;
+	yawRate = mo.yawF; pitchRate = mo.pitchF;
 	memcpy(mo.lastPos, pos, sizeof(pos)); memcpy(mo.lastFwd, fwd, sizeof(fwd));
-	// air from the camera when Lua doesn't say (falling fast for a while)
+	// air from the camera only when Lua never said (falling fast for a while)
 	if (!mo.airFromLua) {
 		bool falling = vz < -2.5f;
 		if (falling != mo.air) { if (falling) { mo.air = true; mo.airTime = 0; } else { Land(); mo.air = false; } }
 	}
-	if (mo.air) { mo.airTime += dt; mo.vzAir = vz; }
+	if (mo.air) { mo.airTime += dt; mo.vzAir = mo.airFromLua ? mo.velS[2] : vz; }
 	// sprint with hysteresis (in above 4.6 m/s, out below 3.8), never while aiming or crouched
-	if (!mo.sprinting && speedIn > 4.6f && !mo.aiming && !mo.crouched) mo.sprinting = true;
-	else if (mo.sprinting && (speedIn < 3.8f || mo.aiming || mo.crouched)) mo.sprinting = false;
+	float speedNow = sqrtf(mo.velS[0] * mo.velS[0] + mo.velS[1] * mo.velS[1]);
+	if (!mo.sprinting && speedNow > 4.6f && !mo.aiming && !mo.crouched) mo.sprinting = true;
+	else if (mo.sprinting && (speedNow < 3.8f || mo.aiming || mo.crouched)) mo.sprinting = false;
+	float vr = 0, vf = 0, vu = 0;
 
 	const MotionParams& P = mo.p;
 	const float wMesh = P.meshInterp / 5.0f, kMesh = wMesh * wMesh, cMesh = 2 * 0.8f * wMesh;
 	// sub-step so the look and the springs match at 20-240 fps (implicit springs are stable anyway)
 	int n = (int)ceilf(dt / (1.0f / 240.0f)); if (n < 1) n = 1; if (n > 16) n = 16;
 	float h = dt / n;
+	const float va = 1 - expf(-h / 0.06f);
 	for (int i = 0; i < n; i++) {
-		mo.speed += (speedIn - mo.speed) * (1 - expf(-h / 0.15f));
+		for (int c = 0; c < 3; c++) mo.velS[c] += (vw[c] - mo.velS[c]) * va;
+		vr = mo.velS[0] * rH[0] + mo.velS[1] * rH[1]; vf = mo.velS[0] * fH[0] + mo.velS[1] * fH[1]; vu = mo.velS[2];
+		mo.speed += (sqrtf(vr * vr + vf * vf) - mo.speed) * (1 - expf(-h / 0.15f));
 		mo.aimK.step(mo.aiming ? 1.0f : 0.0f, 200, 28, h);
 		// look sway (baseline: the gun lags behind turns), gain from RoN's drag (0.6 -> today's 0.012 / 0.010)
 		float g = P.dragAimRot / 0.6f;
@@ -154,6 +160,7 @@ void MotionStep(const float* cam, float dt) {
 		mo.hang[0].step(tx, P.hangK, P.hangC, h); mo.hang[1].step(ty, P.hangK, P.hangC, h); mo.hang[2].step(tz, P.hangK, P.hangC, h);
 		mo.strafeRoll.step(clampf(-vr * 1.5f * P.dragStrafeRot, -6, 6), kMesh, cMesh, h);
 		mo.strafeYaw.step(clampf(-vr * 0.5f * P.dragStrafeRot, -3, 3), kMesh, cMesh, h);
+		mo.moveP.step(clampf(-vf / 3.2f * P.moveRotP * 0.05f, -4, 4), kMesh, cMesh, h);   // pitch with forward speed, through the mesh-interp spring
 		for (int c = 0; c < 3; c++) mo.rotImp[c].step(0, ROT_K, ROT_C, h);
 		// sprint blend: in omega 7 zeta 0.7 (~0.3 s), out omega 6 zeta 0.75 (~0.6 s), like RoN's start / stop clips
 		if (mo.sprinting) mo.sprint.step(1, 49, 9.8f, h); else mo.sprint.step(0, 36, 9.0f, h);
@@ -184,11 +191,10 @@ void MotionStep(const float* cam, float dt) {
 	float ak = clampf(mo.airK.x, 0, 1.2f) * P.jumpScale;
 	float airOff = ak * 0.019f, airRot[3] = { -0.6f * ak, ak * (4.9f + 2.5f * sinf(1.3f * mo.airTime)), 1.6f * ak };
 	float k = mo.enabled ? mo.scale : 0.0f;
-	float moveP = -vf / 3.2f * P.moveRotP * 0.05f * hip;
 	mo.off[0] = k * (bobX * hip + sp[0] + (mo.swayX.x * hip + mo.hang[0].x * hangShare));
 	mo.off[1] = k * (sp[1] + mo.hang[1].x * hangShare) - mo.kickBack.x;
 	mo.off[2] = k * (bobZ * hip + sp[2] + airOff + mo.swayZ.x * hip + mo.hang[2].x * hangShare);
-	mo.rot[0] = k * (mo.pitch.x * hip + sp[3] + airRot[0] + mo.rotImp[0].x + bobP * hip + clampf(moveP, -4, 4)) + mo.kickPitch.x;
+	mo.rot[0] = k * (mo.pitch.x * hip + sp[3] + airRot[0] + mo.rotImp[0].x + bobP * hip + mo.moveP.x * hip) + mo.kickPitch.x;
 	mo.rot[1] = k * (mo.yaw.x * 0.5f * hip + sp[4] + airRot[1] + mo.rotImp[1].x + sinf(mo.phase) * 0.6f * a * hip + mo.strafeRoll.x * hip + P.testRoll) + mo.kickRoll.x;
 	mo.rot[2] = k * (mo.yaw.x * hip + sp[5] + airRot[2] + mo.rotImp[2].x + bobY * hip + mo.strafeYaw.x * hip) + mo.kickYaw.x;
 	if (!Finite(mo.off, 3) || !Finite(mo.rot, 3) || !std::isfinite(mo.speed)) ResetMotion();
