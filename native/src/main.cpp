@@ -59,8 +59,8 @@ struct Flash { uintptr_t emitter; float scale; LARGE_INTEGER born; uint64_t firs
 // for each frame it's drawn, counted from the first one (bounding box valid at the camera step = drawn this frame):
 // g_flashGrow[i] x its scale on drawn frame i, then nothing. The same quick bloom at any frame rate. Lua sends the
 // sizes (cfg.flashGrow); none = the particles' own life.
-static float g_flashGrow[8] = { 0.7f, 1.0f, 1.1f };
-static int g_flashGrowN = 3;
+static float g_flashGrow[8] = {};
+static int g_flashGrowN = 0;   // off until Lua sends sizes (counting from the first valid box hid the flash before it was drawn)
 static Flash g_flashes[8];
 static int g_nFlashes = 0;
 static float g_flashPos[3] = {}, g_flashDir[3] = { 0, 1, 0 };

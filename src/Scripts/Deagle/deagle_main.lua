@@ -45,8 +45,10 @@ Deagle.cfg = {
 	-- "gun": the flash rides the muzzle, moved with the gun every frame (like CS2 / CoD / Ready or Not); "world": it stays
 	-- where it was fired
 	flashMode = "gun",
-	flashGrow = { 0.7, 1.0, 1.1 },  -- the flash's size on each frame it's seen (plugin, any frame rate), then gone: a quick
-	                          -- bloom (user: "it can grow, it just needed to be snappier"); {} = the particles' own life
+	-- the flash's size on each frame it's seen (plugin), then gone; {} = the particles' own life. OFF: counting frames
+	-- from the emitter's first valid bounding box hid it before it was ever drawn (in game 2026-10-12: no flash at
+	-- all); a correct way is being researched (docs/muzzle_flash_research.md)
+	flashGrow = {},
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F10 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
