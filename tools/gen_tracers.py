@@ -19,7 +19,7 @@ camera-facing quads (which axis Aspect stretches).
 usage: gen_tracers.py <repo>"""
 import math, os, sys
 
-RANGE = 250.0            # m, Deagle.cfg.range: rounds are dropped past it (tests/run_ballistics.lua checks they match)
+RANGE = 1000.0           # m, Deagle.cfg.range: rounds are dropped past it (tests/run_ballistics.lua checks they match)
 DRAG_LENGTH = 600.0      # m, our rounds' air-drag length (9 mm 567, .50 AE 691; ShotPhysics dragLength)
 STREAK = 5.0             # m, flying streak length
 IGNITE = 4.0             # m out of the barrel before a flying tracer glows

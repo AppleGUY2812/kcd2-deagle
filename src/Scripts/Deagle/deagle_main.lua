@@ -18,7 +18,8 @@ Deagle.cfg = {
 	heatPerShot = 0.35,       -- degrees of extra spread per shot; cools at heatDecay deg/s (rapid fire opens the cone)
 	heatDecay = 4.0,
 	kickPitchVar = 0.0,
-	range = 250,              -- m a round flies before it's dropped (tools/gen_tracers.py RANGE matches)
+	range = 1000,             -- m a round flies before it's dropped (tools/gen_tracers.py RANGE matches); its tracer burns
+	                          -- all the way (a real one burns for seconds: the user's .50 cal reference clip)
 	tracers = true,           -- a glowing tracer on every round (deagle_tracers 0 / 1)
 	-- mode "trail": the round's path drawn as it flies, from the muzzle to what it hit (Deagle:TrailAdd; fx pieces dash
 	-- m long at scale 1, tools/gen_tracers.py DASH), from start m out; "flying": one particle per round flying by itself
@@ -29,9 +30,11 @@ Deagle.cfg = {
 	-- fx: in game 2026-10-12, single Lua-spawned pieces showed only with 0.4 s of life (trail_40, "like a shooting
 	-- star"); 0.12 / 0.25 s never did, nor plugin-spawned ones with a box written at spawn. The plugin now sets each
 	-- new piece's location again for its first frames, as it moves the flash (seen a frame after its spawn): to test
-	-- with spawn "plugin" and fx deagle_tracers.trail: seen at once (user). trail_025 / _040 / _060 / _080: pieces
+	-- with spawn "plugin" and fx deagle_tracers.trail: seen at once (user). fx "auto": each piece glows about one frame
+	-- (trail_025 / _040 / _060 by the frame time), so the tracer is one streak running with the round, like a real one
+	-- filmed (the user's reference clip), not a line left behind it. trail_025 / _040 / _060 / _080: pieces
 	-- living that long (no fade), a streak running with the round; trail (0.12 s) drew as a 50 m "laser"
-	tracer = { mode = "trail", fx = "deagle_tracers.trail_040", dash = 1.0, start = 1.0, scaled = true, anchor = "start",
+	tracer = { mode = "trail", fx = "auto", dash = 1.0, start = 1.0, scaled = true, anchor = "start",
 		spawn = "plugin" },
 	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
 	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
@@ -1315,7 +1318,8 @@ end
 -- ---------------------------------------------------------------------------
 local GRAVITY = 9.81             -- m/s^2
 local ROUND_STEP = 0.02          -- s: a longer frame is cut into steps this long, so the arc stays smooth
-local ROUND_LIFE = 3             -- s: a round that hit nothing is dropped after this, or past cfg.range
+local ROUND_LIFE = 6             -- s: a round that hit nothing is dropped after this, or past cfg.range (a Deagle round
+                                 -- takes ~5 s to fly 1000 m)
 local TRACER_SPEEDS = { 250, 1000, 25 }   -- deagle_tracers.v<speed> (tools/gen_tracers.py): first, last, step
 
 -- Debug: every round's path drawn in the world and kept until cleared (deagle_paths 1 / 0 / clear): flight yellow,
@@ -1490,6 +1494,11 @@ function Deagle:TrailAdd(r, a, b, d0)
 	local len = vlen(vsub(b, a))
 	if len < 1e-4 then return end
 	local u, dash = vscale(vsub(b, a), 1 / len), c.dash
+	local fx = c.fx
+	if fx == "auto" then   -- pieces glow about a frame: never shorter than the frame, or they're never drawn
+		local dt = self.frameDt or 1 / 60
+		fx = dt <= 1 / 50 and "deagle_tracers.trail_025" or dt <= 1 / 30 and "deagle_tracers.trail_040" or "deagle_tracers.trail_060"
+	end
 	local n = math.max(1, math.ceil(len / dash - 1e-6))
 	for k = 1, n do
 		local e = math.min(len, k * dash)                                -- this piece ends e m from a
@@ -1503,8 +1512,8 @@ function Deagle:TrailAdd(r, a, b, d0)
 			local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2
 			local at = vsub(p1, vscale(dir, back))
 			if c.spawn == "plugin" and self.native then   -- seen from its first frame (plugin fxs: a box at once)
-				self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", c.fx, l / dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
-			else self:SpawnFx(c.fx, at, dir, l / dash) end
+				self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", fx, l / dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
+			else self:SpawnFx(fx, at, dir, l / dash) end
 		end
 	end
 end

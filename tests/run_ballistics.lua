@@ -162,7 +162,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	world.wallY = nil
 	landed = {}
 	fire()
-	M.advance(2.0, 60)
+	M.advance(7.0, 60)                -- 1000 m takes a Deagle round ~5 s
 	check(string.format("%s: a miss flies out of range and stops being moved", id), #landed == 0 and #(Deagle.rounds or {}) == 0 and Deagle.roundsToken == nil, #(Deagle.rounds or {}))
 
 	-- an NPC 5 m away: hit in the same frame as the shot, nothing waits for the next frame
@@ -214,7 +214,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 				dir = vec(tonumber(dx), tonumber(dy), tonumber(dz)), t = M.nativeT and M.nativeT[i] or 0 } end
 		end
 		for _, f in ipairs(log) do
-			if f.n == tc.fx then
+			if f.n:find("^deagle_tracers%.trail") then
 				local l = tc.dash * f.scale
 				local back = tc.anchor == "start" and 0 or tc.anchor == "end" and l or l / 2   -- from the effect to the piece's start
 				local a = vec(f.pos.x - f.dir.x * back, f.pos.y - f.dir.y * back, f.pos.z - f.dir.z * back)
@@ -247,8 +247,13 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		first and shot and shot.muzzle and dist(first.a, shot.muzzle) or -1),
 		hit and last and dist(last.b, hit.pos) < 1e-3 and first and shot and shot.muzzle and math.abs(dist(first.a, shot.muzzle) - tc.start) < 0.05,
 		hit and last and dist(last.b, hit.pos))
-	check(string.format("%s: %s is in deagle_tracers.xml, dash %.1f m = tools/gen_tracers.py", id, tc.fx, tc.dash),
-		tracerLib:find('Name="' .. tc.fx:match("%.(.+)$") .. '"', 1, true) ~= nil and tc.dash == genDash, genDash)
+	local used = {}
+	for _, f in ipairs(M.fxLog or {}) do if f.n:find("^deagle_tracers%.trail") then used[f.n] = true end end
+	for i = 1, #M.native do local fx = M.native[i]:match("^%[DN%] fxs (%S+) ") if fx then used[fx] = true end end
+	local names, allIn = {}, true
+	for fx in pairs(used) do names[#names + 1] = fx; allIn = allIn and tracerLib:find('Name="' .. fx:match("%.(.+)$") .. '"', 1, true) ~= nil end
+	check(string.format("%s: pieces %s (one frame's glow at 60 fps) are in deagle_tracers.xml, dash %.1f m = tools/gen_tracers.py", id,
+		table.concat(names, ","), tc.dash), #names > 0 and allIn and used["deagle_tracers.trail_025"] and tc.dash == genDash, genDash)
 	-- the NPC at 5 m: the whole streak is laid in the frame of the shot and ends on the hit
 	world.wallY, world.npcY = nil, 205
 	npc.damage = 0
