@@ -66,8 +66,9 @@ for i in range(1, SETTLE + 1):
         pb.keyframe_insert("rotation_quaternion", frame=f1 + i, group=pb.name)
 print("SETTLED @shoot_empty", f1, "->", int(se.frame_range[1]))
 
-# ---- @inspect_empty: MWII-style empty inspect = the normal inspect with the slide locked back the whole time (the
-# slide check may push it further back, never forward) and no round in the chamber (j_ammo_17 stays at rest, hidden).
+# ---- @inspect_empty: MWII-style empty inspect = the normal inspect with the slide locked back the whole time and no
+# round in the chamber (j_ammo_17 stays at rest, hidden). The hand's slide check still moves it: a locked slide gives a
+# few mm more under a pull and comes back onto the lock; the safety-lever block rides along.
 # The magazine's rounds are a separate attachment the script hides at 0 ammo.
 src = A["@inspect"]; ie = src.copy(); ie.name = "@inspect_empty"; ie.use_fake_user = True
 for fc in [fc for fc in ie.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in LOCK_BONES + ["j_ammo_17"]]:
@@ -75,21 +76,31 @@ for fc in [fc for fc in ie.fcurves if fc.data_path.split('"')[1:2] and fc.data_p
 L_lock, R_stop = locked["j_slide"][0], locked["j_slidestop"][1]
 axis = L_lock.normalized(); s_lock = L_lock.length
 fi0, fi1 = (int(v) for v in src.frame_range)
-slide_keys = []
+pulls = []
 for f in range(fi0, fi1 + 1):
     pose_at(src, f)
     pb = PB["j_slide"]
     t_parent = (pb.parent.matrix.inverted() @ pb.matrix).translation
-    L = Vector((0, 0, 0)) if t_parent.length < 1e-5 else pb.location.copy()   # zeroed Source section = rest
-    s = max(L.dot(axis), s_lock)
-    slide_keys.append((f, axis * s + (L - axis * L.dot(axis))))
+    pulls.append((f, Vector((0, 0, 0)) if t_parent.length < 1e-5 else pb.location.copy()))   # zeroed Source section = rest
+pmax = max(L.dot(axis) for _, L in pulls)
+EXTRA = 0.006
+slide_keys = []
+for f, L in pulls:
+    p = L.dot(axis)
+    s = max(p, s_lock + (EXTRA * min(1.0, max(0.0, p) / pmax) if pmax > 1e-4 else 0.0))
+    slide_keys.append((f, axis * s + (L - axis * p)))
+# the safety-lever block follows the slide's travel past the lock along its own travel direction
+pose_at(A["@idle1"], 1)
+mates = {n: (PB[n].location.copy(), (locked[n][0] - PB[n].location).normalized()) for n in LOCK_BONES if n not in ("j_slide", "j_slidestop")}
 arm.animation_data.action = ie
 for f, L in slide_keys:
     PB["j_slide"].location = L; PB["j_slide"].rotation_quaternion = Quaternion()
     PB["j_slide"].keyframe_insert("location", frame=f, group="j_slide")
     PB["j_slide"].keyframe_insert("rotation_quaternion", frame=f, group="j_slide")
-held = [(n, locked[n][0], locked[n][1]) for n in LOCK_BONES if n not in ("j_slide", "j_slidestop")]
-for n, loc, rot in [("j_slidestop", locked["j_slidestop"][0], R_stop), ("j_ammo_17", Vector((0, 0, 0)), Quaternion())] + held:
+    for n, (_, ax) in mates.items():
+        PB[n].location = locked[n][0] + ax * (L.dot(axis) - s_lock); PB[n].rotation_quaternion = locked[n][1]
+        PB[n].keyframe_insert("location", frame=f, group=n); PB[n].keyframe_insert("rotation_quaternion", frame=f, group=n)
+for n, loc, rot in [("j_slidestop", locked["j_slidestop"][0], R_stop), ("j_ammo_17", Vector((0, 0, 0)), Quaternion())]:
     for f in (fi0, fi1):
         PB[n].location, PB[n].rotation_quaternion = loc, rot
         PB[n].keyframe_insert("location", frame=f, group=n); PB[n].keyframe_insert("rotation_quaternion", frame=f, group=n)

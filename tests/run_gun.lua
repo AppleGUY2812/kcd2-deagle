@@ -28,15 +28,28 @@ local modes = Deagle:FireModes()
 for i = 1, #modes do
 	local mode = Deagle:FireMode()
 	Deagle.state.ammo = g.magSize; M.advance(0.5)
-	local before = Deagle.state.ammo
+	local before, a0 = Deagle.state.ammo, #M.anims
 	if mode == "auto" then
 		Deagle:OnAction("deagle_fire", "press"); M.advance(0.55); Deagle:OnAction("deagle_fire", "release"); M.advance(0.5)
 	else
 		act("deagle_fire"); M.advance(0.5)
 	end
 	local after = Deagle.state.ammo; M.advance(1.0)
-	modeResults[#modeResults + 1] = { mode = mode, used = before - after }
+	local started = {}
+	for i = a0 + 1, #M.anims do started[#started + 1] = M.anims[i].name .. "@" .. M.anims[i].layer end
+	modeResults[#modeResults + 1] = { mode = mode, used = before - after, started = table.concat(started, " ") }
 	act("deagle_firemode"); M.advance(0.1)
+end
+-- burst during an inspect: the burst cuts it (it used to stack recoil on the inspect, firing from a sideways gun)
+local burstCut
+if g.anims.shootBurst then
+	while Deagle:FireMode() ~= "burst" do act("deagle_firemode"); M.advance(0.1) end
+	Deagle.state.ammo = g.magSize; M.advance(1.0)
+	act("deagle_inspect"); M.advance(1.0)
+	local a0 = #M.anims
+	act("deagle_fire"); M.advance(0.5)
+	burstCut = M.anims[a0 + 1] and (M.anims[a0 + 1].name .. "/" .. string.format("%.2f", M.anims[a0 + 1].blend or -1)) or "nothing"
+	M.advance(1.0)
 end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
@@ -73,7 +86,12 @@ for _, r in ipairs(modeResults) do
 	local want = (r.mode == "semi" and 1) or (r.mode == "burst" and 3) or nil
 	local ok = want and r.used == want or (r.mode == "auto" and r.used >= 3)
 	check(string.format("%s fire: %d round(s) per trigger", r.mode, r.used), ok, r.used)
+	if r.mode == "burst" and g.anims.shootBurst then
+		local _, n = r.started:gsub(g.anims.shootBurst[1] .. "@0", "")
+		check("burst plays its burst clip once: " .. r.started, n == 1, r.started)
+	end
 end
+if burstCut then check("a burst cuts an inspect: " .. burstCut, burstCut:find("shoot_alt/0.30", 1, true) ~= nil, burstCut) end
 local w = g.cs2 and Deagle.cs2 and Deagle.cs2[g.cs2]
 if w then
 	check(string.format("CS2 %s: damage %g, %d rpm, head x%.1f", g.cs2, Deagle.cfg.damage, 60 / Deagle.cfg.interval, Deagle.cfg.headshotMult * 1.5),

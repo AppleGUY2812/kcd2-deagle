@@ -24,7 +24,7 @@ info = {"slug": slug, "clips": {}, "notes": []}
 note = lambda s: (info["notes"].append(s), print("NOTE", s))
 
 # ---------------------------------------------------------------- role clips
-USED = ["idle", "idle_empty", "draw", "draw_empty", "holster", "holster_empty", "shoot", "shoot_empty", "reload", "reload_empty", "inspect", "inspect_empty"]
+USED = ["idle", "idle_empty", "draw", "draw_empty", "holster", "holster_empty", "shoot", "shoot_empty", "shoot_alt", "reload", "reload_empty", "inspect", "inspect_empty"]
 for a in list(A):
     if a.name.startswith("@"):
         a.name = "src" + a.name          # keep the originals out of the way
@@ -264,19 +264,24 @@ for s, d in (("@draw", "@holster"), ("@draw_empty", "@holster_empty")):
         fc.update()
     note(f"made {d} (draw reversed)")
 if A.get("@inspect") and not A.get("@inspect_empty") and LOCK and B.get("slide"):
-    # the slide stays locked back; a slide check may push it further back, never forward
+    # the slide stays locked back; the hand's slide check still moves it: a locked slide gives a few mm more under a
+    # pull and comes back onto the lock (a pull past that follows the hand); it never goes forward of the lock
     ie = A["@inspect"].copy(); ie.name = "@inspect_empty"; ie.use_fake_user = True; ie["fps"] = A["@inspect"]["fps"]
     sl = B["slide"]
     base = IDLE[sl][0]                     # travel measured from the idle slide, like the lock itself
     L_lock = LOCK[sl][0] - base
     axis = L_lock.normalized() if L_lock.length > 1e-6 else Vector((1, 0, 0))
     f0, f1 = rng(A["@inspect"])
-    keys = []
+    pulls = []
     for f in range(f0, f1 + 1):
-        pose_at(A["@inspect"], f)
-        L = PB[sl].location - base
-        s_ = max(L.dot(axis), L_lock.length)
-        keys.append((f, base + axis * s_ + (L - axis * L.dot(axis))))
+        pose_at(A["@inspect"], f); pulls.append((f, PB[sl].location - base))
+    pmax = max(L.dot(axis) for _, L in pulls)
+    EXTRA = 0.006
+    keys = []
+    for f, L in pulls:
+        p = L.dot(axis)
+        s_ = max(p, L_lock.length + (EXTRA * min(1.0, max(0.0, p) / pmax) if pmax > 1e-4 else 0.0))
+        keys.append((f, base + axis * s_ + (L - axis * p)))
     for fc in [fc for fc in ie.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in LOCK]:
         ie.fcurves.remove(fc)
     arm.animation_data.action = ie
@@ -325,6 +330,18 @@ if seated is not None and A.get("@reload_empty"):
             timing["newMagAt"] = round((fa - tr[0][0] + 0.5) / fps, 3)
             note(f"@reload_empty: the dropped mag comes back as the new one at {timing['newMagAt']} s")
             break
+# a burst clip (MWII's fireburst): its slide cycles give the gap between the rounds, so they land on the animation
+if A.get("@shoot_alt") and B.get("slide"):
+    act, sl = A["@shoot_alt"], B["slide"]
+    tr = []
+    for f in range(rng(act)[0], rng(act)[1] + 1):
+        pose_at(act, f); tr.append((PB[sl].location - IDLE[sl][0]).length)
+    top = max(tr)
+    starts = [i for i in range(1, len(tr)) if tr[i] >= 0.3 * top > tr[i - 1]]
+    if len(starts) >= 2:
+        timing["burstGap"] = round((starts[-1] - starts[0]) / (len(starts) - 1) / act["fps"], 3)
+        timing["burstRounds"] = len(starts)
+        note(f"@shoot_alt: burst of {len(starts)} rounds, {timing['burstGap']} s apart (slide cycles)")
 info["timing"] = timing
 
 # ---------------------------------------------------------------- rc keeps keys on a 30 fps grid: faster clips are resampled

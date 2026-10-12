@@ -11,7 +11,7 @@ NAME = f"{SLUG}_vm"
 KEY = {"idle": "idle", "idle_empty": "idleEmpty", "draw": "draw", "draw_empty": "drawEmpty", "holster": "holster",
        "holster_empty": "holsterEmpty", "shoot": "shoot", "shoot_empty": "shootEmpty", "reload": "reload",
        "reload_empty": "reloadEmpty", "inspect": "inspect", "inspect_empty": "inspectEmpty",
-       "shoot_add": "shootAdd", "shoot_empty_add": "shootEmptyAdd"}
+       "shoot_add": "shootAdd", "shoot_empty_add": "shootEmptyAdd", "shoot_alt": "shootBurst"}
 CUES_FROM = {"draw_empty": "draw", "inspect_empty": "inspect"}   # derived clips reuse their source clip's sounds
 sounds = {}
 def snd(rel):
@@ -70,6 +70,7 @@ Deagle:RegisterGun({lua(SLUG)}, {{
 	rounds = {str(bool(build.get("has_rounds"))).lower()},
 	swapTail = {{ {", ".join(f"{k} = {v}" for k, v in swap.items())} }},
 	newMagAt = {t.get("newMagAt", "nil")},
+	burstGap = {t.get("burstGap", "nil")},   -- seconds between burst rounds, from the burst clip's slide cycles
 	-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
 	times = {{ {", ".join(f"{k} = {{ " + ", ".join(f"{w} = {v}" for w, v in sorted(d.items())) + " }" for k, d in ctimes.items())} }},
 }})

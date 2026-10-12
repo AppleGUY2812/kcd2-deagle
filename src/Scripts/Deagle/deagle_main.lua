@@ -161,7 +161,7 @@ local REST = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }   --
 local HOLDS_AIM = { draw = true, drawEmpty = true, holster = true, holsterEmpty = true, reload = true, reloadEmpty = true }   -- aim waits for these; shots and inspect it cuts
 local DRAWING = { draw = true, drawEmpty = true }        -- no shooting, reloading or inspecting until the gun is up
 local HOLDS_TOGGLE = { draw = true, drawEmpty = true, reload = true, reloadEmpty = true }   -- a holster asked for meanwhile waits
-local SHOTS = { shoot = true, shootEmpty = true }
+local SHOTS = { shoot = true, shootEmpty = true, shootBurst = true }
 local INSPECTS = { inspect = true, inspectEmpty = true }
 
 -- ---------------------------------------------------------------------------
@@ -462,9 +462,10 @@ function Deagle:Shoot(force)
 end
 
 -- hip shots play the full shoot clip; aimed shots keep the ADS pose and add the recoil on top
-function Deagle:Fire(force)
+function Deagle:Fire(force, burstRound)
 	local s = self.state
 	if self:VmDrawing() or self.vmHolstering then return end
+	if s.reloading and (burstRound or 1) > 1 then return end   -- a burst's later rounds never cancel a reload
 	if s.reloading then
 		if System.GetCurrTime() >= (s.reloadCancel or 0) then return end
 		self:CancelReload()
@@ -477,7 +478,15 @@ function Deagle:Fire(force)
 	local aimed, wasLast = s.aiming, s.ammo == 1
 	if not self:Shoot(force) then return end
 	if s.ammo == 0 then self:VmRounds(false) end
-	if aimed or (self:FireMode() ~= "semi" and self.cfg.vm.anims.shootAdd) then   -- rapid fire stacks recoil on the idle
+	local anims = self.cfg.vm.anims
+	if burstRound and anims.shootBurst and not aimed then
+		-- the burst clip shows every round: the first round starts it, the others only fire; a round that empties
+		-- the gun cuts it with the last shot (slide locks back)
+		if wasLast then self:VmPlay("shootEmpty", false)
+		elseif burstRound == 1 then self:VmPlay("shootBurst", false) end
+	elseif aimed or (self:FireMode() ~= "semi" and anims.shootAdd) then
+		-- rapid fire stacks recoil on the rest pose; a clip still playing (inspect, a reload's settle) is cut first
+		if self:VmBusy() and not SHOTS[self.vmAnim.key] then self:VmPlay(self:VmRestKey(), true, 1.0) end
 		self:VmRecoilAdd(wasLast)
 	else
 		self:VmPlay(wasLast and "shootEmpty" or "shoot", false)
@@ -1330,11 +1339,12 @@ function Deagle:TriggerPress()
 		shot()
 	elseif mode == "burst" then
 		local now = System.GetCurrTime()
+		local gap = self.gun.burstGap or c.burstShotGap      -- the gun's burst clip sets the rhythm
 		if now < (s.burstReady or 0) or now - s.lastShot < c.interval - 0.005 then return end
-		s.burstReady = now + 2 * c.burstShotGap + c.burstInterval
-		self:Fire()
+		s.burstReady = now + 2 * gap + c.burstInterval
+		self:Fire(false, 1)
 		for i = 1, 2 do
-			Script.SetTimer(math.floor(i * c.burstShotGap * 1000), function() if Deagle.state.drawn then Deagle:Fire(true) end end)
+			Script.SetTimer(math.floor(i * gap * 1000), function() if Deagle.state.drawn then Deagle:Fire(true, i + 1) end end)
 		end
 	else
 		self:Fire()
