@@ -78,9 +78,16 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 - [ ] **Sparks on metal** (your idea): armor, weapons, metal props; size by energy
 - [ ] **Water** (your idea): splash column scaled by energy; bullets slow fast in water (about 1 m to stop)
 - [ ] **Dirt / grass** (your idea): dust and debris kick scaled by energy
-- [ ] Wood: splinters, penetrates planks / doors / fences with energy loss; stone: chips + dust, no penetration
-- [ ] **Ricochets**: chance by angle + material (stone, metal, water at shallow angles); spawn the deflected round with less
-      energy (tracer ricochets look great)
+- [ ] **Our own impact effects replace the hand-cannon ones** (user, 2026-10-12): today every hit plays KCD2's
+      `collisions.destructibles.bullet_*`; v1 plays per-surface effects built for bullets (RoN's as the bar,
+      docs/ron/ron_impact_fx.md), sized by the round's energy
+- [ ] **Wallbang / material penetration** (user, 2026-10-12): every surface gets a density (RoN's PenetrationData:
+      drywall 0.6, wood, brick 1.95, concrete 5.5, steel 8). The round loses energy per cm of material and goes through
+      thin walls, doors, planks, fences and shields if enough is left: entry hole, exit hole + debris on the far side,
+      the round keeps flying with what's left (can hit someone behind the wall)
+- [ ] Wood: splinters; stone: chips + dust (thick stone stops everything)
+- [ ] **Ricochets**: chance by angle + material (stone, metal, water at shallow angles) and **off armor on people**; the
+      deflected round flies on with less energy and can hit something else (tracer ricochets look great)
 - [ ] **Bullet holes / dents** (your idea): decals per material (wood splinter hole, stone chip, metal dent / hole, cloth
       tear), with a cap so they don't pile up
 - [ ] Impact sounds per material (thud, ping, splash, crack)
@@ -138,6 +145,11 @@ Full table + every decoded property: docs/ron/ron_recoil_table.md, ron_recoil.js
   to Ready or Not's range. Their exact math isn't in the files (names only): match it against the user's recordings.
 - **Small rounds bounce off plate** (2026-10-12, for fun, even though a 9 mm would often get through): plate deflects
   anything under an energy threshold with sparks, a ping and a ricochet; big rounds (.50 AE and up) go through.
+  Refined (user, 2026-10-12): penetration uses the energy **at impact** (falls with range) and the **angle** (square-on
+  = thinnest, glancing = thicker, past a limit it always glances). So a 9 mm can get through plate up close and
+  square-on, and bounces otherwise. A bounce still hurts: **bruise** (stamina + a little health, stagger by
+  momentum), a **dent** on the armor (decal + condition loss) and **sparks + ping exactly like hitting a metal
+  surface** (one shared metal-hit effect for armor and world metal). The deflected round flies on (ricochet).
 - **Shove = momentum (mass x speed)**; penetration and wound size = energy (1/2 x mass x speed^2). Real momentum barely
   moves a person (.50 BMG: ~0.5 m/s on 80 kg), so the shove uses momentum for the ratio between rounds, times a
   tunable "punch" multiplier. 9 mm 2.9 / .50 AE 9.1 / .50 BMG 38 kg m/s; 520 J / 2,100 J / 17,000 J.
