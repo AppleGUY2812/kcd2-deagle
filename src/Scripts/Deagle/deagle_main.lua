@@ -1107,6 +1107,7 @@ function Deagle:OnGameplayStarted()
 	self.inputLoaded = false
 	self:EnsureInit()
 	self.vmId = nil
+	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()
 end
 

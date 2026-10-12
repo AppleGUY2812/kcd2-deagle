@@ -16,11 +16,15 @@ step("stale save entities", function()   -- an older build's viewmodel restored 
 	System.SpawnEntity({ class = "BasicEntity", name = "deagle_viewmodel", properties = { object_Model = "objects/default/primitive_pyramid.cgf" } })
 	System.SpawnEntity({ class = "BasicEntity", name = "deagle_vm_probe", properties = {} })
 end)
-step("gameplay started", function() Deagle:OnGameplayStarted() end)
+local function ours() local n, ns = 0, 0 for k, e in pairs(M.entities()) do if type(k) ~= "string" and e.name and e.name:find("^deagle_") then n = n + 1; if bit.band(e.flags or 0, 32768) ~= 0 then ns = ns + 1 end end end return n, ns end
+step("gameplay started", function()
+	Deagle:OnGameplayStarted()
+	-- the pyramid must be gone as soon as the save loads, not only once the gun is drawn
+	if ours() ~= 0 then error(ours() .. " stale entities left after load") end
+end)
 step("native handshake", function() M.console("deagle_native_ok") end)
 step("draw (toggle)", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(1.2) end)
 print("   anims:", lastAnims(3), " native:", table.concat(M.native, " ; "):sub(1, 160))
-local function ours() local n, ns = 0, 0 for k, e in pairs(M.entities()) do if type(k) ~= "string" and e.name and e.name:find("^deagle_") then n = n + 1; if bit.band(e.flags or 0, 32768) ~= 0 then ns = ns + 1 end end end return n, ns end
 print("   deagle_* entities in world:", ours(), "(no-save:", select(2, ours()) .. ")")
 step("idle frames + HUD", function() M.advance(0.5) end)
 print("   HUD draw calls:", M.drawn_text, " first person:", tostring(Deagle.vmInFp), " DOF:", tostring(M.cvars and M.cvars.r_DepthOfField))
