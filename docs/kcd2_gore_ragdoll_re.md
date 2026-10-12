@@ -145,3 +145,21 @@ covers it.
 2. `HideAttachment(0, "head", true, true)` on a corpse: does the head vanish (and the helmet with it, or separately)?
 3. Kill + `npc.actor:RagDollize()` + next-frame `AddImpulse(partFromRay, pos, dir, imp)`: does the hit part fly?
 4. Try joint-id part ids (Head 155) when no ray part is available.
+
+## Plugin commands (native/src/gore.cpp)
+Sent as `System.LogAlways("[DN] ...")`. Main thread; every engine call is SEH-guarded. Results go to `deagle_native.log`.
+- `listatt <entityHex>` logs every attachment of character slot 0: index, type (bone / skin / face), joint id (-1 for
+  skins), hidden flag, name.
+- `hideatt <entityHex> <substring> <0|1>` hides (1) or shows (0) every attachment whose name contains the substring
+  (case-insensitive).
+- `hideatt <entityHex> *head* <0|1>` is **head mode**:
+  - bone / face attachments on joints at or below the Neck (male.chr ids: Neck 147, Neck1 154, Head 155, HeadEnd 156,
+    eyes 157 / 158, Look 159, camera 160)
+  - skin attachments (no joint) whose name contains head, hair, beard, mustache / moustache, brow, helm, bascinet,
+    kettle, skullcap, coif, hood, hat, cap, bonnet, veil, wimple, wreath, eye, teeth, tongue or lash
+  - never names containing "collar" or "body". Mail / padded collars stay to cover the stump.
+  - This includes the CA_SKIN `head` itself.
+- IAttachment `GetJointID` = vt+0xC8 (CAttachmentBONE: `word [this+0x78]`; CAttachmentSKIN: -1).
+
+The name list is a **guess** until `listatt` shows the runtime names. Hoods that also cover the shoulders
+(HoodDown / HoodOn archetypes) disappear whole.

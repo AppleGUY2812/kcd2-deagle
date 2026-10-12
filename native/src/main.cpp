@@ -9,6 +9,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "scan.h"
+#include "gore.h"
 #include <string>
 #include <unordered_map>
 #include <cstdio>
@@ -580,6 +581,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
 	else if (!strcmp(cmd, "hitreact")) HitReact(rest);
+	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
 }
 
 // LogAlways Lua handler: int (this, IFunctionHandler* pH); string via GetParam<const char*>(pH, 1, &s)
