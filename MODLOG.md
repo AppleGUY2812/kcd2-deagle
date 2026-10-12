@@ -196,3 +196,11 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   the flash. Smoke split into deagle.muzzle_smoke (world, CameraMinDistance 0.3).
 - Glock burst "no animation" (user): the additive clips load in game (GetAnimationLength 0.53 / 0.37 s) and compile like
   the Deagle's working ones; waiting for the user's video.
+- User video (old build): bursts barely kicked (the additive restarted every 0.06 s and never developed) and burst
+  during an inspect kept the inspect playing (additive on top). The Glock mod ships MWII's burst clip
+  (glock_fireburst1: 3 slide cycles 0.08 s apart, 8 deg each): now exported as shoot_alt -> shootBurst, played once per
+  trigger on the base layer (cuts an inspect over 0.3 s), rounds burstGap apart (from its slide cycles). Rapid fire
+  without a burst clip cuts a busy base clip to rest before stacking the additive.
+- Empty inspects: the loaded inspect's slide check (Glock 13 mm press check, Deagle 20 mm) left the locked slide
+  frozen while the hand pulled; now it moves 6 mm past the lock with the pull and settles back (Deagle: j_safetylock
+  follows along its own travel axis).
