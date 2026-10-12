@@ -52,6 +52,19 @@ Deagle.cfg = {
 	armorFx = "deagle_impacts.metal",   -- a round on plate / mail sparks like any metal (KCD2's plate hit effect doesn't exist)
 	headFx = "collisions.combat.blood_head",
 	holeSize = 0.035,         -- m, a 9 mm's bullet hole (Ready or Not's pistol holes: 3-4 cm); x the impact scale
+	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)
+	wallbang = { budget = 0.10 },  -- m of density-1 material (plywood) a 9 mm at the muzzle gets through (Ready or Not's
+	                          -- 9 mm guns: 10 cm); others by energy ratio; densities in guns/penetration.lua
+	ricochetKeep = 0.35,      -- energy a round keeps when it skids off stone / metal (GUESS)
+	ricochetLift = 0.4,       -- how much of its angle to the surface it leaves with (ricochets leave flatter)
+	ricochetScatter = 4,      -- deg of random turn on a ricochet
+	-- armour (Deagle:ThroughArmor): punch = a 9 mm at the muzzle, square-on, in KCD2 stab defense. Set so the Glock
+	-- (110) gets through a typical worn cuirass (median plate stab 135 x 0.8 = 108) only within ~5 m and square-on, a
+	-- weaker worn one (132: 106) within ~12 m, a new one never; the Deagle (~200) through most plate at any range
+	armor = { punch = 104, conditionFloor = 0.6, glanceAngle = 70, bruise = 0.1, ricochetKeep = 0.3, scatter = 30 },
+	armorRicochetFx = "deagle_impacts.ricochet_metal",
+	exitEnergy = 20,          -- J: a round leaving the body with less stays in it (no exit wound)
+	bodyExit = 0.35,          -- m from the entry where a through-and-through round goes on
 	holeLife = 300,           -- s a bullet hole stays
 	bloodPaint = 0.45,        -- actor:AddBlood amount per hit on that body part
 	bleeding = true,          -- non-lethal hits apply the game's bleeding buff
@@ -431,14 +444,17 @@ local function deposited(bullet, d, energy)
 	local k = TISSUE_RHO * TISSUE_CD * math.pi * (d / 2) ^ 2 / (2 * bullet)
 	return energy * (1 - math.exp(-2 * k * BODY_PATH))
 end
-function Deagle:Wound(phys, dist)
+-- energy = what reaches the body (after armour); without it, the muzzle energy less air drag over dist. Also returns
+-- the energy that comes out the far side (through and through).
+function Deagle:Wound(phys, dist, energy)
 	local m = self.cfg.physics
-	local eIn = phys.energy * math.exp(-2 * (dist or 0) / phys.dragLength)
+	local eIn = energy or phys.energy * math.exp(-2 * (dist or 0) / phys.dragLength)
 	local ref = self.calibers["9x19"]
 	local eRef = deposited(ref.bullet, ref.d, 0.5 * ref.bullet * 360 * 360)
-	local health = m.damageRef * math.sqrt(deposited(phys.bullet, phys.d, eIn) / eRef)
+	local dep = deposited(phys.bullet, phys.d, eIn)
+	local health = m.damageRef * math.sqrt(dep / eRef)
 	local stamina = m.staminaRef * (math.sqrt(2 * eIn / phys.bullet) * phys.bullet) / (ref.bullet * 360)
-	return health, stamina, eIn
+	return health, stamina, eIn, eIn - dep
 end
 
 function Deagle:Recoil()
@@ -629,14 +645,11 @@ function Deagle:Splatter(e, hit, dir)
 	if ok and n and n > 0 and hits[1] then decal(hits[1].pos, hits[1].normal, 0.6) end
 end
 
-function Deagle:Bleed(e, hit, dir)
+function Deagle:Bleed(e, hit, dir, exits)
 	local c = self.cfg
 	local part = hit.bodyPart
-	local armored = false
-	pcall(function() armored = e.actor:GetArmor() / math.max(1, e.actor:GetMaxArmor()) > c.armorFxThreshold end)
-	-- spray goes out of the exit side, along the bullet
-	self:SpawnFx(armored and c.armorFx or c.bloodFx, hit.pos, dir)
-	self:SpawnFx(c.bloodFx, vadd(hit.pos, vscale(dir, 0.25)), dir, 1.3)  -- exit wound
+	self:SpawnFx(c.bloodFx, hit.pos, dir)
+	if exits ~= false then self:SpawnFx(c.bloodFx, vadd(hit.pos, vscale(dir, 0.25)), dir, 1.3) end  -- exit wound
 	if part == "head" then self:SpawnFx(c.headFx, hit.pos, dir) end
 	self:Splatter(e, hit, dir)
 	if part and c.bloodPaint > 0 then
@@ -651,8 +664,9 @@ end
 
 -- KCD2's own flinch / stagger on the one hit: Lua's DealDamage tags every hit as a fall, which has no reactions
 -- (docs/kcd2_hit_reaction_re.md), so the plugin builds the game's hit-reaction event itself. Strength by the game's
--- own rule for a hit: any health lost = minor injury (5), 50 or more = major (6). Not on the dead or unconscious.
-function Deagle:HitReact(e, hit, dir, dmg)
+-- own rule for a hit: health lost = minor injury (5), 50 or more = major (6); stamina only (a round stopped by armour):
+-- under 10 tickle (2), under 50 unpleasant (3), else exhausting (4). Not on the dead or unconscious.
+function Deagle:HitReact(e, hit, dir, dmg, stam)
 	local c = self.cfg
 	if not c.hitReactions then return end
 	if not self.native then
@@ -665,23 +679,108 @@ function Deagle:HitReact(e, hit, dir, dmg)
 	local down = false
 	pcall(function() down = e.actor:IsDead() or e.actor:GetHealth() <= 0 or (e.actor.IsUnconscious and e.actor:IsUnconscious()) end)
 	if down then return end
-	local strength = dmg >= c.hitReactMajor and 6 or 5
+	stam = stam or 0
+	local strength = dmg > 0 and (dmg >= c.hitReactMajor and 6 or 5) or (stam >= 50 and 4 or stam >= 10 and 3 or 2)
 	self:Native(string.format("hitreact 0x%s 0x%s %d %d %s %.3f %.3f %.3f %.4f %.4f %.4f %x", entityHex(e.id),
 		entityHex(self:Player().id), c.hitReactType, strength, hit.bodyPart or "torso", hit.pos.x, hit.pos.y, hit.pos.z,
 		dir.x, dir.y, dir.z, c.hitReactFlags))
 end
 
+-- A round's punch: its energy per area of its cross-section, against a 9 mm at the muzzle (1 = 9 mm). What gets a
+-- round through a wall or a piece of armour (sectional energy; the .50 AE ~1.9).
+function Deagle:EnergyRatio(phys, energy)
+	local ref = self.calibers["9x19"]
+	return (energy / (phys.d * phys.d)) / (0.5 * ref.bullet * ref.velocity * ref.velocity / (ref.d * ref.d))
+end
+
 -- How big a round's impact looks: debris and crater volume go with the energy it lands with, so their size goes with
 -- its cube root, against a 9 mm at the muzzle (= 1: the size the effects and holes are made at). Deagle ~1.5 close up.
-function Deagle:ImpactScale(phys, dist)
+function Deagle:ImpactScale(phys, dist, energy)
 	if not phys then return 1 end
 	local ref = self.calibers["9x19"]
-	local eIn = phys.energy * math.exp(-2 * (dist or 0) / phys.dragLength)
+	local eIn = energy or phys.energy * math.exp(-2 * (dist or 0) / phys.dragLength)
 	return (eIn / (0.5 * ref.bullet * ref.velocity * ref.velocity)) ^ (1 / 3)
 end
 
--- a round hitting the world: the surface's effect, sized by the round, and a bullet hole that stays a while
-function Deagle:Impact(hit, dir, phys)
+-- What an NPC wears on one zone (head / torso / arm_* / leg_*), outer layer first: the items in its inventory that are
+-- armour or clothing (guns/armor.lua, generated from KCD2's tables) and cover that zone, with their condition (0..1).
+-- KCD2 gives Lua no "equipped" query; an NPC's inventory is its outfit (checked live: a guard's lists exactly the
+-- plate, mail and gambeson he wears).
+function Deagle:ArmorOn(e, zone)
+	local out = {}
+	if not (self.armor and zone and e.inventory) then return out end
+	pcall(function()
+		for _, id in pairs(e.inventory:GetInventoryTable() or {}) do
+			local it = ItemManager.GetItem(id)
+			local a = it and self.armor[string.lower(tostring(it.class))]
+			if a then
+				for _, z in ipairs(a.zones) do
+					if z == zone then out[#out + 1] = { a = a, health = tonumber(it.health) or 1 }; break end
+				end
+			end
+		end
+	end)
+	table.sort(out, function(x, y) return x.a.order > y.a.order end)
+	return out
+end
+
+-- A round against the layers on the spot it hit, outer first (BALLISTICS.md "Small rounds bounce off plate"). Its punch
+-- is cfg.armor.punch for a 9 mm at the muzzle, times its energy ratio, times cos of the angle off square-on (a plate
+-- hit at an angle is thicker along the path). Each layer takes its KCD2 stab defense out of it, scaled by its
+-- condition (a worn piece keeps conditionFloor + the rest x condition); a layer with more defense than the punch left
+-- stops the round. Past glanceAngle off square-on, plate and mail always turn it. So a 9 mm gets through a worn
+-- cuirass only up close and square-on, a .50 AE through most plate. Returns the energy that reaches the body (0 when
+-- stopped), the layer that stopped it and whether a hard layer (plate / mail) was hit.
+function Deagle:ThroughArmor(layers, phys, energy, cosI)
+	local m = self.cfg.armor
+	local punch0 = m.punch * self:EnergyRatio(phys, energy) * math.max(cosI, 0.05)
+	local punch, hard = punch0, false
+	for _, l in ipairs(layers) do
+		local isHard = l.a.layer == "plate" or l.a.layer == "mail"
+		hard = hard or isHard
+		if isHard and cosI < math.cos(math.rad(m.glanceAngle)) then return 0, l, true, true end
+		local def = l.a.stab * (m.conditionFloor + (1 - m.conditionFloor) * l.health)
+		if punch < def then return 0, l, hard end
+		punch = punch - def
+	end
+	return energy * punch / punch0, nil, hard
+end
+
+-- A round turned off a surface or armour: mirrored, leaving flatter than it came in (lift), scattered, slower; it flies
+-- on and can hit something else. Its own tracer from there.
+function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip)
+	local c = self.cfg
+	local out = vsub(dir, vscale(normal, 2 * vdot(dir, normal)))
+	out = vnorm(vsub(out, vscale(normal, vdot(out, normal) * (1 - c.ricochetLift))))
+	out = coneDir(out, scatter)
+	if vdot(out, normal) < 0.05 then out = vnorm(vadd(out, vscale(normal, 0.08))) end   -- never back into the surface
+	local speed = vlen(r.vel) * math.sqrt(keep)
+	r.pos, r.vel, r.skip = vadd(pos, vscale(normal, 0.01)), vscale(out, speed), skip
+	if c.tracers then self:SpawnFx(self:TracerFx(speed), r.pos, out, 1.0) end
+	return out
+end
+
+-- the mark a round leaves: the surface's effect, sized by the round, and a bullet hole that stays a while
+function Deagle:Mark(s, hit, dir, scale, size)
+	local c = self.cfg
+	if s.fx then self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale) end
+	if s.hole then
+		size = (size or c.holeSize) * scale * (0.85 + 0.3 * math.random())
+		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
+			"Materials/deagle/decals/bullet_hole_" .. s.hole, math.random() * 360, dir, hit.entity and hit.entity.id or nil, hit.partid)
+	end
+end
+
+local EXIT_FX = { stone = true, plaster = true, wood = true, metal = true, glass = true, cloth = true }   -- <family>_exit
+local THIN = { glass = true, cloth = true, straw = true }   -- panes / sheets: often built with no thickness
+
+-- A round hitting the world (BALLISTICS.md phase 3). A glancing hit on a surface that can turn rounds may skid off
+-- (chance grows as the angle flattens, guns/penetration.lua from Ready or Not). Otherwise the surface's mark, then
+-- through it if the round can be: its punch has to reach the surface's armour level, and it gets through
+-- cfg.wallbang.budget x energy ratio / density metres of it. A ray back from that deep finds the far side; if the
+-- thing is thinner, the round comes out there (debris out the back, a bigger exit hole) with the energy it didn't
+-- spend. True when the round flies on.
+function Deagle:Impact(hit, dir, phys, r)
 	local c = self.cfg
 	local name = surfaceName(hit)
 	local s = SURFACES[name]
@@ -691,24 +790,56 @@ function Deagle:Impact(hit, dir, phys)
 			self.unknownSurface[name] = true
 			log("$4impact: surface '" .. tostring(name) .. "' isn't in the table (deagle_main.lua SURFACES)")
 		end
-		return
+		return false
 	end
-	local scale = self:ImpactScale(phys, hit.dist)
-	self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale)
-	if s.hole then
-		local size = c.holeSize * scale * (0.85 + 0.3 * math.random())
-		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
-			"Materials/deagle/decals/bullet_hole_" .. s.hole, math.random() * 360, dir, hit.entity and hit.entity.id or nil, hit.partid)
+	local energy = hit.energy or (phys and phys.energy * math.exp(-2 * (hit.dist or 0) / phys.dragLength))
+	local scale = self:ImpactScale(phys, hit.dist, energy)
+	local pen = self.penetration and self.penetration[name]
+	local cosI = math.max(0, -vdot(dir, hit.normal))
+	if r and pen and pen.ricochetChance > 0 then
+		local graze = math.deg(math.asin(math.min(1, cosI)))     -- between the shot and the surface
+		if graze < pen.ricochetMaxAngle and math.random() < math.min(1, pen.ricochetChance * pen.ricochetMaxAngle / math.max(graze, 1)) then
+			self:Mark(s, hit, dir, scale * 0.6)
+			local out = self:Deflect(r, hit.pos, hit.normal, dir, c.ricochetKeep, c.ricochetScatter)
+			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale)
+			if self.state.logActions then log(string.format("ricochet %s at %.0f deg", name, graze)) end
+			return true
+		end
 	end
+	self:Mark(s, hit, dir, scale)
 	if self.state.logActions then log(string.format("impact %s -> %s x%.2f hole %s", name, s.fx, scale, tostring(s.hole))) end
+	if not (r and pen and pen.penetrable) or s.fx == "water" then return false end
+	local ratio = self:EnergyRatio(phys, energy)
+	if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then return false end   -- 9 mm level 2, .50 AE 3
+	local depth = c.wallbang.budget * ratio / pen.density
+	local reach, back, p = depth + 0.01, {}, self:Player()
+	local ok, n = pcall(Physics.RayWorldIntersection, vadd(hit.pos, vscale(dir, reach)), vscale(dir, -reach), 1, ent_all, p and p.id, nil, back)
+	local far = ok and n and n > 0 and back[1]
+	local thick = far and far.entity == hit.entity and reach - far.dist or nil
+	if THIN[s.fx] then thick = math.max(thick or 0, 0.005)
+	elseif not thick or thick < 0.002 then return false end     -- the far side is out of reach (or it's the near side)
+	if thick >= depth then return false end
+	local exitPos = vadd(hit.pos, vscale(dir, thick))
+	local exitNormal = far and vdot(far.normal, dir) > 0 and far.normal or dir
+	if EXIT_FX[s.fx] then self:SpawnFx("deagle_impacts." .. s.fx .. "_exit", exitPos, dir, scale) end
+	if s.hole then
+		self:Mark({ hole = s.hole }, { pos = exitPos, normal = exitNormal, entity = hit.entity }, dir, scale, c.holeExitSize)
+	end
+	local left = energy * (1 - thick / depth)
+	r.pos, r.vel, r.dist = vadd(exitPos, vscale(dir, 0.002)), vscale(dir, math.sqrt(2 * left / phys.bullet)), r.dist + thick
+	if c.tracers then self:SpawnFx(self:TracerFx(vlen(r.vel)), r.pos, dir, 1.0) end
+	if self.state.logActions then log(string.format("through %s %.1f cm (could %.1f), %.0f J left", name, thick * 100, depth * 100, left)) end
+	return true
 end
 
-function Deagle:ApplyHit(hit, dir, phys)
+-- A round hitting something. r = the round in flight (nil for an instant ray): true when it flies on (through a body
+-- or wall, or turned off armour / stone), with r moved to where it goes on from.
+function Deagle:ApplyHit(hit, dir, phys, r)
 	local c = self.cfg
 	phys = phys or self:ShotPhysics()
 	local e = hit.entity
 	local p = self:Player()
-	local dead = false
+	local dead, goesOn = false, false
 	if e and e.actor then pcall(function() dead = e.actor:IsDead() end) end
 	if e and e ~= p and (dead or (e.class and string.find(string.lower(e.class), "dead"))) then
 		hit.bodyPart = bodyPartFor(e, hit.pos)
@@ -719,31 +850,60 @@ function Deagle:ApplyHit(hit, dir, phys)
 			try("CreateHit", function()
 				g_gameRules:CreateHit(e.id, p.id, p.id, c.damage, 0, nil, hit.partid or -1, c.hitType, hit.pos, dir, hit.normal)
 			end)
+			self:Bleed(e, hit, dir)
 		else
 			local part = bodyPartFor(e, hit.pos)
-			local dmg, stam
-			if phys then        -- from the cartridge: energy left in the body, air drag over the distance
-				dmg, stam = self:Wound(phys, hit.dist)
+			hit.bodyPart = part
+			local dmg, stam, through = 0, 0, nil
+			local stopped, hard, glance
+			if phys then        -- from the cartridge: through what's worn there, then the energy left in the body
+				local energy = hit.energy or phys.energy * math.exp(-2 * (hit.dist or 0) / phys.dragLength)
+				local cosI = hit.normal and math.abs(vdot(dir, hit.normal)) or 1
+				local left
+				left, stopped, hard, glance = self:ThroughArmor(self:ArmorOn(e, part), phys, energy, cosI)
+				local bare, shove = self:Wound(phys, hit.dist, energy)
+				stam = shove                                  -- the shove lands whatever stops the round
+				if stopped then
+					dmg = bare * c.armor.bruise               -- blunt trauma: a bruise under the armour
+				else
+					local _, _, _, out = self:Wound(phys, hit.dist, left)
+					dmg = self:Wound(phys, hit.dist, left)
+					through = out
+				end
 				if part == "head" then dmg = dmg * c.physics.headMult end
+				if hard then self:SpawnFx(c.armorFx, hit.pos, hit.normal or vscale(dir, -1), self:ImpactScale(phys, hit.dist, energy)) end
+				if stopped and hard and r then         -- turned by plate / mail: off it goes, sparks along its new way
+					local out = self:Deflect(r, hit.pos, hit.normal or vscale(dir, -1), dir, c.armor.ricochetKeep, c.armor.scatter, e.id)
+					self:SpawnFx(c.armorRicochetFx, hit.pos, out, self:ImpactScale(phys, hit.dist, energy))
+					goesOn = true
+				end
 			else                -- a gun without cartridge data: its CS2 numbers
 				dmg = c.damage * (part == "head" and c.headshotMult or 1) * c.rangeMod ^ ((hit.dist or 0) / 12.7)
 				stam = c.stamina
 			end
-			hit.bodyPart = part
 			try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end)
-			self:HitReact(e, hit, dir, dmg)
+			self:HitReact(e, hit, dir, dmg, stam)
+			local exits = through and through > c.exitEnergy
+			if not stopped then self:Bleed(e, hit, dir, exits == true) end
+			if exits and r then                         -- through and through: on with what's left, past this body
+				r.pos, r.vel, r.skip = vadd(hit.pos, vscale(dir, c.bodyExit)), vscale(dir, math.sqrt(2 * through / phys.bullet)), e.id
+				r.dist = r.dist + c.bodyExit
+				goesOn = true
+			end
+			local hp = "?"
+			pcall(function() hp = string.format("%.1f/%.1f", e.actor:GetHealth(), e.actor:GetMaxHealth()) end)
+			log(string.format("hit %s part %s dist %.1f hp %s%s%s", tostring(e:GetName()), tostring(part), hit.dist or -1, hp,
+				stopped and (" stopped by " .. tostring(stopped.a.name) .. (glance and " (glanced)" or "")) or "",
+				exits and string.format(", out the back with %.0f J", through) or ""))
 		end
-		self:Bleed(e, hit, dir)
-		local hp = "?"
-		pcall(function() hp = string.format("%.1f/%.1f", e.actor:GetHealth(), e.actor:GetMaxHealth()) end)
-		log("hit " .. tostring(e:GetName()) .. " mode " .. c.hitMode .. " part " .. tostring(hit.bodyPart) .. " dist " .. string.format("%.1f", hit.dist or -1) .. " hp " .. hp)
 	else
-		self:Impact(hit, dir, phys)
+		goesOn = self:Impact(hit, dir, phys, r)
 	end
 	if e and e.AddImpulse and (not e.soul or (e.IsDead and e:IsDead())) then
 		local push = phys and c.physics.punchPerMomentum * phys.momentum or c.impulse   -- the shove follows momentum
 		try("impulse", function() e:AddImpulse(hit.partid or -1, hit.pos, dir, push, 1) end)
 	end
+	return goesOn
 end
 
 -- ---------------------------------------------------------------------------
@@ -769,7 +929,7 @@ function Deagle:MoveRound(r, h)
 	local move = vscale(vadd(r.vel, v1), 0.5 * h)
 	local hits = {}
 	local p = self:Player()
-	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, move, 1, ent_all, p and p.id, nil, hits)
+	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, move, 1, ent_all, p and p.id, r.skip, hits)
 	if not ok then
 		log("$4raycast failed: " .. tostring(n))
 		return true
@@ -785,14 +945,20 @@ function Deagle:MoveRound(r, h)
 			if done >= vlen(move) then break end
 			from, left = vadd(r.pos, vscale(dir, done)), vscale(dir, vlen(move) - done)
 			hits = {}
-			ok, n = pcall(Physics.RayWorldIntersection, from, left, 1, ent_all, p and p.id, nil, hits)
+			ok, n = pcall(Physics.RayWorldIntersection, from, left, 1, ent_all, p and p.id, r.skip, hits)
 			if not ok then log("$4raycast failed: " .. tostring(n)); return true end
 			if n and n > 0 and hits[1] then hits[1].dist = hits[1].dist + done end
 		else
+			local frac = hit.dist / vlen(move)   -- share of this step flown before the hit
 			hit.dist = r.dist + hit.dist        -- the ray's distance is from this step's start: the path flown so far
-			r.pos, r.landed = hit.pos, true
-			self:ApplyHit(hit, vnorm(move), r.phys)
-			return true
+			local speed = vlen(r.vel)
+			hit.energy = 0.5 * r.phys.bullet * speed * speed
+			r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
+			if not self:ApplyHit(hit, vnorm(move), r.phys, r) then r.landed = true; return true end
+			-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
+			r.hops = (r.hops or 0) + 1
+			if r.hops > 8 or vlen(r.vel) < 30 then return true end
+			return self:MoveRound(r, h * (1 - frac))
 		end
 	end
 	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
@@ -1978,6 +2144,9 @@ function Deagle:LoadGuns()
 	local function load(f) return Script.LoadScript(f, true, true) end
 	pcall(load, "Scripts/Deagle/guns/cs2.lua")
 	pcall(load, "Scripts/Deagle/guns/calibers.lua")
+	pcall(load, "Scripts/Deagle/guns/penetration.lua")
+	pcall(load, "Scripts/Deagle/guns/armor.lua")
+	pcall(load, "Scripts/Deagle/guns/hitbones.lua")
 	pcall(load, "Scripts/Deagle/guns/shot_gain.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end

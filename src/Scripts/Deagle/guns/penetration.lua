@@ -85,6 +85,8 @@ for _, m in ipairs({
 	{ S.cloth, "mat_fabric", "mat_leather" },
 	{ S.glass, "mat_glass", "mat_window" },
 	{ S.flesh, "mat_flesh" },
+	{ S.stone, "mat_default", "mat_invulnerable" },        -- untyped / indestructible geometry: KCD2's is mostly masonry
+	{ S.metal, "mat_super_cool_sparkly_type" },
 }) do
 	for i = 2, #m do S[m[i]] = m[1] end
 end

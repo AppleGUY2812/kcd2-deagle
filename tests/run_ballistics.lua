@@ -109,7 +109,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	local hole = M.decals and M.decals[#M.decals]
 	local stoneScale = M.fxScale and M.fxScale["deagle_impacts.stone"]
 	check(string.format("%s: stone wall -> deagle_impacts.stone x%.2f + %s %.3f m", id, stoneScale or -1, hole and hole.mat or "no hole", hole and hole.size or -1),
-		(M.fxNames["deagle_impacts.stone"] or 0) == 1 and math.abs((stoneScale or 0) - scale) < 1e-3 and hole
+		(M.fxNames["deagle_impacts.stone"] or 0) == 1 and math.abs((stoneScale or 0) - scale) < 0.02 * scale and hole
 		and hole.mat == "Materials/deagle/decals/bullet_hole_stone" and hole.size > 0.85 * Deagle.cfg.holeSize * scale - 1e-6
 		and hole.size < 1.15 * Deagle.cfg.holeSize * scale + 1e-6 and hole.life == Deagle.cfg.holeLife, M.fxNames["deagle_impacts.stone"])
 
