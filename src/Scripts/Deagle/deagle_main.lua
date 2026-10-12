@@ -79,7 +79,9 @@ Deagle.cfg = {
 	hearing = { on = true, shot = 3.2, hit = 1.0 },
 	exitEnergy = 20,          -- J: a round leaving the body with less stays in it (no exit wound)
 	-- a killing round: ragdoll at once and a shove by its momentum (x killPush) pushDelay ms later, at the part it hit
-	gore = { ragdollOnKill = true, killPush = 1.0, pushDelay = 60 },
+	-- head pop: a killing head shot landing with headPopEnergy J or more (Deagle out to ~100 m, never a 9 mm)
+	gore = { ragdollOnKill = true, killPush = 1.0, pushDelay = 60, headPop = true, headPopEnergy = 1200, headPopFx = 1.6,
+		neckPulses = 3, neckPulseGap = 0.35 },
 	bodyExit = 0.35,          -- m from the entry where a through-and-through round goes on
 	holeLife = 300,           -- s a bullet hole stays
 	bloodPaint = 0.45,        -- actor:AddBlood amount per hit on that body part
@@ -1022,6 +1024,25 @@ function Deagle:KillShove(e, hit, dir, phys, energy)
 	end)
 end
 
+-- Head pop: a killing head shot that lands with gore.headPopEnergy or more (a .50 AE out to ~100 m, never a 9 mm)
+-- takes the head off. KCD2 has no dismemberment (docs/kcd2_gore_ragdoll_re.md): the plugin hides the head skin and
+-- everything on the head (hair, beard, helmet, hood; hideatt *head*), the collar stays over the stump; a big burst
+-- out the back and a few pulses from the neck.
+function Deagle:HeadPop(e, hit, dir, scale)
+	local g = self.cfg.gore
+	if not self.native then return end
+	self:Native("hideatt 0x" .. entityHex(e.id) .. " *head* 1")
+	self:SpawnFx(self.cfg.headFx, hit.pos, dir, scale * g.headPopFx)
+	for i = 1, g.neckPulses do
+		Script.SetTimer(math.floor(i * g.neckPulseGap * 1000), function()
+			local ok, neck = pcall(e.GetBonePos, e, "Neck")
+			local ok2, head = pcall(e.GetBonePos, e, "Head")
+			if ok and neck and ok2 and head then Deagle:SpawnFx(Deagle.cfg.bloodExitFx, head, vnorm(vsub(head, neck)), scale * (1 - 0.2 * i)) end
+		end)
+	end
+	log("head pop " .. tostring(e:GetName()))
+end
+
 -- A round hitting something. r = the round in flight (nil for an instant ray): true when it flies on (through a body
 -- or wall, or turned off armour / stone), with r moved to where it goes on from.
 function Deagle:ApplyHit(hit, dir, phys, r)
@@ -1104,7 +1125,13 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			self:HitReact(e, hit, dir, dmg, stam)
 			local killed = false
 			pcall(function() killed = e.actor:GetHealth() <= 0 end)
-			if killed and phys then self:KillShove(e, hit, dir, phys, hit.energy) end
+			if killed and phys then
+				local energy = hit.energy or phys.energy
+				if part == "head" and not stopped and self.cfg.gore.headPop and energy >= self.cfg.gore.headPopEnergy then
+					self:HeadPop(e, hit, dir, self:ImpactScale(phys, hit.dist, energy))
+				end
+				self:KillShove(e, hit, dir, phys, hit.energy)
+			end
 			local exits = through and through > c.exitEnergy
 			if not stopped then self:Bleed(e, hit, dir, exits == true, scale, padded) end
 			if exits and r then                         -- through and through: on with what's left, past this body

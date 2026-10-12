@@ -217,6 +217,23 @@ reset()
 local alive = newNpc(210)
 fire()
 check("a wound that doesn't kill: no ragdoll", alive.ragdoll == nil and alive.damage > 0 and alive.damage < 100, alive.ragdoll)
+-- head pop: a Deagle kill to the head hides the head (plugin hideatt *head*); a Glock head kill doesn't
+local function headKill(id)
+	Deagle:UseGun(id); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+	reset()
+	local v = newNpc(210)
+	v.z, v.damage = 31.75 - 1.75, 95
+	local n0 = #M.native
+	fire()
+	local pop = false
+	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] hideatt 0x%x+ %*head%* 1$") then pop = true end end
+	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+	return pop, v
+end
+local dPop, dv = headKill("deagle")
+local gPop, gv = headKill("glock_17")
+check(string.format("head pop: Deagle %s, Glock %s (both kills)", tostring(dPop), tostring(gPop)), dPop and not gPop and dv.damage >= 100 and gv.damage >= 100, dPop)
+Deagle:UseGun("deagle"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 
 -- size: a 2.5 kg hare dies to one Glock round; a 500 kg horse takes less than a man (KCD2 gives all 100 HP)
