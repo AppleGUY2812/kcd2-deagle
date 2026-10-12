@@ -48,6 +48,7 @@ Deagle.cfg = {
 	flashGrow = { 0.7, 1.0, 1.1 },  -- the flash's size on each frame it's seen (plugin, any frame rate), then gone: a quick
 	                          -- bloom (user: "it can grow, it just needed to be snappier"); {} = the particles' own life
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
+	debugZoom = { 4, 10 },    -- F10 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
 	cancelKeepsRounds = false,
@@ -400,6 +401,20 @@ function Deagle:FlashFollow()
 end
 
 -- slow motion for checking effects (F9): KCD2 has CryEngine's t_Scale
+-- Debug zoom (F10 / deagle_zoom): steps through cfg.debugZoom (x4, x10) and back to normal, to look at impacts, holes
+-- and tracers far away. The gun is hidden from view while zoomed (it would fill the screen); it keeps working.
+function Deagle:SetZoom(factor)
+	self.zoom = factor and factor > 1 and factor or nil
+	self:EaseFov(self.state.aiming)
+	self:Notify(self.zoom and string.format("zoom x%g", self.zoom) or "zoom off")
+end
+
+function Deagle:CycleZoom()
+	local list = self.cfg.debugZoom
+	self.zoomStep = ((self.zoomStep or 0) + 1) % (#list + 1)
+	self:SetZoom(list[self.zoomStep])
+end
+
 function Deagle:SlowMo(on)
 	self.slowOn = on and true or false
 	pcall(System.SetCVar, "t_Scale", on and self.cfg.slowmo or 1)
@@ -1504,9 +1519,10 @@ end
 function Deagle:EaseFov(on)
 	local s = self.state
 	try("aim fov", function()
-		if on and not s.baseFov then s.baseFov = System.GetViewCameraFov() end
+		if (on or self.zoom) and not s.baseFov then s.baseFov = System.GetViewCameraFov() end
 		if not s.baseFov then return end
-		local from, to, t0 = s.fovNow or s.baseFov, s.baseFov * (on and self.cfg.aimFovScale or 1), System.GetCurrTime()
+		local to = s.baseFov * (on and self.cfg.aimFovScale or 1) / (self.zoom or 1)
+		local from, t0 = s.fovNow or s.baseFov, System.GetCurrTime()
 		self.fovToken = (self.fovToken or 0) + 1
 		local tok = self.fovToken
 		local function step()
@@ -1516,7 +1532,7 @@ function Deagle:EaseFov(on)
 			s.fovNow = from + (to - from) * k
 			System.SetViewCameraFov(s.fovNow)
 			if k < 1 then Script.SetTimer(0, step)
-			elseif not on then s.baseFov, s.fovNow = nil, nil end   -- fully out: read the game's FOV again next time
+			elseif not on and not Deagle.zoom then s.baseFov, s.fovNow = nil, nil end   -- fully out: read the game's FOV again next time
 		end
 		step()
 	end)
@@ -1749,6 +1765,11 @@ function Deagle:VmTick(token)
 	self.vmTickT = now
 	self:VmPlace()
 	self:HoldGameMapsOff()
+	if (self.zoom ~= nil) ~= (self.vmZoomHidden == true) then     -- the gun out of view while the debug zoom is on
+		local vm = self.vmId and System.GetEntity(self.vmId)
+		if vm then pcall(vm.Hide, vm, self.zoom and 1 or 0) end
+		self.vmZoomHidden = self.zoom ~= nil
+	end
 	self:FlashFollow()
 	local a = self.vmAnim
 	if a and not a.loop and System.GetCurrTime() >= a.ends and not self.vmHolstering then self:VmReturn() end
@@ -1972,7 +1993,7 @@ function Deagle:VmShow()
 end
 
 function Deagle:VmHide()
-	self.vmShown = false
+	self.vmShown, self.vmZoomHidden = false, false
 	self.vmToken = (self.vmToken or 0) + 1
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if vm then pcall(vm.Hide, vm, 1) end
@@ -2071,6 +2092,10 @@ function Deagle:OnAction(action, activation)
 	end
 	if action == "deagle_slowmo" then
 		if activation == "press" then self:SlowMo(not self.slowOn) end
+		return true
+	end
+	if action == "deagle_zoom" then
+		if activation == "press" then self:CycleZoom() end
 		return true
 	end
 	if not s.drawn then return false end
@@ -2206,6 +2231,7 @@ function Deagle:DevLua(line)
 	log("lua -> " .. tostring(ok) .. " " .. tostring(res))
 end
 
+System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber([[%1]]))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F10 steps x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")
 System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")

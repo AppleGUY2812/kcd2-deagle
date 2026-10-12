@@ -12,6 +12,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | Y | inspect |
 | B | fire mode (semi / burst / auto, on guns that have them) |
 | F9 | slow motion on / off (0.1x, works holstered) |
+| F10 | debug zoom: x4, x10, off (works holstered; the gun is hidden while zoomed). `deagle_zoom 6` for any zoom |
 
 ## Everyday commands
 | Command | What it does |

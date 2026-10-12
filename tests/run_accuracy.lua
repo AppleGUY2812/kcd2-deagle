@@ -87,6 +87,15 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		20 * (w.inStand + w.spread) < 0.2, nil)
 	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 end
+-- debug zoom (F10 / deagle_zoom): x4, x10, off; the field of view eases to the game's / the factor and back
+local base = System.GetViewCameraFov()
+Deagle:OnAction("deagle_zoom", "press"); M.advance(0.5)
+local z4 = M.fov
+Deagle:OnAction("deagle_zoom", "press"); M.advance(0.5)
+local z10 = M.fov
+Deagle:OnAction("deagle_zoom", "press"); M.advance(0.5)
+check(string.format("F10 zoom: x4 %.3f, x10 %.3f, off %.3f (game %.3f)", z4 or -1, z10 or -1, M.fov or -1, base),
+	z4 and math.abs(z4 - base / 4) < 1e-6 and math.abs(z10 - base / 10) < 1e-6 and math.abs(M.fov - base) < 1e-6, z4)
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("accuracy: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
