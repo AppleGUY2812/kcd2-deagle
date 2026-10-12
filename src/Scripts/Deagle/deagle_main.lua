@@ -30,7 +30,8 @@ Deagle.cfg = {
 	shotTrigger = "c_f_firearm_shot",   -- the game's gunshot; skipped while the plugin plays the MWII shots
 	dryTrigger = nil,
 	reloadTrigger = nil,
-	muzzleFx = "deagle.muzzle",         -- Libs/Particles/deagle.xml (preloaded via PreloadList.txt)
+	muzzleFx = "deagle.muzzle",         -- Libs/Particles/deagle.xml (preloaded via PreloadList.txt): the flash, rides on the gun
+	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
 	muzzleFxScale = 1.0,
 	portFx = "deagle.port_smoke",
 	bloodFx = "collisions.combat.hit_passed_bullet_fabric",
@@ -238,6 +239,30 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
 end
 
+-- The flash rides on the gun (CS2 / CoD attach it to the weapon too): an emitter in a slot of the viewmodel, put back
+-- on the muzzle every frame while it burns, so walking forward never walks into it. Smoke stays where it was made.
+-- Third person (no viewmodel drawn): both in the world.
+function Deagle:MuzzleFlash(dir)
+	local c = self.cfg
+	local pos = self:MuzzlePos()
+	local vm = self.vmInFp and self.vmShown and self.vmId and System.GetEntity(self.vmId)
+	local ok, slot = false, nil
+	if vm then ok, slot = pcall(vm.LoadParticleEffect, vm, self.flashSlot or -1, c.muzzleFx, { Scale = c.muzzleFxScale }) end
+	if ok and type(slot) == "number" and slot >= 0 then
+		self.flashSlot, self.flashUntil = slot, System.GetCurrTime() + 0.2
+		pcall(vm.SetSlotWorldTM, vm, slot, pos, dir)
+	else
+		self:SpawnFx(c.muzzleFx, pos, dir, 0.6)
+	end
+	self:SpawnFx(c.muzzleSmokeFx, pos, dir, 1.0)
+end
+
+function Deagle:FlashFollow()
+	if not self.flashSlot or System.GetCurrTime() > (self.flashUntil or 0) then return end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if vm then pcall(vm.SetSlotWorldTM, vm, self.flashSlot, self:MuzzlePos(), System.GetViewCameraDir()) end
+end
+
 function Deagle:Recoil()
 	local p = self:Player()
 	local k = self.cfg.recoil
@@ -421,7 +446,7 @@ function Deagle:Shoot(force)
 	s.heat = s.heat + c.heatPerShot
 
 	self:PlayTrigger(c.shotTrigger)
-	self:SpawnFx(c.muzzleFx, self:MuzzlePos(), dir, 0.6)
+	self:MuzzleFlash(System.GetViewCameraDir())
 	self:Recoil()
 	self:EjectCase()
 
@@ -658,7 +683,7 @@ function Deagle:VmEntity()
 		log("viewmodel fallback chr " .. tostring(ok2) .. " " .. tostring(slot2) .. " skin " .. tostring(ok3))
 	end
 	pcall(vm.SetViewDistRatio, vm, 255)
-	self.vmId, self.vmRoundsShown = vm.id, nil
+	self.vmId, self.vmRoundsShown, self.flashSlot = vm.id, nil, nil
 	vm.OnUpdate = function() Deagle:VmPlace() end    -- per-frame follow (entity update); VmTick timer as well
 	pcall(vm.Activate, vm, 1)
 	return vm
@@ -788,6 +813,7 @@ end
 
 function Deagle:VmPlace()
 	self:VmFollow()
+	self:FlashFollow()
 	local now = System.GetCurrTime()
 	if now ~= self.hudT then self.hudT = now; self:DrawHud() end
 end

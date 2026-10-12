@@ -67,6 +67,14 @@ local function newEntity(name, props)
 	function e:GetBoneDir(b) return vec(0, 1, 0) end
 	function e:GetBoneLocal(b, t) return vec(0, 0, 0) end
 	function e:AddImpulse() return true end
+	-- particle effects in entity slots (the muzzle flash rides on the viewmodel)
+	e.nslots = 1
+	function e:LoadParticleEffect(slot, fx, params)
+		if slot < 0 then slot = self.nslots; self.nslots = self.nslots + 1 end
+		M.slotFx = (M.slotFx or 0) + 1; M.lastSlotFx = fx
+		return slot
+	end
+	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end
 	for k, v in pairs(e) do if type(v) == "function" then e[k] = M.traced(name or "?", k, v) end end
 	setmetatable(e, { __index = function(t, k) return M.traced(name or "?", k, function() return nil end) end })
 	return e
@@ -118,7 +126,7 @@ _G.Script = {
 	LoadScript = function(path) return M.loadScript(path) end, ReloadScript = function(path) return M.loadScript(path) end,
 }
 _G.Game = { SendInfoText = function(t) M.info = t end, HideInfoText = function() end }
-_G.Particle = { SpawnEffect = function(n) M.fx = (M.fx or 0) + 1 M.lastFx = n end, CreateMatDecal = function() end }
+_G.Particle = { SpawnEffect = function(n) M.fx = (M.fx or 0) + 1 M.lastFx = n; M.fxNames = M.fxNames or {}; M.fxNames[n] = (M.fxNames[n] or 0) + 1 end, CreateMatDecal = function() end }
 _G.Physics = { RayWorldIntersection = function() return 0 end }
 _G.ActionMapManager = { LoadFromXML = function() return true end, EnableActionMap = function() end }
 _G.UIAction = { RegisterEventSystemListener = function() end }

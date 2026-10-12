@@ -30,6 +30,8 @@ step("idle frames + HUD", function() M.advance(0.5) end)
 print("   HUD draw calls:", M.drawn_text, " first person:", tostring(Deagle.vmInFp), " DOF:", tostring(M.cvars and M.cvars.r_DepthOfField))
 step("hip fire x7", function() for i = 1, 7 do Deagle:OnAction("deagle_fire", "press"); M.advance(0.3) end end)
 print("   ammo:", Deagle.state.ammo, " anims:", lastAnims(4), " fx:", M.fx, M.lastFx)
+print("   muzzle flash on the viewmodel:", M.slotFx, M.lastSlotFx, " follow updates:", M.slotMoves, " world flashes:", (M.fxNames or {})["deagle.muzzle"], " smoke:", (M.fxNames or {})["deagle.muzzle_smoke"])
+if (M.slotFx or 0) < 7 or (M.slotMoves or 0) <= 7 or ((M.fxNames or {})["deagle.muzzle"] or 0) > 0 then table.insert(M.errors, "muzzle flash not riding on the viewmodel") end
 step("empty idle", function() M.advance(1.0) end)
 print("   rest:", lastAnims(1))
 print("   mag rounds shown:", tostring(Deagle.vmRoundsShown))
