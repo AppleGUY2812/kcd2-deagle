@@ -12,7 +12,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | Y | inspect |
 | B | fire mode (semi / burst / auto, on guns that have them) |
 | F9 | slow motion on / off (0.1x, works holstered) |
-| F10 | debug zoom: x4, x10, off (works holstered; the gun is hidden while zoomed). `deagle_zoom 6` for any zoom |
+| F2 (or mouse button 4) | debug zoom: x4, x10, off (works holstered; you can shoot; the gun is hidden while zoomed). `deagle_zoom 6` for any zoom. (KCD2 uses F10) |
 
 ## Everyday commands
 | Command | What it does |
@@ -30,14 +30,14 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_mparam <key> <value>` | weapon-movement tunable, kept until restart (`src/Scripts/Deagle/motion.lua`, `native/src/motion.h`). Keys (defaults = RoN G19; the Deagle overrides drag_aim_loc 0.875, drag_strafe_loc 0.05, move_rot_p 35, hang_k 80, land 1.2): `drag_aim_rot` 0.6 / `drag_aim_loc` 0.4 (look sway rotation / shift), `drag_strafe_rot` 0.4 / `drag_strafe_loc` 0.2 (strafe roll / shift), `move_scale_x/y/z` 10/10/5 and `move_rot_p` 60 (move inertia), `mesh_interp` 55 (sway follow speed), `hang_k` 100 / `hang_c` 8 / `hang_ads` 0.3 (the soft hang spring), `sprint_ron` 1 (0 = the old sprint pose), `sprint_x/y/z` m and `sprint_pitch/roll/yaw` deg (pose), `jump` / `land` / `crouch` / `dodge` / `bob` 1 (strengths), `test_roll` 0 (deg, a constant roll for the sign check) |
 | `deagle_tracers 0` / `1` | glowing tracer on every round off / on |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
-| `deagle_zoom <n>` | debug zoom (F10 steps x4 / x10 / off) |
+| `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.on 0`) is an unknown command.
 On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list settings take numbers apart by commas.
 | Setting | Default | What it changes |
 |---|---|---|
-| `flashMode` | `gun` | `gun` = flash on the gun's muzzle (glued), `world` = left where it was fired |
+| `flashMode` | `live` | `live` = the flash is seen in the frame you fire, for 2 frames (1 under 40 fps), like Ready or Not; `gun` = a flash spawned per shot (shows a frame or two late, lasts longer); `world` = left where it was fired |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
@@ -71,7 +71,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `ricochetKeep` | `0.35` | energy a ricochet keeps |
 | `holeExitSize` | `0.09` | exit hole size in m |
 | `accuracy.scale` | `1` | CS2 guns: 1 = CS2's own accuracy (standing / crouched / moving / jumping / shots in a row), 0.5 = twice as tight, 0 = no spread |
-| `flashGrow` | `0.7,1,1.1` | the flash's size on each frame it's seen, then gone (same at any frame rate). More numbers = a longer flash: `deagle_set flashGrow 0.6,0.9,1.1,1.1` |
+| `flashLive` | `0.8,1` | the live flash's size on each frame it's seen (more numbers = a longer flash: `deagle_set flashLive 0.7,1,1.2`) |
 | `impactVolume` | `1` | bullet impact / ricochet / armour sounds |
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |

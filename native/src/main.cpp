@@ -181,6 +181,35 @@ static void MoveFlashes() {
 	g_nFlashes = keep;
 }
 
+// ---- the live flash (flashMode "live"): one continuous emitter per drawn gun that never stops; its particles are
+// always alive (a random tile and turn each). It sits on the muzzle at a size of nothing, and a shot scales it up for
+// exactly the frames it should be seen (g_liveSizes: its size on each of them), then back to nothing. KCD2 draws a NEW
+// emitter a frame or two late and pre-ages it (MODLOG), so a flash spawned per shot is seen late and for 4-6 frames at
+// a high frame rate; this one is already drawn, and resizing it is instant: flashshot runs inside Lua, before the
+// particle update and the render of the frame it's fired in. The light stays on a short per-shot emitter (a particle
+// light's radius doesn't follow the emitter's size).
+static uintptr_t g_live = 0;
+static float g_liveScale = 1, g_liveSizes[8] = {};
+static int g_liveN = 0, g_liveFrame = -1;          // frame of the flash being shown, -1 = none
+static void LivePlace(float size) {
+	if (!g_live || !g_haveVmTM) return;
+	float loc[8];
+	if (!MuzzleLoc(g_vmTM, size > 0 ? g_liveScale * size : 1e-4f, loc)) return;
+	float box[6]; bool had = BoxValid(g_live) && ReadBox(g_live, box);
+	float old[3] = {}; __try { memcpy(old, (void*)(g_live + 0x80), 12); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+	SafeSetLocation(g_live, loc);
+	if (had) {
+		for (int k = 0; k < 3; k++) { box[k] += loc[4 + k] - old[k]; box[3 + k] += loc[4 + k] - old[k]; }
+		WriteBox(g_live, box);
+	}
+}
+// every camera step, after the gun: the frame's size, then the next frame
+static void LiveStep() {
+	if (!g_live) return;
+	if (g_liveFrame >= 0 && g_liveFrame < g_liveN) { LivePlace(g_liveSizes[g_liveFrame]); g_liveFrame++; }
+	else { g_liveFrame = -1; LivePlace(0); }
+}
+
 static bool PlaceViewmodel(const float* cam) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
 	auto getEntity = (GetEntityFn)VFn(es, 0x70);
@@ -206,6 +235,7 @@ static bool PlaceViewmodel(const float* cam) {
 	setTM(e, tm, 0);
 	memcpy(g_vmTM, tm, sizeof(tm)); g_haveVmTM = true;
 	if (g_nFlashes) MoveFlashes();
+	LiveStep();
 	return true;
 }
 
@@ -442,7 +472,7 @@ static void Command(const char* line) {
 	while (*rest == ' ') rest++;
 	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
 		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
-		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false;
+		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1;
 		g_pendingConsole = "deagle_native_ok"; Log("hello from Lua");
 	}
 	else if (!strcmp(cmd, "vm")) {
@@ -507,6 +537,31 @@ static void Command(const char* line) {
 			PlaySound3D(file, v, at, mn, mx);
 	}
 	else if (!strcmp(cmd, "speed")) { float v = (float)atof(rest); if (Finite(&v, 1)) SetSoundSpeed(v); Log("sound speed %.2f", g_soundSpeed); }
+	else if (!strcmp(cmd, "flasharm")) {   // flasharm <effect> <scale> <pos xyz> <dir xyz>: the live flash for the drawn gun
+		char effect[96] = {}; float scale = 1;
+		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &g_flashPos[0], &g_flashPos[1],
+			&g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);
+		float loc[8];
+		if (g_live) { SafeRelease(g_live); g_live = 0; }
+		if (n != 8 || !Finite(&scale, 1)) Log("bad flasharm command: %s", rest);
+		else if (!g_haveVmTM || !MuzzleLoc(g_vmTM, 1e-4f, loc)) Log("flasharm: the gun isn't placed yet");
+		else {
+			uintptr_t em = SafeSpawnFlash(effect, loc);
+			if (em == (uintptr_t)-1 || !em) Log("flasharm: %s didn't spawn", effect);
+			else { g_live = em; g_liveScale = scale; g_liveFrame = -1; Log("flasharm %s emitter %p scale %.2f", effect, (void*)em, scale); }
+		}
+	}
+	else if (!strcmp(cmd, "flashshot")) {  // flashshot <size on frame 1> [<frame 2> ...]: show the live flash now
+		float v[8] = {};
+		int n = sscanf_s(rest, "%f %f %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);
+		if (n > 0 && g_live) {
+			g_liveN = 0;
+			for (int i = 0; i < n; i++) if (Finite(&v[i], 1) && v[i] > 0) g_liveSizes[g_liveN++] = v[i];
+			g_liveFrame = 0;
+			if (g_liveN) LivePlace(g_liveSizes[0]);   // in this frame, before its particle update and render
+		}
+	}
+	else if (!strcmp(cmd, "flashdisarm")) { if (g_live) { SafeRelease(g_live); g_live = 0; } g_liveFrame = -1; }
 	else if (!strcmp(cmd, "flashgrow")) {   // flashgrow <size on drawn frame 1> <2> ... (up to 8; none = the particles' own life)
 		float v[8] = {};
 		int n = sscanf_s(rest, "%f %f %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);

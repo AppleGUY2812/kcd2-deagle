@@ -44,13 +44,16 @@ Deagle.cfg = {
 	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
 	-- "gun": the flash rides the muzzle, moved with the gun every frame (like CS2 / CoD / Ready or Not); "world": it stays
 	-- where it was fired
-	flashMode = "gun",
+	flashMode = "live",
+	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)
+	muzzleLight = "deagle.muzzle_light", muzzleLightLarge = "deagle.muzzle_large_light",   -- its light, per shot
+	flashLive = { 0.8, 1.0 },  -- the live flash's size on each frame it's seen (2 frames; 1 frame under 40 fps)
 	-- the flash's size on each frame it's seen (plugin), then gone; {} = the particles' own life. OFF: counting frames
 	-- from the emitter's first valid bounding box hid it before it was ever drawn (in game 2026-10-12: no flash at
 	-- all); a correct way is being researched (docs/muzzle_flash_research.md)
 	flashGrow = {},
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
-	debugZoom = { 4, 10 },    -- F10 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
+	debugZoom = { 4, 10 },    -- F2 / mouse 4 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
 	debugPathsMax = 3000,     -- line pieces kept (oldest go first)
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
@@ -362,6 +365,20 @@ function Deagle:MuzzleFlash(dir)
 	local fx = (phys and phys.blast >= c.physics.largeFlashBlast) and c.muzzleFxLarge or c.muzzleFx
 	if c.flashMode == "world" then
 		try("fx", Particle.SpawnEffect, fx, pos, dir, scale)
+	elseif c.flashMode == "live" and self.flashArmed and self.vmInFp and self.vmShown then
+		-- the live flash (armed when the gun came out, FlashArm): seen in the frame it's fired, for 2 frames, 1 under
+		-- 40 fps (Ready or Not: 0.035-0.04 s); its light from a short per-shot emitter on the muzzle
+		local sizes = c.flashLive
+		local n = (self.frameDt or 0.016) > 1 / 40 and 1 or #sizes
+		self:Native("flashshot " .. table.concat(sizes, " ", 1, n))
+		local vm = self.vmId and System.GetEntity(self.vmId)
+		local okM, lp, ld = false, nil, nil
+		if vm then okM, lp, ld = pcall(self.MuzzleLocal, self, vm) end
+		if okM then
+			local light = (fx == c.muzzleFxLarge) and c.muzzleLightLarge or c.muzzleLight
+			self:Native(string.format("flashfx %s %.4f %.4f %.4f %.4f %.4f %.4f %.4f", light, scale, lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
+			self.flashUntil = System.GetCurrTime() + FLASH_FOLLOW
+		end
 	elseif self.vmInFp and self.vmShown then
 		local vm = self.vmId and System.GetEntity(self.vmId)
 		local okM, lp, ld = false, "no viewmodel", nil
@@ -395,6 +412,30 @@ function Deagle:MuzzleLocal(vm)
 	return { x = vdot(r, X), y = vdot(r, Y), z = vdot(r, Z) }, vnorm({ x = vdot(d, X), y = vdot(d, Y), z = vdot(d, Z) })
 end
 
+-- The live flash (flashMode "live"): once the gun is out and placed, the plugin keeps one never-stopping flash emitter
+-- on its muzzle at a size of nothing (native/src/main.cpp "the live flash"); a shot scales it up for the frames it's
+-- seen. Armed again for another gun or blast size; let go when the gun goes away.
+function Deagle:FlashArm()
+	local c = self.cfg
+	if c.flashMode ~= "live" or not self.native or not (self.vmShown and self.vmInFp) then return end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm or System.GetCurrTime() - (self.vmShownAt or 0) < 0.2 then return end   -- the plugin has placed the gun
+	local phys = self:ShotPhysics()
+	local scale = (phys and c.physics.flashPerUnit * phys.blast or 1) * c.muzzleFxScale
+	local fx = (phys and phys.blast >= c.physics.largeFlashBlast) and c.muzzleFxLargeLive or c.muzzleFxLive
+	local key = tostring(self.vmId) .. fx .. string.format("%.3f", scale)
+	if self.flashArmed == key then return end
+	local ok, lp, ld = pcall(self.MuzzleLocal, self, vm)
+	if not ok then return end
+	self:Native(string.format("flasharm %s %.4f %.4f %.4f %.4f %.4f %.4f %.4f", fx, scale, lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
+	self.flashArmed = key
+end
+
+function Deagle:FlashDisarm()
+	if self.flashArmed then self:Native("flashdisarm") end
+	self.flashArmed = nil
+end
+
 -- every frame while a flash burns: the muzzle moves with the shot animation; afterwards the plugin lets go
 function Deagle:FlashFollow()
 	if not self.flashUntil then return end
@@ -410,7 +451,7 @@ function Deagle:FlashFollow()
 end
 
 -- slow motion for checking effects (F9): KCD2 has CryEngine's t_Scale
--- Debug zoom (F10 / deagle_zoom): steps through cfg.debugZoom (x4, x10) and back to normal, to look at impacts, holes
+-- Debug zoom (F2 or mouse button 4 / deagle_zoom): steps through cfg.debugZoom (x4, x10) and back to normal, to look at impacts, holes
 -- and tracers far away. The gun is hidden from view while zoomed (it would fill the screen); it keeps working.
 function Deagle:SetZoom(factor)
 	self.zoom = factor and factor > 1 and factor or nil
@@ -1834,6 +1875,7 @@ function Deagle:VmTick(token)
 	if self.vmTickT and now > self.vmTickT then self.frameDt = math.min(0.1, now - self.vmTickT) end   -- a round's first step
 	self.vmTickT = now
 	self:VmPlace()
+	self:FlashArm()
 	if self.MotionTick then self:MotionTick() end
 	self:HoldGameMapsOff()
 	if (self.zoom ~= nil) ~= (self.vmZoomHidden == true) then     -- the gun out of view while the debug zoom is on
@@ -2040,6 +2082,7 @@ end
 -- draw / holster
 -- ---------------------------------------------------------------------------
 function Deagle:VmShow()
+	self.vmShownAt = System.GetCurrTime()
 	self.vmHolstering = false
 	local vm = self:VmEntity()
 	if not vm then return end
@@ -2065,6 +2108,7 @@ end
 
 function Deagle:VmHide()
 	self.vmShown, self.vmZoomHidden = false, false
+	self:FlashDisarm()
 	self.vmToken = (self.vmToken or 0) + 1
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if vm then pcall(vm.Hide, vm, 1) end
@@ -2170,7 +2214,7 @@ function Deagle:OnAction(action, activation)
 		if activation == "press" then self:SlowMo(not self.slowOn) end
 		return true
 	end
-	if action == "deagle_zoom" then
+	if action == "deagle_zoom" or action == "deagle_zoom_mouse" then   -- F2 / mouse side button (KCD2 uses F10)
 		if activation == "press" then self:CycleZoom() end
 		return true
 	end
@@ -2246,6 +2290,7 @@ function Deagle:OnGameplayStarted()
 	self.inputLoaded = false
 	self:EnsureInit()
 	self.vmId, self.casePool, self.flashUntil = nil, nil, nil   -- a load ends the old world: its ids may now name other entities
+	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
@@ -2326,7 +2371,7 @@ function Deagle:DevLua(line)
 end
 
 System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
-System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F10 steps x4, x10, off")
+System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")
 System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")

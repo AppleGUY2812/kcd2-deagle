@@ -12,6 +12,8 @@ bad, n = [], 0
 for eff in lib.findall("Particles"):
     if not eff.get("Name", "").startswith("muzzle") or eff.get("Name") == "muzzle_smoke":
         continue
+    if eff.get("Name", "").endswith("_live"):   # continuous: always alive, shown by the plugin moving it (no spawn delay)
+        continue
     for part in eff.iter("Particles"):
         prm = part.find("Params")
         if part is eff or prm is None or prm.get("Enabled") == "false":
