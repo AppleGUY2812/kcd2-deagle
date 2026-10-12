@@ -83,7 +83,9 @@ blended("handover idle1 -> ads", first("idle1"), first("ads"), R["ads"])
 for a, r in (("reload_empty", "ads"), ("draw", "ads"), ("draw_empty", "ads_empty")):
     blended(f"handover {a} -> {r}", at(a, L(a) - R["lead"]), first(r), R["lead"])
 # rest -> clip
-for r, b, bl in (("idle1", "shoot1", R["blend"]), ("idle1", "shoot_empty", R["blend"]), ("idle1", "reload", R["blend"]), ("idle1", "inspect", R["blend"]),
+instant("start idle1 -> shoot1 (kick on the next frame)", first("idle1"), first("shoot1"))
+instant("start idle1 -> shoot_empty", first("idle1"), first("shoot_empty"))
+for r, b, bl in (("idle1", "reload", R["blend"]), ("idle1", "inspect", R["blend"]),
                  ("idle1", "holster", R["blend"]), ("idle_empty", "reload_empty", R["blend"]), ("idle_empty", "inspect_empty", R["blend"]),
                  ("idle_empty", "holster_empty", R["blend"]), ("ads", "reload", R["cut"]), ("ads_empty", "reload_empty", R["cut"]),
                  ("ads", "holster", R["cut"]), ("ads_empty", "holster_empty", R["cut"]), ("idle1", "ads", R["ads"]), ("idle_empty", "ads_empty", R["ads"]),

@@ -789,6 +789,7 @@ function Deagle:VmBlendFor(key)
 		return c.cutBlend
 	end
 	if (cur.key == "ads" or cur.key == "adsEmpty") and not REST[key] then return c.cutBlend end
+	if SHOTS[key] and REST[cur.key] then return 0 end   -- the kick lands on the next frame (idle = the shot's first frame)
 	return c.blend
 end
 

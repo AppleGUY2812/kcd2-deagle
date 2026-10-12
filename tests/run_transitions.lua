@@ -24,10 +24,10 @@ expect("draw blocks fire / reload / inspect", since(m), "draw/0.08 idle1/0.00")
 expect("  ...nothing else started", tostring(select(2, since(m):gsub("/", ""))), "2")
 
 reset(7); m = mark(); act("deagle_fire"); M.advance(0.25); act("deagle_fire"); M.advance(2.0)
-expect("refire mid-recoil blends 0.12", since(m), "/0.08 shoot2/0.12 idle1/0.00")
+expect("refire mid-recoil blends 0.12", since(m), "/0.00 shoot2/0.12 idle1/0.00")
 
 reset(7); m = mark(); act("deagle_fire"); M.advance(0.1); act("deagle_reload"); M.advance(3.0)
-expect("reload cuts a shot over 0.2", since(m), "/0.08 reload/0.20")
+expect("reload cuts a shot over 0.2", since(m), "/0.00 reload/0.20")
 expect("reload end -> idle instantly", since(m), "reload/0.20 idle1/0.00")
 
 reset(7); m = mark(); act("deagle_inspect"); M.advance(1.0); act("deagle_inspect"); M.advance(0.2); act("deagle_fire"); M.advance(2.0)
@@ -63,7 +63,7 @@ m = mark(); act("deagle_toggle"); M.advance(0.2); act("deagle_aim"); M.advance(1
 expect("aim held through draw hands over at 0.2", since(m), "draw/0.08 ads/0.20")
 act("deagle_aim", "release"); M.advance(0.5)
 reset(7); m = mark(); act("deagle_fire"); M.advance(0.1); act("deagle_aim"); M.advance(0.5)
-expect("aim cuts a hip shot over 0.2", since(m), "/0.08 ads/0.20")
+expect("aim cuts a hip shot over 0.2", since(m), "/0.00 ads/0.20")
 act("deagle_aim", "release"); M.advance(0.5)
 reset(7); m = mark(); act("deagle_inspect"); M.advance(1.0); act("deagle_aim"); M.advance(0.5)
 expect("aim cuts inspect over 0.3", since(m), "inspect/0.08 ads/0.30")
