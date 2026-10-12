@@ -13,6 +13,17 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
       native plugin (WHGame.dll: PlayRagdollHitReaction, wh_HitReaction_*, knockdownChance, hitStrength).
 - Outcome decides: native projectile + our tracer / own flight + native hits / everything ours.
 
+### Probe findings (offline, 2026-10-12)
+- Firearms are MissileWeapon class 13 ("rifle", skill marksmanship: handgonneNormal01, handgunFancy01, hook guns),
+  ammo classes 3 Ball / 4 Shotgun (shot_ball smash 250, shot_scatter smash 200, battle_shot stab 50), like bows.
+- Projectiles are stock CryEngine weapon-system ammo: Scripts/Entities/Items/XML/Ammo/Arrow.xml (class Arrow; physics
+  particle: mass 0.3, speed 60, gravity -9, water resistance, pierceability, trail effect, whiz sound, hitRecoil Level2
+  / hitRecoilArmorMode Level1). No separate bullet file: guns fire the Arrow projectile with the ammo item's damage.
+- Plan: our own Scripts/Entities/Items/XML/Ammo/DeagleBullet.xml (speed, mass, gravity, tracer trail, hitRecoil),
+  then launch it: SpawnEntity of that class from Lua if it flies, else the native plugin calls the weapon system's
+  ammo spawn + launch (find it in WHGame.dll like the camera hook).
+- Live: list the projectile entity while a hand cannon round is in flight; try spawning the class from Lua.
+
 ## Phase 1: flight
 - [ ] Projectile per round: position, velocity, gravity, air drag (ballistic coefficient), time of flight, max range
 - [ ] Hit test each frame along the path (segment ray from last position to new position)
