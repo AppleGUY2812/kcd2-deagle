@@ -147,8 +147,8 @@ do
 		-- faster (measured against YabrakProds' own video of the mod: reload back at idle ~1.7 s, as at 30 fps)
 		rate = { default = 30 / 24, shoot = 40 / 24, shootAdd = 40 / 24 },
 		-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
-		times = { reload = { cancel = 0.375, ready = 2.375, seat = 1.375, trim = 2.375 },
-			reloadEmpty = { cancel = 0.333, ready = 2.292, seat = 1.125, trim = 2.542 },
+		times = { reload = { cancel = 0.375, out = 0.833, ready = 2.375, seat = 1.375, trim = 2.375 },
+			reloadEmpty = { cancel = 0.333, out = 0.333, ready = 2.292, seat = 1.125, trim = 2.542 },
 			inspect = { trim = 5.833 }, inspectEmpty = { trim = 5.833 },
 			draw = { ready = 0.958, trim = 1.292 }, drawEmpty = { ready = 0.958, trim = 1.292 } } })
 end
@@ -501,21 +501,19 @@ function Deagle:Fire(force, burstRound)
 	if s.reloading then
 		-- the new mag is in: the shot goes off the moment the gun is back up
 		if s.magSeated then s.fireQueued = true return end
-		-- before that a shot cancels the reload (the rounds you had stay, no new ones). Once the old mag has left the
-		-- gun the magazines are mid-swap: they're hidden while the hands blend back (guns without mag pieces can only
-		-- cancel before that)
-		local midSwap = System.GetCurrTime() >= (s.reloadCancel or 0)
-		if midSwap and not self.gun.mags then return end
+		-- before that, staged like Insurgency: Sandstorm: while the old mag is still in the gun a shot cancels the
+		-- reload and the rounds stay; once it's out, the shot is the round in the chamber and the gun has no mag until
+		-- the next reload. An empty gun has nothing to fire: the reload goes on.
+		if s.ammo <= 0 then return end
+		local now = System.GetCurrTime()
+		local spareInView = now >= (s.reloadCancel or 0)    -- the spare is in the hand: the mags would fly in a blend
+		if spareInView and not self.gun.mags then return end -- (no mag pieces to hide: only before that)
+		local out = now >= (s.reloadOut or math.huge)
 		self:CancelReload()
-		if midSwap and not self.cfg.cancelKeepsRounds then
-			s.ammo, s.magOut = math.min(s.ammo, 1), true     -- the old mag is out: the chambered round is all there is
+		if out and not self.cfg.cancelKeepsRounds then
+			s.ammo, s.magOut = math.min(s.ammo, 1), true
 		end
-		if midSwap then self:VmMagsHidden(self.cfg.vm.cutBlend) end
-		if s.ammo <= 0 then        -- an empty gun: the click, and the hands go back to the rest pose
-			self:Shoot(force)
-			self:VmPlay(self:VmRestKey(), true, 1.0, self.cfg.vm.cutBlend)
-			return
-		end
+		if spareInView then self:VmMagsHidden(self.cfg.vm.cutBlend) end
 	end
 	local aimed, wasLast = s.aiming, s.ammo == 1
 	if not self:Shoot(force) then return end
@@ -584,7 +582,9 @@ end
 -- the gun, a shot cancels the reload: the rounds you had stay, no new ones.
 function Deagle:Reload()
 	local s, c = self.state, self.cfg
-	if s.reloading or s.ammo >= c.magSize or self:VmDrawing() or self.vmHolstering then return end
+	-- a round in the chamber stays there: a fresh mag on top of it makes magSize + 1 (Deagle 7+1, Glock 17+1)
+	local capacity = c.magSize + (s.ammo > 0 and 1 or 0)
+	if s.reloading or s.ammo >= capacity or self:VmDrawing() or self.vmHolstering then return end
 	if c.useAmmoItems and self:CountOf(c.ammoId) <= 0 then
 		self:Notify("No .50 AE cartridges")
 		return
@@ -598,6 +598,8 @@ function Deagle:Reload()
 	s.reloading, s.magSeated = true, false
 	s.reloadEnd = now + ready
 	s.reloadCancel = now + (self:ClipTime(key, "cancel") or 0)
+	s.reloadOut = now + (self:ClipTime(key, "out") or self:ClipTime(key, "cancel") or 0)
+	s.reloadTarget = capacity
 	local this = s.reloadEnd
 	local function mine() return Deagle.state.reloading and Deagle.state.reloadEnd == this end
 	self:Notify("Desert Eagle  reloading...")
@@ -619,7 +621,7 @@ function Deagle:SeatMag()
 	if s.magSeated then return end
 	s.magSeated = true
 	self:VmMagIn()
-	local take = c.magSize - s.ammo
+	local take = (s.reloadTarget or c.magSize) - s.ammo
 	if c.useAmmoItems then
 		take = math.min(take, self:CountOf(c.ammoId))
 		if take > 0 then

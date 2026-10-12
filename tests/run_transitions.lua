@@ -53,26 +53,31 @@ expect("empty gun: draw_empty -> idle_empty", since(m), "draw_empty/0.08 idle_em
 m = mark(); act("deagle_reload"); M.advance(3.2)
 expect("empty reload settles into idle", since(m), "reload_empty/0.08 idle1/0.10")
 
--- reload timing (Deagle times / rate 1.25): mag seated 1.23 s, ready 1.90 s, clean cancel until 0.30 s
-reset(3); act("deagle_reload"); M.advance(1.3)
-expect("ammo goes in when the mag seats", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading), "7 true")
-M.advance(0.65)
+-- reload timing (Deagle times / rate 1.25): mag clicks in 1.10 s, ready 1.90 s, clean cancel until 0.30 s, old mag out
+-- at 0.67 s. Staged like Insurgency: Sandstorm; a chambered round stays (7 + 1).
+reset(3); act("deagle_reload"); M.advance(1.15)
+expect("the mag clicks in: 7 + the chambered round", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading), "8 true")
+M.advance(0.8)
 expect("  ...and the reload is over once the gun is up", tostring(Deagle.state.reloading), "false")
 reset(3); m = mark(); act("deagle_reload"); M.advance(0.15); act("deagle_fire"); M.advance(1.5)
-expect("a shot before the mag leaves cancels the reload", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. since(m), "2 false reload/0.08 shoot")
-reset(3); act("deagle_reload"); M.advance(0.6); act("deagle_fire"); M.advance(0.05)
+expect("a shot before the spare shows cancels cleanly", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. since(m), "2 false reload/0.08 shoot")
+reset(3); act("deagle_reload"); M.advance(0.5); act("deagle_fire"); M.advance(0.05)
 local hiddenMid = tostring(M.hidden and M.hidden.vm_mag1) .. "/" .. tostring(M.hidden and M.hidden.vm_mag2)
 M.advance(0.4)
--- realistic: the old mag is out, so the shot is the chambered round and the gun stays without a mag
-expect("a shot mid-swap fires the chambered round, no mag after", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. hiddenMid .. " then " .. tostring(M.hidden.vm_mag1), "0 false true/true then true")
+expect("old mag still in: the rounds stay (mags hidden in the blend)", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. hiddenMid .. " then " .. tostring(M.hidden.vm_mag1), "2 false true/true then false")
+reset(3); act("deagle_reload"); M.advance(0.8); act("deagle_fire"); M.advance(0.5)
+expect("old mag out: the chambered round fires, no mag after", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " mag hidden " .. tostring(M.hidden.vm_mag1), "0 false mag hidden true")
 act("deagle_reload"); M.advance(0.7); local magBack = tostring(M.hidden.vm_mag1); M.advance(2.6)
-expect("  ...the next reload brings a mag back (new mag in the hand)", magBack .. " ammo " .. Deagle.state.ammo, "false ammo 7")
+expect("  ...the next reload brings a mag back (empty: 7)", magBack .. " ammo " .. Deagle.state.ammo, "false ammo 7")
 reset(3); act("deagle_reload"); M.advance(1.5); act("deagle_fire"); M.advance(0.05)
 local queued = Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading)
 M.advance(0.6)
-expect("after the mag is in, the shot waits for the gun to come up", queued .. " -> " .. Deagle.state.ammo, "7 true -> 6")
+expect("after the click, the shot waits for the gun to come up", queued .. " -> " .. Deagle.state.ammo, "8 true -> 7")
 reset(0); m = mark(); act("deagle_reload"); M.advance(0.1); act("deagle_fire"); M.advance(0.5)
-expect("an empty reload cancels to the empty idle", tostring(Deagle.state.reloading) .. " " .. since(m), "false reload_empty/0.08 idle_empty/0.20")
+expect("an empty gun has nothing to fire: the reload goes on", tostring(Deagle.state.reloading) .. " " .. since(m), "true reload_empty/0.08")
+M.advance(3.0)
+reset(8); act("deagle_reload"); M.advance(0.2)
+expect("7 + 1 is full: no reload", tostring(Deagle.state.reloading), "false")
 
 Deagle.cfg.vm.ads = true
 reset(6); m = mark(); act("deagle_aim"); M.advance(0.3); act("deagle_reload"); M.advance(3.2)

@@ -41,5 +41,5 @@ Deagle:RegisterGun("glock_17", {
 	newMagAt = 1.65,
 	burstGap = 0.08,   -- seconds between burst rounds, from the burst clip's slide cycles
 	-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
-	times = { reload = { cancel = 0.3, ready = 1.833, seat = 1.167, trim = 1.833 }, reloadEmpty = { cancel = 0.267, ready = 1.867, seat = 0.733, trim = 1.867 }, inspect = { trim = 4.2 }, inspectEmpty = { trim = 4.2 }, draw = { ready = 0.967, trim = 1.133 }, drawEmpty = { ready = 0.967, trim = 1.133 } },
+	times = { reload = { cancel = 0.3, out = 0.633, ready = 1.833, seat = 1.167, trim = 1.833 }, reloadEmpty = { cancel = 0.267, out = 0.367, ready = 1.867, seat = 0.733, trim = 1.867 }, inspect = { trim = 4.2 }, inspectEmpty = { trim = 4.2 }, draw = { ready = 0.967, trim = 1.133 }, drawEmpty = { ready = 0.967, trim = 1.133 } },
 })

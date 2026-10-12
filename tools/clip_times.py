@@ -2,6 +2,7 @@
 """When each clip's work is done, measured from its tracks (tools/vm_tracks_dump.py, tools/gb/gb_tracks_dump.py),
 in clip-timeline seconds (frames / the clip's fps), for the script's reload / inspect / draw timing:
   cancel  until then a shot cancels a reload cleanly: the old mag is still in and the spare still off screen
+  out     the old mag leaves the gun: before it a cancelled reload keeps the rounds, after it only the chambered one
   seat    the new mag clicks in (its mag-in sound; else when it sits in the gun for good): the ammo goes in
   ready   the gun is back near its firing pose (30 mm / 10 deg; 3 mm / 1 deg when the clip ends with the spare mag
           seated, because the cut out of it switches to idle first), and on an empty reload the slide has closed:
@@ -54,7 +55,10 @@ def times(t, cues=None, swap=()):
                     j -= 1
                 if j < n:
                     k = min(k, j)
-            r["cancel"], r["seat"] = c / fps, k / fps
+            o = 0                                # the old mag leaves the gun (it was seated at the start)
+            while o < n and abs(mag_at(fr[o], "j_mag1") - seated) <= 3:
+                o += 1
+            r["cancel"], r["seat"], r["out"] = c / fps, k / fps, o / fps
         # the magazine's click (its mag-in sound) is the moment it's in: the ammo counts from there
         if clip.startswith("reload") and cues:
             clicks = [c[0] for c in cues.get(key, []) if re.search(r"mag_?in(?![a-z])", c[1].lower())]
