@@ -1,7 +1,7 @@
 # Builds deagle_native.asi with MSVC (VS 2022) from a Windows-side copy of the sources.
 $ErrorActionPreference = "Stop"
 $src = $args[0]; $out = $args[1]
-$work = "C:\Users\<user>\AppData\Local\Temp\kcd2re\native"
+$work = "E:\Tools\deagle-work\native-build"
 if (Test-Path $work) { Remove-Item -Recurse -Force "$work\src","$work\CMakeLists.txt" -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force $work | Out-Null
 robocopy $src $work /E /XD build .git /NFL /NDL /NJH /NJS /NP | Out-Null

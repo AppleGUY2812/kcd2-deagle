@@ -1,4 +1,4 @@
-# Deagle mod — status (updated 2026-10-11 20:00)
+# Deagle mod — status (updated 2026-10-11 21:00)
 
 ## Fixed after the first test (built, install when the game is closed)
 - Slide stuck back after reload: the aimed recoil (additive, layer 1) held its last frame forever; layer now cleared

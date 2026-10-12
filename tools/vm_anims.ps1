@@ -25,4 +25,4 @@ Set-Location $AR
 Remove-Item -Recurse -Force "$AR\out" -ErrorAction SilentlyContinue
 & $RC 'Animations\deagle_vm\*.i_caf' /animConfigFolder=Animations /SourceRoot=$AR /TargetRoot="$AR\out" /p=PC /refresh /userdialog=0 /AnimationsCafFilePath=Animations/Animations.img | Select-String 'rror|arning' | Select-Object -First 8 | % Line
 "CAF: " + ((Get-ChildItem "$AR\out\Animations\deagle_vm\*.caf" | % { $_.Name + ' ' + $_.Length }) -join ', ')
-Copy-Item "$AR\out\Animations\Animations.img" 'C:\Users\<user>\AppData\Local\Temp\kcd2re\deagle_vm_anims.img' -Force
+Copy-Item "$AR\out\Animations\Animations.img" 'E:\Tools\deagle-work\out\deagle_vm_anims.img' -Force
