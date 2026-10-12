@@ -28,7 +28,7 @@ local modes = Deagle:FireModes()
 for i = 1, #modes do
 	local mode = Deagle:FireMode()
 	Deagle.state.ammo = g.magSize; M.advance(0.5)
-	local before, a0 = Deagle.state.ammo, #M.anims
+	local before, a0, n0 = Deagle.state.ammo, #M.anims, #M.native
 	if mode == "auto" then
 		Deagle:OnAction("deagle_fire", "press"); M.advance(0.55); Deagle:OnAction("deagle_fire", "release"); M.advance(0.5)
 	else
@@ -37,7 +37,12 @@ for i = 1, #modes do
 	local after = Deagle.state.ammo; M.advance(1.0)
 	local started = {}
 	for i = a0 + 1, #M.anims do started[#started + 1] = M.anims[i].name .. "@" .. M.anims[i].layer end
-	modeResults[#modeResults + 1] = { mode = mode, used = before - after, started = table.concat(started, " ") }
+	local shots = 0
+	for i = n0 + 1, #M.native do
+		local f = M.native[i]:match("^%[DN%] snd (%S+)")
+		for _, sf in ipairs(g.shotSounds or {}) do if f == sf then shots = shots + 1 end end
+	end
+	modeResults[#modeResults + 1] = { mode = mode, used = before - after, started = table.concat(started, " "), shots = shots }
 	act("deagle_firemode"); M.advance(0.1)
 end
 -- burst during an inspect: the burst cuts it (it used to stack recoil on the inspect, firing from a sideways gun)
@@ -86,6 +91,7 @@ for _, r in ipairs(modeResults) do
 	local want = (r.mode == "semi" and 1) or (r.mode == "burst" and 3) or nil
 	local ok = want and r.used == want or (r.mode == "auto" and r.used >= 3)
 	check(string.format("%s fire: %d round(s) per trigger", r.mode, r.used), ok, r.used)
+	check(string.format("%s fire: a gunshot per round (%d for %d)", r.mode, r.shots, r.used), r.shots == r.used, r.shots)
 	if r.mode == "burst" and g.anims.shootBurst then
 		local _, n = r.started:gsub(g.anims.shootBurst[1] .. "@0", "")
 		check("burst plays its burst clip once: " .. r.started, n == 1, r.started)

@@ -482,8 +482,11 @@ function Deagle:Fire(force, burstRound)
 	if burstRound and anims.shootBurst and not aimed then
 		-- the burst clip shows every round: the first round starts it, the others only fire; a round that empties
 		-- the gun cuts it with the last shot (slide locks back)
-		if wasLast then self:VmPlay("shootEmpty", false)
-		elseif burstRound == 1 then self:VmPlay("shootBurst", false) end
+		if wasLast then self:VmPlay("shootEmpty", false)                 -- its cue is the gunshot
+		else
+			if burstRound == 1 then self:VmPlay("shootBurst", false) end
+			self:PlayCues("shoot")                                       -- every round's gunshot (the clip has none)
+		end
 	elseif aimed or (self:FireMode() ~= "semi" and anims.shootAdd) then
 		-- rapid fire stacks recoil on the rest pose; a clip still playing (inspect, a reload's settle) is cut first
 		if self:VmBusy() and not SHOTS[self.vmAnim.key] then self:VmPlay(self:VmRestKey(), true, 1.0) end
