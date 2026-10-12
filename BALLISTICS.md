@@ -88,6 +88,18 @@ barrel length. Derived:
 Games: Tarkov = per-gun vertical / horizontal recoil + ergonomics, modified by stock / muzzle / ammo (tuned stats);
 Arma 3 = weight -> inertia, resting / bipod cut recoil; Ready or Not = procedural recoil with visible recovery.
 
+## Ready or Not reference (from another session's check of the user's install, 2026-10-12)
+- Paks are legacy .pak v11, NOT encrypted (EncryptionKeyGuid zero, index unencrypted), no anti-cheat strings: FModel
+  (UE 5.3 + a Mappings.usmap) reads them; weapons under ReadyOrNot/Assets/Weapons/<Gun>, anims export as .psa; sounds
+  are FMOD banks (Content/FMOD/Desktop/weapons.bank). Guide: https://claude.ai/artifact/JBEUcq8rpza61kB4y2Hoaj
+- Recoil (property names only, values unread): procedural rotation + translation kick (ProcRecoil_Rot / _Trans) with
+  buildup over sustained fire, first-shot strength, pitch / yaw multipliers, damping, partial return to aim
+  (RecoilReturnPercentage / Rate / InterpSpeed), randomness, ADS multiplier, movement multiplier, per-attachment
+  modifiers. Looks per-gun hand-tuned, not derived from caliber or mass -> use its model shape (kick + buildup +
+  damped partial return) and derive our parameters from the cartridge; read one gun's values to calibrate.
+- Ballistics: real projectiles (speed, drag, gravity scale), damage falloff, penetration by material depth / density,
+  ricochet chance, armor-piercing, armor coverage / level, an ammo data table per caliber: same shape as our plan.
+
 ## Decided
 - **Small rounds bounce off plate** (2026-10-12, for fun, even though a 9 mm would often get through): plate deflects
   anything under an energy threshold with sparks, a ping and a ricochet; big rounds (.50 AE and up) go through.
