@@ -175,13 +175,28 @@ static bool LocFromDir(const float* pos, const float* dir, float scale, float* l
 	return true;
 }
 
+static bool g_fxsSeed = false;   // fxsseed 1: write the box at spawn too (with it, 0.4 s pieces didn't show either)
 // tracer pieces spawned by fxs: held 2 s, then let go (oldest first; a full ring lets the oldest go early)
-struct HeldPiece { uintptr_t em; LARGE_INTEGER born; };
+struct HeldPiece { uintptr_t em; LARGE_INTEGER born; float loc[8]; int touches; };
 static HeldPiece g_held[1024]; static int g_heldHead = 0, g_heldN = 0;
-static void HoldPiece(uintptr_t em) {
+static void HoldPiece(uintptr_t em, const float* loc) {
 	if (g_heldN == 1024) { SafeRelease(g_held[g_heldHead].em); g_heldHead = (g_heldHead + 1) % 1024; g_heldN--; }
 	int i = (g_heldHead + g_heldN) % 1024;
-	g_held[i].em = em; QueryPerformanceCounter(&g_held[i].born); g_heldN++;
+	g_held[i].em = em; QueryPerformanceCounter(&g_held[i].born); memcpy(g_held[i].loc, loc, sizeof(g_held[i].loc));
+	g_held[i].touches = 3; g_heldN++;
+}
+// every camera step: set each new piece's location again (the same place) for its first frames, the way a flash is
+// moved onto the muzzle every frame; a moved emitter is drawn a frame after its spawn (the flash), a new one left alone
+// isn't drawn for ~0.3 s (pieces living under 0.4 s never showed, in game 2026-10-12)
+static void TouchPieces() {
+	for (int j = 0; j < g_heldN; j++) {
+		HeldPiece& h = g_held[(g_heldHead + j) % 1024];
+		if (h.touches <= 0) continue;
+		h.touches--;
+		float box[6]; bool had = BoxValid(h.em) && ReadBox(h.em, box);
+		SafeSetLocation(h.em, h.loc);
+		if (had) WriteBox(h.em, box);
+	}
 }
 static void ReleaseOldPieces(bool all) {
 	LARGE_INTEGER now, f; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&f);
@@ -631,6 +646,7 @@ static void Command(const char* line) {
 			}
 		}
 	}
+	else if (!strcmp(cmd, "fxsseed")) g_fxsSeed = atoi(rest) != 0;
 	else if (!strcmp(cmd, "fxs")) {   // fxs <effect> <scale> <len m> <pos xyz> <dir xyz>: a world effect (a tracer piece) seen
 		// from its first frame: a new emitter starts with an empty bounding box and is skipped until an update gives it
 		// one, which a 0.12 s piece may never get (Lua-spawned single pieces never showed, 2026-10-12): it gets the box
@@ -646,8 +662,8 @@ static void Command(const char* line) {
 					float e = p[k] + (dl > 0 ? d[k] / dl : 0) * len;
 					box[k] = (p[k] < e ? p[k] : e) - 0.15f; box[3 + k] = (p[k] > e ? p[k] : e) + 0.15f;
 				}
-				WriteBox(em, box);
-				HoldPiece(em);
+				if (g_fxsSeed) WriteBox(em, box);
+				HoldPiece(em, loc);
 			}
 			else { static int said = 0; if (said++ < 5) Log("fxs: %s didn't spawn", effect); }
 		}
@@ -789,6 +805,7 @@ static void OnCamera(uintptr_t camera) {
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
 	if (g_fmod) { UpdateListener(g_cam); fm.update(g_fmod); }
 	ApplyFilters();
+	TouchPieces();
 	ReleaseOldPieces(false);
 	{   // tell Lua when the free camera comes and goes (its look mode, the aim line)
 		static bool fcWas = false;

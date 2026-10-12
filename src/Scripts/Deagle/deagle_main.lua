@@ -26,9 +26,12 @@ Deagle.cfg = {
 	-- scale 3 = 3x longer). anchor: where the effect sits on its piece (mid / start / end, by how its streak extends;
 	-- the pieces streak forward from their start). spawn "plugin": the plugin spawns each piece with its bounding box
 	-- set, so the engine draws it at once (Lua-spawned 0.12 s pieces never showed); "lua": Particle.SpawnEffect.
-	-- fx deagle_tracers.trail_25 / trail_40: pieces that stay longer
-	tracer = { mode = "trail", fx = "deagle_tracers.trail", dash = 1.0, start = 1.0, scaled = true, anchor = "start",
-		spawn = "plugin" },
+	-- fx: in game 2026-10-12, single Lua-spawned pieces showed only with 0.4 s of life (trail_40, "like a shooting
+	-- star"); 0.12 / 0.25 s never did, nor plugin-spawned ones with a box written at spawn. The plugin now sets each
+	-- new piece's location again for its first frames, as it moves the flash (seen a frame after its spawn): to test
+	-- with spawn "plugin" and fx deagle_tracers.trail
+	tracer = { mode = "trail", fx = "deagle_tracers.trail_40", dash = 1.0, start = 1.0, scaled = true, anchor = "start",
+		spawn = "lua" },
 	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
 	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
 	accuracy = { scale = 1, crouchEye = 1.27, crouchBand = 0.05 },
