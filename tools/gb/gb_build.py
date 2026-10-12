@@ -445,7 +445,16 @@ if rbones:
         rounds = next(o for o in bpy.context.selected_objects if o is not skin)
         rounds.name = f"{NAME}_rounds"
         note(f"magazine rounds ({rb}) split into their own skin: {len(rounds.data.vertices)} verts")
+# one skin per round (<slug>_vm_round_1 = the top one, nearest the slide): the script shows as many as the mag holds
+round_objs = []
+if rounds:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from split_rounds import split_rounds
+    top = B.get("slide") or B.get("gun")
+    round_objs = split_rounds(rounds, arm.matrix_world @ arm.data.bones[top].head_local, f"{NAME}_round_{{}}")
+    note(f"magazine rounds: {len(round_objs)} modelled, one skin each")
 info["has_rounds"] = rounds is not None
+info["rounds"] = len(round_objs)
 pm = bpy.data.meshes.new(f"{NAME}_proxy"); pm.from_pydata([(0, 0, 0), (0.001, 0, 0), (0, 0, 0.001)], [], [(0, 1, 2)])
 pm.materials.append(bpy.data.materials[f"{NAME}__01__{info['materials'][0]['sub']}__physNone"])
 proxy = bpy.data.objects.new(f"{NAME}_proxy", pm); scene.collection.objects.link(proxy); proxy.parent = arm
@@ -454,7 +463,7 @@ vg = proxy.vertex_groups.new(name=root); vg.add([0, 1, 2], 1.0, "REPLACE")
 md = proxy.modifiers.new("Armature", "ARMATURE"); md.object = arm
 bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); proxy.select_set(True); bpy.context.view_layer.objects.active = proxy
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="chr", node_name=NAME)
-for o, n in ((skin, f"{NAME}_skin"), (rounds, f"{NAME}_rounds")):
+for o, n in [(skin, f"{NAME}_skin")] + [(r, r.name) for r in round_objs]:
     if o:
         bpy.ops.object.select_all(action="DESELECT"); o.select_set(True); bpy.context.view_layer.objects.active = o
         bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name=n)

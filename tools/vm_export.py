@@ -149,6 +149,10 @@ bpy.ops.object.mode_set(mode="OBJECT")
 rounds = next(o for o in bpy.context.selected_objects if o is not skin)
 rounds.name = "deagle_vm_rounds"
 print("ROUNDS", n_sel, "faces ->", rounds.name, len(rounds.data.vertices), "verts; skin left", len(skin.data.vertices))
+# one skin per round (deagle_vm_round_1 = the top one): the script shows as many as the magazine holds
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from split_rounds import split_rounds
+round_objs = split_rounds(rounds, arm.matrix_world @ arm.data.bones["j_ammo_17"].head_local, "deagle_vm_round_{}")
 
 # ---- export nodes: chr (skeleton) + skin (mesh)
 # the toolkit wants a mesh in the chr node: a 1 mm triangle at the camera origin skinned to the root
@@ -161,8 +165,9 @@ bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); proxy.select
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="chr", node_name="deagle_vm")
 bpy.ops.object.select_all(action="DESELECT"); skin.select_set(True); bpy.context.view_layer.objects.active = skin
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name="deagle_vm_skin")
-bpy.ops.object.select_all(action="DESELECT"); rounds.select_set(True); bpy.context.view_layer.objects.active = rounds
-bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name="deagle_vm_rounds")
+for ro in round_objs:
+    bpy.ops.object.select_all(action="DESELECT"); ro.select_set(True); bpy.context.view_layer.objects.active = ro
+    bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name=ro.name)
 print("NODES", [c.name for c in bpy.data.collections if c.name.endswith((".chr", ".skin"))])
 os.makedirs(OUT, exist_ok=True)
 arm.animation_data.action = bpy.data.actions["@idle1"]; scene.frame_set(int(bpy.data.actions["@idle1"].frame_range[0]))

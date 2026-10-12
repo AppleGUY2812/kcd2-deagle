@@ -15,7 +15,10 @@ local function act(a, x) Deagle:OnAction(a, x or "press") end
 local log = {}
 local function step(label, fn) fn(); log[#log + 1] = string.format("%-26s ammo %2d  %s", label, Deagle.state.ammo, tostring(Deagle.vmAnim and Deagle.vmAnim.name)) end
 step("draw", function() act("deagle_toggle"); M.advance(2.0) end)
-step("fire the magazine", function() for _ = 1, g.magSize do act("deagle_fire"); M.advance(0.25) end M.advance(1.5) end)
+local roundsAfterOne, ammoAfterOne
+step("fire the magazine", function()
+	for i = 1, g.magSize do act("deagle_fire"); M.advance(0.25); if i == 1 then roundsAfterOne, ammoAfterOne = Deagle.vmRoundsShown, Deagle.state.ammo end end
+	M.advance(1.5) end)
 local roundsWhenEmpty = Deagle.vmRoundsShown
 step("inspect (empty)", function() act("deagle_inspect"); M.advance(6) end)
 step("empty reload", function() act("deagle_reload"); M.advance(4) end)
@@ -86,7 +89,9 @@ for _ in pairs(used) do roles = roles + 1 end
 check("every clip belongs to " .. id .. " (" .. roles .. " used)", #unknown == 0, table.concat(unknown, ", "))
 check("every sound is staged (" .. sounds .. " played)", #missing == 0, table.concat(missing, ", "))
 check("magazine refills to " .. g.magSize, ammoAfterReload == g.magSize, ammoAfterReload)
-check("empty magazine hides its rounds", (not g.rounds) or roundsWhenEmpty == false, roundsWhenEmpty)
+check("empty magazine hides its rounds", (not g.rounds) or roundsWhenEmpty == 0, roundsWhenEmpty)
+check(string.format("magazine shows what it holds (%s in it after the first shot, %s modelled)", tostring(roundsAfterOne), tostring(g.rounds)),
+	(not g.rounds) or g.rounds == true or roundsAfterOne == ammoAfterOne - 1, roundsAfterOne)   -- one round is in the chamber
 for _, r in ipairs(modeResults) do
 	local want = (r.mode == "semi" and 1) or (r.mode == "burst" and 3) or nil
 	local ok = want and r.used == want or (r.mode == "auto" and r.used >= 3)

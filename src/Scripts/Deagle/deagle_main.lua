@@ -132,7 +132,7 @@ do
 	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
 	for i = 1, 8 do shots[i] = "decho/decho-" .. i .. ".wav" end
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
-		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = true,
+		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
 		-- the clips were exported frame for frame at 24 fps, but the mod's sequences run at 30 (shots at 40): play them
 		-- faster (measured against YabrakProds' own video of the mod: reload back at idle ~1.7 s, as at 30 fps)
@@ -477,7 +477,7 @@ function Deagle:Fire(force, burstRound)
 	end
 	local aimed, wasLast = s.aiming, s.ammo == 1
 	if not self:Shoot(force) then return end
-	if s.ammo == 0 then self:VmRounds(false) end
+	self:VmRounds(self:MagRounds())          -- the next round went into the chamber
 	local anims = self.cfg.vm.anims
 	if burstRound and anims.shootBurst and not aimed then
 		-- the burst clip shows every round: the first round starts it, the others only fire; a round that empties
@@ -565,7 +565,7 @@ function Deagle:Reload()
 	self:UpdateAim()
 	if key == "reloadEmpty" and self.gun.newMagAt then
 		Script.SetTimer(math.floor(self.gun.newMagAt / self:Rate(key) * 1000), function()
-			if mine() then Deagle:VmRounds(true) end
+			if mine() then Deagle:VmRounds(Deagle.cfg.magSize) end   -- a full magazine in the hand
 		end)
 	end
 end
@@ -583,7 +583,7 @@ function Deagle:SeatMag()
 		end
 	end
 	s.ammo = s.ammo + take
-	self:VmRounds(s.ammo > 0)
+	self:VmRounds(self:MagRounds())
 end
 
 -- Called by the timer and polled from input, so a reload never gets stuck if timers are cleared.
@@ -600,7 +600,7 @@ end
 function Deagle:CancelReload()
 	local s = self.state
 	s.reloading, s.reloadEnd = false, nil
-	self:VmRounds(s.ammo > 0)
+	self:VmRounds(self:MagRounds())
 	self:ShowAmmo()
 end
 
@@ -701,12 +701,20 @@ function Deagle:VmEntity()
 	return vm
 end
 
--- the rounds in the gun's magazine (own skin attachment) show only while it holds any
-function Deagle:VmRounds(show)
+-- the rounds in the gun's magazine: one attachment per modelled round (vm_round_1 = the top one), so it shows what it holds
+function Deagle:VmRounds(n)
 	local vm = self.vmId and System.GetEntity(self.vmId)
-	if not vm or not self.gun.rounds or self.vmRoundsShown == show then return end
-	self.vmRoundsShown = show
-	pcall(vm.HideAttachment, vm, 0, "vm_rounds", not show, not show)
+	local r = self.gun.rounds
+	if not vm or not r or self.vmRoundsShown == n then return end
+	self.vmRoundsShown = n
+	if r == true then pcall(vm.HideAttachment, vm, 0, "vm_rounds", n <= 0, n <= 0) return end   -- one piece
+	for i = 1, r do pcall(vm.HideAttachment, vm, 0, "vm_round_" .. i, i > n, i > n) end
+end
+
+-- rounds in the magazine: with any ammo, one of them is in the chamber
+function Deagle:MagRounds()
+	local a = self.state.ammo
+	return a > 0 and a - 1 or 0
 end
 
 function Deagle:VmBone(name)
@@ -1038,7 +1046,7 @@ function Deagle:VmShow()
 	pcall(vm.Hide, vm, 0)
 	self:VmPlace()
 	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or "draw", false)
-	self:VmRounds(self.state.ammo > 0)
+	self:VmRounds(self:MagRounds())
 	self.vmToken = (self.vmToken or 0) + 1
 	local token = self.vmToken
 	Script.SetTimer(0, function() Deagle:VmTick(token) end)
