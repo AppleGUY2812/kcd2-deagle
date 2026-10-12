@@ -49,12 +49,16 @@ def flying(v):
     }
 
 
-def piece(life, fade=True):
-    # a still streak DASH m long: it creeps at 1 m/s along its direction and is stretched DASH / 2 s each way
+def piece(life, fade=True, forward=True):
+    # a still streak DASH m long: it creeps at 1 m/s along its direction and is stretched along it. forward: the whole
+    # streak reaches ahead of the particle (Stretch OffsetRatio=1, like KCD2's own shooting star), so it's full length
+    # from birth; a streak reaching back from its particle only grows as the particle ages (seen in game 2026-10-12:
+    # 0.15 m dashes). The effect sits at its piece's start (cfg.tracer.anchor "start").
     alpha = "ParticleAge=(v=1;t=0.45,v=1;t=1)" if fade else "1"
+    stretch = f"{DASH / 2:.3f},OffsetRatio=1" if forward else f"{DASH / 2:.3f}"
     base = {"Count": "1", "ParticleLifeTime": f"{life}", "OrientToVelocity": "true", "BlendType": "Additive",
             "Texture": SPARK, "DiffuseLighting": "0", "DiffuseBacklighting": "0", "Speed": "1",
-            "Stretch": f"{DASH / 2:.3f}", "AirResistance": "WindScale=0", "GravityScale": "0"}
+            "Stretch": stretch, "AirResistance": "WindScale=0", "GravityScale": "0"}
     core = dict(base, Alpha=f"1,{alpha}" if fade else "1", Color="(x=1,y=0.78,z=0.5)", EmissiveLighting="30",
                 Size="0.004", MinPixels="1.2", SortOffset="1")
     glow = dict(base, Alpha=f"0.35,{alpha}" if fade else "0.35", Color="(x=1,y=0.32,z=0.06)", EmissiveLighting="10",
@@ -90,7 +94,9 @@ def drop(d, *keys):
 
 def main(repo):
     pdir = os.path.join(repo, "src", "Libs", "Particles")
-    tracers = [effect("trail", childs=piece(TRAIL_LIFE))] + [effect(f"v{v}", flying(v)) for v in SPEEDS]
+    # trail pieces: the default, and longer-lived ones to compare (a fading tail that stays longer)
+    tracers = ([effect("trail", childs=piece(TRAIL_LIFE)), effect("trail_25", childs=piece(0.25)),
+                effect("trail_40", childs=piece(0.4))] + [effect(f"v{v}", flying(v)) for v in SPEEDS])
     library(os.path.join(pdir, "deagle_tracers.xml"), "deagle_tracers",
             "the trail piece and one flying tracer per muzzle speed (see the script for what each value means)", tracers)
 
@@ -107,14 +113,14 @@ def main(repo):
         effect("t_alpha1", dict(ref, Alpha="1")),
         effect("t_slow", dict(ref, Speed="20", AirResistance="WindScale=0")),
         effect("t_free", dict(ref, Facing="Free")),
-        effect("trail_long", childs=piece(1.5, fade=False)),
+        effect("trail_long", childs=piece(1.5, fade=False, forward=False)),
         effect("quad_long", dict(quad, Size="0.005", Aspect="100", MinPixels="1.2")),   # long if Aspect stretches along the motion
         effect("quad_wide", dict(quad, Size="0.5", Aspect="0.01")),                     # long if Aspect squashes along it
     ]
     # trail piece candidates (life TRAIL_LIFE, fading): the 0.12 s piece drew as a ~0.15 m dash (a streak can't reach
     # back past where its particle started). KCD2's own shooting star (WH_Particels, meteor) streaks forward only:
     # Facing Velocity + Stretch OffsetRatio=1.
-    core = piece(TRAIL_LIFE)[0][1]
+    core = piece(TRAIL_LIFE, forward=False)[0][1]
     lab += [
         effect("pc_ref", core),
         effect("pc_off1", dict(core, Stretch=f"{DASH / 2:.3f},OffsetRatio=1")),

@@ -152,6 +152,29 @@ static void SafeRelease(uintptr_t em) { __try { ReleaseEmitter(em); } __except (
 static void SafeSetLocation(uintptr_t em, const float* loc) {
 	__try { if (auto set = (SetLocationFn)VFn(em, 0x2B0)) set(em, loc); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
+// a world location as CryEngine's QuatTS {q.xyz, q.w, t.xyz, s} with +y along dir (no roll), like MuzzleLoc
+static bool LocFromDir(const float* pos, const float* dir, float scale, float* loc) {
+	float y[3] = { dir[0], dir[1], dir[2] };
+	float ly = sqrtf(y[0] * y[0] + y[1] * y[1] + y[2] * y[2]);
+	if (ly < 1e-6f) return false;
+	for (float& v : y) v /= ly;
+	float x[3] = { y[1], -y[0], 0 };
+	float lx = sqrtf(x[0] * x[0] + x[1] * x[1]);
+	if (lx < 1e-6f) { x[0] = 1; x[1] = 0; lx = 1; }
+	x[0] /= lx; x[1] /= lx;
+	float z[3] = { x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0] };
+	float m[3][3] = { { x[0], y[0], z[0] }, { x[1], y[1], z[1] }, { x[2], y[2], z[2] } };
+	float qw, qx, qy, qz, tr = m[0][0] + m[1][1] + m[2][2];
+	if (tr > 0) { float k = sqrtf(tr + 1) * 2; qw = 0.25f * k; qx = (m[2][1] - m[1][2]) / k; qy = (m[0][2] - m[2][0]) / k; qz = (m[1][0] - m[0][1]) / k; }
+	else if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) { float k = sqrtf(1 + m[0][0] - m[1][1] - m[2][2]) * 2; qw = (m[2][1] - m[1][2]) / k; qx = 0.25f * k; qy = (m[0][1] + m[1][0]) / k; qz = (m[0][2] + m[2][0]) / k; }
+	else if (m[1][1] > m[2][2]) { float k = sqrtf(1 + m[1][1] - m[0][0] - m[2][2]) * 2; qw = (m[0][2] - m[2][0]) / k; qx = (m[0][1] + m[1][0]) / k; qy = 0.25f * k; qz = (m[1][2] + m[2][1]) / k; }
+	else { float k = sqrtf(1 + m[2][2] - m[0][0] - m[1][1]) * 2; qw = (m[1][0] - m[0][1]) / k; qx = (m[0][2] + m[2][0]) / k; qy = (m[1][2] + m[2][1]) / k; qz = 0.25f * k; }
+	float out[8] = { qx, qy, qz, qw, pos[0], pos[1], pos[2], scale };
+	if (!Finite(out, 8)) return false;
+	memcpy(loc, out, sizeof(out));
+	return true;
+}
+
 static void ReleaseFlashes() {
 	for (int i = 0; i < g_nFlashes; i++) SafeRelease(g_flashes[i].emitter);
 	g_nFlashes = 0;
@@ -590,6 +613,26 @@ static void Command(const char* line) {
 					effect, (void*)g_lastEffect, (void*)em, g_lastRefs, loc[4], loc[5], loc[6], loc[0], loc[1], loc[2], loc[3], loc[7],
 					g_vmTM[3], g_vmTM[7], g_vmTM[11]);
 			}
+		}
+	}
+	else if (!strcmp(cmd, "fxs")) {   // fxs <effect> <scale> <len m> <pos xyz> <dir xyz>: a world effect (a tracer piece) seen
+		// from its first frame: a new emitter starts with an empty bounding box and is skipped until an update gives it
+		// one, which a 0.12 s piece may never get (Lua-spawned single pieces never showed, 2026-10-12): it gets the box
+		// from pos to pos + dir x len (+ 0.15 m) at once. Fire and forget: our reference goes straight away.
+		char effect[96] = {}; float scale = 1, len = 1, p[3] = {}, d[3] = {}, loc[8];
+		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &len, &p[0], &p[1], &p[2], &d[0], &d[1], &d[2]);
+		if (n == 9 && Finite(p, 3) && Finite(d, 3) && Finite(&len, 1) && LocFromDir(p, d, scale, loc)) {
+			uintptr_t em = SafeSpawnFlash(effect, loc);
+			if (em && em != (uintptr_t)-1) {
+				float dl = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]), box[6];
+				for (int k = 0; k < 3; k++) {
+					float e = p[k] + (dl > 0 ? d[k] / dl : 0) * len;
+					box[k] = (p[k] < e ? p[k] : e) - 0.15f; box[3 + k] = (p[k] > e ? p[k] : e) + 0.15f;
+				}
+				WriteBox(em, box);
+				SafeRelease(em);
+			}
+			else { static int said = 0; if (said++ < 5) Log("fxs: %s didn't spawn", effect); }
 		}
 	}
 	else if (!strcmp(cmd, "flashseed")) { float v = (float)atof(rest); g_flashSeed = Finite(&v, 1) && v > 0 ? v : 0; Log("flash seed box %.2f m", g_flashSeed); }

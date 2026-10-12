@@ -206,7 +206,14 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	end
 	local function pieces()
 		local out = {}
-		for _, f in ipairs(M.fxLog or {}) do
+		local log = {}
+		for _, f in ipairs(M.fxLog or {}) do log[#log + 1] = f end
+		for i = (M.fxsFrom or 1), #M.native do   -- pieces the plugin spawns: fxs <fx> <scale> <len> <pos> <dir>
+			local fx, sc, _, px, py, pz, dx, dy, dz = M.native[i]:match("^%[DN%] fxs (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)$")
+			if fx then log[#log + 1] = { n = fx, scale = tonumber(sc), pos = vec(tonumber(px), tonumber(py), tonumber(pz)),
+				dir = vec(tonumber(dx), tonumber(dy), tonumber(dz)), t = M.nativeT and M.nativeT[i] or 0 } end
+		end
+		for _, f in ipairs(log) do
 			if f.n == tc.fx then
 				local l = tc.dash * f.scale
 				local back = tc.anchor == "start" and 0 or tc.anchor == "end" and l or l / 2   -- from the effect to the piece's start
@@ -222,7 +229,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	local ps, hit
 	for _, anchor in ipairs({ "start", "end", "mid" }) do   -- every anchor lays the same pieces (checked for mid below)
 		tc.anchor = anchor
-		landed, M.fxLog = {}, {}
+		landed, M.fxLog, M.fxsFrom = {}, {}, #M.native + 1
 		fire()
 		M.advance(1.0, 60)
 		ps, hit = pieces(), landed[1] and landed[1].hit
@@ -245,7 +252,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	-- the NPC at 5 m: the whole streak is laid in the frame of the shot and ends on the hit
 	world.wallY, world.npcY = nil, 205
 	npc.damage = 0
-	landed, M.fxLog = {}, {}
+	landed, M.fxLog, M.fxsFrom = {}, {}, #M.native + 1
 	local t1 = fire()
 	ps, hit = pieces(), landed[1] and { pos = landed[1].at }   -- where the round met the body (zones move hit.pos in)
 	local now = true
@@ -257,13 +264,13 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	-- off: nothing; "flying": the speed's own particle once, no pieces
 	world.wallY = 300
 	M.console("deagle_tracers", "0")
-	M.fxLog = {}
+	M.fxLog, M.fxsFrom = {}, #M.native + 1
 	fire()
 	M.advance(1.0, 60)
 	check(string.format("%s: no tracer when tracers are off", id), #pieces() == 0 and not Deagle.cfg.tracers, #pieces())
 	M.console("deagle_tracers")      -- no argument: on
 	tc.mode = "flying"
-	M.fxLog = {}
+	M.fxLog, M.fxsFrom = {}, #M.native + 1
 	fire()
 	local want = Deagle:TracerFx(phys.velocity)
 	M.advance(1.0, 60)

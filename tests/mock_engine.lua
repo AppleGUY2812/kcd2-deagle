@@ -125,7 +125,7 @@ _G.ENTITY_FLAG_NO_SAVE = 32768
 _G.System = {
 	LogAlways = function(s)
 		s = tostring(s)
-		if s:sub(1, 4) == "[DN]" then table.insert(M.native, s)            -- what the plugin would receive
+		if s:sub(1, 4) == "[DN]" then table.insert(M.native, s); M.nativeT = M.nativeT or {}; M.nativeT[#M.native] = M.t            -- what the plugin would receive
 		else table.insert(M.logs, s); if s:find("%$4") then table.insert(M.errors, s) end end
 	end,
 	Log = function(s) end, Warning = function(s) table.insert(M.errors, "WARN " .. tostring(s)) end,
