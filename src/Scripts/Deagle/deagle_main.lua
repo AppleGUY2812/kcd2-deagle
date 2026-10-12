@@ -37,6 +37,7 @@ Deagle.cfg = {
 	-- "gun": the flash rides the muzzle, moved with the gun every frame (like CS2 / CoD / Ready or Not); "world": it stays
 	-- where it was fired
 	flashMode = "gun",
+	flashProbe = false,       -- diagnosis: every frame of a flash, the plugin logs whether the engine has updated it yet
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
@@ -346,6 +347,7 @@ function Deagle:FlashFollow()
 	local ok, lp, ld = pcall(self.MuzzleLocal, self, vm)
 	if not ok then log("$4muzzle flash: lost the muzzle: " .. tostring(lp)) self.flashUntil = nil self:Native("flashoff") return end
 	self:Native(string.format("flashpos %.4f %.4f %.4f %.4f %.4f %.4f", lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
+	if self.cfg.flashProbe then self:Native("flashprobe") end   -- diagnosis: the plugin logs the flash's state now
 end
 
 -- slow motion for checking effects (F9): KCD2 has CryEngine's t_Scale
