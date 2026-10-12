@@ -28,6 +28,11 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- Recoil: kick is our hand-tuned 2.6 deg (Deagle) scaled by CS2's recoil magnitude, and never recovers; user finds the
+  Deagle's too small -> tune kickPitch live (deagle_set kickPitch N), then add recovery (rise, settle partway back)
+- Spray patterns for automatic guns: CS2's per-gun seed + recoil angle / magnitude (+ variances) are already in
+  weapons.vdata (cs2_stats FIELDS); reproduce its pattern generation (method, not code)
+- Later: Ready or Not's weapon feel (sway / inertia / recoil that moves the gun, recovery); build on the plugin's motion
 - Install today's build (game was running) and get the user's video: Glock burst, reload + fire, Deagle empty inspect,
   flash while walking forward
 - Decide: fire rate CS2 (0.225 / 0.15 s) or the mods' own (0.08 / 0.075 s, as fast as you click)
