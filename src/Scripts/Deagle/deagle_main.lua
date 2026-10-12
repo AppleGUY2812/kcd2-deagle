@@ -59,11 +59,13 @@ Deagle.cfg = {
 	-- .50 AE Deagle kicks ~4.5 deg; to be fitted to Ready or Not's values for the same guns. A gun with no cartridge
 	-- data keeps kickPitch / kickYaw below.
 	physics = {
-		camPerFlip = 0.217,     -- camera kick (deg) per rad/s of muzzle flip (Deagle 20.7 rad/s -> 4.5 deg, Glock 7.1 -> 1.5)
+		camPerFlip = 0.35,      -- camera kick (deg) per rad/s of the Deagle's muzzle flip: 20.3 rad/s -> 7.1 deg, above Ready or
+		                        -- Not's .357 Python (5-6 deg a shot, docs/ron/); other guns through kickExponent
 		-- elastic hold (design 1): the grip springs back up to holdRange degrees of camera kick; what goes past it
 		-- stays (you pull it down). A calm Deagle shot returns 65 %, fast follow-ups much less, a Glock ~95 %.
-		holdRange = 2.9,        -- deg, two hands, hip (Ready or Not's RecoilReturnPercentage calibrates it)
-		holdMax = 0.95,         -- most of a kick that ever comes back by itself
+		holdRange = 4.7,        -- deg of camera kick the grip springs back (scaled with camPerFlip: same physical hold as 2.9 at 0.217)
+		holdMax = 0.6,          -- most of a kick that ever comes back by itself (a shooter's natural spring back to the point
+		                        -- of aim; 0 = Ready or Not's pistols, all of it stays: too stiff for the user, 0.95 too soft)
 		holdYaw = 0.5,          -- the sideways range is half the vertical one (sideways control is weaker)
 		holds = { pistol = 1.0, pistol1h = 0.5, rifle = 1.2 },
 		adsHold = 1.3,          -- aiming tightens the grip
@@ -75,13 +77,13 @@ Deagle.cfg = {
 		barrelAim = 1.0,        -- shots leave along the gun's un-returned kick (1 = physical, 0 = along the camera)
 		vary = 0.15,            -- +- per shot
 		adsMult = 0.7,          -- aimed: steadier
-		gunBackPerVel = 0.007,  -- gun pushed back (m) per m/s of free recoil (Deagle 4.95 -> 3.5 cm)
-		gunFlipPerFlip = 0.29,  -- gun model flip (deg) per rad/s, on top of the shot animation
+		gunBackPerVel = 0.0113, -- gun pushed back (m) per m/s of free recoil (Deagle 4.84 -> 5.5 cm)
+		gunFlipPerFlip = 0.467, -- gun model flip (deg) per rad/s, on top of the shot animation (Deagle 9.5 deg)
 		-- felt kick: physics alone makes a 9 mm Glock kick a third of a .50 AE Deagle; shooters (and games like Ready or
 		-- Not) feel a much smaller gap. Kick goes as (flip / Deagle's flip)^kickExponent x Deagle's: the Deagle is
-		-- unchanged, smaller guns are lifted toward it, the order stays (1 = pure physics: Glock 0.35x; 0.22: 0.79x,
-		-- Glock camera kick 3.5 deg, picked by the user in game 2026-10-12)
-		kickExponent = 0.22,
+		-- unchanged, smaller guns are lifted toward it, the order stays (1 = pure physics: Glock 0.35x; 0.67: 0.49x,
+		-- Glock camera kick 3.5 deg, the user's pick in game 2026-10-12, with the Deagle at 7.1)
+		kickExponent = 0.67,
 		kickRefFlip = 20.26,    -- rad/s: the Deagle's muzzle flip (the gun whose kick the constants above are set on)
 		kickRefVel = 4.84,      -- m/s: the Deagle's free recoil speed
 		flashPerUnit = 0.30,    -- flash size per unit of blast scale G (9 mm = 1: Glock 0.30, Deagle 0.62)
@@ -1185,9 +1187,19 @@ function Deagle:VmPlace()
 	if now ~= self.hudT then self.hudT = now; self:DrawHud() end
 end
 
+-- While the gun is out the mod owns our keys: KCD2's own maps on them ("combat": left click punches;
+-- "draw_holster_torch": R takes the torch out) are held off every frame. Switching them off once at H wasn't enough:
+-- a gun drawn another way (gun switch, save load, script reload) skipped it, and the game turns its maps back on
+-- after some state changes (R still took the torch out, user 2026-10-12).
+function Deagle:HoldGameMapsOff()
+	if not self.state.drawn then return end
+	for _, map in ipairs(GAME_MAPS_OFF) do ActionMapManager.EnableActionMap(map, false) end
+end
+
 function Deagle:VmTick(token)
 	if token ~= self.vmToken or not self.vmShown then return end
 	self:VmPlace()
+	self:HoldGameMapsOff()
 	self:FlashFollow()
 	local a = self.vmAnim
 	if a and not a.loop and System.GetCurrTime() >= a.ends and not self.vmHolstering then self:VmReturn() end

@@ -36,17 +36,18 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
 | `cancelKeepsRounds` | `0` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
 | `recoil` | `1` | **master kick**: scales every recoil effect together (camera kick, sideways, gun model flip and push). `1.5` = 50 % harder for every gun |
-| `physics.kickExponent` | `0.22` | how much smaller guns are lifted toward the Deagle's kick: `1` = pure physics (Glock a third of the Deagle), `0.22` = Glock 0.79x (3.5 deg), `0` = every gun kicks like the Deagle |
+| `physics.kickExponent` | `0.67` | how much smaller guns are lifted toward the Deagle's kick: `1` = pure physics (Glock a third of the Deagle), `0.67` = Glock 0.49x (3.5 deg), `0` = every gun kicks like the Deagle |
 | `physics.loudnessSpan` | `0.25` | how much quieter small guns are than the Deagle: `0` = all as loud, `0.25` = Glock 0.83x, `0.5` = 0.69x, `1` = real difference |
-| `physics.camPerFlip` | `0.217` | camera kick per unit of muzzle flip (all guns in proportion) |
-| `physics.holdRange` | `2.9` | degrees of kick your grip takes back by itself (more = more of each kick returns) |
+| `physics.camPerFlip` | `0.35` | camera kick per unit of muzzle flip (Deagle 7.1 deg a shot, above Ready or Not's .357 at 5-6) |
+| `physics.holdRange` | `4.7` | degrees of kick your grip takes back by itself (more = more of each kick returns) |
+| `physics.holdMax` | `0.6` | most of one kick that springs back by itself: `0` = it all stays (Ready or Not), `0.95` = nearly all returns |
 | `physics.returnRate` | `5` | how fast the held part settles (higher = faster; heavier guns slower) |
 | `physics.adsHold` | `1.3` | aiming tightens the grip by this much |
 | `physics.riseRate` | `70` | how fast a kick lands |
 | `physics.sideSigma` | `0.15` | sideways kick, random share of the climb (same pattern every time per gun) |
 | `physics.barrelAim` | `1` | shots fired while the gun is still kicked go where the barrel points (0 = straight) |
-| `physics.gunFlipPerFlip` | `0.29` | gun model flip per unit of muzzle flip |
-| `physics.gunBackPerVel` | `0.007` | gun model push-back per m/s of recoil |
+| `physics.gunFlipPerFlip` | `0.467` | gun model flip per unit of muzzle flip (Deagle 9.5 deg) |
+| `physics.gunBackPerVel` | `0.0113` | gun model push-back per m/s of recoil (Deagle 5.5 cm) |
 | `physics.flashPerUnit` | `0.30` | flash size per unit of blast (Deagle 0.63, Glock 0.30) |
 
 Examples: `deagle_set physics.camPerFlip 0.3` (bigger kick for every gun), `deagle_set flashMode world`,
