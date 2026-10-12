@@ -50,7 +50,13 @@ using FindEffectFn = uintptr_t(__fastcall*)(uintptr_t pm, const char* name, cons
 using SpawnFn = uintptr_t(__fastcall*)(uintptr_t effect, const float* loc, const void* spawnParams);
 using SetLocationFn = void(__fastcall*)(uintptr_t emitter, const float* loc);
 using DeleteThisFn = void(__fastcall*)(uintptr_t refBase);
-struct Flash { uintptr_t emitter; float scale; LARGE_INTEGER born; };
+struct Flash { uintptr_t emitter; float scale; LARGE_INTEGER born; uint64_t firstFrame; };
+// A real muzzle flash is over in a few milliseconds; games show it for a frame or two. Its particles live >= 0.08 s
+// (a new emitter is drawn a frame or two after it's made, MODLOG), so at a high frame rate they were seen for 4-6
+// frames, visibly growing ("zoom", user 2026-10-12). Counted from the first frame its particles exist (bounding box
+// valid at the camera step = drawn this frame), the flash is shrunk to nothing after g_flashFrames drawn frames: the
+// same short flash at any frame rate. 0 = off (the particles' own life).
+static int g_flashFrames = 2;
 static Flash g_flashes[8];
 static int g_nFlashes = 0;
 static float g_flashPos[3] = {}, g_flashDir[3] = { 0, 1, 0 };
@@ -214,8 +220,10 @@ static void MoveFlashes() {
 	for (int i = 0; i < g_nFlashes; i++) {
 		Flash& fl = g_flashes[i];
 		if ((now.QuadPart - fl.born.QuadPart) > 5 * f.QuadPart) { SafeRelease(fl.emitter); continue; }
+		if (!fl.firstFrame && BoxValid(fl.emitter)) fl.firstFrame = g_viewFrames;
+		bool over = g_flashFrames > 0 && fl.firstFrame && g_viewFrames >= fl.firstFrame + (uint64_t)g_flashFrames;
 		float loc[8];
-		if (MuzzleLoc(g_vmTM, fl.scale, loc)) {
+		if (MuzzleLoc(g_vmTM, over ? 1e-4f : fl.scale, loc)) {
 			float box[6]; bool had = BoxValid(fl.emitter) && ReadBox(fl.emitter, box);
 			float old[3] = {}; __try { memcpy(old, (void*)(fl.emitter + 0x80), 12); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 			SafeSetLocation(fl.emitter, loc);
@@ -508,7 +516,7 @@ static void Command(const char* line) {
 					memmove(g_flashes, g_flashes + 1, sizeof(Flash) * (g_nFlashes - 1)); g_nFlashes--;
 				}
 				Flash& fl = g_flashes[g_nFlashes++];
-				fl.emitter = em; fl.scale = scale; QueryPerformanceCounter(&fl.born);
+				fl.emitter = em; fl.scale = scale; fl.firstFrame = 0; QueryPerformanceCounter(&fl.born);
 				static int said = 0;
 				if (said++ < 40) Log("flashfx %s effect %p emitter %p refs %ld at %.3f %.3f %.3f q %.3f %.3f %.3f %.3f s %.2f (gun at %.3f %.3f %.3f)",
 					effect, (void*)g_lastEffect, (void*)em, g_lastRefs, loc[4], loc[5], loc[6], loc[0], loc[1], loc[2], loc[3], loc[7],
@@ -539,6 +547,7 @@ static void Command(const char* line) {
 		if (sscanf_s(rest, "%259s %f %f %f %f %f %f", file, (unsigned)sizeof(file), &v, &at[0], &at[1], &at[2], &mn, &mx) >= 5 && Finite(at, 3))
 			PlaySound3D(file, v, at, mn, mx);
 	}
+	else if (!strcmp(cmd, "flashframes")) { g_flashFrames = atoi(rest); Log("flash frames %d", g_flashFrames); }
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
