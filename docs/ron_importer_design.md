@@ -6,7 +6,7 @@ ballistics / movement values 1:1. The gameplay side stays as it is (README "How 
 heavy files live in `E:\Tools\deagle-work\ron\<gun>\`, never in the repo.
 
 ## 0. Prototype status (done for the G19, 2026-10-12)
-- **Exporter:** `E:\Tools\deagle-work\ron\exporter\RonExport` is a .NET 10 console app on CUE4Parse 1.2.2 (FModel's
+- **Exporter:** `E:\Tools\deagle-work\ron\exporter\RonExport` (source: `tools/ron/RonExport/`) is a .NET 10 console app on CUE4Parse 1.2.2 (FModel's
   library), run through `ronexport.bat <list.txt>`. It mounts the Steam paks read-only (unencrypted; Oodle;
   `Mappings.usmap` build 113804) and writes ActorX `.psk` / `.psa`, PNG textures and material JSON.
 - **Output in `E:\Tools\deagle-work\ron\g19\ReadyOrNot\Content\...`:**
@@ -63,7 +63,7 @@ gun bones, its meshes, one action per source sequence named `@<sequence>`), plus
 The RoN front end produces exactly those two things:
 
 1. **Export** (`RonExport`, done): the arms psk, weapon psk, textures, and the arm + weapon psa per action, from the
-   gun's AnimData asset. The list is generated from `BP_<gun>_M_AnimData` (the decoders in the session's scratchpad
+   gun's AnimData asset. The list is generated from `BP_<gun>_M_AnimData` (the decoders in `tools/ron/`, docs/ron_extraction.md,
    already resolve montages → sequences). Also the TP body sequences for sound notifies (step 5).
 2. **`tools/ron/ron_import.py` (new, Blender, like `gb_import`):**
    - import both psk (own ActorX reader: the prototype `psk_render.py` reads points / wedges / faces / skeleton);

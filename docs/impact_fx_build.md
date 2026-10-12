@@ -74,7 +74,7 @@ Surfaces from `docs/kcd2_impact_fx.md` section 1 (`System.GetSurfaceTypeNameById
 
 ## 4. Rebuild
 1. Textures (TIF with alpha, 35 files) live in `E:\Tools\deagle-work\fx_tif_impacts\`. They are made from the RoN PNG
-   export (`E:\Tools\deagle-work\ron_fx\`) by the session's converter: particles are copied (sparks/glow premultiplied
+   export (`E:\Tools\deagle-work\ron_fx\`) by `tools/ron/mk_impact_tif.py` (docs/ron_extraction.md): particles are copied (sparks/glow premultiplied
    onto black, glass/straw recoloured, drop alpha from luminance); decals keep `_BO` as colour+opacity, and normals get
    green flipped plus smoothness in alpha. The source map is in `fx_tif_impacts\_particles.json` / `_holes.json`.
 2. Compile and stage: `powershell.exe -ExecutionPolicy Bypass -File tools\fx_impact_textures.ps1` (rc.exe presets
@@ -184,7 +184,7 @@ RoN only places wall splatters within `AnimatedSplatterMaxDistance` = 3 m behind
 
 ### Rebuild
 Blood TIFs (`bld_*_diff`, `blooddecal_*_diff/_ddna`, 22 files) sit in `E:\Tools\deagle-work\fx_tif_impacts\`, made by
-the session's blood converter from `E:\Tools\deagle-work\ron_fx\blood\` (86 PNG). The source map is in `_blood.json`.
+`tools/ron/mk_blood_tif.py` from `E:\Tools\deagle-work\ron_fx\blood\` (86 PNG). The source map is in `_blood.json`.
 `tools/fx_impact_textures.ps1` compiles them along with the impact set (presets: particles AlbedoWithGenericAlpha,
 decals Decal_AlbedoWithOpacity / NormalsWithSmoothness). Staged total: 318 DDS files. Contact sheet:
 `Desktop\Deagle Progress\blood_textures_sheet.png`.

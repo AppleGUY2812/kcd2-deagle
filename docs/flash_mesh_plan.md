@@ -12,7 +12,7 @@ Status:
   `deagle_vm_flash_1..4.cgf` and the DAE.
 - Preview render: `Desktop\Deagle Progress\09 flash mesh plan preview.png`. It is a Blender preview, not a game capture.
 
-Sources: game files extracted read-only to a scratchpad:
+Sources: game files extracted read-only (`tools/pakx.ps1`) to a temporary folder that wasn't kept:
 - 4,520 `.mtl` files (27,527 leaf materials)
 - `Engine\Shaders.pak` (the Illum shader source)
 - 246 `.cdf` files

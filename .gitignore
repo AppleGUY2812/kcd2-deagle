@@ -12,3 +12,5 @@ native/third_party/asi-loader-dl/
 native/build/
 tools/__pycache__/
 src/Textures/**/*.dds*
+tools/ron/local_keys.txt
+__pycache__/
