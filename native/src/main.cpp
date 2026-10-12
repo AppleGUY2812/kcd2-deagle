@@ -522,8 +522,8 @@ static void HitReact(const char* rest) {
 // (Scanning gEnv for CCryAction found nothing in game 2026-10-12: it isn't a gEnv member in KCD2.)
 static const uint8_t kFilterKey = 0xDE;
 struct OurFilter { const char* name; int want; bool on; };
-static OurFilter g_filters[] = { { "no_torch", -1, false }, { "no_move", -1, false } };
-enum { F_NO_TORCH = 0, F_NO_MOVE = 1 };
+static OurFilter g_filters[] = { { "no_torch", -1, false }, { "no_move", -1, false }, { "no_camera", -1, false } };
+enum { F_NO_TORCH = 0, F_NO_MOVE = 1, F_NO_CAMERA = 2 };
 static uintptr_t g_amm = 0;
 static uintptr_t SafeGetter(uintptr_t obj, int off) {   // no C++ objects here: MSVC forbids __try next to unwinding
 	auto get = (uintptr_t(__fastcall*)(uintptr_t))VFn(obj, off);
@@ -720,6 +720,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
 	else if (!strcmp(cmd, "notorch")) g_filters[F_NO_TORCH].want = atoi(rest) != 0 ? 1 : 0;
+	else if (!strcmp(cmd, "nocamera")) g_filters[F_NO_CAMERA].want = atoi(rest) != 0 ? 1 : 0;   // the freecam's mouse look
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }

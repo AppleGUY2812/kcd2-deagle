@@ -70,6 +70,17 @@ for i = nf + 1, #M.native do if M.native[i]:find("^%[DN%] freecam rot ") then af
 check(string.format("freecam look: %d frames aimed while on, none after off, rotoff sent", rots),
 	rots >= 5 and after == rots and M.native[#M.native] == "[DN] freecam rotoff" or (function()
 		for i = #M.native, nf + 1, -1 do if M.native[i] == "[DN] freecam rotoff" then return after == rots and rots >= 5 end end end)(), rots)
+-- the look scale is learned from Henry's own turning (free camera off), then the mouse turns the camera by it
+Deagle.lookScale = { x = { sv = 0, sa = 0 }, y = { sv = 0, sa = 0 } }; Deagle.lookLast = nil
+for i = 1, 30 do M.view.yaw = M.view.yaw + 0.004 * 5; Deagle:OnAction("deagle_look_x", "", 5) end   -- 0.004 rad per unit
+local k = Deagle.lookScale.x.k
+M.console("deagle_freecam_state", "1")
+local y0 = Deagle.fc.camY
+Deagle:OnAction("deagle_look_x", "", 10)
+local turned = Deagle.fc.camY - y0
+M.console("deagle_freecam_state", "0")
+check(string.format("freecam look: learned %.4f rad per mouse unit (Henry 0.004), 10 units turn the camera %.3f rad",
+	k or -1, turned), k and math.abs(k - 0.004) < 0.0005 and math.abs(turned - 0.04) < 0.005, k)
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("settings: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
