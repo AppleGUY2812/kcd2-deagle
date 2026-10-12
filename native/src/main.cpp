@@ -51,12 +51,14 @@ using SpawnFn = uintptr_t(__fastcall*)(uintptr_t effect, const float* loc, const
 using SetLocationFn = void(__fastcall*)(uintptr_t emitter, const float* loc);
 using DeleteThisFn = void(__fastcall*)(uintptr_t refBase);
 struct Flash { uintptr_t emitter; float scale; LARGE_INTEGER born; uint64_t firstFrame; };
-// A real muzzle flash is over in a few milliseconds; games show it for a frame or two. Its particles live >= 0.08 s
-// (a new emitter is drawn a frame or two after it's made, MODLOG), so at a high frame rate they were seen for 4-6
-// frames, visibly growing ("zoom", user 2026-10-12). Counted from the first frame its particles exist (bounding box
-// valid at the camera step = drawn this frame), the flash is shrunk to nothing after g_flashFrames drawn frames: the
-// same short flash at any frame rate. 0 = off (the particles' own life).
-static int g_flashFrames = 2;
+// A real muzzle flash is over in a few milliseconds; games show it for a few frames. Its particles live >= 0.08 s
+// (a new emitter is drawn a frame or two after it's made, MODLOG), so at a high frame rate they were seen growing for
+// 4-6 frames: too slow (user 2026-10-12: "the flash can grow, it just needed to be snappier"). The plugin sets its size
+// for each frame it's drawn, counted from the first one (bounding box valid at the camera step = drawn this frame):
+// g_flashGrow[i] x its scale on drawn frame i, then nothing. The same quick bloom at any frame rate. Lua sends the
+// sizes (cfg.flashGrow); none = the particles' own life.
+static float g_flashGrow[8] = { 0.7f, 1.0f, 1.1f };
+static int g_flashGrowN = 3;
 static Flash g_flashes[8];
 static int g_nFlashes = 0;
 static float g_flashPos[3] = {}, g_flashDir[3] = { 0, 1, 0 };
@@ -221,9 +223,13 @@ static void MoveFlashes() {
 		Flash& fl = g_flashes[i];
 		if ((now.QuadPart - fl.born.QuadPart) > 5 * f.QuadPart) { SafeRelease(fl.emitter); continue; }
 		if (!fl.firstFrame && BoxValid(fl.emitter)) fl.firstFrame = g_viewFrames;
-		bool over = g_flashFrames > 0 && fl.firstFrame && g_viewFrames >= fl.firstFrame + (uint64_t)g_flashFrames;
+		float size = fl.scale;
+		if (g_flashGrowN > 0 && fl.firstFrame) {
+			uint64_t i = g_viewFrames - fl.firstFrame;
+			size = i < (uint64_t)g_flashGrowN ? fl.scale * g_flashGrow[i] : 1e-4f;
+		}
 		float loc[8];
-		if (MuzzleLoc(g_vmTM, over ? 1e-4f : fl.scale, loc)) {
+		if (MuzzleLoc(g_vmTM, size, loc)) {
 			float box[6]; bool had = BoxValid(fl.emitter) && ReadBox(fl.emitter, box);
 			float old[3] = {}; __try { memcpy(old, (void*)(fl.emitter + 0x80), 12); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 			SafeSetLocation(fl.emitter, loc);
@@ -547,7 +553,13 @@ static void Command(const char* line) {
 		if (sscanf_s(rest, "%259s %f %f %f %f %f %f", file, (unsigned)sizeof(file), &v, &at[0], &at[1], &at[2], &mn, &mx) >= 5 && Finite(at, 3))
 			PlaySound3D(file, v, at, mn, mx);
 	}
-	else if (!strcmp(cmd, "flashframes")) { g_flashFrames = atoi(rest); Log("flash frames %d", g_flashFrames); }
+	else if (!strcmp(cmd, "flashgrow")) {   // flashgrow <size on drawn frame 1> <2> ... (up to 8; none = the particles' own life)
+		float v[8] = {};
+		int n = sscanf_s(rest, "%f %f %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);
+		g_flashGrowN = n > 0 ? n : 0;
+		for (int i = 0; i < g_flashGrowN; i++) g_flashGrow[i] = Finite(&v[i], 1) && v[i] >= 0 ? v[i] : 1.0f;
+		Log("flash grow %d frames", g_flashGrowN);
+	}
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }

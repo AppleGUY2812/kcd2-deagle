@@ -65,7 +65,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `ricochetKeep` | `0.35` | energy a ricochet keeps |
 | `holeExitSize` | `0.09` | exit hole size in m |
 | `accuracy.scale` | `1` | CS2 guns: 1 = CS2's own accuracy (standing / crouched / moving / jumping / shots in a row), 0.5 = twice as tight, 0 = no spread |
-| `flashFrames` | `2` | frames the muzzle flash is seen (any frame rate); 0 = the particles' own life |
+| `flashGrow` | `{0.7, 1, 1.1}` | the flash's size on each frame it's seen, then gone (same at any frame rate). More numbers = a longer flash |
 | `impactVolume` | `1` | bullet impact / ricochet / armour sounds |
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |

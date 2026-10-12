@@ -45,7 +45,8 @@ Deagle.cfg = {
 	-- "gun": the flash rides the muzzle, moved with the gun every frame (like CS2 / CoD / Ready or Not); "world": it stays
 	-- where it was fired
 	flashMode = "gun",
-	flashFrames = 2,          -- frames the flash is seen (the plugin hides it after that many drawn frames; 0 = its own life)
+	flashGrow = { 0.7, 1.0, 1.1 },  -- the flash's size on each frame it's seen (plugin, any frame rate), then gone: a quick
+	                          -- bloom (user: "it can grow, it just needed to be snappier"); {} = the particles' own life
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
@@ -2045,7 +2046,7 @@ function Deagle:NativeSyncVm()
 	self:Native(string.format("off %.4f %.4f %.4f", c.offset.right, c.offset.fwd, c.offset.up))
 	self:Native("follow " .. ((self.vmShown and self.vmInFp) and "1" or "0"))
 	self:Native(string.format("motion %.2f", c.motion))
-	self:Native("flashframes " .. tostring(self.cfg.flashFrames))
+	self:Native("flashgrow " .. table.concat(self.cfg.flashGrow, " "))
 end
 
 function Deagle:Snd(file, vol)
