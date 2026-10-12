@@ -314,6 +314,120 @@ static void PlaySoundFile(const std::string& rel, float vol) {
 	if (fm.play(g_fmod, snd, nullptr, 0, &ch) == 0 && ch) fm.vol(ch, vol * g_masterVol);
 }
 
+// ---- hit reactions: KCD2's own flinch / stagger on a living actor (RE: docs/kcd2_hit_reaction_re.md, WHGame 1.5.6)
+// entity id -> CCryAction::m_pThis +0x518 IActorSystem -> vt+0x18 GetActor(id) = C_Actor* -> +0x240 HitReactionComponent;
+// S_HitReactionEvent built by its ctor (keeps the +0x8C default that would otherwise force the death-only hit type 7),
+// then HitReactionComponent::ProcessHit(comp, &event) -> bool (true = a reaction action started). Main thread only.
+using HitEvtCtorFn = void* (__fastcall*)(void* evt);
+using ProcessHitFn = bool(__fastcall*)(uintptr_t comp, const void* evt);
+using GetActorFn = uintptr_t(__fastcall*)(uintptr_t actorSystem, uint32_t id);
+using GetWorldTMFn = const float* (__fastcall*)(uintptr_t entity);                  // IEntity +0x100 (returns this+0x58)
+static uintptr_t g_cryActionThis = 0;            // &CCryAction::m_pThis
+static HitEvtCtorFn g_hitEvtCtor = nullptr;
+static ProcessHitFn g_processHit = nullptr;
+static uint64_t g_hitReacts = 0;
+
+static void FindHitReact() {
+	if (uintptr_t a = FindUnique(g_game, "48 89 0D ?? ?? ?? ?? 88 81 90 00 00 00 88 81 90 02 00 00")) g_cryActionThis = RipTarget(a, 3, 7);
+	g_hitEvtCtor = (HitEvtCtorFn)FindUnique(g_game, "48 83 EC 18 45 33 C0 C6 41 24 02 83 CA FF 4C 89 04 24");
+	g_processHit = (ProcessHitFn)FindUnique(g_game, "48 89 5C 24 18 55 56 57 41 56 41 57 48 8D 6C 24 C9 48 81 EC B0 00 00 00 F6 42 78 04");
+	Log("hitreact: CCryAction::m_pThis %p  event ctor %p  ProcessHit %p", (void*)g_cryActionThis, (void*)g_hitEvtCtor, (void*)g_processHit);
+}
+
+static uintptr_t SafeGetActor(uintptr_t as, uint32_t id) {
+	__try { auto get = (GetActorFn)VFn(as, 0x18); return get ? get(as, id) : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+static uintptr_t SafeGetEntity(uintptr_t es, uint32_t id) {
+	__try { auto get = (GetEntityFn)VFn(es, 0x70); return get ? get(es, id) : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+static bool SafeWorldTM(uintptr_t entity, float* tm12) {
+	__try {
+		auto get = (GetWorldTMFn)VFn(entity, 0x100); const float* m = get ? get(entity) : nullptr;
+		if (!m) return false; memcpy(tm12, m, 12 * sizeof(float)); return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+static bool SafeEventCtor(uint8_t* e) { __try { g_hitEvtCtor(e); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; } }
+// 1 = a reaction started, 0 = the game declined (gates / no row), -1 = crashed (caught)
+static int SafeProcessHit(uintptr_t comp, const uint8_t* e) {
+	__try { return g_processHit(comp, e) ? 1 : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
+}
+
+// body_part_name -> body_part_id (Libs/Tables/item/body_part.xml, human rows); the event takes id - 1 (the reaction
+// query looks rows up with index + 1), -1 = no body part
+static int BodyPartId(const char* name) {
+	static const char* names[] = { "head", "torso", "arm_left", "arm_right", "leg_left", "leg_right" };
+	for (int i = 0; i < 6; i++) if (!_stricmp(name, names[i])) return i + 1;
+	return -1;
+}
+
+// hitreact <victimHex> <attackerHex> <hitType> <strength> <bodyPart> <px> <py> <pz> <dx> <dy> <dz> <flags>
+//   dir = world-space travel direction of the bullet. flags low byte = event flags (0x3F = all; 0x04 game impact FX,
+//   0x20 AI / crime stimulus). Plugin bits: 0x100 send dir as given (world, no conversion), 0x200 don't negate
+//   (default: the event gets the actor-local direction towards the shooter, i.e. -travel, like hit_direction 0;1;0 =
+//   "so_forward"), 0x400 send body_part_id itself instead of id - 1.
+static void HitReact(const char* rest) {
+	char vic[24] = {}, att[24] = {}, part[32] = {};
+	int hitType = 0, strength = 0; unsigned flags = 0x3F; float pos[3] = {}, dir[3] = {};
+	int n = sscanf_s(rest, "%23s %23s %d %d %31s %f %f %f %f %f %f %x", vic, (unsigned)sizeof(vic), att, (unsigned)sizeof(att),
+		&hitType, &strength, part, (unsigned)sizeof(part), &pos[0], &pos[1], &pos[2], &dir[0], &dir[1], &dir[2], &flags);
+	if (n < 11) { Log("hitreact: bad command (%d fields): %s", n, rest); return; }
+	unsigned long long v = 0, a = 0;
+	sscanf_s(strncmp(vic, "0x", 2) ? vic : vic + 2, "%llx", &v);
+	sscanf_s(strncmp(att, "0x", 2) ? att : att + 2, "%llx", &a);
+	uint32_t victim = (uint32_t)v, attacker = (uint32_t)a;
+	if (strength > 6) strength = 6; if (strength < 0) strength = 0;    // 7 = death reaction: never on the living
+	if (!g_cryActionThis || !g_hitEvtCtor || !g_processHit) { Log("hitreact: patterns missing"); return; }
+	if (!Finite(pos, 3) || !Finite(dir, 3)) { Log("hitreact: non-finite pos/dir"); return; }
+
+	uintptr_t fw = 0, as = 0, actor = 0, comp = 0, es = 0, ent = 0;
+	if (!ReadPtr(g_cryActionThis, fw) || !fw) { Log("hitreact %08X: no CCryAction", victim); return; }
+	if (!ReadPtr(fw + 0x518, as) || !as) { Log("hitreact %08X: no actor system", victim); return; }
+	actor = SafeGetActor(as, victim);
+	if (!actor) { Log("hitreact %08X: not an actor", victim); return; }
+	if (!ReadPtr(actor + 0x240, comp) || !comp) { Log("hitreact %08X: actor %p has no hit reaction component", victim, (void*)actor); return; }
+
+	// direction for the event
+	float d[3] = { dir[0], dir[1], dir[2] };
+	float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+	if (len > 1e-4f) { d[0] /= len; d[1] /= len; d[2] /= len; } else { d[0] = 0; d[1] = 1; d[2] = 0; }
+	if (!(flags & 0x200)) { d[0] = -d[0]; d[1] = -d[1]; d[2] = -d[2]; }
+	float ld[3] = { d[0], d[1], d[2] };
+	bool local = false;
+	if (!(flags & 0x100) && g_env && ReadPtr(g_env + 0xA0, es) && es) {
+		float tm[12];
+		if ((ent = SafeGetEntity(es, victim)) && SafeWorldTM(ent, tm)) {
+			// Matrix34 row-major: column j = local axis j in world; local = R^T * world (axes normalised: entity scale)
+			for (int j = 0; j < 3; j++) {
+				float ax[3] = { tm[j], tm[4 + j], tm[8 + j] };
+				float l = sqrtf(ax[0] * ax[0] + ax[1] * ax[1] + ax[2] * ax[2]);
+				ld[j] = l > 1e-6f ? (ax[0] * d[0] + ax[1] * d[1] + ax[2] * d[2]) / l : 0;
+			}
+			local = true;
+		}
+	}
+
+	int partId = BodyPartId(part);
+	int partField = partId < 0 ? -1 : ((flags & 0x400) ? partId : partId - 1);
+
+	alignas(16) uint8_t e[0xA0] = {};
+	if (!SafeEventCtor(e)) { Log("hitreact %08X: event ctor crashed", victim); return; }
+	*(uint32_t*)(e + 0x00) = attacker;
+	*(uint32_t*)(e + 0x18) = (uint32_t)hitType;
+	*(uint32_t*)(e + 0x28) = victim;
+	*(int32_t*)(e + 0x34) = partField;
+	*(uint32_t*)(e + 0x44) = (uint32_t)strength;
+	memcpy(e + 0x50, pos, 12);
+	memcpy(e + 0x5C, ld, 12);
+	*(uint32_t*)(e + 0x78) = flags & 0xFF;
+	int r = SafeProcessHit(comp, e);
+	g_hitReacts++;
+	Log("hitreact #%llu victim %08X attacker %08X actor %p comp %p type %d strength %d part %s (id %d -> %d) pos %.2f %.2f %.2f "
+		"dir world %.2f %.2f %.2f -> %s %.2f %.2f %.2f flags %02X -> %s",
+		g_hitReacts, victim, attacker, (void*)actor, (void*)comp, hitType, strength, part, partId, partField, pos[0], pos[1], pos[2],
+		dir[0], dir[1], dir[2], local ? "local" : "as given", ld[0], ld[1], ld[2], flags & 0xFF,
+		r > 0 ? "reaction started" : r == 0 ? "declined (gates / no row / busy / dead)" : "CRASHED (caught)");
+}
+
 // ---- commands from Lua: System.LogAlways("[DN] <cmd> ...")
 static void Command(const char* line) {
 	char cmd[32] = {};
@@ -384,6 +498,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
+	else if (!strcmp(cmd, "hitreact")) HitReact(rest);
 }
 
 // LogAlways Lua handler: int (this, IFunctionHandler* pH); string via GetParam<const char*>(pH, 1, &s)
@@ -509,6 +624,7 @@ static DWORD WINAPI Init(LPVOID) {
 	uintptr_t lh = FindUnique(g_game, "40 53 48 83 EC ?? 48 8B 02 48 8B CA 48 8B DA FF 50 28 BA 01 00 00 00 48 8B CB 3B C2 74 27 48 8B 03 FF 50 28 BA 02 00 00 00 4C 8D 0D ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? 89 44 24 20 8D 4A 05 E8 ?? ?? ?? ?? EB 35");
 	g_getParamStr = (GetParamStrFn)gp;
 	Log("GetParam<str> %p  LogAlways handler %p", (void*)gp, (void*)lh);
+	FindHitReact();
 	if (gp && lh && MH_CreateHook((void*)lh, (void*)&HkLog, (void**)&g_origLog) == MH_OK && MH_EnableHook((void*)lh) == MH_OK)
 		Log("Lua channel hook installed");
 	else

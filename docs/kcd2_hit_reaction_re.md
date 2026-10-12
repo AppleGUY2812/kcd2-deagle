@@ -332,3 +332,15 @@ bool HitReact(uint32_t victim, uint32_t attacker, int hitType, int strength,
 ```
 Live test order: (1) `hitreact <npc> 0 5 ...` with a front direction; (2) vary the dir sign to confirm the local or
 world frame; (3) `hitType 3`, strength 6 for the stagger; (4) flags without 0x20 if you don't want crime alerts.
+
+## Plugin integration (native/src/main.cpp, "---- hit reactions")
+- Patterns are resolved once in Init (`FindHitReact`, logged as `hitreact: CCryAction::m_pThis ... ProcessHit ...`).
+  Command `[DN] hitreact <victimHex> <attackerHex> <hitType> <strength> <bodyPart> <px> <py> <pz> <dx> <dy> <dz> <flags>`.
+- `dir` is the bullet's **world travel direction**. By default the plugin negates it (points to the shooter) and
+  converts it into the victim's local frame with IEntity +0x100 GetWorldTM (returns `this+0x58`, Matrix34). The
+  frame and sign are unconfirmed guesses: plugin flag 0x100 sends world as given, 0x200 skips the negation.
+- `bodyPart` is the `body_part_name`, sent as `body_part_id - 1` (head 0 ... leg_right 5; unknown → -1). Plugin flag
+  0x400 sends the id itself. Flags' low byte becomes event +0x78 (0x3F = everything).
+- `strength` is clamped to 0..6. Return is ProcessHit's bool: "reaction started" or "declined". SEH-guarded. There is
+  no native dead / unconscious check (the actor vtable slots behind Lua `IsDead` / `IsUnconscious` could not be
+  matched); the game's own gates decline those. Lua should still filter with `soul` health before sending.
