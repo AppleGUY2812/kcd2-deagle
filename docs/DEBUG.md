@@ -58,6 +58,12 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `hitReactType` | `0` | which of KCD2's reaction sets plays (0 = normal hits; 3 = collision, big staggers only) |
 | `hitReactMajor` | `50` | health lost from which a hit is a big stagger instead of a flinch |
 | `hitReactFlags` | `0x3F` | reaction event flags (plugin bits 0x100 / 0x200 / 0x400 flip direction / body part handling) |
+| `armor.punch` | `104` | how hard a 9 mm hits armour (KCD2 stab defense units). Higher = rounds get through plate more often (Glock through a worn cuirass only within ~5 m now; Deagle through most plate) |
+| `armor.glanceAngle` | `70` | degrees off square-on past which plate / mail always turn a round |
+| `armor.bruise` | `0.1` | share of the wound a round stopped by armour still does (blunt trauma) |
+| `wallbang.budget` | `0.1` | metres of wood a 9 mm gets through (others by energy; the Deagle ~0.19) |
+| `ricochetKeep` | `0.35` | energy a ricochet keeps |
+| `holeExitSize` | `0.09` | exit hole size in m |
 
 Examples: `deagle_set physics.camPerFlip 0.3` (bigger kick for every gun), `deagle_set flashMode world`,
 `deagle_set muzzleFxScale 0.5`.

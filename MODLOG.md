@@ -320,3 +320,9 @@ live probes here. Facts found:
 Built: rounds with speed / gravity / drag (first step covers one frame: close hits land the frame they're fired);
 tracer per round (one self-flying particle per muzzle-speed bucket); impacts + holes per surface sized by landing
 energy^(1/3); hit reactions wired. tests/run_ballistics.lua 40 checks. User in game: "spread and bullet drop looks good".
+- Later the same day: wallbang (far side found by a ray back from as deep as the round can reach; KCD2 ray normals and
+  one- vs two-sided faces unverified, so a hit at the near face counts as "too thick"), ricochets (chance x 30 deg /
+  angle, Ready or Not's surfaces), armour per worn layer (inventory items = outfit; KCD2 stab defense x (0.6 + 0.4 x
+  condition) against punch 104 x energy ratio x cos), through-and-through bodies, Ready or Not blood, hit zones from
+  bone capsules. NPC rays: always mat_flesh, partid nil (the living capsule), checked live on an armoured guard.
+  Offline: tests/run_penetration.lua (35 checks). Not yet seen in game.

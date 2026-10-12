@@ -63,19 +63,19 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 - [ ] Performance caps: rounds in flight, lifetime, decals and particles per second
 
 ## Phase 2: hitting people
-- [ ] **Armor per body part** (your idea): read what the NPC wears on the hit zone (KCD2 layers: padding / gambeson,
+- [x] **Armor per body part** (your idea): read what the NPC wears on the hit zone (KCD2 layers: padding / gambeson,
       mail, plate, helmet) and its defense + condition
-- [ ] **Penetration by energy** (your idea): each layer takes energy; enough left -> through (wound), not enough ->
+- [x] **Penetration by energy** (your idea): each layer takes energy; enough left -> through (wound), not enough ->
       stopped. 9 mm vs heavy plate: likely stopped; .50 AE: through most plate; .50 BMG: through anything medieval
-- [ ] **Exit wounds / over-penetration** (your idea): energy left after the body -> exit wound, bullet continues
+- [x] **Exit wounds / over-penetration** (your idea): energy left after the body -> exit wound, bullet continues
       (can hit someone behind), blood out of the exit side (we already splatter behind targets)
-- [ ] **Shallow angles** (your idea): effective thickness grows with angle; past a limit the round glances off ->
+- [x] **Shallow angles** (your idea): effective thickness grows with angle; past a limit the round glances off ->
       dent on the armor, sparks, ricochet, no wound
-- [ ] **Blunt trauma**: a stopped round still hurts and can knock down or wind (stamina) the target
+- [x] **Blunt trauma**: a stopped round still hurts and can knock down or wind (stamina) the target
 - [ ] **Entry vs exit look** (your idea): different blood / tissue effect for entry and exit; armor shows a hole
       (penetrated) or a dent (stopped / glanced)
 - [ ] **Armor damage**: rounds lower the piece's condition (KCD2 already tracks it); holes weaken it for later hits
-- [ ] **Accurate hit zones**: use the physics part / bone the ray hit (head vs neck vs torso vs limbs) instead of the
+- [x] **Accurate hit zones**: use the physics part / bone the ray hit (head vs neck vs torso vs limbs) instead of the
       current height guess
 - [ ] **Wound effects per zone**: head (helmet decides), torso (heavy bleeding), arms (drop weapon?), legs (limp, slow)
 - [ ] **Impact force at the hit spot** (asked): shove that part of the body by the round's momentum; big hits stagger or
@@ -84,17 +84,17 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 
 ## Phase 3: hitting the world
 - [x] **Sparks on metal** (your idea): armor, weapons, metal props; size by energy
-- [ ] **Water** (your idea): splash column scaled by energy; bullets slow fast in water (about 1 m to stop)
-- [ ] **Dirt / grass** (your idea): dust and debris kick scaled by energy
+- [x] **Water** (your idea): splash column scaled by energy; bullets slow fast in water (about 1 m to stop)
+- [x] **Dirt / grass** (your idea): dust and debris kick scaled by energy
 - [x] **Our own impact effects replace the hand-cannon ones** (user, 2026-10-12): today every hit plays KCD2's
       `collisions.destructibles.bullet_*`; v1 plays per-surface effects built for bullets (RoN's as the bar,
       docs/ron/ron_impact_fx.md), sized by the round's energy
-- [ ] **Wallbang / material penetration** (user, 2026-10-12): every surface gets a density (RoN's PenetrationData:
+- [x] **Wallbang / material penetration** (user, 2026-10-12): every surface gets a density (RoN's PenetrationData:
       drywall 0.6, wood, brick 1.95, concrete 5.5, steel 8). The round loses energy per cm of material and goes through
       thin walls, doors, planks, fences and shields if enough is left: entry hole, exit hole + debris on the far side,
       the round keeps flying with what's left (can hit someone behind the wall)
-- [ ] Wood: splinters; stone: chips + dust (thick stone stops everything)
-- [ ] **Ricochets**: chance by angle + material (stone, metal, water at shallow angles) and **off armor on people**; the
+- [x] Wood: splinters; stone: chips + dust (thick stone stops everything)
+- [x] **Ricochets**: chance by angle + material (stone, metal, water at shallow angles) and **off armor on people**; the
       deflected round flies on with less energy and can hit something else (tracer ricochets look great)
 - [x] **Bullet holes / dents** (your idea): decals per material (wood splinter hole, stone chip, metal dent / hole, cloth
       tear), with a cap so they don't pile up
