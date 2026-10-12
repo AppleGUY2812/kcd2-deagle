@@ -33,10 +33,9 @@ Deagle.cfg = {
 	reloadTrigger = nil,
 	muzzleFx = "deagle.muzzle",         -- Libs/Particles/deagle.xml (preloaded via PreloadList.txt): the flash, rides on the gun
 	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
-	-- "entity": the flash rides a small entity the plugin keeps on the muzzle in the same step it places the gun (glued,
-	-- like CS2 / CoD / Ready or Not); "world": it stays where it was fired. A viewmodel slot can't be used: emitters
-	-- there never render.
-	flashMode = "entity",
+	-- "gun": the flash rides a bone attachment on the muzzle (glued, like CS2 / CoD / Ready or Not); "world": it stays
+	-- where it was fired
+	flashMode = "gun",
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
@@ -265,79 +264,53 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
 end
 
--- The flash: flashMode "world" leaves it where it was fired; "entity" puts it on a small entity of its own that is
--- kept on the muzzle every frame (CS2 / CoD attach the flash to the weapon), so walking forward never walks into it.
--- (An emitter in a slot of the viewmodel itself loads fine but never renders.) Smoke always stays in the world.
--- Third person (no viewmodel drawn): in the world.
+-- The flash rides the gun: a bone attachment on the viewmodel's muzzle bone carries it, so the engine draws it glued to
+-- the muzzle through every shot animation, step and turn. Tested in game 2026-10-12: a helper entity glued by the
+-- plugin and an emitter in a viewmodel slot never showed; KCD2's ParticleEffect entity can't be spawned from Lua; the
+-- bone attachment flashed on every shot. flashMode "world" leaves it where the muzzle was instead. No fallback: a
+-- flash that can't attach is logged as an error, never swapped for another kind. Smoke stays in the world.
+local MUZZLE_ATTACH = "deagle_muzzle_fx"
 function Deagle:MuzzleFlash(dir)
 	local c = self.cfg
 	local pos = self:MuzzlePos()
 	local phys = self:ShotPhysics()
 	local scale = (phys and c.physics.flashPerUnit * phys.flash or 1) * c.muzzleFxScale
-	local e = c.flashMode == "entity" and self.vmInFp and self.vmShown and self:FlashEntity()
-	local ok = false
-	if e then
-		pcall(e.SetWorldPos, e, pos); pcall(e.SetDirectionVector, e, dir)
-		local l = self:MuzzleLocal()
-		if self.native and l then self:Native(string.format("flash 0x%s %.4f %.4f %.4f", string.match(tostring(e.id), "(%x+)%s*$") or "0", l.x, l.y, l.z)) end
-		-- alternate two slots, cleared first: loading into a slot that still holds the effect doesn't restart it
-		self.flashSlotN = ((self.flashSlotN or 0) + 1) % 2
-		pcall(e.FreeSlot, e, self.flashSlotN)
-		-- KCD2's binding takes plain arguments: (slot, effect, bPrime, pulsePeriod, scale, countScale, attachType,
-		-- attachForm). A table in bPrime's place left the scale at 1 (and may have primed the one-shot flash, i.e.
-		-- started it as if it had already burned out).
-		local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlotN, c.muzzleFx, false, 0, scale, 1, "", "")
-		ok = okL and type(slot) == "number" and slot >= 0
-		if c.flashDebug == 1 or not ok then log(string.format("flash slot %d -> %s %s", self.flashSlotN, tostring(okL), tostring(slot))) end
-		if ok then self.flashUntil = System.GetCurrTime() + 0.2 end
+	if c.flashMode == "world" then
+		try("fx", Particle.SpawnEffect, c.muzzleFx, pos, dir, scale)
+	elseif self.vmInFp and self.vmShown then
+		local vm = self.vmId and System.GetEntity(self.vmId)
+		if vm then self:VmMuzzleAttach(vm) end
+		if not (vm and self.flashDir) then
+			log("$4muzzle flash: the viewmodel has no muzzle attachment")
+		else
+			-- KCD2's binding: (characterSlot, attachment, effect, offset, dir, scale, flags), the dir in the bone's axes
+			local ok, err = pcall(vm.SetAttachmentEffect, vm, 0, MUZZLE_ATTACH, c.muzzleFx, { x = 0, y = 0, z = 0 }, self.flashDir, scale, 0)
+			if not ok then log("$4muzzle flash: " .. tostring(err)) end
+		end
 	end
-	if not ok then try("fx", Particle.SpawnEffect, c.muzzleFx, pos, dir, scale) end
 	try("fx", Particle.SpawnEffect, c.muzzleSmokeFx, pos, dir, scale / 0.6)
 end
 
-function Deagle:FlashEntity()
-	local e = self.flashEntId and System.GetEntity(self.flashEntId)
-	if e then return e end
-	e = System.SpawnEntity({ class = "BasicEntity", name = "deagle_flash", position = System.GetViewCameraPos(),
-		flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = "" } })
-	if not e then return nil end
-	pcall(e.SetFlags, e, ENTITY_FLAG_NO_SAVE, 0)
-	self.flashEntId = e.id
-	return e
-end
-
--- while the flash burns: the plugin glues it to the gun (it only needs the muzzle in the gun's axes, which the shot
--- animation moves); without the plugin Lua moves it, a frame behind the gun
-function Deagle:FlashFollow()
-	if not self.flashEntId then return end
-	if System.GetCurrTime() > (self.flashUntil or 0) then
-		if self.flashGlued then self.flashGlued = false; self:Native("flashoff") end
+-- once per viewmodel: the attachment on the muzzle bone, and which way the barrel points in that bone's own axes. The
+-- bone sits rigidly on the barrel, so that's fixed: measured at the first shot, which leaves the rest pose with the
+-- barrel along the view (a freshly made viewmodel is still in its bind pose, pointing anywhere).
+function Deagle:VmMuzzleAttach(vm)
+	local bone = self.gun.bones.muzzle
+	if self.flashAttachFor ~= vm.id then
+		self.flashAttachFor, self.flashDir = vm.id, nil
+		local okA, errA = pcall(vm.CreateBoneAttachment, vm, 0, bone, MUZZLE_ATTACH)
+		if not okA then log("$4muzzle attachment on " .. tostring(bone) .. " failed: " .. tostring(errA)) return end
+	end
+	if self.flashDir then return end
+	local okD, d = pcall(vm.GetBoneLocal, vm, bone, System.GetViewCameraDir())
+	if not okD or type(d) ~= "table" then
+		log("$4muzzle attachment: no barrel direction from " .. tostring(bone) .. ": " .. tostring(d))
 		return
 	end
-	if self.native then
-		local l = self:MuzzleLocal()
-		if l then self.flashGlued = true; self:Native(string.format("flashpos %.4f %.4f %.4f", l.x, l.y, l.z)) end
-		return
-	end
-	local e = System.GetEntity(self.flashEntId)
-	if e then pcall(e.SetWorldPos, e, self:MuzzlePos()); pcall(e.SetDirectionVector, e, System.GetViewCameraDir()) end
-end
-
--- the muzzle bone in the viewmodel's own axes (x right, y forward, z up)
-function Deagle:MuzzleLocal()
-	local vm = self.vmId and System.GetEntity(self.vmId)
-	local m = self:VmBone(self.gun.bones.muzzle)
-	if not (vm and m) then return nil end
-	local okP, p = pcall(vm.GetWorldPos, vm)
-	if not okP or not p then return nil end
-	local d = { x = m.x - p.x, y = m.y - p.y, z = m.z - p.z }
-	local out = {}
-	for i, k in ipairs({ "x", "y", "z" }) do
-		local ok, a = pcall(vm.GetDirectionVector, vm, i - 1)
-		if not ok or type(a) ~= "table" then return nil end
-		out[k] = d.x * a.x + d.y * a.y + d.z * a.z
-	end
-	return out
+	local l = math.sqrt(d.x * d.x + d.y * d.y + d.z * d.z)
+	if l < 1e-6 then log("$4muzzle attachment: no barrel direction") return end
+	self.flashDir = { x = d.x / l, y = d.y / l, z = d.z / l }
+	log(string.format("muzzle attachment on %s, barrel in bone axes %.2f %.2f %.2f", bone, self.flashDir.x, self.flashDir.y, self.flashDir.z))
 end
 
 -- slow motion for checking effects (F9): KCD2 has CryEngine's t_Scale
@@ -842,7 +815,7 @@ function Deagle:RemoveStaleEntities()
 	local n = 0
 	for _, e in pairs(System.GetEntitiesByClass("BasicEntity") or {}) do
 		local ok, name = pcall(e.GetName, e)
-		if ok and type(name) == "string" and name:find("^deagle_") and e.id ~= self.vmId and e.id ~= self.flashEntId then
+		if ok and type(name) == "string" and name:find("^deagle_") and e.id ~= self.vmId then
 			pcall(System.RemoveEntity, e.id); n = n + 1
 		end
 	end
@@ -1030,7 +1003,6 @@ end
 
 function Deagle:VmPlace()
 	self:VmFollow()
-	self:FlashFollow()
 	self:CamRecoilTick()
 	local now = System.GetCurrTime()
 	if now ~= self.hudT then self.hudT = now; self:DrawHud() end
@@ -1432,7 +1404,7 @@ function Deagle:OnGameplayStarted()
 	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
-	self.vmId, self.flashEntId = nil, nil
+	self.vmId = nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()

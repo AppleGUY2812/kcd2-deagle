@@ -232,3 +232,15 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   per-frame deltas through PlayerSetViewAngles (watch for eaten mouse input in game). Gun: plugin springs (w 28,
   slightly underdamped) on "[DN] kick back pitch yaw": Deagle 3.5 cm / 6 deg, Glock 2.4 cm / 2 deg. Flash scale
   0.476 x flash (Deagle 0.6, Glock 0.3), smoke with it. All in cfg.physics, live via deagle_set physics.<key>.
+
+## 2026-10-12 — the flash, settled
+- KCD2's entity:LoadParticleEffect takes plain arguments (slot, effect, bPrime, pulsePeriod, scale, countScale,
+  attachType, attachForm), found in WHGame.dll's binding strings. We passed a table as bPrime: the scale never applied
+  (and the flash may have been primed). With plain arguments it returns nothing, so code that checked its return
+  silently fell back to a world flash ("not glued").
+- Recorded test (forced gun kicks): flash in a plugin-glued helper entity = nothing drawn; SetAttachmentEffect on a
+  bone attachment of the viewmodel (CreateBoneAttachment on the muzzle bone) = a flash on every call, riding the gun;
+  System.SpawnEntity class ParticleEffect = nil (EntityModule.MakeParticleEffectActive/Idle exist but need that).
+- Now: the flash is a bone attachment on the muzzle; the barrel direction in bone axes comes from GetBoneLocal at the
+  first shot (rest pose). No fallback: a failure is logged. Helper entity, slot alternation, MuzzleLocal and the
+  plugin's flash / flashpos / flashoff are gone. User rule: no silent fallbacks; intended paths must work every time.

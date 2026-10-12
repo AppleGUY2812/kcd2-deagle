@@ -65,7 +65,7 @@ local function newEntity(name, props)
 	function e:IsAnimationRunning() return true end
 	function e:GetBonePos(b) return vec(self.pos.x + 0.3, self.pos.y + 0.4, self.pos.z - 0.05) end
 	function e:GetBoneDir(b) return vec(0, 1, 0) end
-	function e:GetBoneLocal(b, t) return vec(0, 0, 0) end
+	function e:GetBoneLocal(b, t) return vec(1, 0, 0) end   -- a world direction in the bone axes (CoD tags: x along the barrel)
 	function e:AddImpulse() return true end
 	-- particle effects in entity slots (the muzzle flash rides on the viewmodel)
 	e.nslots = 1
@@ -78,6 +78,11 @@ local function newEntity(name, props)
 	end
 	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end
 	function e:HideAttachment(slot, name, hide) M.hidden = M.hidden or {}; M.hidden[name] = hide end
+	function e:CreateBoneAttachment(slot, bone, name) M.boneAttach = (M.boneAttach or 0) + 1 end
+	function e:SetAttachmentEffect(slot, name, fx, offset, dir, scale, flags)
+		if type(dir) ~= "table" or type(scale) ~= "number" then error("SetAttachmentEffect takes plain arguments") end
+		M.attachFx = (M.attachFx or 0) + 1; M.lastAttachScale = scale; M.lastAttachDir = dir
+	end
 	function e:GetDirectionVector(axis) return ({ vec(1, 0, 0), vec(0, 1, 0), vec(0, 0, 1) })[(axis or 1) + 1] end
 	for k, v in pairs(e) do if type(v) == "function" then e[k] = M.traced(name or "?", k, v) end end
 	setmetatable(e, { __index = function(t, k) return M.traced(name or "?", k, function() return nil end) end })

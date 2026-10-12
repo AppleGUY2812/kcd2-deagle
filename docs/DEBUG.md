@@ -30,9 +30,8 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 ## Settings worth knowing (`deagle_set <name> <value>`)
 | Setting | Default | What it changes |
 |---|---|---|
-| `flashMode` | `entity` | `entity` = flash glued to the muzzle, `world` = left where it was fired |
+| `flashMode` | `gun` | `gun` = flash on the gun's muzzle (glued), `world` = left where it was fired |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
-| `flashDebug` | `0` | `1` = log every flash load into the game log |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
 | `cancelKeepsRounds` | `0` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
