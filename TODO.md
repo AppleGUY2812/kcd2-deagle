@@ -12,11 +12,16 @@
   gun loading fix.
 - After the install: R with a gun out = reload, never the torch; flash lights the room (Glock smaller than the Deagle).
 
-## Built 2026-10-12 (day), installs at the next "closed" (rounds fly is live via hot reload)
-- Rounds fly (speed, drop, drag; user: "bullet drop looks good"), tracers (deagle_tracers 0/1), our impacts + bullet
-  holes on every surface (Ready or Not's), rounds pass invisible blockers / foliage, NPC flinch / stagger (plugin).
-- After the install, check in game: tracer look, impact + hole size per surface (stone / wood / plaster / metal / soil),
-  hit reaction on a bandit (direction right? stagger on a Deagle chest hit?).
+## Installed 2026-10-12 afternoon (pak 893c4450, plugin 4fbb1f55): live checks pending
+- Bullets: flight / drop / drag, tracers, our impacts + holes + sounds per surface, invisible blockers / foliage passed,
+  wallbang + exit holes, ricochets, armour per worn layer (9 mm vs plate by range + angle), through-and-through, hit
+  zones from bones, Ready or Not blood, hit reactions (plugin), kill shove, head pop, size-scaled wounds, AI hearing.
+- Handling: CS2 accuracy (stand / crouch / move / air / fire penalty), flash 3-frame bloom, slow motion slows our
+  sounds, weapon movement layer (sprint / jump / land / crouch / dodge / strafe; roll-sign check first).
+- Debug: F10 zoom, deagle_paths, deagle_set booleans / lists, docs page https://claude.ai/artifact/2pJ2zJeNNAfxa5MD9VyitH
+- Checks: tracer look; holes / wallbang on a plank; Glock vs a bandit in plate (bounce far, through close); flinch
+  direction; crouch vs run accuracy; flash snappiness; deagle_mparam test_roll 10 (top tilts left?); sprint / jump;
+  head pop on a Deagle head kill; kill shove; impact sound levels; guards hearing shots.
 
 ## Next (user's list 2026-10-12, ordered: each builds on the one before)
 1. Bullet system v1 (BALLISTICS.md): a real projectile (speed, drop, drag), tracer, impacts per surface (holes / decals,
