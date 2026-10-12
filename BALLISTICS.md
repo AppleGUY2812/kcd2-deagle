@@ -43,6 +43,10 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
   ttkc_man_13 (coat, tunic, coif cap, hose) took exactly 5 hp for "torso", "leg_left" and "head" alike (100 -> 95 -> 90
   -> 85). So the bullet system computes armor (docs/kcd2_armor_hits.md: DefenseStab / Smash per subpart) and the
   zone multiplier itself, then passes the result to DealDamage.
+- **No visible reaction**: the user watched those three 5 hp hits and saw nothing: no flinch, no stagger, no look.
+  `suppressHitreaction=false` alone doesn't make a small hit visible. Open: does a full-strength hit (Deagle torso
+  ~40 hp) play one, and does KCD2 pick the reaction from the hit strength (hit_reaction.xml rows: weak / minor / major)?
+  If not, reactions come from our own path (wh_HitReaction physical impulse, or a native PlayRagdollHitReaction call).
 - Next (needs the user: save first, pick an NPC): CreateHit with type "bullet" (or its id) on an NPC with tiny damage,
   log health / armor / reaction, then compare with soul:DealDamage.
 
