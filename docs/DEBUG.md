@@ -42,6 +42,10 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | Setting | Default | What it changes |
 |---|---|---|
 | `flashMode` | `gun` | `gun` = a flash spawned per shot on the muzzle (shows a frame or two late); `world` = left where it was fired; `live` = experimental, don't use: its hide doesn't work and after a save load it kept burning in the air (the "fireball") |
+| `flashMode` `mesh` | (testing) | flash cards on the gun itself, shown on the exact frame you fire, a different shape on frame 2, random roll |
+| `flashMesh.mtl` | `deagle_vm_flash` | mesh flash brightness: `deagle_vm_flash_dim` / `deagle_vm_flash` / `deagle_vm_flash_hot` |
+| `flashMesh.light.mode` | `particle` | the mesh flash's light: `particle` (a frame late) or `entity` (a light on the gun, testing) |
+| `muzzleFx` / `muzzleFxLarge` | `deagle.muzzle` | particle flash look: try `deagle.muzzle_b4`, `_b4s15`, `_b10s2` (and `deagle.muzzle_large_b4`... for the Deagle) |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |

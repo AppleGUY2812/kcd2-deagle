@@ -89,6 +89,40 @@ if phys then
 		light = (function() local l for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx ") then l = M.native[i] end end return l end)(),
 		wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
+-- the mesh flash (flashMode "mesh"): 4 hidden cards on the muzzle bone of this gun's size; a shot shows one in its own
+-- frame, a different one the next frame, then none (1 frame under 40 fps); a fresh roll for each card it hid
+local mesh
+if phys then
+	local fm = Deagle.flashMesh
+	local function shown()
+		local out = {}
+		for i = 1, 4 do if M.hidden["vm_flash_" .. i] == false then out[#out + 1] = i end end
+		return out
+	end
+	local set = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and Deagle.cfg.flashMesh.large or Deagle.cfg.flashMesh.small
+	mesh = { setup = fm and #fm.names == 4 and #shown() == 0, cgf = M.attachCgf and M.attachCgf.vm_flash_3, set = set }
+	Deagle.cfg.flashMode = "mesh"
+	M.advance(0.5, 60)
+	local nf, roll0 = #M.native, M.attachAngles and M.attachAngles.vm_flash_1
+	M.attachAngles = {}
+	Deagle.state.ammo, Deagle.state.lastShot = g.magSize, -100
+	Deagle:Shoot(true)
+	local f0 = shown()
+	M.advance(1 / 60, 60); local f1 = shown()
+	M.advance(1 / 60, 60); local f2 = shown()
+	local rolled = 0
+	for _ in pairs(M.attachAngles) do rolled = rolled + 1 end
+	local particleFlash = false
+	for i = nf + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx deagle%.muzzle ") or M.native[i]:find("^%[DN%] flashfx deagle%.muzzle_large ") then particleFlash = true end end
+	mesh.f0, mesh.f1, mesh.f2, mesh.rolled, mesh.roll0, mesh.particleFlash = f0, f1, f2, rolled, roll0, particleFlash
+	M.advance(0.5, 30)                                -- under 40 fps: one frame
+	Deagle.state.lastShot = -100
+	Deagle:Shoot(true)
+	mesh.s0 = shown()
+	M.advance(1 / 30, 30); mesh.s1 = shown()
+	Deagle.cfg.flashMode = "gun"
+	M.advance(0.5, 60)
+end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
 
@@ -172,6 +206,15 @@ if recoil then
 	check(string.format("the barrel is still kicked %.1f deg up 0.08 s after a shot (next bullet goes there)", recoil.kickNow or 0), (recoil.kickNow or 0) > 0.3, recoil.kickNow)
 	local a1, a2 = Deagle:SprayRand(3, 2), Deagle:SprayRand(3, 2)
 	check("the spray pattern is the same every time (learnable)", a1 == a2 and Deagle:SprayRand(3, 2) ~= Deagle:SprayRand(4, 2), a1)
+end
+if mesh then
+	check(string.format("mesh flash: 4 hidden cards, %s", tostring(mesh.cgf)), mesh.setup and mesh.cgf == "objects/manmade/weapons/deagle/vm/" .. mesh.set .. "_3.cgf"
+		and mesh.roll0 ~= nil, mesh.cgf)
+	check(string.format("mesh flash at 60 fps: card %s on the shot's frame, %s the next, %s after; %d rolled; no particle flash",
+		table.concat(mesh.f0, ","), table.concat(mesh.f1, ","), table.concat(mesh.f2, ","), mesh.rolled),
+		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] ~= mesh.f0[1] and #mesh.f2 == 0 and mesh.rolled == 2 and not mesh.particleFlash, mesh.rolled)
+	check(string.format("mesh flash under 40 fps: card %s, then %s", table.concat(mesh.s0, ","), table.concat(mesh.s1, ",")),
+		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))

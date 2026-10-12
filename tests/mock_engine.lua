@@ -86,6 +86,10 @@ local function newEntity(name, props)
 	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end
 	function e:HideAttachment(slot, name, hide) M.hidden = M.hidden or {}; M.hidden[name] = hide end
 	function e:CreateBoneAttachment(slot, bone, name) M.boneAttach = (M.boneAttach or 0) + 1 end
+	-- like KCD2 (WHGame disassembly, docs/flash_mesh_plan.md): loading a CGF onto an attachment always shows it
+	function e:SetAttachmentCGF(slot, name, cgf) M.hidden = M.hidden or {}; M.hidden[name] = false; M.attachCgf = M.attachCgf or {}; M.attachCgf[name] = cgf end
+	function e:SetAttachmentAngles(slot, name, a) M.attachAngles = M.attachAngles or {}; M.attachAngles[name] = a end
+	function e:ChangeAttachmentMaterial(name, mtl) M.attachMtl = M.attachMtl or {}; M.attachMtl[name] = mtl end
 	function e:SetAttachmentEffect(slot, name, fx, offset, dir, scale, flags)
 		if type(dir) ~= "table" or type(scale) ~= "number" then error("SetAttachmentEffect takes plain arguments") end
 		M.attachFx = (M.attachFx or 0) + 1; M.lastAttachScale = scale; M.lastAttachDir = dir; M.lastAttachName = fx

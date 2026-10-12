@@ -52,6 +52,13 @@ Deagle.cfg = {
 	-- size of nothing) didn't hide it, and letting it go doesn't stop it (the plugin only drops its reference): after
 	-- a save load one kept burning where the gun had been (in game 2026-10-12, the "fireball")
 	flashMode = "gun",
+	-- flashMode "mesh": flash cards on the gun's muzzle bone (tools/flash_mesh.py; docs/flash_mesh_plan.md), shown by
+	-- hiding / unhiding them, which the renderer reads when it draws the gun: no particle delay. Variants a then b on
+	-- the frames of a shot (frames; 1 under 40 fps), a random roll each; mtl = their strength (deagle_vm_flash,
+	-- _dim, _hot); set = the cards by blast (large for big blasts, cfg.physics.largeFlashBlast). Light: the per-shot
+	-- particle light (a frame late) or an entity light on the gun (light.mode "entity", to test)
+	flashMesh = { frames = 2, roll = true, mtl = "deagle_vm_flash", large = "deagle_vm_flash", small = "deagle_vm_flash_s",
+		light = { mode = "particle", radius = 6, intensity = 3, frames = 2 } },
 	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)
 	muzzleLight = "deagle.muzzle_light", muzzleLightLarge = "deagle.muzzle_large_light",   -- its light, per shot
 	flashLive = { 0.8, 1.0 },  -- the live flash's size on each frame it's seen (2 frames; 1 frame under 40 fps)
@@ -385,6 +392,16 @@ function Deagle:MuzzleFlash(dir)
 	local fx = (phys and phys.blast >= c.physics.largeFlashBlast) and c.muzzleFxLarge or c.muzzleFx
 	if c.flashMode == "world" then
 		try("fx", Particle.SpawnEffect, fx, pos, dir, scale)
+	elseif c.flashMode == "mesh" and self.vmInFp and self.vmShown and self:FlashMeshShot() then
+		local vm = self.vmId and System.GetEntity(self.vmId)
+		local okM, lp, ld = false, nil, nil
+		if vm then okM, lp, ld = pcall(self.MuzzleLocal, self, vm) end
+		if okM and c.flashMesh.light.mode == "entity" then self:FlashMeshLight(vm, lp)
+		elseif okM then
+			local light = (fx == c.muzzleFxLarge) and c.muzzleLightLarge or c.muzzleLight
+			self:Native(string.format("flashfx %s %.4f %.4f %.4f %.4f %.4f %.4f %.4f", light, scale, lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
+			self.flashUntil = System.GetCurrTime() + FLASH_FOLLOW
+		end
 	elseif c.flashMode == "live" and self.flashArmed and self.vmInFp and self.vmShown then
 		-- the live flash (armed when the gun came out, FlashArm): seen in the frame it's fired, for 2 frames, 1 under
 		-- 40 fps (Ready or Not: 0.035-0.04 s); its light from a short per-shot emitter on the muzzle
@@ -454,6 +471,90 @@ end
 function Deagle:FlashDisarm()
 	if self.flashArmed then self:Native("flashdisarm") end
 	self.flashArmed = nil
+end
+
+-- The mesh flash: 4 card variants as bone attachments on the muzzle (made here, so neither gun's model files change),
+-- hidden. SetAttachmentCGF always shows the attachment it loads (WHGame disassembly), so each is hidden right after,
+-- in the same frame. Made again with every new viewmodel (a gun change, a respawn).
+local FLASH_CARDS = 4
+function Deagle:FlashMeshSetup(vm)
+	local c, phys = self.cfg.flashMesh, self:ShotPhysics()
+	local set = (phys and phys.blast >= self.cfg.physics.largeFlashBlast) and c.large or c.small
+	local dir = "objects/manmade/weapons/deagle/vm/"
+	local m = { names = {}, shown = {}, set = set }
+	for i = 1, FLASH_CARDS do
+		local name = "vm_flash_" .. i
+		pcall(vm.CreateBoneAttachment, vm, 0, self.gun.bones.muzzle, name, false)
+		pcall(vm.SetAttachmentCGF, vm, 0, name, dir .. set .. "_" .. i .. ".cgf")
+		pcall(vm.HideAttachment, vm, 0, name, true, true)
+		m.names[i] = name
+	end
+	self.flashMesh = m
+	self:FlashMeshMaterial(vm)
+	for i = 1, FLASH_CARDS do self:FlashMeshRoll(vm, i) end
+end
+function Deagle:FlashMeshMaterial(vm)
+	local m = self.flashMesh
+	if not m then return end
+	for _, name in ipairs(m.names) do
+		pcall(vm.ChangeAttachmentMaterial, vm, name, "objects/manmade/weapons/deagle/vm/" .. self.cfg.flashMesh.mtl)
+	end
+	m.mtl = self.cfg.flashMesh.mtl
+end
+function Deagle:FlashMeshRoll(vm, i)   -- a card's roll around the barrel for its next shot, set while it's hidden
+	if not self.cfg.flashMesh.roll then return end
+	pcall(vm.SetAttachmentAngles, vm, 0, self.flashMesh.names[i], { x = 0, y = math.random() * 2 * math.pi, z = 0 })
+end
+function Deagle:FlashMeshShow(i, on)
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	local m = self.flashMesh
+	if not vm or not m or not m.names[i] then return end
+	pcall(vm.HideAttachment, vm, 0, m.names[i], not on, true)
+	m.shown[i] = on or nil
+	if not on then self:FlashMeshRoll(vm, i) end
+end
+-- at the shot: variant a now (seen in this frame); FlashMeshTick moves to b, then hides it
+function Deagle:FlashMeshShot()
+	local m = self.flashMesh
+	if not m then return false end
+	if m.mtl ~= self.cfg.flashMesh.mtl then self:FlashMeshMaterial(self.vmId and System.GetEntity(self.vmId)) end
+	for i in pairs(m.shown) do self:FlashMeshShow(i, false) end
+	local a = math.random(FLASH_CARDS)
+	local b = (a % FLASH_CARDS) + math.random(FLASH_CARDS - 1)
+	b = (b - 1) % FLASH_CARDS + 1
+	m.seq, m.frame = { a, b }, self.vmFrame or 0
+	m.frames = (self.frameDt or 0.016) > 1 / 40 and 1 or self.cfg.flashMesh.frames
+	self:FlashMeshShow(a, true)
+	return true
+end
+-- every viewmodel frame: frame k of the shot shows variant k, then none
+function Deagle:FlashMeshTick()
+	local m = self.flashMesh
+	if not m or not m.seq then return end
+	local k = (self.vmFrame or 0) - m.frame
+	if k < 1 then return end
+	self:FlashMeshShow(m.seq[1], false)
+	if k < m.frames then self:FlashMeshShow(m.seq[math.min(k + 1, 2)], true)
+	else
+		if m.seq[2] then self:FlashMeshShow(m.seq[2], false) end
+		m.seq = nil
+	end
+end
+-- an entity light on the gun for the frames of a shot (flashMesh.light.mode "entity"): drawn from the entity, not
+-- through the particle update
+local FLASH_LIGHT_SLOT = 3
+function Deagle:FlashMeshLight(vm, lp)
+	local L = self.cfg.flashMesh.light
+	local i = L.intensity
+	local ok = pcall(vm.LoadLight, vm, FLASH_LIGHT_SLOT, {
+		style = 0, deferred_light = 1, radius = L.radius,
+		diffuse_color = { x = i, y = i * 0.72, z = i * 0.38 }, specular_color = { x = i, y = i * 0.72, z = i * 0.38 },
+		hdrdyn = 0, lifetime = 0, realtime = 1, dot3 = 1, cast_shadow = 0,
+		corona_scale = 0, corona_dist_size_factor = 1, corona_dist_intensity_factor = 1 })
+	if ok then
+		pcall(vm.SetSlotPos, vm, FLASH_LIGHT_SLOT, lp)
+		self.flashLightUntil = (self.vmFrame or 0) + L.frames
+	end
 end
 
 -- every frame while a flash burns: the muzzle moves with the shot animation; afterwards the plugin lets go
@@ -1758,6 +1859,7 @@ function Deagle:VmEntity()
 	end
 	pcall(vm.SetViewDistRatio, vm, 255)
 	self.vmId, self.vmRoundsShown = vm.id, nil
+	self:FlashMeshSetup(vm)
 	vm.OnUpdate = function() Deagle:VmPlace() end    -- per-frame follow (entity update); VmTick timer as well
 	pcall(vm.Activate, vm, 1)
 	return vm
@@ -1940,8 +2042,15 @@ function Deagle:VmTick(token)
 	local now = System.GetCurrTime()
 	if self.vmTickT and now > self.vmTickT then self.frameDt = math.min(0.1, now - self.vmTickT) end   -- a round's first step
 	self.vmTickT = now
+	self.vmFrame = (self.vmFrame or 0) + 1
 	self:VmPlace()
 	self:FlashArm()
+	self:FlashMeshTick()
+	if self.flashLightUntil and self.vmFrame >= self.flashLightUntil then
+		local vm = self.vmId and System.GetEntity(self.vmId)
+		if vm then pcall(vm.FreeSlot, vm, FLASH_LIGHT_SLOT) end
+		self.flashLightUntil = nil
+	end
 	if self.MotionTick then self:MotionTick() end
 	self:HoldGameMapsOff()
 	if (self.zoom ~= nil) ~= (self.vmZoomHidden == true) then     -- the gun out of view while the debug zoom is on

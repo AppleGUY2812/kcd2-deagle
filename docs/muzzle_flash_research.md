@@ -253,3 +253,93 @@ simplest.
 
 Fallbacks: `Activate(false/true)` (+0x258) per shot on a pre-spawned emitter (cheaper than spawning, but may still
 lose a frame to the first emission); `Restart()` (+0x268) to re-burst an instant emitter in place.
+
+## 7. Measured from the user's recording (2026-10-12)
+Source: `Desktop\Deagle Progress\test records\2026-10-12 10-05-55.mp4` (1664x936, **60 fps**, 17.8 s, 1068 frames). The
+game ran 70-105 fps (RTSS overlay), so each video frame (16.7 ms) shows the newest of ~1.2-1.75 game frames. Counts
+below are video frames. Shots were found from brightness spikes around the muzzle and each was checked by eye:
+**28 G19** (16 + 12, two magazines, frames 25-480) and **11 rifle** (frames 740-997; frame 934 froze the game for 10
+frames with the flash on screen, a hitch, so it's left out). Contact sheets: `Desktop\Deagle Progress\ron_flash_g19.png`
+and `ron_flash_rifle.png`. The extracted frames stay outside the repo (private footage).
+
+How it was measured: flash = pixels with luminance >= 185, R >= 230, R-B >= 25 and at least 40 brighter than the frame
+before the shot; bbox in screen px. Light = mean luminance change vs the frame before the shot. For the G19 that's
+measured on floor / walls next to the gun, outside the sprite; for the rifle on the whole screen outside the centre
+band. Gun motion was read off zoomed crops (optic / front sight against a 10 px grid). Frame 0 = first frame with
+flash or light.
+
+### G19 (4 of 28 shots)
+| shot (frame) | gun on frame 0 | visible frames | ms | bbox frame 0 → +1 (px) | growth | light, frame 0 |
+|---|---|---|---|---|---|---|
+| 25 | at rest (kicks on +1) | 1 | 17 | 226x342 → – | – | +8 % |
+| 39 | already kicking (~36 px up, slide back) | 2 | 33 | 309x370 → 293x294 | no (column, then a softer ball; area 0.83x) | +4 % |
+| 61 | starting (~15 px up) | 2 | 33 | 228x394 → 249x414 | no (1.02x) | +6 % |
+| 94 | starting (~9 px up) | 2 | 33 | 266x349 → 260x250 | no (0.89x) | +5 % |
+
+- **All 28:** visible 1 frame on 12 shots, 2 on 15, 3 on 1 (17-50 ms, mean ~27 ms). Frame-0 bbox 135-322 px wide
+  (median ~185) and 190-414 px tall (median ~335), so about a third of the screen height. Frame +1 vs frame 0 area has
+  a median of 1.0x (range 0.3-1.3x).
+- **Timing:** the flash is on the first recoil frame, or one frame before it (the gun hadn't moved yet on 2 of 7
+  checked: 25 and 416). It's never later than the recoil.
+- **Shape:** different every shot. It's a tall soft column straight up from the muzzle (up to ~2:1 tall), a round fluffy
+  ball, or both. Edges are soft and billowy, with no star / petal outline. The two frames of one shot can have
+  different shapes (39).
+- **Colours** (as recorded, after tonemap and bloom): warm-white core ~(254, 241, 205), blown out behind the optic;
+  pale-orange body ~(254, 205, 145); orange rim ~(238, 138, 97).
+- **Alignment:** centred on the muzzle on every frame. On the 3-frame shot 416 the ball rises with the muzzle as it kicks
+  30 px and then 80 px up, so it's attached to the gun, not left in the world.
+- **Light:** weak. Floor / walls next to the gun brighten 2-8 % on frame 0 (and on +1 when the flash lasts 2 frames).
+  The far screen brightens <= 4 %. 4 of 13 checked shots show next to none (<= 2 %), which fits the 0.8 light
+  `SpawnFraction` from section 1 (not proven).
+- **Smoke:** a thin grey haze around the muzzle. It builds up during rapid fire and is gone 15-20 frames (0.25-0.33 s)
+  after the last shot. Faint, with no distinct puff.
+- **Sparks / tracer:** a few thin orange spark streaks around the muzzle on the flash frames. No tracer.
+
+### Rifle (4 of 10 shots)
+| shot (frame) | gun on frame 0 | visible frames | ms | bbox per frame (px) | growth | light, whole screen 0 / +1 / +2 |
+|---|---|---|---|---|---|---|
+| 740 | kicking (front sight 9 px) | 2 + 1 ember | 33 | 186x212 → 213x257 → ember | full on frame 0 (1.3x on +1) | +43 / +24 / +7 % |
+| 767 | kicking (33 px) | 2 + 1 ember | 33 | 98x86 glow → 256x275 → ember | small glow, then full on +1 | +26 / +11 / +8 % |
+| 795 | kicking (39 px) | 3 | 50 | 38x31 glow → 174x268 → 207x272 | small glow, then full on +1, then holds | +25 / +8 / +7 % |
+| 983 | ~7 px (within aim drift) | 3 | 50 | 91x54 glow → 313x248 → 212x312 | small glow, then full on +1, then holds | +22 / +21 / +11 % |
+
+- **All 10:**
+  - A big plume appeared on 6 shots, for 2 frames each (33 ms). On 3 of those 6, frame 0 shows only a small 38-98 px
+    glow with the full light, and the plume arrives on +1. Total visible is 2-3 frames (33-50 ms), plus a tiny
+    1-frame ember at the muzzle.
+  - On 4 shots (749, 902, 914, 978) there's **no plume**, just 1 frame of a 74-109 px glow. The light still fires but
+    weaker (+8-16 %).
+  - The peak plume bbox is 207-313 x 248-341 px (one wide 592x376 spread on 895). From one frame to the next the plume
+    is 0.46-1.3x the area, with no gradual growth.
+- **Timing:** the flash and light are on the first recoil frame (the gun is already 9-39 px off on frame 0 in the clean
+  shots 740 / 767 / 795).
+- **Shape:** a broad fluffy fireball pushed forward along the barrel (to the left of the front sight on screen). Its
+  centre is white-yellow and its rim orange, and it's different every shot. The colours are as for the G19, with a
+  slightly whiter body ~(250, 220, 175).
+- **Alignment:** the plume's base stays on the muzzle on every frame. Between flash frames the gun moves <= 7 px while
+  the camera moves up to ~22 px (983), and the plume shows no lag, so it's attached to the gun.
+- **Light:** strong and red-orange. The whole screen brightens 22-54 % on frame 0 (red channel +35-75 of 255), 9-24 %
+  on +1 and <= 11 % on +2, then a +3-9 % tail (haze / camera). **The light peaks on frame 0 even when the plume peaks on
+  +1.**
+- **Smoke:** a faint light-grey wisp rising from the muzzle, from +2 to ~+18 frames (<= 0.3 s). A few orange embers for
+  +2..+5 frames.
+- **Tracer:** none.
+
+### What this means for our flash
+1. **Visible frames:** 2 frames at 60 fps (~33 ms), at most 3 (50 ms) with a dim last frame. A single frame is fine:
+   RoN shows a single frame on 43 % of G19 shots. With 4.2 that's N = 2 drawn frames at 60 fps. With 4.1, the 0.08 s
+   lifetime only works if a capture shows it on <= 2-3 frames.
+2. **No growth:** full size on the first visible frame. Frame 2 is the same size +-30 % and can be a different, softer
+   shape. The only acceptable "growth" is the rifle's: 1 frame of a small hot glow, then the full plume. There's never
+   a visible expansion over 3+ frames.
+3. **Timing and alignment:** flash and light must be on the shot's first kick frame, or one frame before it, never
+   after it. Keep the flash glued to the muzzle every frame (local space / `SetLocation` each camera step, as today). Our
+   1-2 frame spawn delay is the wrong way round, because RoN's flash leads the recoil.
+4. **Light:** one warm red-orange light, at its peak on frame 1, about half on frame 2, then off. The rifle lights the
+   whole screen by +20-50 % and the G19 only +2-8 % near the gun. For the Deagle, aim in between (~+15-25 % of the
+   screen) and skip it on some shots.
+5. **Randomness:** a new shape every shot (random tile + random roll; for a pistol, column / ball / mixed). Now and then
+   show only a small flash (RoN rifle: 4 of 10 shots). Colours as seen on screen: warm-white core (~255, 240, 205),
+   pale-orange body, orange rim; HDR bloom makes the glow.
+
+After the flash: no tracer, a faint smoke wisp <= 0.3 s, and a few embers for 2-5 frames (section 4.3 already plans for this).
