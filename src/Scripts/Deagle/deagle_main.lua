@@ -249,7 +249,7 @@ local DRAWING = { draw = true, drawEmpty = true }        -- no shooting, reloadi
 local HOLDS_TOGGLE = { draw = true, drawEmpty = true, reload = true, reloadEmpty = true }   -- a holster asked for meanwhile waits
 local SHOTS = { shoot = true, shootEmpty = true, shootBurst = true }
 local INSPECTS = { inspect = true, inspectEmpty = true }
-local GAME_MAPS_OFF = { "combat", "draw_holster_torch" }   -- KCD2 action maps on our keys, off while the gun is out
+local GAME_MAPS_OFF = { "combat" }   -- KCD2 action maps on our keys, off while the gun is out (the torch: OnAction)
 
 -- ---------------------------------------------------------------------------
 -- helpers
@@ -2158,6 +2158,10 @@ function Deagle:OnAction(action, activation)
 	if not self.inputLoaded then self:EnsureInit() end
 	if s.reloading then self:FinishReload() end
 	if s.logActions then log("action " .. tostring(action) .. " " .. tostring(activation)) end
+	-- R is the game's torch key too: KCD2 delivers toggle_torch to the player's OnAction (logged live, right before
+	-- our deagle_reload), so while the gun is out we take it and the torch stays put. Switching the
+	-- draw_holster_torch map off did nothing: it's an include map, its actions live inside "player".
+	if s.drawn and (action == "toggle_torch" or action == "xi_toggle_torch") then return true end
 	if action == "deagle_toggle" then
 		if activation == "press" then self:Toggle() end
 		return true

@@ -24,8 +24,10 @@ step("gameplay started", function()
 end)
 step("native handshake", function() M.console("deagle_native_ok") end)
 step("draw (toggle)", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(1.2) end)
--- KCD2's maps on our keys are off while the gun is out (R took the torch out, left click punched)
-if M.maps.draw_holster_torch ~= false or M.maps.combat ~= false then table.insert(M.errors, "game maps on our keys still on while drawn") end
+-- KCD2's combat map is off while the gun is out (left click punched); R's torch toggle is taken by our OnAction
+-- (the game delivers it there; draw_holster_torch is an include map, switching it off did nothing)
+if M.maps.combat ~= false then table.insert(M.errors, "combat map still on while drawn") end
+if Deagle:OnAction("toggle_torch", "press") ~= true then table.insert(M.errors, "R took the torch out with the gun drawn") end
 print("   anims:", lastAnims(3), " native:", table.concat(M.native, " ; "):sub(1, 160))
 print("   deagle_* entities in world:", ours(), "(no-save:", select(2, ours()) .. ")")
 step("idle frames + HUD", function() M.advance(0.5) end)
@@ -124,8 +126,9 @@ step("dialogue camera", function()
 	print("   back in first person:", tostring(Deagle.vmInFp))
 end)
 step("holster", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(1.5) end)
-if M.maps.draw_holster_torch ~= true or M.maps.combat ~= true then table.insert(M.errors, "game maps on our keys not back on after holster") end
-print("   game maps after holster: torch", tostring(M.maps.draw_holster_torch), " combat", tostring(M.maps.combat))
+if M.maps.combat ~= true then table.insert(M.errors, "combat map not back on after holster") end
+if Deagle:OnAction("toggle_torch", "press") == true then table.insert(M.errors, "torch blocked with the gun holstered") end
+print("   after holster: combat map", tostring(M.maps.combat), " torch key passes:", tostring(Deagle:OnAction("toggle_torch", "press") ~= true))
 print("   anims:", lastAnims(2), " shown:", tostring(Deagle.vmShown), " body hidden:", tostring(Deagle.bodyHidden), " DOF:", tostring(M.cvars.r_DepthOfField))
 t0 = M.t
 step("draw with aim held", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(0.2); Deagle:OnAction("deagle_aim", "press"); M.advance(2.0) end)
