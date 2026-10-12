@@ -10,7 +10,8 @@ Deagle.cfg = {
 	ammoId = "214b29af-66a9-42be-882a-d63562010b7b",   -- deagle_ammo
 	useAmmoItems = false,     -- cartridge items stack as one count in KCD2; unlimited reserve until that is solved
 	magSize = 7,
-	interval = 0.22,          -- seconds between shots (the gun's CS2 cycle time replaces it)
+	interval = 0.22,          -- seconds between shots (the gun's own / CS2 cycle time replaces it)
+	fireRate = "mod",         -- "mod": the GameBanana mod's own cycle time (as fast as you click); "cs2": CS2's
 	rangeMod = 1.0,           -- damage x rangeMod per 12.7 m (CS2: per 500 units)
 	burstShotGap = 0.06,      -- seconds between the rounds of a burst
 	burstInterval = 0.3,      -- after a burst
@@ -134,6 +135,7 @@ do
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
 		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
+		cycle = 0.08,             -- the mod's weapon script (cycletime): CS2's Deagle is 0.225
 		-- the clips were exported frame for frame at 24 fps, but the mod's sequences run at 30 (shots at 40): play them
 		-- faster (measured against YabrakProds' own video of the mod: reload back at idle ~1.7 s, as at 30 fps)
 		rate = { default = 30 / 24, shoot = 40 / 24, shootAdd = 40 / 24 },
@@ -1373,7 +1375,7 @@ function Deagle:ApplyGunStats(g)
 	if not w then return end
 	c.damage = w.damage
 	c.headshotMult = w.head / 1.5                 -- KCD2 already multiplies head hits by 1.5
-	c.interval = w.cycle
+	c.interval = (c.fireRate == "mod" and g.cycle) or w.cycle
 	c.burstInterval = w.burstCycle
 	c.rangeMod = w.rangeMod
 	c.kickPitch = BASE.kickPitch * w.recoil / 48.2   -- CS2's Deagle recoil (48.2) = the kick this mod was tuned with

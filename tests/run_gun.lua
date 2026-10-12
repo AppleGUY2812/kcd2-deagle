@@ -106,7 +106,7 @@ if burstCut then check("a burst cuts an inspect: " .. burstCut, burstCut:find("s
 local w = g.cs2 and Deagle.cs2 and Deagle.cs2[g.cs2]
 if w then
 	check(string.format("CS2 %s: damage %g, %d rpm, head x%.1f", g.cs2, Deagle.cfg.damage, 60 / Deagle.cfg.interval, Deagle.cfg.headshotMult * 1.5),
-		Deagle.cfg.damage == w.damage and math.abs(Deagle.cfg.interval - w.cycle) < 1e-6, Deagle.cfg.damage)
+		Deagle.cfg.damage == w.damage and math.abs(Deagle.cfg.interval - ((Deagle.cfg.fireRate == "mod" and g.cycle) or w.cycle)) < 1e-6, Deagle.cfg.damage)
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))

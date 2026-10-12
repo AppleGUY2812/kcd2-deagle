@@ -6,6 +6,7 @@ Deagle:RegisterGun("glock_17", {
 	short = "Glock 17",
 	magSize = 17,
 	cs2 = "weapon_glock",
+	cycle = 0.075,   -- the mod's own seconds between shots (weapon script cycletime)
 	cdf = "objects/manmade/weapons/guns/glock_17/glock_17_vm.cdf",
 	anims = {   -- clip, frames, frames per second
 		draw = { "glock_17_vm_draw", 41, 30 },

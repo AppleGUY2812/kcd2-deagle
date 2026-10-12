@@ -58,6 +58,7 @@ Deagle:RegisterGun({lua(SLUG)}, {{
 	short = {lua(prof.get("short") or SLUG.replace("_", " "))},
 	magSize = {prof.get("magSize") or 15},
 	cs2 = {lua(prof["cs2"]) if prof.get("cs2") else "nil"},
+	cycle = {prof.get("fireInterval") or "nil"},   -- the mod's own seconds between shots (weapon script cycletime)
 	cdf = "objects/manmade/weapons/guns/{SLUG}/{NAME}.cdf",
 	anims = {{   -- clip, frames, frames per second
 {chr(10).join(anims)}
