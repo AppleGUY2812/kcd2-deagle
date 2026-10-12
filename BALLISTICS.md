@@ -39,6 +39,10 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 - NPC physics: mass 80 kg, `physicsParams.Living.timeImpulseRecover = 1`, `collisionDamageThreshold` per actor.
 - Enums dumped: `enum_ammo_class` (Arrow 1, Bolt 2, Ball 3, Shotgun 4), `enum_armor_type` (79 piece types, e.g. MailLong
   32, Cuirass 33, Brigandine 34, GambesonLong 28), `enum_armor_archetype` (coverage shapes), `enum_weapon_class` (rifle 13).
+- **DealDamage ignores armor and body part** (live, 2026-10-12): `soul:DealDamage(0, 5, player.id, false, part)` on
+  ttkc_man_13 (coat, tunic, coif cap, hose) took exactly 5 hp for "torso", "leg_left" and "head" alike (100 -> 95 -> 90
+  -> 85). So the bullet system computes armor (docs/kcd2_armor_hits.md: DefenseStab / Smash per subpart) and the
+  zone multiplier itself, then passes the result to DealDamage.
 - Next (needs the user: save first, pick an NPC): CreateHit with type "bullet" (or its id) on an NPC with tiny damage,
   log health / armor / reaction, then compare with soul:DealDamage.
 
