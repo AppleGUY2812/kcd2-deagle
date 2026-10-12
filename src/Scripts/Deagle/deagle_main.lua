@@ -32,6 +32,7 @@ Deagle.cfg = {
 	dryTrigger = nil,
 	reloadTrigger = nil,
 	muzzleFx = "deagle.muzzle",         -- Libs/Particles/deagle.xml (preloaded via PreloadList.txt): the flash, rides on the gun
+	muzzleFxLarge = "deagle.muzzle_large",   -- the same flash burning longer, for big blasts (cfg.physics.largeFlashBlast)
 	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
 	-- "gun": the flash rides a bone attachment on the muzzle (glued, like CS2 / CoD / Ready or Not); "world": it stays
 	-- where it was fired
@@ -81,6 +82,7 @@ Deagle.cfg = {
 		staminaRef = 20,        -- stamina a 9 mm's shove takes; others by momentum
 		headMult = 2.0,         -- on a head hit, on top of KCD2's own x1.5: a round through the skull kills
 		punchPerMomentum = 25.6,-- physics push on bodies / props per kg m/s of bullet momentum (Deagle 8.6 -> 220)
+		largeFlashBlast = 1.5,  -- blast scale from which the flash burns longer (3-4 frames instead of 2-3; Deagle 2.08)
 		loudnessSpan = 0.5,     -- share of the real loudness difference played (Deagle +6.5 dB over the Glock -> 0.69x)
 	},
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
@@ -289,8 +291,11 @@ function Deagle:MuzzleFlash(dir)
 	local pos = self:MuzzlePos()
 	local phys = self:ShotPhysics()
 	local scale = (phys and c.physics.flashPerUnit * phys.blast or 1) * c.muzzleFxScale
+	-- a real flash is over in 1-2 ms; games show it 2-4 frames. A bigger blast burns a little longer (the engine can't
+	-- stretch a flash per shot, so two versions of it).
+	local fx = (phys and phys.blast >= c.physics.largeFlashBlast) and c.muzzleFxLarge or c.muzzleFx
 	if c.flashMode == "world" then
-		try("fx", Particle.SpawnEffect, c.muzzleFx, pos, dir, scale)
+		try("fx", Particle.SpawnEffect, fx, pos, dir, scale)
 	elseif self.vmInFp and self.vmShown then
 		local vm = self.vmId and System.GetEntity(self.vmId)
 		if vm then self:VmMuzzleAttach(vm) end
@@ -298,7 +303,7 @@ function Deagle:MuzzleFlash(dir)
 			log("$4muzzle flash: the viewmodel has no muzzle attachment")
 		else
 			-- KCD2's binding: (characterSlot, attachment, effect, offset, dir, scale, flags), the dir in the bone's axes
-			local ok, err = pcall(vm.SetAttachmentEffect, vm, 0, MUZZLE_ATTACH, c.muzzleFx, { x = 0, y = 0, z = 0 }, self.flashDir, scale, 0)
+			local ok, err = pcall(vm.SetAttachmentEffect, vm, 0, MUZZLE_ATTACH, fx, { x = 0, y = 0, z = 0 }, self.flashDir, scale, 0)
 			if not ok then log("$4muzzle flash: " .. tostring(err)) end
 		end
 	end

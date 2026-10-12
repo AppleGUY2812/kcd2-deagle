@@ -81,7 +81,7 @@ local function newEntity(name, props)
 	function e:CreateBoneAttachment(slot, bone, name) M.boneAttach = (M.boneAttach or 0) + 1 end
 	function e:SetAttachmentEffect(slot, name, fx, offset, dir, scale, flags)
 		if type(dir) ~= "table" or type(scale) ~= "number" then error("SetAttachmentEffect takes plain arguments") end
-		M.attachFx = (M.attachFx or 0) + 1; M.lastAttachScale = scale; M.lastAttachDir = dir
+		M.attachFx = (M.attachFx or 0) + 1; M.lastAttachScale = scale; M.lastAttachDir = dir; M.lastAttachName = fx
 	end
 	function e:GetDirectionVector(axis) return ({ vec(1, 0, 0), vec(0, 1, 0), vec(0, 0, 1) })[(axis or 1) + 1] end
 	for k, v in pairs(e) do if type(v) == "function" then e[k] = M.traced(name or "?", k, v) end end

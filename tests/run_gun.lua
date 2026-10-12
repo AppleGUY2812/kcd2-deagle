@@ -84,7 +84,7 @@ if phys then
 	M.advance(2.0)
 	local string5 = math.deg(M.view.pitch - p1)
 	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = keep, string5 = string5, kickNow = kickNow,
-		flashScale = M.lastAttachScale, flashPrime = false, wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
+		flashName = M.lastAttachName, flashScale = M.lastAttachScale, flashPrime = false, wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
@@ -157,6 +157,8 @@ if phys then   -- the wound model: 9 mm torso 35 HP by definition, .50 AE ~1.8x 
 		(not want or math.abs(hp - want) < 1.5) and hp50 < hp and hp50 > 0.85 * hp, hp)
 end
 if recoil then
+	local wantFx = phys.blast >= Deagle.cfg.physics.largeFlashBlast and Deagle.cfg.muzzleFxLarge or Deagle.cfg.muzzleFx
+	check(string.format("flash %s for blast x%.2f", tostring(recoil.flashName), phys.blast), recoil.flashName == wantFx, recoil.flashName)
 	check(string.format("5 fast shots climb %.1f deg, more than 5 single shots (%.1f)", recoil.string5, 5 * recoil.final), recoil.string5 > 1.2 * 5 * recoil.final, recoil.string5)
 	check(string.format("the barrel is still kicked %.1f deg up 0.08 s after a shot (next bullet goes there)", recoil.kickNow or 0), (recoil.kickNow or 0) > 0.3, recoil.kickNow)
 	local a1, a2 = Deagle:SprayRand(3, 2), Deagle:SprayRand(3, 2)
