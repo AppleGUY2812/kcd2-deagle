@@ -83,10 +83,27 @@ def fix_section_zeros():
         if bad:
             left = zero_frames(act)
             print("SECTION ZEROS", act.name, {n: len(f) for n, f in bad.items()}, "left after fix", {n: len(f) for n, f in left.items()})
+# ---- the muzzle tag is rigid on the barrel. The rig's rest pose has it on the bore at the muzzle with +Y down the
+# barrel, but MWII's clips key it elsewhere in places (idle: 7 cm under the barrel and tilted 18 deg, measured in game
+# 2026-10-12), and the muzzle flash rides it. Its keys are dropped so every clip leaves it at rest on its parent.
+RIGID_TAGS = ("tag_flash",)
+def unkey_rigid_tags():
+    for act in [a for a in bpy.data.actions if a.name.startswith("@")]:
+        drop = [fc for fc in act.fcurves if any(fc.data_path.startswith(f'pose.bones["{b}"].') for b in RIGID_TAGS)]
+        for fc in drop:
+            act.fcurves.remove(fc)
+        if drop:
+            print("RIGID", act.name, len(drop), "curves dropped")
+    for b in RIGID_TAGS:
+        pb = arm.pose.bones.get(b)
+        if pb is None:
+            raise SystemExit(f"rigid tag {b} missing from the rig")
+        pb.location = (0, 0, 0); pb.rotation_quaternion = (1, 0, 0, 0); pb.scale = (1, 1, 1)
 if not arm.animation_data:
     arm.animation_data_create()
 fix_section_zeros()
 fill_unkeyed()
+unkey_rigid_tags()
 if not BLEND.endswith('_extra.blend'):
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(os.path.dirname(BLEND), 'mwii_vm_filled.blend'), copy=True)
 

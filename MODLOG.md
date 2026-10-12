@@ -262,3 +262,25 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   the plugin skips repeated camera calls within a frame (same matrix < 1 ms apart; was 2-3x per frame).
 - Checks added: tools/check_native.py (every command Lua sends has a plugin handler: the kick handler had been cut
   out with the flash code), tests/run_all.sh (all suites).
+
+## 2026-10-12 (night) — the flash, actually glued; the Deagle's missing flash
+- User video: Glock flash trailing the gun on turns, off to the side; Deagle no flash at all.
+- In-game tests (slow motion x0.02, camera turned by script, recorded; test records glue*.mkv):
+  - bone-attachment effects (SetAttachmentEffect): one Glock flash rendered, one didn't, in the same session; the
+    Deagle's never rendered, even moved to the real muzzle; they trail by a frame (the engine positions attachments
+    before the plugin's camera step; KCD2 runs CEffectAttachment updates through a deferred global queue);
+  - an emitter in a slot of the viewmodel entity: created (table form) but never renders;
+  - an emitter on a separate BasicEntity: renders every time.
+- LoadParticleEffect: CryEngine's table form (slot, effect, { Scale = ... }) returns the slot; plain arguments return
+  nil and create nothing (checked live: IsSlotValid false). The 2026-10-12 "plain arguments" change was wrong, and it's
+  why the plugin-glued flash entity once showed nothing. Mock now does what the game does.
+- Now: the flash burns on its own entity (deagle_flash, two alternating slots); Lua sends the muzzle (position + barrel
+  direction in the viewmodel's axes) each frame while it burns; the plugin places the entity right after the gun in
+  the camera step (flash / flashpos / flashoff). No more attachments or GetBoneLocal measuring at the first shot.
+- Deagle: tag_flash sat 7 cm under the barrel, 12 cm ahead and tilted 18 deg in idle (measured in game). Cause: the
+  idle clip never keys it, and vm_export.py baked whatever pose the previously exported clip left on it. The exporter
+  (and gb_build.py for converted guns) now drops the muzzle bone's keys and resets it to rest: every clip has it on the
+  bore, +Y down the barrel. The Glock's shipped clips already had it right (within 1 mm); re-converting applies the rule.
+- Notes for later (WHGame 1.5.6): IEntity::GetCharacter = vtable +0x328, GetSlotWorldTM +0x2D8;
+  ICharacterInstance::SetAttachmentLocation_DEPRECATED = +0x190 (only stores m_location at +0xA08),
+  FinishAnimationComputations +0x188, GetIAttachmentManager +0x40.

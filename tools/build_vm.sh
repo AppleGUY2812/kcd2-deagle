@@ -33,7 +33,7 @@ if [ "$extra" = 1 ]; then
 fi
 
 echo "== export (vm_export.py)"
-out="$(ps "Remove-Item -Recurse -Force '$W\\vm' -ErrorAction SilentlyContinue; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -P '$(win "$here/tools/vm_export.py")' -- '$W\\blend\\mwii_vm_extra.blend' '$W\\vm\\$VMDIR' '$W\\vm\\anims' '$RC' 2>&1 | Select-String 'SECTION|ROUNDS|VM EXPORT DONE|Traceback|rror:' | % Line")"
+out="$(ps "Remove-Item -Recurse -Force '$W\\vm' -ErrorAction SilentlyContinue; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -P '$(win "$here/tools/vm_export.py")' -- '$W\\blend\\mwii_vm_extra.blend' '$W\\vm\\$VMDIR' '$W\\vm\\anims' '$RC' 2>&1 | Select-String 'SECTION|ROUNDS|RIGID|VM EXPORT DONE|Traceback|rror:' | % Line")"
 echo "$out"
 grep -q "VM EXPORT DONE" <<<"$out" || { echo "export failed" >&2; exit 1; }
 

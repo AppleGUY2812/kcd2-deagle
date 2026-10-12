@@ -114,6 +114,19 @@ for bn in sorted(every):
             fc = act.fcurves.new(f'pose.bones["{bn}"].rotation_quaternion', index=i, action_group=bn)
             fc.keyframe_points.insert(f0, r[i]); fc.keyframe_points.insert(f1, r[i])
 
+# ---------------------------------------------------------------- the muzzle bone stays rigid on the barrel
+# The flash rides it. MWII clips can key it off the bore (the Deagle's idle had it 7 cm under the barrel, tilted 18 deg,
+# measured in game 2026-10-12): its keys go, so every clip leaves it at its rest place on its parent (on the bore at the
+# muzzle, +Y down the barrel).
+MUZZLE = B.get("muzzle", "tag_flash")
+if MUZZLE in PB:
+    for act in roles():
+        drop = [fc for fc in act.fcurves if fc.data_path.startswith(f'pose.bones["{MUZZLE}"].')]
+        for fc in drop:
+            act.fcurves.remove(fc)
+    PB[MUZZLE].location = (0, 0, 0); PB[MUZZLE].rotation_quaternion = (1, 0, 0, 0); PB[MUZZLE].scale = (1, 1, 1)
+    note(f"muzzle bone {MUZZLE} kept rigid on its parent (clip keys dropped)")
+
 # ---------------------------------------------------------------- empty idle (slide locked like the end of the last shot)
 pose_at(A["@idle"], rng(A["@idle"])[0]); IDLE = snap()
 LOCK, LOCK_MADE = None, False
