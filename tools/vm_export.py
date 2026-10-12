@@ -128,6 +128,28 @@ for md in skin.modifiers:
 nw = max((len(v.groups) for v in skin.data.vertices), default=0)
 print("SKIN", len(skin.data.vertices), "verts, max weights/vertex", nw, "bones", len(arm.data.bones))
 
+# ---- the rounds in the gun's magazine (bone j_ammo_01, rides j_mag1) become their own skin attachment, so the
+# script can hide them while that magazine is empty. The spare magazine (j_mag2) always shows its rounds.
+ai = skin.vertex_groups["j_ammo_01"].index
+in_mag = {v.index for v in skin.data.vertices if any(g.group == ai and g.weight > 0.5 for g in v.groups)}
+for v in skin.data.vertices:
+    v.select = False
+for e in skin.data.edges:
+    e.select = False
+n_sel = 0
+for p in skin.data.polygons:
+    p.select = all(i in in_mag for i in p.vertices)
+    if p.select:
+        n_sel += 1
+        for i in p.vertices:
+            skin.data.vertices[i].select = True
+bpy.ops.object.select_all(action="DESELECT"); skin.select_set(True); bpy.context.view_layer.objects.active = skin
+bpy.ops.object.mode_set(mode="EDIT"); bpy.ops.mesh.select_mode(type="FACE"); bpy.ops.mesh.separate(type="SELECTED")
+bpy.ops.object.mode_set(mode="OBJECT")
+rounds = next(o for o in bpy.context.selected_objects if o is not skin)
+rounds.name = "deagle_vm_rounds"
+print("ROUNDS", n_sel, "faces ->", rounds.name, len(rounds.data.vertices), "verts; skin left", len(skin.data.vertices))
+
 # ---- export nodes: chr (skeleton) + skin (mesh)
 # the toolkit wants a mesh in the chr node: a 1 mm triangle at the camera origin skinned to the root
 pm = bpy.data.meshes.new("deagle_vm_proxy"); pm.from_pydata([(0, 0, 0), (0.001, 0, 0), (0, 0, 0.001)], [], [(0, 1, 2)])
@@ -139,6 +161,8 @@ bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); proxy.select
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="chr", node_name="deagle_vm")
 bpy.ops.object.select_all(action="DESELECT"); skin.select_set(True); bpy.context.view_layer.objects.active = skin
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name="deagle_vm_skin")
+bpy.ops.object.select_all(action="DESELECT"); rounds.select_set(True); bpy.context.view_layer.objects.active = rounds
+bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name="deagle_vm_rounds")
 print("NODES", [c.name for c in bpy.data.collections if c.name.endswith((".chr", ".skin"))])
 os.makedirs(OUT, exist_ok=True)
 arm.animation_data.action = bpy.data.actions["@idle1"]; scene.frame_set(int(bpy.data.actions["@idle1"].frame_range[0]))

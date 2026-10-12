@@ -42,7 +42,7 @@ Deagle.cfg = {
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
 	modelDir = "objects/manmade/weapons/deagle/",
-	ejectImpulse = 0.06,
+	ejectImpulse = 0.035,     -- casing (20 g) out at ~1.75 m/s, up and to the right
 	caseLifeMs = 20000,
 }
 
@@ -53,19 +53,26 @@ Deagle.cfg.vm = {
 	chr = "objects/manmade/weapons/deagle/vm/deagle_vm.chr",
 	skin = "objects/manmade/weapons/deagle/vm/deagle_vm_skin.skin",
 	offset = { fwd = 0.0, right = 0.0, up = 0.0 },   -- camera-space nudge (m)
-	fps = 24, layer = 0, blend = 0.08,
+	fps = 24, layer = 0,
+	-- transition blends (seconds), checked offline against every clip pair (transition audit, MODLOG):
+	-- rest -> clip, refire mid-recoil, a shot cut by reload / holster / aim, an inspect cut by anything (the gun may be
+	-- upside down). Clip end -> rest is instant: every clip ends on its rest pose.
+	blend = 0.08, refireBlend = 0.12, cutBlend = 0.2, inspectCutBlend = 0.3,
 	ads = false,              -- aim down sights on right click (deagle_ads 1); off = CS-style hip only
 	recoilLayer = 1,          -- aimed shots: additive recoil on top of the ADS pose
 	adsBlend = 0.14,          -- seconds to blend hip <-> ADS (pose and zoom)
 	adsLead = 0.2,            -- reload / draw hand over to a held aim this long before they end, blending as long
 	holsterSpeed = 1.6,
+	newMagAt = 0.69,          -- empty reload: the dropped mag is off screen and the same bone comes back as the new one
+	reloadSwapped = 0.6,      -- last seconds of the reload in which the spare mag is the seated one (frames 50-65)
 	anims = {   -- clip, frame count (24 fps)
 		draw = { "deagle_vm_draw", 37 }, holster = { "deagle_vm_holster", 37 },
 		idle = { "deagle_vm_idle1", 2 }, idleEmpty = { "deagle_vm_idle_empty", 2 },
 		ads = { "deagle_vm_ads", 2 }, adsEmpty = { "deagle_vm_ads_empty", 2 },
 		shoot = { { "deagle_vm_shoot1", 35 }, { "deagle_vm_shoot2", 35 } }, shootEmpty = { "deagle_vm_shoot_empty", 23 },
 		shootAdd = { { "deagle_vm_shoot1_add", 35 }, { "deagle_vm_shoot2_add", 35 } }, shootEmptyAdd = { "deagle_vm_shoot_empty_add", 23 },
-		reload = { "deagle_vm_reload", 65 }, reloadEmpty = { "deagle_vm_reload_empty", 68 }, inspect = { "deagle_vm_inspect", 153 },
+		reload = { "deagle_vm_reload", 65 }, reloadEmpty = { "deagle_vm_reload_empty", 68 }, inspect = { "deagle_vm_inspect", 153 }, inspectEmpty = { "deagle_vm_inspect_empty", 153 },
+		drawEmpty = { "deagle_vm_draw_empty", 37 }, holsterEmpty = { "deagle_vm_holster_empty", 37 },
 	},
 	hideBody = true,          -- Henry's body and worn gear are hidden in first person while the gun is up (shadow stays)
 	fpMaxDist = 0.35,         -- camera within this of the Head bone = first person (dialogue / cutscene cameras aren't)
@@ -99,9 +106,18 @@ Deagle.vmSoundCues = {
 	["reload_empty"] = { { 0.000, "decho/p25_pi_decho_reload_empty_raise.wav" }, { 0.125, "decho/p25_pi_decho_reload_empty_pivot.wav" }, { 0.208, "decho/p25_pi_decho_reload_empty_magout.wav" }, { 0.917, "decho/p25_pi_decho_reload_empty_magfindwell.wav" }, { 1.125, "decho/p25_pi_decho_reload_empty_magin.wav" }, { 1.375, "decho/p25_pi_decho_reload_empty_tilt.wav" }, { 1.750, "decho/p25_pi_decho_reload_empty_slideback.wav" }, { 1.833, "decho/p25_pi_decho_reload_empty_slideclose.wav" }, { 2.042, "decho/p25_pi_decho_reload_empty_end.wav" } },
 	["inspect"] = { { 0.000, "decho/p25_pi_decho_inspect_raise.wav" }, { 0.083, "decho/p25_pi_decho_inspect_pivot.wav" }, { 0.208, "decho/p25_pi_decho_inspect_magrelease.wav" }, { 0.208, "decho/p25_pi_decho_inspect_magout.wav" }, { 0.750, "decho/p25_pi_decho_inspect_magcatch.wav" }, { 2.500, "decho/p25_pi_decho_inspect_magfindwell.wav" }, { 2.917, "decho/p25_pi_decho_inspect_magin.wav" }, { 3.375, "decho/p25_pi_decho_inspect_rotate.wav" }, { 3.792, "decho/p25_pi_decho_inspect_slideback.wav" }, { 4.542, "decho/p25_pi_decho_inspect_slideclose.wav" }, { 4.667, "decho/p25_pi_decho_inspect_end.wav" } },
 }
-local CUE_SEQ = { shoot = "shoot1", shootEmpty = "shoot_empty", reload = "reload", reloadEmpty = "reload_empty", draw = "draw", inspect = "inspect" }
+-- empty inspect: same cues, but the locked slide never closes
+Deagle.vmSoundCues["inspect_empty"] = {}
+for _, c in ipairs(Deagle.vmSoundCues["inspect"]) do
+	if not c[2]:find("slideclose") then table.insert(Deagle.vmSoundCues["inspect_empty"], c) end
+end
+local CUE_SEQ = { shoot = "shoot1", shootEmpty = "shoot_empty", reload = "reload", reloadEmpty = "reload_empty", draw = "draw", drawEmpty = "draw", inspect = "inspect", inspectEmpty = "inspect_empty" }
 local REST = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }   -- looping rest poses
-local HOLDS_AIM = { draw = true, holster = true, reload = true, reloadEmpty = true }   -- aim waits for these; shots and inspect it cuts
+local HOLDS_AIM = { draw = true, drawEmpty = true, holster = true, holsterEmpty = true, reload = true, reloadEmpty = true }   -- aim waits for these; shots and inspect it cuts
+local DRAWING = { draw = true, drawEmpty = true }        -- no shooting, reloading or inspecting until the gun is up
+local HOLDS_TOGGLE = { draw = true, drawEmpty = true, reload = true, reloadEmpty = true }   -- a holster asked for meanwhile waits
+local SHOTS = { shoot = true, shootEmpty = true }
+local INSPECTS = { inspect = true, inspectEmpty = true }
 
 -- ---------------------------------------------------------------------------
 -- helpers
@@ -324,7 +340,7 @@ function Deagle:EjectCase()
 		})
 		pcall(case.SetFlags, case, ENTITY_FLAG_NO_SAVE, 0)   -- casings live for seconds; never into a save
 		case:SetWorldPos(port)
-		local jr, ju, jf = 0.75 + math.random() * 0.5, 0.5 + math.random() * 0.7, -0.45 + math.random() * 0.5
+		local jr, ju, jf = 0.7 + math.random() * 0.4, 0.9 + math.random() * 0.5, -0.3 + math.random() * 0.4
 		local dir = vnorm(vadd(vscale(r, jr), vadd(vscale(u, ju), vscale(f, jf))))
 		local spinAt = vadd(port, { x = (math.random() - 0.5) * 0.02, y = (math.random() - 0.5) * 0.02, z = (math.random() - 0.5) * 0.02 })
 		case:AddImpulse(-1, spinAt, dir, c.ejectImpulse * (0.8 + math.random() * 0.45), 1)
@@ -377,8 +393,10 @@ end
 -- hip shots play the full shoot clip; aimed shots keep the ADS pose and add the recoil on top
 function Deagle:Fire()
 	local s = self.state
+	if self:VmBusyWith(DRAWING) or self.vmHolstering then return end
 	local aimed, wasLast = s.aiming, s.ammo == 1
 	if not self:Shoot() then return end
+	if s.ammo == 0 then self:VmRounds(false) end
 	if aimed then
 		self:VmRecoilAdd(wasLast)
 	else
@@ -429,7 +447,7 @@ end
 -- the reload lasts exactly as long as its clip (full or empty-mag version)
 function Deagle:Reload()
 	local s, c = self.state, self.cfg
-	if s.reloading or s.ammo >= c.magSize then return end
+	if s.reloading or s.ammo >= c.magSize or self:VmBusyWith(DRAWING) or self.vmHolstering then return end
 	if c.useAmmoItems and self:CountOf(c.ammoId) <= 0 then
 		self:Notify("No .50 AE cartridges")
 		return
@@ -441,8 +459,14 @@ function Deagle:Reload()
 	self:Notify("Desert Eagle  reloading...")
 	self:PlayTrigger(c.reloadTrigger)
 	Script.SetTimer(math.floor(len * 1000) + 20, function() self:FinishReload() end)
-	self:VmPlay(key, false, nil, s.aiming and c.vm.adsBlend or nil)
+	self:VmPlay(key, false)
 	self:UpdateAim()
+	if key == "reloadEmpty" then
+		local this = s.reloadEnd
+		Script.SetTimer(math.floor(c.vm.newMagAt * 1000), function()
+			if Deagle.state.reloading and Deagle.state.reloadEnd == this then Deagle:VmRounds(true) end
+		end)
+	end
 end
 
 -- Called by the timer and polled from input, so a reload never gets stuck if timers are cleared.
@@ -459,6 +483,7 @@ function Deagle:FinishReload()
 		end
 	end
 	s.ammo = s.ammo + take
+	self:VmRounds(s.ammo > 0)
 	self:ShowAmmo()
 end
 
@@ -485,7 +510,7 @@ function Deagle:UpdateAim(blend)
 		if self.native then self:Native("aim " .. (want and "1" or "0")) end
 	end
 	if self.vmShown and not blocked then
-		self:VmPlay(self:VmRestKey(), true, 1.0, blend or self.cfg.vm.adsBlend)
+		self:VmPlay(self:VmRestKey(), true, 1.0, blend or (not self:VmBusy() and self.cfg.vm.adsBlend or nil))
 	end
 end
 
@@ -511,11 +536,11 @@ function Deagle:EaseFov(on)
 	end)
 end
 
--- inspect only from the hip
+-- inspect only from the hip; an empty gun keeps its slide locked and shows an empty magazine (MWII-style)
 function Deagle:Inspect()
 	local s = self.state
-	if s.aiming or s.aimHeld or not s.drawn or s.reloading then return end
-	self:VmPlay("inspect", false)
+	if s.aiming or s.aimHeld or not s.drawn or s.reloading or self:VmBusy() or self.vmHolstering then return end
+	self:VmPlay(s.ammo == 0 and "inspectEmpty" or "inspect", false)
 end
 
 -- ---------------------------------------------------------------------------
@@ -553,10 +578,18 @@ function Deagle:VmEntity()
 		log("viewmodel fallback chr " .. tostring(ok2) .. " " .. tostring(slot2) .. " skin " .. tostring(ok3))
 	end
 	pcall(vm.SetViewDistRatio, vm, 255)
-	self.vmId = vm.id
+	self.vmId, self.vmRoundsShown = vm.id, nil
 	vm.OnUpdate = function() Deagle:VmPlace() end    -- per-frame follow (entity update); VmTick timer as well
 	pcall(vm.Activate, vm, 1)
 	return vm
+end
+
+-- the rounds in the gun's magazine (own skin attachment) show only while it holds any
+function Deagle:VmRounds(show)
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm or self.vmRoundsShown == show then return end
+	self.vmRoundsShown = show
+	pcall(vm.HideAttachment, vm, 0, "vm_rounds", not show, not show)
 end
 
 function Deagle:VmBone(name)
@@ -728,14 +761,35 @@ function Deagle:VmRestKey()
 end
 
 -- a one-shot clip is over: back to the rest loop, or into ADS if aim was held through it
+-- Instant: every one-shot clip ends exactly on its rest pose (and the reload's seated spare mag swaps for the
+-- identical main one without a blend that would fly them past each other). A queued draw / holster goes first.
 function Deagle:VmReturn()
 	local s = self.state
-	if s.aimHeld ~= s.aiming then self:UpdateAim() else self:VmPlay(self:VmRestKey(), true) end
+	if self.pendingToggle then self.pendingToggle = false; self:Toggle()
+	elseif s.aimHeld ~= s.aiming then self:UpdateAim()
+	else self:VmPlay(self:VmRestKey(), true, 1.0, 0) end
 end
 
 function Deagle:VmBusy()   -- a one-shot clip (shot, reload, inspect, draw, holster) still playing
 	local a = self.vmAnim
 	return a and not a.loop and System.GetCurrTime() < (a.ends or 0)
+end
+
+function Deagle:VmBusyWith(keys)
+	return self:VmBusy() and keys[self.vmAnim.key] or false
+end
+
+-- blend for a clip start when the caller doesn't set one
+function Deagle:VmBlendFor(key)
+	local c, cur = self.cfg.vm, self.vmAnim
+	if not cur then return c.blend end
+	if self:VmBusy() then
+		if INSPECTS[cur.key] then return c.inspectCutBlend end
+		if SHOTS[cur.key] and SHOTS[key] then return c.refireBlend end
+		return c.cutBlend
+	end
+	if (cur.key == "ads" or cur.key == "adsEmpty") and not REST[key] then return c.cutBlend end
+	return c.blend
 end
 
 -- Plays a clip on the base layer. One-shot clips play their sound cues and return to the rest loop by themselves.
@@ -751,10 +805,15 @@ function Deagle:VmPlay(key, loop, speed, blend)
 	end
 	local name, frames = a[1], a[2]
 	speed = speed or 1.0
-	if self.vmAnim and self.vmAnim.name == name and not REST[key] then
+	blend = blend or self:VmBlendFor(key)
+	local cur = self.vmAnim
+	-- the reload ends with the spare mag seated and the main one parked off screen: switch to idle (identical image)
+	-- before any blend, or the blend would fly both magazines across the view
+	local swapped = cur and cur.key == "reload" and System.GetCurrTime() >= (cur.ends or 0) - c.reloadSwapped
+	if (cur and cur.name == name and not REST[key]) or (swapped and blend > 0 and key ~= "idle") then
 		pcall(vm.StartAnimation, vm, 0, c.anims.idle[1], c.layer, 0, 1.0, true)
 	end
-	local ok, started = pcall(vm.StartAnimation, vm, 0, name, c.layer, blend or c.blend, speed, loop and true or false)
+	local ok, started = pcall(vm.StartAnimation, vm, 0, name, c.layer, blend, speed, loop and true or false)
 	if not (ok and started) and self.vmLastFail ~= name and not (self.vmAnim and self.vmAnim.name == name) then
 		self.vmLastFail = name
 		log("$4viewmodel anim did not start: " .. name .. " " .. tostring(started))
@@ -765,7 +824,7 @@ function Deagle:VmPlay(key, loop, speed, blend)
 	self.vmAnim = { key = key, name = name, loop = loop, ends = System.GetCurrTime() + len }
 	if not loop then
 		self:PlayCues(key)
-		if HOLDS_AIM[key] and len > c.adsLead then
+		if HOLDS_AIM[key] and key ~= "reload" and len > c.adsLead then   -- reload: at its end (mag swap)
 			Script.SetTimer(math.floor((len - c.adsLead) * 1000), function()
 				if Deagle.vmAnimToken == tok and Deagle.vmShown and Deagle.state.aimHeld then Deagle:UpdateAim(c.adsLead) end
 			end)
@@ -831,7 +890,8 @@ function Deagle:VmShow()
 	self.vmShown = true
 	pcall(vm.Hide, vm, 0)
 	self:VmPlace()
-	self:VmPlay("draw", false)
+	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or "draw", false)
+	self:VmRounds(self.state.ammo > 0)
 	self.vmToken = (self.vmToken or 0) + 1
 	local token = self.vmToken
 	Script.SetTimer(0, function() Deagle:VmTick(token) end)
@@ -861,10 +921,11 @@ end
 function Deagle:HideInHand()
 	if self.vmShown and not self.vmHolstering then
 		self.vmHolstering = true
-		local len = self:VmPlay("holster", false, self.cfg.vm.holsterSpeed)
+		local len = self:VmPlay(self.state.ammo == 0 and "holsterEmpty" or "holster", false, self.cfg.vm.holsterSpeed)
 		Script.SetTimer(math.floor(len * 1000), function()
 			Deagle.vmHolstering = false
 			if not Deagle.state.drawn then Deagle:VmHide(); Deagle:NativeSyncVm() end
+			if Deagle.pendingToggle then Deagle.pendingToggle = false; Deagle:Toggle() end   -- drawn again meanwhile
 		end)
 		return
 	end
@@ -873,8 +934,13 @@ function Deagle:HideInHand()
 	self:NativeSyncVm()
 end
 
+-- Draw / holster. Asked for during a draw, holster or reload, it waits for that to finish (no mid-way jumps).
 function Deagle:Toggle()
 	local s = self.state
+	if self.vmShown and (self.vmHolstering or self:VmBusyWith(HOLDS_TOGGLE)) then
+		self.pendingToggle = not self.pendingToggle
+		return
+	end
 	if not s.drawn and not self:Owns() then
 		self:Notify("You don't have a Desert Eagle")
 		return

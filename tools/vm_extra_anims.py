@@ -63,16 +63,80 @@ for i in range(1, SETTLE + 1):
         pb.keyframe_insert("rotation_quaternion", frame=f1 + i, group=pb.name)
 print("SETTLED @shoot_empty", f1, "->", int(se.frame_range[1]))
 
-# ---- @holster: draw reversed
-d = A["@draw"]; h = d.copy(); h.name = "@holster"; h.use_fake_user = True
-f0, f1 = d.frame_range
-for fc in h.fcurves:
-    for kp in fc.keyframe_points:
-        kp.co.x = f0 + f1 - kp.co.x
-        kp.handle_left.x = f0 + f1 - kp.handle_left.x; kp.handle_right.x = f0 + f1 - kp.handle_right.x
-    fc.keyframe_points.sort() if hasattr(fc.keyframe_points, "sort") else None
-    fc.update()
-print("MADE @holster", tuple(h.frame_range))
+# ---- @inspect_empty: MWII-style empty inspect = the normal inspect with the slide locked back the whole time (the
+# slide check may push it further back, never forward) and no round in the chamber (j_ammo_17 stays at rest, hidden).
+# The magazine's rounds are a separate attachment the script hides at 0 ammo.
+src = A["@inspect"]; ie = src.copy(); ie.name = "@inspect_empty"; ie.use_fake_user = True
+for fc in [fc for fc in ie.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in ("j_slide", "j_slidestop", "j_ammo_17")]:
+    ie.fcurves.remove(fc)
+L_lock, R_stop = locked["j_slide"][0], locked["j_slidestop"][1]
+axis = L_lock.normalized(); s_lock = L_lock.length
+fi0, fi1 = (int(v) for v in src.frame_range)
+slide_keys = []
+for f in range(fi0, fi1 + 1):
+    pose_at(src, f)
+    pb = PB["j_slide"]
+    t_parent = (pb.parent.matrix.inverted() @ pb.matrix).translation
+    L = Vector((0, 0, 0)) if t_parent.length < 1e-5 else pb.location.copy()   # zeroed Source section = rest
+    s = max(L.dot(axis), s_lock)
+    slide_keys.append((f, axis * s + (L - axis * L.dot(axis))))
+arm.animation_data.action = ie
+for f, L in slide_keys:
+    PB["j_slide"].location = L; PB["j_slide"].rotation_quaternion = Quaternion()
+    PB["j_slide"].keyframe_insert("location", frame=f, group="j_slide")
+    PB["j_slide"].keyframe_insert("rotation_quaternion", frame=f, group="j_slide")
+for n, loc, rot in (("j_slidestop", locked["j_slidestop"][0], R_stop), ("j_ammo_17", Vector((0, 0, 0)), Quaternion())):
+    for f in (fi0, fi1):
+        PB[n].location, PB[n].rotation_quaternion = loc, rot
+        PB[n].keyframe_insert("location", frame=f, group=n); PB[n].keyframe_insert("rotation_quaternion", frame=f, group=n)
+print("MADE @inspect_empty", tuple(ie.frame_range), "slide travel min/max", round(min(k[1].dot(axis) for k in slide_keys), 4), round(max(k[1].dot(axis) for k in slide_keys), 4), "lock", round(s_lock, 4))
+
+# ---- @reload_empty starts where the converted @shoot_empty used to stop (gun high, 76 mm / 18 deg off the empty
+# idle); ease its first frames out of @idle_empty so the reload starts from where the gun actually is
+EASE_IN = 8
+re_ = A["@reload_empty"]
+fr0 = int(re_.frame_range[0])
+pose_at(A["@idle_empty"], 1)
+start = {pb.name: (pb.location.copy(), pb.rotation_quaternion.copy()) for pb in PB}
+keys = []
+for f in range(fr0, fr0 + EASE_IN):
+    pose_at(re_, f)
+    k = (f - fr0) / EASE_IN
+    k = k * k * (3 - 2 * k)
+    keys.append((f, k, {pb.name: (pb.location.copy(), pb.rotation_quaternion.copy()) for pb in PB}))
+arm.animation_data.action = re_
+for f, k, clip in keys:
+    for pb in PB:
+        (l0, r0), (l1, r1) = start[pb.name], clip[pb.name]
+        if r0.dot(r1) < 0:
+            r1 = -r1
+        pb.location = l0.lerp(l1, k); pb.rotation_quaternion = r0.slerp(r1, k)
+        pb.keyframe_insert("location", frame=f, group=pb.name); pb.keyframe_insert("rotation_quaternion", frame=f, group=pb.name)
+print("EASED @reload_empty in from @idle_empty over", EASE_IN, "frames")
+
+# ---- @draw_empty: the draw with the slide locked back (an empty gun comes out empty)
+de = A["@draw"].copy(); de.name = "@draw_empty"; de.use_fake_user = True
+for fc in [fc for fc in de.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in ("j_slide", "j_slidestop")]:
+    de.fcurves.remove(fc)
+arm.animation_data.action = de
+fd0, fd1 = (int(v) for v in de.frame_range)
+for n, (l, r) in locked.items():
+    for f in (fd0, fd1):
+        PB[n].location, PB[n].rotation_quaternion = l, r
+        PB[n].keyframe_insert("location", frame=f, group=n); PB[n].keyframe_insert("rotation_quaternion", frame=f, group=n)
+print("MADE @draw_empty", tuple(de.frame_range))
+
+# ---- @holster / @holster_empty: the draws reversed
+for src_name, dst_name in (("@draw", "@holster"), ("@draw_empty", "@holster_empty")):
+    d = A[src_name]; h = d.copy(); h.name = dst_name; h.use_fake_user = True
+    f0, f1 = d.frame_range
+    for fc in h.fcurves:
+        for kp in fc.keyframe_points:
+            kp.co.x = f0 + f1 - kp.co.x
+            kp.handle_left.x = f0 + f1 - kp.handle_left.x; kp.handle_right.x = f0 + f1 - kp.handle_right.x
+        fc.keyframe_points.sort() if hasattr(fc.keyframe_points, "sort") else None
+        fc.update()
+    print("MADE", dst_name, tuple(h.frame_range))
 
 # ---- @ads
 pose_at(A["@idle1"], 1)

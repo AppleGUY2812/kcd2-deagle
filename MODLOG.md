@@ -130,3 +130,18 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   (the white triangle). ENTITY_FLAG_NO_SAVE = 32768; SetFlags(f, 0) ORs, (f, 2) clears. System.GetEntitiesByClass works.
 - Live debugging: tools/live.sh <snippet.lua> over the rcon port works while the game is unfocused, but the game is
   paused then (timers and animation don't advance).
+
+## 2026-10-11 ~20:40 — transitions audited, magazine rounds, empty variants
+- tools/vm_tracks_dump.py + tools/vm_transition_audit.py: 50 transitions (clip ends, starts, every interruption frame,
+  queued draw/holster) -> 0 jumps. Rules in the script: clip end -> rest instant (every clip ends on its rest pose),
+  rest -> clip 0.08, refire 0.12, a shot cut by reload/holster/aim 0.2, an inspect cut 0.3, from ADS 0.2; draw blocks
+  fire/reload/inspect; draw/holster/reload finish before a requested toggle; tests/run_transitions.lua checks them.
+- The normal reload ends with the spare mag (j_mag2) seated and j_mag1 parked: any blend out of it flew both mags
+  across the view; VmPlay switches to idle instantly first (identical image).
+- New clips: @draw_empty/@holster_empty (slide locked), @inspect_empty (slide locked, no chamber round; MWII shows
+  inspects empty since S1), @shoot_empty + 10-frame settle, @reload_empty eased in from @idle_empty over 8 frames.
+- Rounds of the gun's mag (j_ammo_01) are their own skin attachment vm_rounds (deagle_vm_rounds.skin), hidden at 0 ammo
+  and shown 0.69 s into an empty reload (the same bone returns as the new mag at frame 18).
+- Script flash light removed (intensity 6 / 9 m whited out the scene); the muzzle particle has its own light.
+- Casings: ejectImpulse 0.035 (~1.75 m/s), higher arc; were on screen ~2 frames at 3 m/s.
+- Slow motion for checking VFX in game: t_Scale 0.1 (exists in KCD2), back with t_Scale 1.
