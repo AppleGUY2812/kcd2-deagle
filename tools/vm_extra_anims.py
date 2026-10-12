@@ -39,6 +39,30 @@ for n, (l, r) in locked.items():
 bake_pose("@idle_empty", 1, 2)
 print("MADE @idle_empty")
 
+# ---- @shoot_empty: the converted clip stops mid-recoil (gun 76 mm / 18 deg off the empty idle, so the return
+# snapped); append a settle into @idle_empty. @shoot_empty_add (exported from it) gets the same settle.
+SETTLE = 10   # frames at 24 fps
+se = A["@shoot_empty"]
+f1 = int(se.frame_range[1])
+pose_at(se, f1)
+last = {pb.name: (pb.location.copy(), pb.rotation_quaternion.copy()) for pb in PB}
+pose_at(A["@idle_empty"], 1)
+target = {pb.name: (pb.location.copy(), pb.rotation_quaternion.copy()) for pb in PB}
+arm.animation_data.action = se
+for i in range(1, SETTLE + 1):
+    k = i / SETTLE
+    k = k * k * (3 - 2 * k)
+    for pb in PB:
+        (l0, r0), (l1, r1) = last[pb.name], target[pb.name]
+        if r0.dot(r1) < 0:
+            r1 = -r1
+        pb.rotation_mode = "QUATERNION"
+        pb.location = l0.lerp(l1, k)
+        pb.rotation_quaternion = r0.slerp(r1, k)
+        pb.keyframe_insert("location", frame=f1 + i, group=pb.name)
+        pb.keyframe_insert("rotation_quaternion", frame=f1 + i, group=pb.name)
+print("SETTLED @shoot_empty", f1, "->", int(se.frame_range[1]))
+
 # ---- @holster: draw reversed
 d = A["@draw"]; h = d.copy(); h.name = "@holster"; h.use_fake_user = True
 f0, f1 = d.frame_range

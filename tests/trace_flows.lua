@@ -8,7 +8,7 @@ run("stale entities", function()
 	System.SpawnEntity({ class = "BasicEntity", name = "deagle_vm_probe", properties = {} })
 end)
 run("load", function() dofile(script) end)
-run("gameplay started", function() Deagle:OnGameplayStarted() end)
+run("gameplay started", function() Deagle:OnGameplayStarted(); Deagle.cfg.vm.ads = true end)
 if native then run("handshake", function() M.console("deagle_native_ok") end) end
 run("draw", function() Deagle:OnAction("deagle_toggle", "press"); M.advance(1.6) end)
 run("hip fire x7", function() for i = 1, 7 do Deagle:OnAction("deagle_fire", "press"); M.advance(0.3) end M.advance(1.0) end)

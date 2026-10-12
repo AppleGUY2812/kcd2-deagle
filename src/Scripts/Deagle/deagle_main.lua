@@ -38,10 +38,6 @@ Deagle.cfg = {
 	splatRange = 3.0,         -- how far behind the target blood can land
 	splatSize = { 0.45, 0.9 },
 	splatLife = 180,
-	flashRadius = 9,
-	flashIntensity = 6,
-	flashMs = 45,
-	lightSlot = 15,
 	recoil = 1.0,
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
@@ -58,6 +54,7 @@ Deagle.cfg.vm = {
 	skin = "objects/manmade/weapons/deagle/vm/deagle_vm_skin.skin",
 	offset = { fwd = 0.0, right = 0.0, up = 0.0 },   -- camera-space nudge (m)
 	fps = 24, layer = 0, blend = 0.08,
+	ads = false,              -- aim down sights on right click (deagle_ads 1); off = CS-style hip only
 	recoilLayer = 1,          -- aimed shots: additive recoil on top of the ADS pose
 	adsBlend = 0.14,          -- seconds to blend hip <-> ADS (pose and zoom)
 	adsLead = 0.2,            -- reload / draw hand over to a held aim this long before they end, blending as long
@@ -66,8 +63,8 @@ Deagle.cfg.vm = {
 		draw = { "deagle_vm_draw", 37 }, holster = { "deagle_vm_holster", 37 },
 		idle = { "deagle_vm_idle1", 2 }, idleEmpty = { "deagle_vm_idle_empty", 2 },
 		ads = { "deagle_vm_ads", 2 }, adsEmpty = { "deagle_vm_ads_empty", 2 },
-		shoot = { { "deagle_vm_shoot1", 35 }, { "deagle_vm_shoot2", 35 } }, shootEmpty = { "deagle_vm_shoot_empty", 13 },
-		shootAdd = { { "deagle_vm_shoot1_add", 35 }, { "deagle_vm_shoot2_add", 35 } }, shootEmptyAdd = { "deagle_vm_shoot_empty_add", 13 },
+		shoot = { { "deagle_vm_shoot1", 35 }, { "deagle_vm_shoot2", 35 } }, shootEmpty = { "deagle_vm_shoot_empty", 23 },
+		shootAdd = { { "deagle_vm_shoot1_add", 35 }, { "deagle_vm_shoot2_add", 35 } }, shootEmptyAdd = { "deagle_vm_shoot_empty_add", 23 },
 		reload = { "deagle_vm_reload", 65 }, reloadEmpty = { "deagle_vm_reload_empty", 68 }, inspect = { "deagle_vm_inspect", 153 },
 	},
 	hideBody = true,          -- Henry's body and worn gear are hidden in first person while the gun is up (shadow stays)
@@ -179,28 +176,6 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 	if not name then return end
 	if name == self.cfg.muzzleFx then scale = self.cfg.muzzleFxScale end
 	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
-end
-
-function Deagle:Flash()
-	local p = self:Player()
-	local c = self.cfg
-	local i = c.flashIntensity
-	local lt = {
-		style = 0, deferred_light = 1, radius = c.flashRadius,
-		diffuse_color = { x = i, y = i * 0.72, z = i * 0.38 },
-		specular_color = { x = i, y = i * 0.72, z = i * 0.38 },
-		hdrdyn = 0, lifetime = 0, realtime = 1, dot3 = 1, cast_shadow = 0,
-		corona_scale = 0, corona_dist_size_factor = 1, corona_dist_intensity_factor = 1,
-	}
-	local ok = try("flash light", function()
-		local slot = p:LoadLight(c.lightSlot, lt)
-		p:SetSlotPos(slot or c.lightSlot, { x = 0.15, y = 0.9, z = 1.5 })
-	end)
-	if ok then
-		Script.SetTimer(c.flashMs, function()
-			try("flash off", function() p:FreeSlot(c.lightSlot) end)
-		end)
-	end
 end
 
 function Deagle:Recoil()
@@ -385,7 +360,6 @@ function Deagle:Shoot()
 
 	self:PlayTrigger(c.shotTrigger)
 	self:SpawnFx(c.muzzleFx, self:MuzzlePos(), dir, 0.6)
-	self:Flash()
 	self:Recoil()
 	self:EjectCase()
 
@@ -491,7 +465,7 @@ end
 -- Aim input. Aiming (zoom + ADS pose) follows the button, except while a reload / draw / holster runs: those finish
 -- first and hand over to ADS in their last moments. Hip shots and inspect are cut by it.
 function Deagle:SetAim(on)
-	self.state.aimHeld = on
+	self.state.aimHeld = on and self.cfg.vm.ads or false
 	self:UpdateAim()
 end
 
@@ -1098,6 +1072,7 @@ System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give()", "Add the 
 System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give([[%1]])", "deagle_give_ammo <n>: add n cartridges")
 System.AddCCommand("deagle_arms", "Deagle.cfg.vm.arms = (([[%1]]):find('mw') and 'mw' or 'medieval') Deagle.vmArmsApplied = nil Deagle:VmApplyArms()", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
 System.AddCCommand("deagle_motion", "Deagle.cfg.vm.motion = tonumber((([[%1]]):gsub('\"',''))) or 1 Deagle:NativeSyncVm()", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
+System.AddCCommand("deagle_ads", "Deagle.cfg.vm.ads = (([[%1]]):find('0') == nil) Deagle:SetAim(false)", "deagle_ads 1|0: aim down sights on right click")
 System.AddCCommand("deagle_hud", "Deagle.cfg.hud.enabled = (([[%1]]):find('0') == nil) Deagle.hudOk = nil", "deagle_hud 1|0: ammo HUD on/off")
 System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting live")
 System.AddCCommand("deagle_cfg", "Deagle:Cfg()", "Print all settings")
