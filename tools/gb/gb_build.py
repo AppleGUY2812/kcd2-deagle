@@ -455,6 +455,17 @@ if rounds:
     note(f"magazine rounds: {len(round_objs)} modelled, one skin each")
 info["has_rounds"] = rounds is not None
 info["rounds"] = len(round_objs)
+# both magazines become their own skins: a reload cancelled mid-swap hides them while the hands blend back
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from split_rounds import split_off
+mag_objs = []
+for role, nm in (("mag", "mag1"), ("mag2", "mag2")):
+    b = B.get(role)
+    if b:
+        m = split_off(skin, {b} | {c.name for c in arm.data.bones[b].children_recursive}, f"{NAME}_{nm}")
+        if m:
+            mag_objs.append(m)
+info["mags"] = len(mag_objs) == 2
 pm = bpy.data.meshes.new(f"{NAME}_proxy"); pm.from_pydata([(0, 0, 0), (0.001, 0, 0), (0, 0, 0.001)], [], [(0, 1, 2)])
 pm.materials.append(bpy.data.materials[f"{NAME}__01__{info['materials'][0]['sub']}__physNone"])
 proxy = bpy.data.objects.new(f"{NAME}_proxy", pm); scene.collection.objects.link(proxy); proxy.parent = arm
@@ -463,7 +474,7 @@ vg = proxy.vertex_groups.new(name=root); vg.add([0, 1, 2], 1.0, "REPLACE")
 md = proxy.modifiers.new("Armature", "ARMATURE"); md.object = arm
 bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); proxy.select_set(True); bpy.context.view_layer.objects.active = proxy
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="chr", node_name=NAME)
-for o, n in [(skin, f"{NAME}_skin")] + [(r, r.name) for r in round_objs]:
+for o, n in [(skin, f"{NAME}_skin")] + [(r, r.name) for r in round_objs + mag_objs]:
     if o:
         bpy.ops.object.select_all(action="DESELECT"); o.select_set(True); bpy.context.view_layer.objects.active = o
         bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name=n)

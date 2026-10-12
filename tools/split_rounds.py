@@ -62,3 +62,30 @@ def split_rounds(obj, top_point, name_fmt, gap=0.006):
         out.append(r)
     print("ROUNDS split into", len(out), "rounds, top first, verts", [len(o.data.vertices) for o in out])
     return out
+
+
+def split_off(skin, bones, name):
+    """Moves the faces of `skin` whose vertices all mostly follow `bones` (a bone and its children) into their own
+    object `name` (a magazine, so the script can hide it), or returns None when there are none."""
+    names = {g.index: g.name for g in skin.vertex_groups}
+    inside = {v.index for v in skin.data.vertices if v.groups and names.get(max(v.groups, key=lambda g: g.weight).group) in bones}
+    for v in skin.data.vertices:
+        v.select = False
+    for e in skin.data.edges:
+        e.select = False
+    n = 0
+    for p in skin.data.polygons:
+        p.select = all(i in inside for i in p.vertices)
+        if p.select:
+            n += 1
+            for i in p.vertices:
+                skin.data.vertices[i].select = True
+    if not n:
+        return None
+    bpy.ops.object.select_all(action="DESELECT"); skin.select_set(True); bpy.context.view_layer.objects.active = skin
+    bpy.ops.object.mode_set(mode="EDIT"); bpy.ops.mesh.select_mode(type="FACE"); bpy.ops.mesh.separate(type="SELECTED")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    part = next(o for o in bpy.context.selected_objects if o is not skin)
+    part.name = name
+    print("SPLIT", name, n, "faces,", len(part.data.vertices), "verts")
+    return part

@@ -137,7 +137,7 @@ do
 	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
 	for i = 1, 8 do shots[i] = "decho/decho-" .. i .. ".wav" end
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
-		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6,
+		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
 		cycle = 0.08,             -- the mod's weapon script (cycletime): CS2's Deagle is 0.225
 		-- the clips were exported frame for frame at 24 fps, but the mod's sequences run at 30 (shots at 40): play them
@@ -493,8 +493,15 @@ function Deagle:Fire(force, burstRound)
 	if self:VmDrawing() or self.vmHolstering then return end
 	if s.reloading and (burstRound or 1) > 1 then return end   -- a burst's later rounds never cancel a reload
 	if s.reloading then
-		if System.GetCurrTime() >= (s.reloadCancel or 0) then return end
+		-- the new mag is in: the shot goes off the moment the gun is back up
+		if s.magSeated then s.fireQueued = true return end
+		-- before that a shot cancels the reload (the rounds you had stay, no new ones). Once the old mag has left the
+		-- gun the magazines are mid-swap: they're hidden while the hands blend back (guns without mag pieces can only
+		-- cancel before that)
+		local midSwap = System.GetCurrTime() >= (s.reloadCancel or 0)
+		if midSwap and not self.gun.mags then return end
 		self:CancelReload()
+		if midSwap then self:VmMagsHidden(self.cfg.vm.cutBlend) end
 		if s.ammo <= 0 then        -- an empty gun: the click, and the hands go back to the rest pose
 			self:Shoot(force)
 			self:VmPlay(self:VmRestKey(), true, 1.0, self.cfg.vm.cutBlend)
@@ -620,12 +627,16 @@ function Deagle:FinishReload()
 	self:SeatMag()
 	s.reloading = false
 	self:ShowAmmo()
+	if s.fireQueued then                   -- pressed while the new mag went in and the gun came up
+		s.fireQueued = false
+		if self:FireMode() ~= "auto" or s.trigger then self:TriggerPress() end
+	end
 end
 
 -- a shot while the old magazine is still in: no reload, the rounds in it stay
 function Deagle:CancelReload()
 	local s = self.state
-	s.reloading, s.reloadEnd = false, nil
+	s.reloading, s.reloadEnd, s.fireQueued = false, nil, false
 	self:VmRounds(self:MagRounds())
 	self:ShowAmmo()
 end
@@ -735,6 +746,22 @@ function Deagle:VmRounds(n)
 	self.vmRoundsShown = n
 	if r == true then pcall(vm.HideAttachment, vm, 0, "vm_rounds", n <= 0, n <= 0) return end   -- one piece
 	for i = 1, r do pcall(vm.HideAttachment, vm, 0, "vm_round_" .. i, i > n, i > n) end
+end
+
+-- A reload cancelled mid-swap: the spare is in the hand and the old mag is out, and a blend back to the rest pose would
+-- fly both across the view. Both are hidden while the hands blend, then the gun's own mag shows again, seated.
+function Deagle:VmMagsHidden(t)
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm or not self.gun.mags then return end
+	local function show(on)
+		for _, a in ipairs({ "vm_mag1", "vm_mag2" }) do pcall(vm.HideAttachment, vm, 0, a, not on, not on) end
+		self.vmRoundsShown = nil
+		self:VmRounds(on and self:MagRounds() or 0)
+	end
+	show(false)
+	self.magsToken = (self.magsToken or 0) + 1
+	local tok = self.magsToken
+	Script.SetTimer(math.floor((t + 0.05) * 1000), function() if Deagle.magsToken == tok then show(true) end end)
 end
 
 -- rounds in the magazine: with any ammo, one of them is in the chamber

@@ -36,6 +36,7 @@ Deagle:RegisterGun("glock_17", {
 	shotSounds = { "guns/glock_17/X12-1.wav", "guns/glock_17/X12-2.wav", "guns/glock_17/X12-3.wav" },
 	bones = { muzzle = "tag_flash", brass = "tag_brass" },
 	rounds = 2,   -- rounds modelled in the magazine (attachments vm_round_1..)
+	mags = true,   -- magazines are their own attachments (vm_mag1, vm_mag2)
 	swapTail = { reload = 0.917, reloadEmpty = 1.283 },
 	newMagAt = 1.65,
 	burstGap = 0.08,   -- seconds between burst rounds, from the burst clip's slide cycles

@@ -153,6 +153,10 @@ print("ROUNDS", n_sel, "faces ->", rounds.name, len(rounds.data.vertices), "vert
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from split_rounds import split_rounds
 round_objs = split_rounds(rounds, arm.matrix_world @ arm.data.bones["j_ammo_17"].head_local, "deagle_vm_round_{}")
+# both magazines are their own skins too: a reload cancelled mid-swap hides them while the hands blend back
+from split_rounds import split_off
+mag_objs = [m for m in (split_off(skin, {b} | {c.name for c in arm.data.bones[b].children_recursive}, f"deagle_vm_{b[2:]}")
+                        for b in ("j_mag1", "j_mag2")) if m]
 
 # ---- export nodes: chr (skeleton) + skin (mesh)
 # the toolkit wants a mesh in the chr node: a 1 mm triangle at the camera origin skinned to the root
@@ -165,7 +169,7 @@ bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); proxy.select
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="chr", node_name="deagle_vm")
 bpy.ops.object.select_all(action="DESELECT"); skin.select_set(True); bpy.context.view_layer.objects.active = skin
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name="deagle_vm_skin")
-for ro in round_objs:
+for ro in round_objs + mag_objs:
     bpy.ops.object.select_all(action="DESELECT"); ro.select_set(True); bpy.context.view_layer.objects.active = ro
     bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="skin", node_name=ro.name)
 print("NODES", [c.name for c in bpy.data.collections if c.name.endswith((".chr", ".skin"))])

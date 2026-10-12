@@ -75,6 +75,7 @@ local function newEntity(name, props)
 		return slot
 	end
 	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end
+	function e:HideAttachment(slot, name, hide) M.hidden = M.hidden or {}; M.hidden[name] = hide end
 	for k, v in pairs(e) do if type(v) == "function" then e[k] = M.traced(name or "?", k, v) end end
 	setmetatable(e, { __index = function(t, k) return M.traced(name or "?", k, function() return nil end) end })
 	return e
