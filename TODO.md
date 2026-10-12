@@ -1,73 +1,28 @@
-# Deagle mod — status (updated 2026-10-11 21:00)
+# Deagle mod — status (updated 2026-10-12 morning)
 
-## Fixed after the first test (built, install when the game is closed)
-- Slide stuck back after reload: the aimed recoil (additive, layer 1) held its last frame forever; layer now cleared
-- Aimed empty mag stays aimed (new ads_empty pose, slide locked); reload while aiming returns to ADS
-- Inspect: spare round under the grip, slide pulled back, mag hanging (importer zeroed 30-frame sections) fixed
-- White triangle: an old viewmodel saved into the save file (engine default pyramid); our entities are no-save now
-  and stale ones are removed on load
+## Working (user-confirmed in game 2026-10-12)
+- Muzzle flash glued to the muzzle on every shot, both guns (plugin-spawned emitter, bounding box put back after each
+  move; MODLOG "why every glued flash vanished"). Deagle muzzle bone fixed in every clip.
+- Kick feel: Deagle 7.1 deg a shot (above Ready or Not's .357), Glock 3.5, gun model kick, at most 60 % springs back;
+  Glock louder (0.83x the Deagle). Settings: docs/DEBUG.md (Desktop "DEBUG TOOLS.md").
 
-## Built tonight, installed, NOT yet tested in game (first launch checks all of it)
-- Native plugin v1.1 (dinput8.dll + deagle_native.asi in Bin\Win64MasterMasterSteamPGO): zero-jitter viewmodel
-  (placed inside the camera update), Lua channel, MWII sounds via the game's fmod.dll, procedural bob / turn sway /
-  sprint pose / landing spring. Log: Bin\Win64MasterMasterSteamPGO\deagle_native.log
-- MWII sounds: 8 random shot variants + every draw / reload / empty reload / inspect cue timed to the animation
-- Slide / mag / stray-round fix (unkeyed gun bones), ADS pose (right click; sights on the crosshair), additive recoil
-  while aiming, slide locked back when empty (idle_empty), holster animation
-- Own muzzle VFX (deagle.muzzle: MW19 flash bloom / front burst / flame tongues / sparks + smoke + barrel wisp),
-  ejection-port smoke; hand-cannon effect and its gunshot no longer used
-- Ammo HUD (bottom right, System.DrawText), falls back to info text
-- Arms look switch: deagle_arms medieval | mw (default mw)
-- Mock-engine tests: luajit tests/run_flows.lua, luajit tests/run_fallback.lua (0 errors)
+## Pending install (built, committed; installs at the next "closed")
+- Clean flash build (diagnosis switches removed), muzzle light reach 7 m / 21 m (inverse-square), kick / spring-back /
+  loudness defaults, torch held off while the gun is out (live in the running game via hot reload only), dev-reload
+  gun loading fix.
+- After the install: R with a gun out = reload, never the torch; flash lights the room (Glock smaller than the Deagle).
 
-## First launch checklist
-1. Launch, load, press H: arms appear, draw sound plays, no jitter when turning/standing
-2. Shoot: MW shot sound, new muzzle flash, casing + port smoke; 7th shot locks the slide back
-3. R: reload sounds in sync; right click: ADS (sights on centre); shoot while aiming stays aimed; Y: inspect
-4. Walk / sprint / jump: bob, lowered sprint pose, landing dip (deagle_motion 0 turns it off, 0.5 halves it)
-5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
-
-## Next
-- In-game check of the physics build: kick feel (hold, fast fire climb, sideways pattern, shots following the kicked
-  barrel), damage (9 mm 35 / .50 AE 62 torso, head kills), Glock quieter, short flash, casings
-- Live check of KCD2 functions, then: stamina / skill / stance / moving in the hold; the flash light driven by the
-  simulator (SetAttachmentLight?)
-- Later: Ready or Not importer front end (FModel .psk/.psa -> Blender -> the gun contract in README; anim notifies for
-  the mag / slide moments); gun + animations + arms from the same source
-- In-game check of the 2026-10-12 install: ammo at the mag click, reload cancel (old mag in: keep rounds / out: the
-  chambered round, no mag until the next reload), bullets in the mag, burst 0.05 s, R no torch, flash (world / entity)
-- Flash look: size (muzzleFxScale), brightness (deagle_test b100 / b50 / b25 + light), entity mode as default if it
-  stays on the gun; then drop the deagle_test library
-- Cartridge-driven handling: built with provisional constants (cfg.physics); fit them to Ready or Not's recoil values /
-  the user's recording; check the per-frame camera return doesn't eat mouse input
-- Recoil recovery + CS2 spray patterns for automatics; camera sway in inspects / reloads (MWII clips move the view)
-- Recoil: kick is our hand-tuned 2.6 deg (Deagle) scaled by CS2's recoil magnitude, and never recovers; user finds the
-  Deagle's too small -> tune kickPitch live (deagle_set kickPitch N), then add recovery (rise, settle partway back)
-- Spray patterns for automatic guns: CS2's per-gun seed + recoil angle / magnitude (+ variances) are already in
-  weapons.vdata (cs2_stats FIELDS); reproduce its pattern generation (method, not code)
-- Later: Ready or Not's weapon feel (sway / inertia / recoil that moves the gun, recovery); build on the plugin's motion
-- Install today's build (game was running) and get the user's video: Glock burst, reload + fire, Deagle empty inspect,
-  flash while walking forward
-- Decide: fire rate CS2 (0.225 / 0.15 s) or the mods' own (0.08 / 0.075 s, as fast as you click)
-- Decide: Deagle empty inspect pulls a slide that's already locked (keep: you can pull a locked slide further / cut the
-  pull out / find a real empty inspect)
-- Full mid-reload cancel: mags as separate skin attachments (hidden during the cancel blend)
-- Mag role swap in the reload data (spare seated -> main mag) so a shot can cut the reload at 30 mm instead of 3 mm
-- Real bullets (asked 2026-10-11): projectile travel + drop, penetration vs the KCD2 armor on the hit body part,
-  ricochets off plate; ammo data from Escape from Tarkov (tarkov.dev public API); CS2 keeps the handling
-- Shotguns: CS2 pellets (m_nNumBullets) not used yet
-- Test in game: B on the Glock (semi / burst), CS2 damage + range falloff, rapid-fire recoil
-- Test in game: `deagle_gun glock_17` (first GameBanana gun through tools/gb), then `deagle_gun deagle`
-- Move the Deagle itself onto tools/gb (it still plays at 24 fps; its source clips are 30 / 40 fps, so ~25-40% slow)
-- Gore: headshot head-pop on kills (hide the head attachment + blood burst + gib), later real dismemberment (native)
-- Movement poses: walk / sprint / crouch / jump hand animations (today only procedural bob + sprint tilt; the hands
-  themselves don't change). Need clips (MW19/MWII pistol sprint + walk) or hand-made poses blended by speed/stance
-- Tune from the first test (offsets, motion strength, flash size, HUD position, sound volume)
-- Own bullets: projectile travel + drop, tracers (native or Lua per-frame)
-- Option B proper: Henry's own hand/sleeve meshes on the viewmodel skeleton (medieval material is the quick version)
-- Real Henry arms (native skeleton post-process callback) — big, later
-- .50 cal casing model from the MW19 pack; clean up old hold/grip code; clean-install test; knowledge-base note
-
-## Done earlier
-- Gameplay: fire, damage, hit reactions, blood + decals, recoil, reload, item, status
-- MWII viewmodel converted and playing in game, camera-locked; DOF off while up; body + worn gear hidden; FP guard
+## Next (user's list 2026-10-12, ordered: each builds on the one before)
+1. Bullet system v1 (BALLISTICS.md): a real projectile (speed, drop, drag), tracer, impacts per surface (holes / decals,
+   sparks, dirt, water), armor vs flesh vs clothes (plate deflects small rounds), knockback from momentum.
+2. Hit reactions: live NPCs flinch / stagger by momentum and hit place, dead ones ragdoll with the bullet's push.
+3. NPC awareness: guards hear a 9 mm at ~80 m (bigger guns farther), fear / flee / alarm through KCD2's crime system.
+4. Weapon movement (Ready or Not style, their numbers in docs/ron/): walk sway from WASD, sprint pose, jump / land,
+   crouch, dodge, inertia drag (InertiaDragAim / Strafe), spread from movement, recoil pattern buildup. Generic layer
+   for every gun; Ready or Not imports bring their own sprint / jump animations on top.
+5. Gore and injuries (wounds, blood, limb damage) on KCD2's injury system; gun UI polish.
+- Ready or Not importer (gun + animations + arms + its recoil values 1:1) after the bullet system, so imported guns
+  plug into it.
+- Live check of KCD2 functions, then stamina / skill / stance / moving in the grip hold; flash light from the simulator
+  directly.
+- ARC9 MW2019 .50 GS.
