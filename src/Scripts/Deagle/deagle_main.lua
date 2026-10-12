@@ -285,6 +285,7 @@ function Deagle:MuzzleFlash(dir)
 		pcall(e.FreeSlot, e, self.flashSlotN)
 		local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlotN, c.muzzleFx, { Scale = scale })
 		ok = okL and type(slot) == "number" and slot >= 0
+		if c.flashDebug == 1 or not ok then log(string.format("flash slot %d -> %s %s", self.flashSlotN, tostring(okL), tostring(slot))) end
 		if ok then self.flashUntil = System.GetCurrTime() + 0.2 end
 	end
 	if not ok then try("fx", Particle.SpawnEffect, c.muzzleFx, pos, dir, scale) end
