@@ -358,3 +358,8 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   Stretch "...,OffsetRatio=1" in one effect: a forward-only stretch may avoid it; to test). The emitter scale scales
   both length and speed (scale 3 = 3x longer). Facing="CameraX" quads (OrientToVelocity, Speed 0.01) drew nothing.
   Lua-spawned pieces do draw (thousands of them, no trouble).
+- Flash timing oracle (no user needed): `um win record --exe KingdomCome.exe --fps 60` records the game window even
+  behind other windows; fire with a deagle_lua snippet (Deagle:Shoot(true)) during the recording, then diff frames.
+  The capture repeats a frame until the game redraws, so count unique frames. 2026-10-12, gun mode: first recoil
+  frame without flash, flash on the next game frame, gone the one after (game at ~25 fps while recorded unfocused).
+  Size and colour look right (white-hot, orange edge); the flash is one game frame late.

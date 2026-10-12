@@ -59,6 +59,9 @@ Deagle.cfg = {
 	-- from the emitter's first valid bounding box hid it before it was ever drawn (in game 2026-10-12: no flash at
 	-- all); a correct way is being researched (docs/muzzle_flash_research.md)
 	flashGrow = {},
+	-- m: a per-shot flash gets a bounding box this big (x its size) the moment it's spawned, so the engine needn't wait
+	-- for its first update to see it (plugin flashseed; 0 = off). Under test: the flash showed one game frame late
+	flashSeed = 0,
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F2 / mouse 4 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
@@ -2246,6 +2249,7 @@ function Deagle:NativeSyncVm()
 	self:Native("follow " .. ((self.vmShown and self.vmInFp) and "1" or "0"))
 	self:Native(string.format("motion %.2f", c.motion))
 	self:Native("flashgrow " .. table.concat(self.cfg.flashGrow, " "))
+	self:Native(string.format("flashseed %.3f", self.cfg.flashSeed))
 	self:Native(string.format("speed %.3f", self.slowOn and self.cfg.slowmo or 1))
 end
 
@@ -2368,6 +2372,7 @@ end
 local AFTER_SET = {
 	flashGrow = function(self) self:NativeSyncVm() end,
 	slowmo = function(self) self:NativeSyncVm() end,
+	flashSeed = function(self) self:NativeSyncVm() end,
 	["vm.motion"] = function(self) self:NativeSyncVm() end,
 	["vm.arms"] = function(self) self.vmArmsApplied = nil; self:VmApplyArms() end,
 	["vm.ads"] = function(self) self:SetAim(false) end,

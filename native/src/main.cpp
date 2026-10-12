@@ -192,6 +192,10 @@ static void MoveFlashes() {
 // a high frame rate; this one is already drawn, and resizing it is instant: flashshot runs inside Lua, before the
 // particle update and the render of the frame it's fired in. The light stays on a short per-shot emitter (a particle
 // light's radius doesn't follow the emitter's size).
+// flashseed <m>: a spawned flash gets a box this big around the muzzle at once (0 = off). A new emitter starts with
+// an empty box and is culled until its first update computes one, which runs after the frame's culling
+// (docs/flash_no_delay_research.md): measured in game 2026-10-12 one game frame late. To test against that.
+static float g_flashSeed = 0;
 static uintptr_t g_live = 0;
 static float g_liveScale = 1, g_liveSizes[8] = {};
 static int g_liveN = 0, g_liveFrame = -1;          // frame of the flash being shown, -1 = none
@@ -517,6 +521,11 @@ static void Command(const char* line) {
 				}
 				Flash& fl = g_flashes[g_nFlashes++];
 				fl.emitter = em; fl.scale = scale; fl.firstFrame = 0; QueryPerformanceCounter(&fl.born);
+				if (g_flashSeed > 0) {
+					float r = g_flashSeed * (scale > 0 ? scale : 1), box[6];
+					for (int k = 0; k < 3; k++) { box[k] = loc[4 + k] - r; box[3 + k] = loc[4 + k] + r; }
+					WriteBox(em, box);
+				}
 				static int said = 0;
 				if (said++ < 40) Log("flashfx %s effect %p emitter %p refs %ld at %.3f %.3f %.3f q %.3f %.3f %.3f %.3f s %.2f (gun at %.3f %.3f %.3f)",
 					effect, (void*)g_lastEffect, (void*)em, g_lastRefs, loc[4], loc[5], loc[6], loc[0], loc[1], loc[2], loc[3], loc[7],
@@ -524,6 +533,7 @@ static void Command(const char* line) {
 			}
 		}
 	}
+	else if (!strcmp(cmd, "flashseed")) { float v = (float)atof(rest); g_flashSeed = Finite(&v, 1) && v > 0 ? v : 0; Log("flash seed box %.2f m", g_flashSeed); }
 	else if (!strcmp(cmd, "flashpos"))
 		sscanf_s(rest, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1], &g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);
 	else if (!strcmp(cmd, "flashoff")) {
