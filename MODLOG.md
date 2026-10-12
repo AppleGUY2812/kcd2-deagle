@@ -244,3 +244,21 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
 - Now: the flash is a bone attachment on the muzzle; the barrel direction in bone axes comes from GetBoneLocal at the
   first shot (rest pose). No fallback: a failure is logged. Helper entity, slot alternation, MuzzleLocal and the
   plugin's flash / flashpos / flashoff are gone. User rule: no silent fallbacks; intended paths must work every time.
+
+## 2026-10-12 — physics design built (defaults), performance
+- Damage: health from deposited energy (tissue drag C_d 0.3 over a 0.3 m torso path, sqrt, 9 mm FMJ at 360 m/s =
+  35 HP: .50 AE 62), air drag for range (lambda = 2m / (rho C_d A), C_d 0.37: -8 % at 50 m), stamina from momentum
+  (9 mm 20, .50 AE 59), head x2 on top of KCD2's x1.5, body push = 25.6 x momentum. Gas factor 1.5 for pistols.
+- Muzzle gas energy = powder x 4.5 MJ/kg - bullet energy; blast scale G = cube root vs a 9 mm (Deagle 2.08) drives
+  flash size and loudness (+(20/3) log10 energy ratio dB, half strength: Glock 0.69x); shot samples evened out to
+  -12 dBFS blast (tools/shot_loudness.py -> guns/shot_gain.lua).
+- Recoil: elastic hold (holdRange 2.9 deg two-handed, x1.3 aiming; past it the kick stays), per-gun return rate
+  5 x sqrt(0.0245 / inertia), sideways = sigma 0.15 x a seeded per-gun pattern (learnable), gun roll 0.5 x yaw
+  (plugin kick takes a 4th value), shots leave along the still-kicked barrel (Lua mirror of the plugin spring:
+  Deagle +3.8 deg 0.08 s after a shot). Stamina / skill / stance / moving and the simulator flash light wait for a
+  live check of the KCD2 functions (no unverified paths).
+- Flash: deagle.muzzle 2-3 frames, deagle.muzzle_large 3-4 frames for blast >= 1.5 (Deagle).
+- Performance: casings from a pool of 12 (ResetPhysics on reuse; were a physics entity per shot living 20 s);
+  the plugin skips repeated camera calls within a frame (same matrix < 1 ms apart; was 2-3x per frame).
+- Checks added: tools/check_native.py (every command Lua sends has a plugin handler: the kick handler had been cut
+  out with the flash code), tests/run_all.sh (all suites).

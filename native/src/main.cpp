@@ -40,7 +40,7 @@ using ExecFn = void(__fastcall*)(uintptr_t con, const char* cmd, bool silent, bo
 static uint32_t g_vmId = 0;
 static bool g_follow = false;
 static float g_off[3] = { 0, 0, 0 };            // right, forward, up (m)
-static uint64_t g_placed = 0;
+static uint64_t g_placed = 0, g_repeats = 0;
 static std::string g_pendingConsole;           // console command to run next frame (native -> Lua)
 
 // ---- procedural motion (camera space: x right, y forward, z up), from the camera's own movement
@@ -271,18 +271,28 @@ static bool CopyCamera(uintptr_t camera, float* out12, float* fov) {
 	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+// The game asks for the main view's camera 2-3 times per drawn frame (~176 calls/s at 60-80 fps, deagle_native.log).
+// A call with the same camera under 1 ms after the last one is a repeat within the frame: skip the per-frame work
+// (placing the gun, motion springs, FMOD update) instead of doing it 2-3 times. A different camera is always processed.
 static void OnCamera(uintptr_t camera) {
 	uintptr_t vt;
 	if (!ReadPtr(camera - 0xE8, vt) || !IsCView(vt)) return;
-	float fov = 0;
-	if (!CopyCamera(camera, g_cam, &fov)) return;
+	float fov = 0, cam[12];
+	if (!CopyCamera(camera, cam, &fov)) return;
+	static LARGE_INTEGER last{}, freq{};
+	LARGE_INTEGER now; QueryPerformanceCounter(&now);
+	if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+	double ms = last.QuadPart ? (now.QuadPart - last.QuadPart) * 1000.0 / (double)freq.QuadPart : 1e9;
+	if (ms < 1.0 && memcmp(cam, g_cam, sizeof(cam)) == 0) { g_repeats++; return; }
+	last = now;
+	memcpy(g_cam, cam, sizeof(cam));
 	uint64_t n = ++g_viewFrames;
 	UpdateMotion(g_cam);
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
 	if (g_fmod) fm.update(g_fmod);
 	if (!g_pendingConsole.empty() && g_env) { std::string c; c.swap(g_pendingConsole); SafeConsole(c.c_str()); }
 	if (n == 1 || n % 3000 == 0)
-		Log("frames %llu placed %llu cmds %llu sounds %zu", n, g_placed, g_cmds, g_sounds.size());
+		Log("frames %llu placed %llu repeats skipped %llu cmds %llu sounds %zu", n, g_placed, g_repeats, g_cmds, g_sounds.size());
 	if (n == 1 || n % 600 == 0)
 		Log("view frame %llu cam pos %.3f %.3f %.3f fwd %.3f %.3f %.3f fov %.3f", n, g_cam[3], g_cam[7], g_cam[11],
 			g_cam[1], g_cam[5], g_cam[9], fov);

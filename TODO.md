@@ -28,6 +28,10 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- In-game check of the physics build: kick feel (hold, fast fire climb, sideways pattern, shots following the kicked
+  barrel), damage (9 mm 35 / .50 AE 62 torso, head kills), Glock quieter, short flash, casings
+- Live check of KCD2 functions, then: stamina / skill / stance / moving in the hold; the flash light driven by the
+  simulator (SetAttachmentLight?)
 - Later: Ready or Not importer front end (FModel .psk/.psa -> Blender -> the gun contract in README; anim notifies for
   the mag / slide moments); gun + animations + arms from the same source
 - In-game check of the 2026-10-12 install: ammo at the mag click, reload cancel (old mag in: keep rounds / out: the
