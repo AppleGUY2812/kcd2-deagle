@@ -168,3 +168,88 @@ Camera: a sharp ~0.05 s micro-shake on the shot (RoN `FireCameraShake`). Our rec
 - [OpenGameArt muzzle flash sets](https://opengameart.org/node/179598) / [gun muzzle flash effects](https://opengameart.org/content/gun-muzzle-flash-effects-fire-and-ion-and-melee) (show one sprite for a frame, random pick per shot).
 - [Unity discussion: muzzle flash for rapid-fire weapons](https://discussions.unity.com/t/muzzle-flash-not-reliable-for-rapid-fire-weapons/89353), [Construct forum: pick the random anim once](https://www.construct.net/forum/construct-2/how-do-i-18/choose-random-anim-67242).
 - [PC Gamer: MW4 blinding muzzle flash bug](https://www.pcgamer.com/games/call-of-duty/the-blinding-muzzle-flash-in-modern-warfare-4s-gameplay-premiere-was-actually-a-bug/), [Dexerto: devs respond](https://www.dexerto.com/call-of-duty/modern-warfare-4-devs-respond-after-players-cant-see-what-theyre-shooting-3388482/) (bright / smoky flashes obscuring targets in MW2019 / MWII, smoke opacity reduced).
+
+## 6. RE for 4.2: emitter vtable, SpawnParams, strength gating (WHGame 1.5.6, static)
+**`CParticleEmitter` vtable** (RVA 0x3A55F48, `.?AVCParticleEmitter@@`, offset 0). Anchored on SetLocation +0x2B0:
+
+| offset | method | evidence |
+|---|---|---|
+| +0x250 | `IsAlive()` | age +0x64 vs stop time +0x1D0; PulsePeriod (+0x128) > 0 keeps it alive |
+| +0x258 | `Activate(bool)` | branches on `dl` |
+| +0x260 | `Kill()` | sets stop times +0x68 / +0x1D0 = -1e9, re-registers (0x422608) |
+| +0x268 | `Restart()` | resets age +0x64 and the stop times |
+| +0x270 / +0x278 | `SetEffect(eff)` / `GetEffect()` | effect at +0xF0 |
+| +0x280 | `SetEmitGeom(const GeomRef&)` | compares +0xB0..+0xC0 |
+| **+0x288** | **`SetSpawnParams(const SpawnParams&)`** | compares against +0x110, copies with 0x7390CC; only a size / speed / attach change calls the reset 0x422F28; then re-registers |
+| **+0x290** | **`GetSpawnParams(SpawnParams& out)`** | `out <- this+0x110` (0x7390CC) |
+| +0x298 | `SetEntity(entity, slot)` | +0x1E0 entity, +0x1D8 slot |
+| +0x2A8 | `GetLocation(QuatTS& out)` | copies this+0x70 |
+| +0x2B0 | `SetLocation(const QuatTS&)` | (known) |
+
+**SpawnParams** (0x48 bytes; the emitter's copy is at **emitter+0x110**). Names from the ParticleEffect entity
+reader 0x4598F0 (it fills an embedded copy at entity+0x70); defaults from the ctor 0x422DA4:
+
+| off | type | name | default |
+|---|---|---|---|
+| 0x00..0x06 | bytes | flags (0x02 = bRegisterByBBox; others unnamed) | 0,0,0,0,0,1,1 |
+| 0x08 | float | fCountScale | 1 |
+| 0x0C | float | fSizeScale ("Scale") | 1 |
+| 0x10 | float | fSpeedScale | 1 |
+| 0x14 | float | fTimeScale | 1 |
+| 0x18 | float | fPulsePeriod | 0 |
+| **0x1C** | **float** | **fStrength** | **-1** (= "use emitter age") |
+| 0x20 | int | nSeed | -1 |
+| 0x28 | int | eAttachType | 0 |
+| 0x2C | int | eAttachForm | 2 |
+| 0x30 / 0x31 | bool | bCountPerUnit / bEnableAudio | 0 / 1 |
+| 0x34 | int | eSoundObstructionType | 1 |
+| 0x38 | string | audio RTPC (CryString: copy it, never memcpy) | "" |
+| 0x40 | bool | bLODUpdateEnabled | 1 |
+
+**Setting strength:** `GetSpawnParams(tmp)` → `tmp.fStrength = s` → `SetSpawnParams(tmp)`. Copy with the
+engine's own Get (the 0x38 CryString is ref-counted), only change +0x1C, and call it only on change. A strength-only
+change doesn't reset the emitter. Read-back for debugging: `*(float*)(em + 0x12C)`.
+
+**Do live particles follow strength?** Not proven statically. In CryEngine's legacy pfx1, `EmitterStrength` curves
+are evaluated when a particle is **emitted** (it stores the result as a per-particle mod). Particle-age curves run
+every frame, emitter-strength ones don't (**guess**, from engine design). So use a **continuous, high-rate emitter
+with very short particle life** (0.02-0.04 s, `Count` high), with Alpha / Size / LightSource intensity keyed on
+EmitterStrength. A strength change then shows on the next rendered frame through fresh particles, and the old ones die
+within 1-2 frames.
+
+**A "drawn this frame" signal:** none found on the emitter. None of its vtable methods stores a pass / frame id. Since
+the flash emitter is persistent and always in view, use our own **`g_viewFrames`** (incremented once per
+distinct drawn camera frame) as the frame clock. That's exactly "N drawn frames".
+
+**C++ sketch** (plugin; main thread / camera step; reuses SpawnFlash / SafeSetLocation / SafeRelease):
+```cpp
+using GetSPFn = void(__fastcall*)(uintptr_t em, void* out);       // +0x290
+using SetSPFn = void(__fastcall*)(uintptr_t em, const void* sp);  // +0x288
+static uintptr_t g_flashEm = 0; static uint64_t g_flashUntil = 0; static float g_flashStr = -2;
+static bool SafeSetStrength(uintptr_t em, float s) {
+    __try {
+        alignas(16) uint8_t sp[0x48];
+        auto get = (GetSPFn)VFn(em, 0x290); auto set = (SetSPFn)VFn(em, 0x288);
+        if (!get || !set) return false;
+        get(em, sp);                       // engine copy (string inside stays valid)
+        *(float*)(sp + 0x1C) = s;
+        set(em, sp);
+        return true;   // NB: sp's CryString at +0x38 now holds a ref: let the engine's SpawnParams dtor run if one
+                       // is found; else copy only on the stack once and keep it alive (leak 1 ref) - see note below
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// "flasharm <effect>": on draw, spawn once (strength 0) and keep it (AddRef as today)
+// "flashshot <frames>": g_flashUntil = g_viewFrames + frames
+// every camera step (OnCamera, after the viewmodel is placed):
+//   SafeSetLocation(g_flashEm, muzzleLoc);
+//   float want = g_viewFrames < g_flashUntil ? 1.f : 0.f;
+//   if (want != g_flashStr && SafeSetStrength(g_flashEm, want)) g_flashStr = want;
+// "hello" (level load) / holster: SafeRelease(g_flashEm); g_flashEm = 0; g_flashStr = -2;  (re-arm on next draw)
+```
+Note on the CryString at +0x38: the struct copy from GetSpawnParams bumps its ref-count. Two clean options: find
+SpawnParams' dtor (it would call the string release 0x4FC624 on +0x38), or call Get once at arm time into a static
+buffer and reuse that buffer for every Set (one ref, held for the emitter's life). The static-buffer way is the
+simplest.
+
+Fallbacks: `Activate(false/true)` (+0x258) per shot on a pre-spawned emitter (cheaper than spawning, but may still
+lose a frame to the first emission); `Restart()` (+0x268) to re-burst an instant emitter in place.
