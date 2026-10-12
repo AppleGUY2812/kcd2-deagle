@@ -55,7 +55,8 @@ Deagle.cfg = {
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F2 / mouse 4 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
-	debugPathsMax = 3000,     -- line pieces kept (oldest go first)
+	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
+	                          -- shots weren't drawn, in game 2026-10-12)
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
 	cancelKeepsRounds = false,

@@ -326,3 +326,6 @@ energy^(1/3); hit reactions wired. tests/run_ballistics.lua 40 checks. User in g
   condition) against punch 104 x energy ratio x cos), through-and-through bodies, Ready or Not blood, hit zones from
   bone capsules. NPC rays: always mat_flesh, partid nil (the living capsule), checked live on an armoured guard.
   Offline: tests/run_penetration.lua (35 checks). Not yet seen in game.
+- Console commands: KCD2 passes %1 / %line QUOTED ("clear"); and System.AddCCommand doesn't replace a command that
+  already exists, so a dev reload keeps the old command code until the game restarts (Lua functions it calls do update).
+- Debug lines (System.DrawLine) render in retail; at ~3000 per frame the newest weren't drawn (buffer limit): cap 600.
