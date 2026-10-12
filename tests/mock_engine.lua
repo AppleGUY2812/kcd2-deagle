@@ -140,6 +140,7 @@ _G.System = {
 	GetSurfaceTypeNameById = function(id) return M.surfaceNames[id] end,
 	GetCVar = function(n) return 2 end, SetCVar = function(n, v) M.cvars = M.cvars or {}; M.cvars[n] = v end,
 	DrawText = function(...) M.drawn_text = M.drawn_text + 1 end,
+	DrawLine = function(a, b, r, g, bl, al) M.lines = (M.lines or 0) + 1 end,
 	ExecuteCommand = function(c) end,
 }
 _G.Script = {

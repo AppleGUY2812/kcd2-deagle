@@ -49,6 +49,8 @@ Deagle.cfg = {
 	                          -- bloom (user: "it can grow, it just needed to be snappier"); {} = the particles' own life
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F10 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
+	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
+	debugPathsMax = 3000,     -- line pieces kept (oldest go first)
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
 	cancelKeepsRounds = false,
@@ -1117,6 +1119,41 @@ local ROUND_STEP = 0.02          -- s: a longer frame is cut into steps this lon
 local ROUND_LIFE = 3             -- s: a round that hit nothing is dropped after this, or past cfg.range
 local TRACER_SPEEDS = { 250, 1000, 25 }   -- deagle_tracers.v<speed> (tools/gen_tracers.py): first, last, step
 
+-- Debug: every round's path drawn in the world and kept until cleared (deagle_paths 1 / 0 / clear): flight yellow,
+-- after a ricochet / wallbang / body cyan, inside a wall or body red, hits as small crosses (white world, red body).
+-- Lines are redrawn every frame (System.DrawLine) from a list capped at cfg.debugPathsMax.
+local PATH_FLY, PATH_ON, PATH_IN = { 1, 0.9, 0.1 }, { 0.2, 0.9, 1 }, { 1, 0.15, 0.1 }
+function Deagle:PathAdd(a, b, color)
+	if not self.cfg.debugPaths then return end
+	local list = self.paths or {}
+	self.paths = list
+	list[#list + 1] = { a = a, b = b, c = color }
+	while #list > self.cfg.debugPathsMax do table.remove(list, 1) end
+	if not self.pathsToken then
+		local token = {}
+		self.pathsToken = token
+		Script.SetTimer(0, function() Deagle:PathTick(token) end)
+	end
+end
+function Deagle:PathMark(p, color)
+	for _, d in ipairs({ { x = 0.06, y = 0, z = 0 }, { x = 0, y = 0.06, z = 0 }, { x = 0, y = 0, z = 0.06 } }) do
+		self:PathAdd(vsub(p, d), vadd(p, d), color)
+	end
+end
+function Deagle:PathTick(token)
+	if token ~= self.pathsToken then return end
+	if not self.cfg.debugPaths or not self.paths or #self.paths == 0 then self.pathsToken = nil; return end
+	for _, l in ipairs(self.paths) do pcall(System.DrawLine, l.a, l.b, l.c[1], l.c[2], l.c[3], 1) end
+	Script.SetTimer(0, function() Deagle:PathTick(token) end)
+end
+function Deagle:Paths(arg)
+	arg = tostring(arg or "")
+	if arg == "clear" then self.paths = {}
+	else self.cfg.debugPaths = not arg:find("0") end
+	if not self.cfg.debugPaths then self.paths = {} end
+	self:Notify("bullet paths " .. (self.cfg.debugPaths and "on" or "off") .. (arg == "clear" and " (cleared)" or ""))
+end
+
 -- one step of h seconds: true when the round is done (it hit something, or flew out of range / time)
 function Deagle:MoveRound(r, h)
 	local speed = vlen(r.vel)
@@ -1149,14 +1186,18 @@ function Deagle:MoveRound(r, h)
 			hit.dist = r.dist + hit.dist        -- the ray's distance is from this step's start: the path flown so far
 			local speed = vlen(r.vel)
 			hit.energy = 0.5 * r.phys.bullet * speed * speed
+			self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
+			self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
 			r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
 			if not self:ApplyHit(hit, vnorm(move), r.phys, r) then r.landed = true; return true end
+			if vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(hit.pos, r.pos, PATH_IN) end   -- through a wall / body
 			-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
 			r.hops = (r.hops or 0) + 1
 			if r.hops > 8 or vlen(r.vel) < 30 then return true end
 			return self:MoveRound(r, h * (1 - frac))
 		end
 	end
+	self:PathAdd(r.pos, vadd(r.pos, move), (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
 	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
 	return r.dist > self.cfg.range or r.age > ROUND_LIFE
 end
@@ -2231,6 +2272,7 @@ function Deagle:DevLua(line)
 	log("lua -> " .. tostring(ok) .. " " .. tostring(res))
 end
 
+System.AddCCommand("deagle_paths", "Deagle:Paths([[%1]])", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber([[%1]]))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F10 steps x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")

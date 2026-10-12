@@ -28,6 +28,8 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_ads 1` / `0` | aim down sights on / off |
 | `deagle_motion 0`..`2` | gun bob / sway / sprint pose strength (0 = off, 1 = normal) |
 | `deagle_tracers 0` / `1` | glowing tracer on every round off / on |
+| `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
+| `deagle_zoom <n>` | debug zoom (F10 steps x4 / x10 / off) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 | Setting | Default | What it changes |

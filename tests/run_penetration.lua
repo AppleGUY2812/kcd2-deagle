@@ -238,6 +238,27 @@ check(string.format("AI hears the shots: Glock x%.1f, Deagle x%.1f (louder); the
 	gShot and dShot and gHit and gShot.wuid ~= nil and dShot.mult > gShot.mult and gHit.pos.y >= 220 - 1e-6, gShot)
 check("the stone wall's impact sound played from the wall (" .. tostring(gSnd) .. ")", gSnd ~= nil, gSnd)
 
+-- bullet paths (deagle_paths): a shot through a plank into stone leaves flight (yellow), inside (red), on (cyan)
+-- pieces and hit crosses, drawn every frame until cleared
+M.console("deagle_paths")
+Deagle:Paths("1")
+reset()
+world.slabs = { { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 240, y1 = 241, surface = 1 } }
+fire()
+local kinds = {}
+for _, l in ipairs(Deagle.paths or {}) do kinds[table.concat(l.c, ",")] = (kinds[table.concat(l.c, ",")] or 0) + 1 end
+local l0 = M.lines or 0
+M.advance(0.1, 60)
+local drawn = (M.lines or 0) - l0
+check(string.format("bullet paths: %d pieces (yellow %d, red %d, cyan %d, crosses), %d lines drawn in 6 frames", #(Deagle.paths or {}),
+	kinds["1,0.9,0.1"] or 0, kinds["1,0.15,0.1"] or 0, kinds["0.2,0.9,1"] or 0, drawn),
+	(kinds["1,0.9,0.1"] or 0) > 0 and (kinds["1,0.15,0.1"] or 0) > 0 and (kinds["0.2,0.9,1"] or 0) > 0 and drawn >= 6 * #Deagle.paths, drawn)
+Deagle:Paths("clear"); M.advance(0.1, 60)
+local afterClear = M.lines
+M.advance(0.1, 60)
+check("deagle_paths clear: nothing left, nothing drawn", #Deagle.paths == 0 and M.lines == afterClear, #Deagle.paths)
+Deagle:Paths("0")
+
 -- the armour math on its own: punch vs a layer's stab defense, condition, angle, glance
 local phys9 = Deagle:ShotPhysics(Deagle.guns.glock_17)
 local layers = { { a = cuirass.a, health = 1 } }
