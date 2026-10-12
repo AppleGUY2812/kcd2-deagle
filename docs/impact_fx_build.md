@@ -144,3 +144,47 @@ What the values mean (RoN's combining code is native and was **not read**; this 
 
 No new textures were needed: the hot fragments use `imp_glow`, and everything else reuses the impact set. All parts
 live >= 0.08 s (checked by script) and scale 1 = 9 mm.
+
+## 6. Blood (`src/Libs/Particles/deagle_blood.xml`, library `deagle_blood`)
+Source: RoN `Data/Blood_Standard` (BloodData), which every character uses:
+- **Particles:** HitEntryParticles = `Blood_Smoke_Impact_Red`; flesh exit = `P_VFX_Impact_Flesh_Exit`; big burst = `PS_Blood_Burst_Directional`.
+- **Decals:** Splatters = `Blood_01..07_Inst`; HeadshotSplatters = `MI_Blood_Headshot_01..03` (38-60); artery drops = `Blood_Drop_01..05` (15-20); animated wall splatters 45-52 within 3 m; pool = `BP_RoNBloodPool` (DecalSize 8 x 64 x 64).
+- **Units:** sizes in UE cm. UE DecalSize is a half extent, so a pool is ~1.28 m across.
+
+`Particle.SpawnEffect("deagle_blood.<effect>", pos, dir, scale)`. Scale 1 = 9 mm, and Lua scales by energy as for the impacts.
+All parts live >= 0.08 s (script-checked).
+
+| effect | emitter +Y | parts (RoN numbers) |
+|---|---|---|
+| `entry` | surface normal at the wound (back toward the shooter, against the round) | splat 0.08-0.16 s; spray streaks 12 (3 m/s); flecks 22 (5 m/s, ~18 deg cone, 1 g, stick on contact); red mist 2 (0.5-1.3 s, drag 7.5); dust kick |
+| `exit` | the round's travel direction | core splat; 3 slash strands (2.2 m/s); spray 18 (4 m/s); 30 drops (5 m/s, 20 deg); 8 blobs; mist |
+| `head` | travel direction (burst out of the back of the head) | 2 core splats; 10 ropes + 3 big ropes; 16 big blobs (3.5 m/s); far spatter 15; slow spatter 12; 40 drops (30 deg); big mist |
+| `armor_entry` | surface normal | cloth tuft fast 12 (5 m/s, air drag) + slow 6 (1.6 s); fabric puff; small blood splat, 8 flecks, light mist |
+
+Blood colour: RoN's linear dark red, (0.09-0.2, 0, 0) on sprites and (0.025-0.09, 0, 0) on decals. Here it is lifted to
+~(0.34, 0.012, 0.01) on the particles for KCD2 lighting, and sRGB (92, 6, 4) on the decals (pool (62, 3, 2)).
+
+### Blood decals (`src/Materials/deagle/decals/`)
+Same format as the bullet holes. The normals are built from the mask (or RoN's own, with green flipped), with wet
+smoothness 0.8-0.95. Natural size is the full width in m at scale 1. Multiply by the energy scale and add ±15% at
+random, then rotate randomly.
+
+| material | look (RoN source) | natural size (m) | use |
+|---|---|---|---|
+| `blood_spatter_1` | directional wall spray (`Decal_Blood_Splat_1`, RoN exit/shotgun BloodExitDecals) | 0.45 | wall behind an exit, aligned with the shot |
+| `blood_spatter_2` | wide wall spray (`Decal_Blood_Splat_2`) | 0.5 | wall behind an exit |
+| `blood_spatter_3` | round spray (`Blood_04` mask) | 0.4 | wall / floor near the target |
+| `blood_spatter_4` | sideways spray (`Blood_07` sideways mask) | 0.45 | wall at a grazing angle |
+| `blood_spatter_5` | headshot burst (Megascans albedo, `MI_Blood_Headshot_01`) | 1.0 | wall behind a head hit (RoN 38-60 half-size) |
+| `blood_spatter_6` | drips / drops (`Blood_Drop_04`) | 0.18 | floor under a wound, artery drops |
+| `blood_spatter_7` | drop trail (`Blood_Drop_05`) | 0.18 | floor, walking wounded |
+| `blood_pool` | pool (RoN `T_BloodPool_Packed` R channel at full expansion) | 1.28 | under a body. RoN grows it (BloodExpansion) after `BloodPoolSpawnDelay`; we can re-place it at growing sizes |
+
+RoN only places wall splatters within `AnimatedSplatterMaxDistance` = 3 m behind the target. Lifetime is C++.
+
+### Rebuild
+Blood TIFs (`bld_*_diff`, `blooddecal_*_diff/_ddna`, 22 files) sit in `E:\Tools\deagle-work\fx_tif_impacts\`, made by
+the session's blood converter from `E:\Tools\deagle-work\ron_fx\blood\` (86 PNG). The source map is in `_blood.json`.
+`tools/fx_impact_textures.ps1` compiles them along with the impact set (presets: particles AlbedoWithGenericAlpha,
+decals Decal_AlbedoWithOpacity / NormalsWithSmoothness). Staged total: 318 DDS files. Contact sheet:
+`Desktop\Deagle Progress\blood_textures_sheet.png`.
