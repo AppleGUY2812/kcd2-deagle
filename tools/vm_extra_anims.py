@@ -32,7 +32,10 @@ def pose_at(act, f):
 
 # ---- @idle_empty
 pose_at(A["@shoot_empty"], int(A["@shoot_empty"].frame_range[1]))
-locked = {n: (PB[n].location.copy(), PB[n].rotation_quaternion.copy()) for n in ("j_slide", "j_slidestop")}
+# j_safetylock is the safety-lever block on the back of the slide: the shots move it with the slide (55 mm), so it
+# locks back with it (left at idle it sat forward of a locked slide)
+LOCK_BONES = [n for n in ("j_slide", "j_slidestop", "j_safetylock") if n in PB]
+locked = {n: (PB[n].location.copy(), PB[n].rotation_quaternion.copy()) for n in LOCK_BONES}
 pose_at(A["@idle1"], 1)
 for n, (l, r) in locked.items():
     PB[n].location, PB[n].rotation_quaternion = l, r
@@ -67,7 +70,7 @@ print("SETTLED @shoot_empty", f1, "->", int(se.frame_range[1]))
 # slide check may push it further back, never forward) and no round in the chamber (j_ammo_17 stays at rest, hidden).
 # The magazine's rounds are a separate attachment the script hides at 0 ammo.
 src = A["@inspect"]; ie = src.copy(); ie.name = "@inspect_empty"; ie.use_fake_user = True
-for fc in [fc for fc in ie.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in ("j_slide", "j_slidestop", "j_ammo_17")]:
+for fc in [fc for fc in ie.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in LOCK_BONES + ["j_ammo_17"]]:
     ie.fcurves.remove(fc)
 L_lock, R_stop = locked["j_slide"][0], locked["j_slidestop"][1]
 axis = L_lock.normalized(); s_lock = L_lock.length
@@ -85,7 +88,8 @@ for f, L in slide_keys:
     PB["j_slide"].location = L; PB["j_slide"].rotation_quaternion = Quaternion()
     PB["j_slide"].keyframe_insert("location", frame=f, group="j_slide")
     PB["j_slide"].keyframe_insert("rotation_quaternion", frame=f, group="j_slide")
-for n, loc, rot in (("j_slidestop", locked["j_slidestop"][0], R_stop), ("j_ammo_17", Vector((0, 0, 0)), Quaternion())):
+held = [(n, locked[n][0], locked[n][1]) for n in LOCK_BONES if n not in ("j_slide", "j_slidestop")]
+for n, loc, rot in [("j_slidestop", locked["j_slidestop"][0], R_stop), ("j_ammo_17", Vector((0, 0, 0)), Quaternion())] + held:
     for f in (fi0, fi1):
         PB[n].location, PB[n].rotation_quaternion = loc, rot
         PB[n].keyframe_insert("location", frame=f, group=n); PB[n].keyframe_insert("rotation_quaternion", frame=f, group=n)
@@ -116,7 +120,7 @@ print("EASED @reload_empty in from @idle_empty over", EASE_IN, "frames")
 
 # ---- @draw_empty: the draw with the slide locked back (an empty gun comes out empty)
 de = A["@draw"].copy(); de.name = "@draw_empty"; de.use_fake_user = True
-for fc in [fc for fc in de.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in ("j_slide", "j_slidestop")]:
+for fc in [fc for fc in de.fcurves if fc.data_path.split('"')[1:2] and fc.data_path.split('"')[1] in LOCK_BONES]:
     de.fcurves.remove(fc)
 arm.animation_data.action = de
 fd0, fd1 = (int(v) for v in de.frame_range)
