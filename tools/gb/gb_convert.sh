@@ -61,6 +61,8 @@ done < <(grep $'^SOUND\t' "$tmp/stage.txt")
 ps "$copies"
 echo "   $(find "$odir" -name '*.dds' | wc -l) textures, $(find "$adir" -name '*.caf' | wc -l) clips, $(find "$sdir" -type f | wc -l) sounds"
 
+python3 "$here/tools/shot_loudness.py" "$here" | tail -1   # even out every gun's gunshot samples (incl. this one's)
+
 echo "== Animations.img"
 ps "Copy-Item 'E:\\Tools\\deagle-work\\out\\deagle_vm_anims.img' '$(win "$tmp")\\deagle_vm_anims.img' -Force"
 python3 "$here/tools/merge_img.py" "$here/assets/build/game_Animations.img" "$here/src/Animations/Animations.img" "$tmp/deagle_vm_anims.img" "$here"/assets/build/gun_imgs/*.img | tail -1

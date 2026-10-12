@@ -81,6 +81,7 @@ Deagle.cfg = {
 		staminaRef = 20,        -- stamina a 9 mm's shove takes; others by momentum
 		headMult = 2.0,         -- on a head hit, on top of KCD2's own x1.5: a round through the skull kills
 		punchPerMomentum = 25.6,-- physics push on bodies / props per kg m/s of bullet momentum (Deagle 8.6 -> 220)
+		loudnessSpan = 0.5,     -- share of the real loudness difference played (Deagle +6.5 dB over the Glock -> 0.69x)
 	},
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
@@ -362,6 +363,26 @@ function Deagle:ShotPhysics(g)
 		inertia = inertia, flip = impulse * ph.bore / inertia, gasEnergy = gas,
 		blast = (gas / muzzleGas(ref, ref.velocity)) ^ (1 / 3),
 		dragLength = 2 * cal.bullet / (AIR_RHO * AIR_CD * area) }
+end
+
+-- How loud a gunshot plays: the file's own gain (tools/shot_loudness.py evens out how loud each sample was mastered)
+-- times the gun's blast level against the loudest gun in the mod. Blast peak pressure grows with the cube root of the
+-- muzzle-gas energy (Hopkinson-Cranz): +(20/3) log10 of the energy ratio in dB (9 mm vs .357 measured within 1 dB).
+local function blastDb(phys) return (20 / 3) * math.log10(phys.gasEnergy) end
+function Deagle:ShotGain(file)
+	local g = self.shotGain and self.shotGain[file]
+	if not g then
+		log("$4no loudness for " .. tostring(file) .. " (run tools/shot_loudness.py)")
+		g = 1
+	end
+	local phys = self:ShotPhysics()
+	if not phys then return g end
+	local loudest = blastDb(phys)
+	for _, other in pairs(self.guns) do
+		local o = self:ShotPhysics(other)
+		if o then loudest = math.max(loudest, blastDb(o)) end
+	end
+	return g * 10 ^ (self.cfg.physics.loudnessSpan * (blastDb(phys) - loudest) / 20)
 end
 
 -- Wounding from the energy the bullet leaves in the body (crush + stretch; FBI 1989, Fackler): tissue drag slows it
@@ -1302,7 +1323,7 @@ function Deagle:PlayCues(key)
 			if Deagle.vmAnimToken ~= tok and key ~= "shoot" and key ~= "shootEmpty" then return end
 			if file == "shot" then
 				local shots = g.shotSounds or {}
-				if #shots > 0 then Deagle:Snd(shots[math.random(1, #shots)], v.shot) end
+				if #shots > 0 then local f = shots[math.random(1, #shots)] Deagle:Snd(f, v.shot * Deagle:ShotGain(f)) end
 			else Deagle:Snd(file, v.foley) end
 		end
 		if t <= 0.001 then fire() else Script.SetTimer(math.floor(t * 1000), fire) end
@@ -1695,6 +1716,7 @@ function Deagle:LoadGuns()
 	local load = Script.ReloadScript or Script.LoadScript
 	pcall(load, "Scripts/Deagle/guns/cs2.lua")
 	pcall(load, "Scripts/Deagle/guns/calibers.lua")
+	pcall(load, "Scripts/Deagle/guns/shot_gain.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end
 end

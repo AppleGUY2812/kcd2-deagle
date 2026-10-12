@@ -141,6 +141,14 @@ if recoil then
 	check(string.format("flash on the muzzle at the cartridge size x%.2f (got %s)", recoil.wantScale, tostring(recoil.flashScale)),
 		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-6 and recoil.flashPrime == false, recoil.flashScale)
 end
+if phys then   -- loudness: evened-out files x the blast level; the Glock plays ~0.69x the Deagle (half of 6.5 dB)
+	local other = Deagle.guns[id == "deagle" and "glock_17" or "deagle"]
+	local mine = Deagle:ShotGain(g.shotSounds[1]) / Deagle.shotGain[g.shotSounds[1]]
+	local saved = Deagle.gun; Deagle.gun = other
+	local theirs = Deagle:ShotGain(other.shotSounds[1]) / Deagle.shotGain[other.shotSounds[1]]
+	Deagle.gun = saved
+	check(string.format("blast loudness x%.2f vs %s x%.2f", mine, other.id, theirs), math.max(mine, theirs) == 1 and math.abs(math.min(mine, theirs) - 0.69) < 0.02, mine)
+end
 if phys then   -- the wound model: 9 mm torso 35 HP by definition, .50 AE ~1.8x (CS2 has 1.77x), little loss at 50 m
 	local hp, st = Deagle:Wound(phys, 0)
 	local hp50 = Deagle:Wound(phys, 50)
