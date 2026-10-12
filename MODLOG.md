@@ -169,3 +169,30 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
   kick scaled by CS2 recoil magnitude relative to the Deagle's 48.2 (its tuned 2.6 deg); modes from m_bIsFullAuto /
   m_bHasBurstMode (burst rounds 0.06 s apart, burstCycle after). Rapid fire stacks the additive recoil clip on the
   idle (converted guns now export <clip>_add too), crossfading 0.04 s when the previous kick is still playing.
+
+## 2026-10-12 — speed, reload timing, slide locks, muzzle flash on the gun
+- YabrakProds' own videos of both mods (Downloads/YTDown...): Deagle tactical reload back at idle ~1.7 s after the
+  first motion, mag seated ~1.3 s in = our clip at 30 fps. The mod's MDL: Deagle sequences 30 fps, shots 40 (shoot_empty
+  30); our Deagle clips were exported frame for frame at 24 fps -> gun.rate (default 30/24, shots 40/24) scales playback,
+  cue times and mag timings (Deagle:Rate). The Glock already uses its sequences' own fps.
+- The mods' weapon scripts fire much faster than CS2: Deagle cycletime 0.08 / 75 dmg, Glock 0.075 / 40 (CS2: 0.225 / 53,
+  0.15 / 30). We use CS2's (user to decide).
+- Reload timing from each clip's tracks (tools/clip_times.py; gb_convert runs gb_tracks_dump + it, gb_stage writes
+  `times`): cancel (old mag in, spare off screen: ~0.3 s), seat (new mag in for good: ammo), ready (gun within 30 mm /
+  10 deg of idle, 3 mm / 1 deg if the clip ends with the spare mag seated, after the slide closes on an empty one),
+  trim (3 mm / 1 deg to the end: clip ends there, 0.1 s blend). At seat time the gun is still ~200 mm / 80-90 deg off
+  idle, so a shot there would fire sideways: ready waits for the gun. Mid-reload cancel (mag out / spare in hand) isn't
+  clean: a blend flies the spare 1.2 m off screen and pulls the dropped mag back in -> needs the mags as separate
+  attachments (hide during the blend).
+- Glock: its source last shot (glock_firelast) never keys j_slide -> no lock. gb_build now borrows the single shot's
+  cycle up to full travel (35 mm at 0.06 s) and holds it; empty reload keeps it locked until the charge (frame 42,
+  found on the untouched source clip; the ease-in starts the clip on the locked idle).
+- Deagle: j_safetylock (safety-lever block on the slide) moves 55 mm with the slide in the shots; the empty clips only
+  locked j_slide / j_slidestop, leaving it forward of the slide. Now in LOCK_BONES (vm_extra_anims.py).
+- Muzzle flash: KCD2 particles support MoveRelativeEmitter, Intensity=(v,ParticleAge=(...)) light curves,
+  CameraMinDistance, DrawNear; entities have LoadParticleEffect / SetSlotWorldTM / SetAttachmentEffect /
+  CreateBoneAttachment. The flash is now an emitter in a viewmodel slot moved onto the muzzle every frame (no more
+  walking into it); emissive 3-4 (was 10-60: blown out to an opaque blob; KCD2's hand cannon uses 1-2); light ramps with
+  the flash. Smoke split into deagle.muzzle_smoke (world, CameraMinDistance 0.3).
+- Glock burst "no animation" (user): the additive clips load in game (GetAnimationLength 0.53 / 0.37 s) and compile like
+  the Deagle's working ones; waiting for the user's video.

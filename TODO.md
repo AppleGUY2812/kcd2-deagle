@@ -28,6 +28,13 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- Install today's build (game was running) and get the user's video: Glock burst, reload + fire, Deagle empty inspect,
+  flash while walking forward
+- Decide: fire rate CS2 (0.225 / 0.15 s) or the mods' own (0.08 / 0.075 s, as fast as you click)
+- Decide: Deagle empty inspect pulls a slide that's already locked (keep: you can pull a locked slide further / cut the
+  pull out / find a real empty inspect)
+- Full mid-reload cancel: mags as separate skin attachments (hidden during the cancel blend)
+- Mag role swap in the reload data (spare seated -> main mag) so a shot can cut the reload at 30 mm instead of 3 mm
 - Real bullets (asked 2026-10-11): projectile travel + drop, penetration vs the KCD2 armor on the hit body part,
   ricochets off plate; ammo data from Escape from Tarkov (tarkov.dev public API); CS2 keeps the handling
 - Shotguns: CS2 pellets (m_nNumBullets) not used yet
