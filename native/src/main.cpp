@@ -474,52 +474,60 @@ static void HitReact(const char* rest) {
 }
 
 // ---- commands from Lua: System.LogAlways("[DN] <cmd> ...")
-// ---- KCD2's own "no_torch" action filter while the gun is out (R reloads; the torch must stay put). Lua's
-// ActionMapManager can't enable filters, so the plugin calls CActionMapManager directly (docs/kcd2_action_filter.md):
-// CCryAction (found in gEnv by its RTTI) vfn +0xE0 -> the manager; +0xF0 EnableFilter(name, key) adds a reference
-// under a key, +0xF8 (name, key, all) takes one away. KCD2 counts references per key (a quest flowgraph uses
-// no_torch too), so ours go under our own key, strictly balanced, never "all". Applied in the frame hook, outside Lua
-// (an on/off edge notifies listeners).
-static const uint8_t kNoTorchKey = 0xDE;
-static int g_noTorchWant = -1;                 // 1 / 0 asked for by Lua, -1 = nothing new
-static bool g_noTorchOn = false;               // our reference is held
+// ---- KCD2's own action filters: "no_torch" while the gun is out (R reloads; the torch must stay put) and "no_move"
+// while the free camera flies (WASD move the camera, not Henry). Lua's ActionMapManager can't enable filters, so the
+// plugin calls CActionMapManager directly (docs/kcd2_action_filter.md): CCryAction::m_pThis (found for hit reactions)
+// -> vfn +0xE0 GetIActionMapManager; +0xF0 EnableFilter(name, key) adds a reference under a key, +0xF8 (name, key,
+// all) takes one away. KCD2 counts references per key (a quest flowgraph uses no_torch too), so ours go under our own
+// key, strictly balanced, never "all". Applied in the frame hook, outside Lua (an on/off edge notifies listeners).
+// (Scanning gEnv for CCryAction found nothing in game 2026-10-12: it isn't a gEnv member in KCD2.)
+static const uint8_t kFilterKey = 0xDE;
+struct OurFilter { const char* name; int want; bool on; };
+static OurFilter g_filters[] = { { "no_torch", -1, false }, { "no_move", -1, false } };
+enum { F_NO_TORCH = 0, F_NO_MOVE = 1 };
 static uintptr_t g_amm = 0;
 static uintptr_t SafeGetter(uintptr_t obj, int off) {   // no C++ objects here: MSVC forbids __try next to unwinding
 	auto get = (uintptr_t(__fastcall*)(uintptr_t))VFn(obj, off);
 	__try { return get ? get(obj) : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
 static uintptr_t FindActionMapManager() {
-	if (g_amm || !g_env) return g_amm;
-	for (int off = 0; off < 0x200; off += 8) {
-		uintptr_t p = 0, vt = 0;
-		if (!ReadPtr(g_env + off, p) || !p || !ReadPtr(p, vt) || !vt) continue;
-		if (RttiName(g_game, vt) != ".?AVCCryAction@@") continue;
-		uintptr_t amm = SafeGetter(p, 0xE0), avt = 0;
-		if (amm && ReadPtr(amm, avt) && RttiName(g_game, avt) == ".?AVCActionMapManager@@") {
-			g_amm = amm;
-			Log("action map manager %p (CCryAction at gEnv+0x%X)", (void*)amm, off);
-			return amm;
-		}
+	if (g_amm) return g_amm;
+	static bool said = false;
+	uintptr_t fw = 0, vt = 0, amm = 0, avt = 0;
+	if (!g_cryActionThis || !ReadPtr(g_cryActionThis, fw) || !fw || !ReadPtr(fw, vt)) {
+		if (!said) { said = true; Log("filters: no CCryAction (m_pThis %p)", (void*)g_cryActionThis); }
+		return 0;
 	}
-	static bool said = false; if (!said) { said = true; Log("no_torch: action map manager not found"); }
+	std::string fwName = RttiName(g_game, vt);
+	amm = SafeGetter(fw, 0xE0);
+	if (amm && ReadPtr(amm, avt) && RttiName(g_game, avt) == ".?AVCActionMapManager@@") {
+		g_amm = amm;
+		Log("filters: action map manager %p (from %s %p)", (void*)amm, fwName.c_str(), (void*)fw);
+		return amm;
+	}
+	if (!said) { said = true; Log("filters: %s %p vfn+0xE0 gave %p (%s): not the action map manager", fwName.c_str(), (void*)fw,
+		(void*)amm, avt ? RttiName(g_game, avt).c_str() : "?"); }
 	return 0;
 }
-static bool CallFilter(uintptr_t amm, bool on) {
+static bool CallFilter(uintptr_t amm, const char* name, bool on) {
 	__try {
-		if (on) ((void(__fastcall*)(uintptr_t, const char*, uint8_t))VFn(amm, 0xF0))(amm, "no_torch", kNoTorchKey);
-		else ((void(__fastcall*)(uintptr_t, const char*, uint8_t, bool))VFn(amm, 0xF8))(amm, "no_torch", kNoTorchKey, false);
+		if (on) ((void(__fastcall*)(uintptr_t, const char*, uint8_t))VFn(amm, 0xF0))(amm, name, kFilterKey);
+		else ((void(__fastcall*)(uintptr_t, const char*, uint8_t, bool))VFn(amm, 0xF8))(amm, name, kFilterKey, false);
 		return true;
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-static void ApplyNoTorch() {
-	if (g_noTorchWant < 0) return;
-	bool on = g_noTorchWant == 1;
-	g_noTorchWant = -1;
-	if (on == g_noTorchOn) return;
-	uintptr_t amm = FindActionMapManager();
-	if (!amm) return;
-	if (CallFilter(amm, on)) { g_noTorchOn = on; Log("no_torch %s", on ? "on" : "off"); }
-	else Log("no_torch: the call faulted");
+static void ApplyFilters() {
+	if (g_filters[F_NO_MOVE].on != Freecam_Active()) g_filters[F_NO_MOVE].want = Freecam_Active() ? 1 : 0;
+	for (auto& f : g_filters) {
+		if (f.want < 0) continue;
+		bool on = f.want == 1;
+		f.want = -1;
+		if (on == f.on) continue;
+		uintptr_t amm = FindActionMapManager();
+		if (!amm) return;
+		if (CallFilter(amm, f.name, on)) { f.on = on; Log("filter %s %s", f.name, on ? "on" : "off"); }
+		else Log("filter %s: the call faulted", f.name);
+	}
 }
 
 static void Command(const char* line) {
@@ -529,7 +537,7 @@ static void Command(const char* line) {
 	while (*rest == ' ') rest++;
 	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
 		Freecam_Reset("hello");
-		g_noTorchWant = 0;          // a load holsters the gun: let our reference go (a no-op if the load dropped it)
+		for (auto& f : g_filters) f.want = 0;   // a load holsters the gun and ends the freecam: let our references go
 		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
 		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1;
 		// the handshake, then the player's saved settings (settings.cpp)
@@ -651,7 +659,7 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
-	else if (!strcmp(cmd, "notorch")) g_noTorchWant = atoi(rest) != 0 ? 1 : 0;
+	else if (!strcmp(cmd, "notorch")) g_filters[F_NO_TORCH].want = atoi(rest) != 0 ? 1 : 0;
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
@@ -719,7 +727,7 @@ static void OnCamera(uintptr_t camera) {
 	UpdateMotion(g_cam);
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
 	if (g_fmod) { UpdateListener(g_cam); fm.update(g_fmod); }
-	ApplyNoTorch();
+	ApplyFilters();
 	if (g_env) {
 		std::deque<std::string> run;
 		{ std::lock_guard<std::mutex> lk(g_consoleMu); run.swap(g_console); }

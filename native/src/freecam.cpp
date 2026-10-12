@@ -49,10 +49,13 @@ float g_fast = 5.0f;                      // x speed while Shift is held
 float g_maxDist = 500.0f;                 // from Henry's eye
 const float kJump = 25.0f;                // the real eye moved this far in one frame: load / fast travel / cutscene -> off
 
-// fwd, back, left, right, up, down
+// fwd, back, left, right, up, down. WASD by default: main.cpp turns KCD2's "no_move" filter on while the camera flies,
+// so they move the camera and not Henry (Space = jump and Shift = sprint are in that filter too; Left Ctrl is only the
+// horse brake). The user's keyboard has no numpad and maybe no Home/End (the first default didn't move, 2026-10-12).
+const int kWasdKeys[6] = { 'W', 'S', 'A', 'D', VK_SPACE, VK_LCONTROL };
 const int kNavKeys[6] = { VK_HOME, VK_END, VK_DELETE, VK_NEXT, VK_PRIOR, VK_INSERT };   // Ins Home PgUp / Del End PgDn = Q W E / A S D
 const int kArrowKeys[6] = { VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_PRIOR, VK_NEXT };      // the arrows walk Henry too unless unbound
-int g_keys[6] = { VK_HOME, VK_END, VK_DELETE, VK_NEXT, VK_PRIOR, VK_INSERT };
+int g_keys[6] = { 'W', 'S', 'A', 'D', VK_SPACE, VK_LCONTROL };
 int g_toggleVk = VK_OEM_5;                // '\' on US / UK-ISO keyboards; free in defaultProfile.xml and keybindSuperactions.xml
 bool g_toggleHeld = true;                 // a press counts only after a release was seen with the game focused
 LARGE_INTEGER g_last{}, g_freq{};
@@ -242,16 +245,20 @@ void Freecam_Command(const char* args) {
 	else if (!strcmp(w, "off") || !strcmp(w, "0")) g_want = false;
 	else if (!strcmp(w, "speed")) { float v = (float)atof(rest); if (v > 0 && v < 1000) g_speed = v; }
 	else if (!strcmp(w, "fast")) { float v = (float)atof(rest); if (v >= 1 && v < 100) g_fast = v; }
+	else if (!strcmp(w, "nudge")) {   // nudge <x> <y> <z>: move the camera by metres (world), for tests without keys
+		float d[3] = {}; if (sscanf_s(rest, "%f %f %f", &d[0], &d[1], &d[2]) == 3 && g_on) for (int k = 0; k < 3; k++) g_pos[k] += d[k];
+	}
 	else if (!strcmp(w, "max")) { float v = (float)atof(rest); if (v >= 1 && v < 100000) g_maxDist = v; }
 	else if (!strcmp(w, "keys")) {
 		if (!strncmp(rest, "arrows", 6)) memcpy(g_keys, kArrowKeys, sizeof(g_keys));
-		else memcpy(g_keys, kNavKeys, sizeof(g_keys));
+		else if (!strncmp(rest, "nav", 3)) memcpy(g_keys, kNavKeys, sizeof(g_keys));
+		else memcpy(g_keys, kWasdKeys, sizeof(g_keys));
 	}
 	else if (!strcmp(w, "key")) { int vk = ParseVk(rest); if (vk >= 0 && vk < 256) { g_toggleVk = vk; g_toggleHeld = true; } }
 	else if (strcmp(w, "status") != 0) { Log("freecam: unknown '%s'", w); return; }
 	Log("freecam: installed %d want %d on %d pos %.2f %.2f %.2f speed %.1f fast x%.1f max %.0f keys %s toggle vk 0x%02X",
 		(int)g_installed, (int)g_want.load(), (int)g_on, g_pos[0], g_pos[1], g_pos[2], g_speed, g_fast, g_maxDist,
-		g_keys[0] == VK_UP ? "arrows" : "nav", g_toggleVk);
+		g_keys[0] == VK_UP ? "arrows" : g_keys[0] == 'W' ? "wasd" : "nav", g_toggleVk);
 }
 
 void Freecam_Reset(const char* why) {
