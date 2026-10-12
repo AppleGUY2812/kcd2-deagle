@@ -276,7 +276,13 @@ typedef int (__stdcall* F_CreateSound)(void* sys, const char* name, unsigned int
 typedef int (__stdcall* F_PlaySound)(void* sys, void* snd, void* group, int paused, void** chan);
 typedef int (__stdcall* F_Update)(void* sys);
 typedef int (__stdcall* F_ChanVol)(void* chan, float vol);
-static struct { F_SysCreate create; F_SysInit init; F_CreateSound createSound; F_PlaySound play; F_Update update; F_ChanVol vol; } fm{};
+struct FVec { float x, y, z; };
+typedef int (__stdcall* F_Listener)(void* sys, int listener, const FVec* pos, const FVec* vel, const FVec* fwd, const FVec* up);
+typedef int (__stdcall* F_Chan3D)(void* chan, const FVec* pos, const FVec* vel);
+typedef int (__stdcall* F_ChanMinMax)(void* chan, float mn, float mx);
+typedef int (__stdcall* F_ChanPaused)(void* chan, int paused);
+static struct { F_SysCreate create; F_SysInit init; F_CreateSound createSound; F_PlaySound play; F_Update update; F_ChanVol vol;
+	F_Listener listener; F_Chan3D chan3d; F_ChanMinMax minmax; F_ChanPaused paused; } fm{};
 static void* g_fmod = nullptr;
 static std::unordered_map<std::string, void*> g_sounds;
 static std::string g_soundRoot;
@@ -292,7 +298,13 @@ static bool FmodInit() {
 	fm.play = (F_PlaySound)GetProcAddress(h, "FMOD_System_PlaySound");
 	fm.update = (F_Update)GetProcAddress(h, "FMOD_System_Update");
 	fm.vol = (F_ChanVol)GetProcAddress(h, "FMOD_Channel_SetVolume");
-	if (!fm.create || !fm.init || !fm.createSound || !fm.play || !fm.update || !fm.vol) { Log("fmod exports missing"); return false; }
+	fm.listener = (F_Listener)GetProcAddress(h, "FMOD_System_Set3DListenerAttributes");
+	fm.chan3d = (F_Chan3D)GetProcAddress(h, "FMOD_Channel_Set3DAttributes");
+	fm.minmax = (F_ChanMinMax)GetProcAddress(h, "FMOD_Channel_Set3DMinMaxDistance");
+	fm.paused = (F_ChanPaused)GetProcAddress(h, "FMOD_Channel_SetPaused");
+	if (!fm.create || !fm.init || !fm.createSound || !fm.play || !fm.update || !fm.vol || !fm.listener || !fm.chan3d || !fm.minmax || !fm.paused) {
+		Log("fmod exports missing"); return false;
+	}
 	void* sys = nullptr;
 	int r1 = fm.create(&sys, 0x00020221);
 	int r2 = sys ? fm.init(sys, 64, 0, nullptr) : -1;
@@ -300,6 +312,33 @@ static bool FmodInit() {
 	if (r1 != 0 || r2 != 0) return false;
 	g_fmod = sys;
 	return true;
+}
+
+// 3D sounds (bullet impacts): FMOD's listener is the game camera, moved every camera step. CryEngine is right-handed
+// with Z up; FMOD defaults to left-handed with Y up and Z forward: swapping y and z converts one into the other.
+static FVec ToFmod(float x, float y, float z) { return { x, z, y }; }
+static void UpdateListener(const float* cam) {
+	if (!g_fmod) return;
+	FVec pos = ToFmod(cam[3], cam[7], cam[11]), vel = { 0, 0, 0 };
+	FVec fwd = ToFmod(cam[1], cam[5], cam[9]), up = ToFmod(cam[2], cam[6], cam[10]);
+	fm.listener(g_fmod, 0, &pos, &vel, &fwd, &up);
+}
+static void PlaySound3D(const std::string& rel, float vol, const float* at, float minDist, float maxDist) {
+	if (!FmodInit()) return;
+	void*& snd = g_sounds[rel + "|3d"];
+	if (!snd) {
+		std::string path = g_soundRoot + rel;
+		int r = fm.createSound(g_fmod, path.c_str(), 0x00000001 | 0x00000010 | 0x00000100, nullptr, &snd);   // LOOP_OFF|3D|CREATESAMPLE
+		if (r != 0) { Log("sound load failed %d: %s", r, path.c_str()); snd = nullptr; g_sounds.erase(rel + "|3d"); return; }
+	}
+	UpdateListener(g_cam);
+	void* ch = nullptr;
+	if (fm.play(g_fmod, snd, nullptr, 1, &ch) != 0 || !ch) return;    // paused: placed before it makes a sound
+	FVec pos = ToFmod(at[0], at[1], at[2]), vel = { 0, 0, 0 };
+	fm.chan3d(ch, &pos, &vel);
+	fm.minmax(ch, minDist, maxDist);
+	fm.vol(ch, vol * g_masterVol);
+	fm.paused(ch, 0);
 }
 
 static void PlaySoundFile(const std::string& rel, float vol) {
@@ -495,6 +534,11 @@ static void Command(const char* line) {
 		char file[260] = {}; float v = 1.0f;
 		if (sscanf_s(rest, "%259s %f", file, (unsigned)sizeof(file), &v) >= 1) PlaySoundFile(file, v);
 	}
+	else if (!strcmp(cmd, "snd3")) {   // snd3 <file> <vol> <x> <y> <z> <minDist> <maxDist>
+		char file[260] = {}; float v = 1.0f, at[3] = {}, mn = 1.0f, mx = 100.0f;
+		if (sscanf_s(rest, "%259s %f %f %f %f %f %f", file, (unsigned)sizeof(file), &v, &at[0], &at[1], &at[2], &mn, &mx) >= 5 && Finite(at, 3))
+			PlaySound3D(file, v, at, mn, mx);
+	}
 	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
@@ -552,7 +596,7 @@ static void OnCamera(uintptr_t camera) {
 	uint64_t n = ++g_viewFrames;
 	UpdateMotion(g_cam);
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
-	if (g_fmod) fm.update(g_fmod);
+	if (g_fmod) { UpdateListener(g_cam); fm.update(g_fmod); }
 	if (!g_pendingConsole.empty() && g_env) { std::string c; c.swap(g_pendingConsole); SafeConsole(c.c_str()); }
 	if (n == 1 || n % 3000 == 0)
 		Log("frames %llu placed %llu repeats skipped %llu cmds %llu sounds %zu", n, g_placed, g_repeats, g_cmds, g_sounds.size());
