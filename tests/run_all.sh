@@ -8,5 +8,6 @@ luajit tests/run_fallback.lua | grep -q "FALLBACK ERRORS:	0" || { echo "FAIL run
 for g in deagle glock_17; do luajit tests/run_gun.lua "$g" >/dev/null || { echo "FAIL run_gun $g"; fail=1; }; done
 python3 tests/test_profile_guess.py >/dev/null || { echo "FAIL test_profile_guess"; fail=1; }
 python3 tools/check_native.py . >/dev/null || { echo "FAIL check_native"; fail=1; }
+python3 tools/check_fx.py . >/dev/null || { echo "FAIL check_fx"; fail=1; }
 [ $fail = 0 ] && echo "ALL SUITES PASS"
 exit $fail

@@ -82,7 +82,7 @@ Deagle.cfg = {
 		staminaRef = 20,        -- stamina a 9 mm's shove takes; others by momentum
 		headMult = 2.0,         -- on a head hit, on top of KCD2's own x1.5: a round through the skull kills
 		punchPerMomentum = 25.6,-- physics push on bodies / props per kg m/s of bullet momentum (Deagle 8.6 -> 220)
-		largeFlashBlast = 1.5,  -- blast scale from which the flash burns longer (3-4 frames instead of 2-3; Deagle 2.08)
+		largeFlashBlast = 1.5,  -- blast scale from which the flash burns longer (0.13 s instead of 0.1; Deagle 2.08)
 		loudnessSpan = 0.5,     -- share of the real loudness difference played (Deagle +6.5 dB over the Glock -> 0.69x)
 	},
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
@@ -298,8 +298,8 @@ function Deagle:MuzzleFlash(dir)
 	local pos = self:MuzzlePos()
 	local phys = self:ShotPhysics()
 	local scale = (phys and c.physics.flashPerUnit * phys.blast or 1) * c.muzzleFxScale
-	-- a real flash is over in 1-2 ms; games show it 2-4 frames. A bigger blast burns a little longer (the engine can't
-	-- stretch a flash per shot, so two versions of it).
+	-- A bigger blast burns a little longer (the engine can't stretch a flash per shot, so two versions of it). Neither
+	-- can be shorter than ~0.08 s: a new emitter is first drawn a frame or two late (tools/check_fx.py).
 	local fx = (phys and phys.blast >= c.physics.largeFlashBlast) and c.muzzleFxLarge or c.muzzleFx
 	if c.flashMode == "world" then
 		try("fx", Particle.SpawnEffect, fx, pos, dir, scale)
