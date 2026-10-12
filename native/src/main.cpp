@@ -38,6 +38,11 @@ using ExecFn = void(__fastcall*)(uintptr_t con, const char* cmd, bool silent, bo
 
 // ---- viewmodel follow
 static uint32_t g_vmId = 0;
+// the muzzle flash rides on the gun: a small entity carrying the emitter, put on the muzzle in the same step as the
+// viewmodel (Lua sends the muzzle's position in the viewmodel's own axes every frame while the flash burns)
+static uint32_t g_flashId = 0;
+static float g_flashLocal[3] = {};
+static bool g_flashOn = false;
 static bool g_follow = false;
 static float g_off[3] = { 0, 0, 0 };            // right, forward, up (m)
 static uint64_t g_placed = 0;
@@ -126,6 +131,18 @@ static bool PlaceViewmodel(const float* cam) {
 		tm[r * 4 + 3] = cam[r * 4 + 3] + C[r * 3 + 0] * o[0] + C[r * 3 + 1] * o[1] + C[r * 3 + 2] * o[2];
 	}
 	setTM(e, tm, 0);
+	if (g_flashOn && g_flashId) {
+		uintptr_t f = getEntity(es, g_flashId);
+		auto fset = f ? (SetWorldTMFn)VFn(f, 0xF0) : nullptr;
+		if (fset) {
+			float ft[12];
+			for (int r = 0; r < 3; r++) {
+				ft[r * 4 + 0] = tm[r * 4 + 0]; ft[r * 4 + 1] = tm[r * 4 + 1]; ft[r * 4 + 2] = tm[r * 4 + 2];
+				ft[r * 4 + 3] = tm[r * 4 + 3] + tm[r * 4 + 0] * g_flashLocal[0] + tm[r * 4 + 1] * g_flashLocal[1] + tm[r * 4 + 2] * g_flashLocal[2];
+			}
+			fset(f, ft, 0);
+		}
+	}
 	return true;
 }
 
@@ -193,7 +210,7 @@ static void Command(const char* line) {
 	const char* rest = line + strlen(cmd);
 	while (*rest == ' ') rest++;
 	if (!strcmp(cmd, "hello")) {   // every save load / script start: forget the old viewmodel (its id is gone)
-		g_follow = false; g_vmId = 0; mo.aiming = false;
+		g_follow = false; g_vmId = 0; mo.aiming = false; g_flashOn = false; g_flashId = 0;
 		g_pendingConsole = "deagle_native_ok"; Log("hello from Lua");
 	}
 	else if (!strcmp(cmd, "vm")) {
@@ -202,6 +219,16 @@ static void Command(const char* line) {
 		if (sscanf_s(hex, "%llx", &id) == 1) { g_vmId = (uint32_t)id; Log("viewmodel entity %08X", g_vmId); }
 	}
 	else if (!strcmp(cmd, "follow")) { g_follow = atoi(rest) != 0; Log("follow %d", (int)g_follow); }
+	else if (!strcmp(cmd, "flash")) {    // flash 0x<entity> <x> <y> <z>: the flash entity, the muzzle in viewmodel axes
+		unsigned long long id = 0;
+		const char* hex = strstr(rest, "0x"); hex = hex ? hex + 2 : rest;
+		const char* xyz = strchr(hex, ' ');
+		if (sscanf_s(hex, "%llx", &id) == 1 && xyz && sscanf_s(xyz, "%f %f %f", &g_flashLocal[0], &g_flashLocal[1], &g_flashLocal[2]) == 3) {
+			g_flashId = (uint32_t)id; g_flashOn = true;
+		}
+	}
+	else if (!strcmp(cmd, "flashpos")) sscanf_s(rest, "%f %f %f", &g_flashLocal[0], &g_flashLocal[1], &g_flashLocal[2]);
+	else if (!strcmp(cmd, "flashoff")) g_flashOn = false;
 	else if (!strcmp(cmd, "off")) sscanf_s(rest, "%f %f %f", &g_off[0], &g_off[1], &g_off[2]);
 	else if (!strcmp(cmd, "snd")) {
 		char file[260] = {}; float v = 1.0f;

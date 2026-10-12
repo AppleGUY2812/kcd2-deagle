@@ -33,16 +33,21 @@ print("   HUD draw calls:", M.drawn_text, " first person:", tostring(Deagle.vmIn
 step("hip fire x7", function() for i = 1, 7 do Deagle:OnAction("deagle_fire", "press"); M.advance(0.3) end end)
 print("   ammo:", Deagle.state.ammo, " anims:", lastAnims(4), " fx:", M.fx, M.lastFx)
 local fx = M.fxNames or {}
-print("   flashes in the world:", fx["deagle.muzzle"], " smoke:", fx["deagle.muzzle_smoke"], " (flashMode " .. Deagle.cfg.flashMode .. ")")
-if (fx["deagle.muzzle"] or 0) ~= 7 or (fx["deagle.muzzle_smoke"] or 0) ~= 7 then table.insert(M.errors, "a flash and a smoke per shot") end
-step("flash on its own entity", function()   -- flashMode entity: rides a small entity kept on the muzzle
-	Deagle.cfg.flashMode = "entity"; Deagle.state.ammo = 7; M.advance(0.5)
-	local w0, s0 = (M.fxNames or {})["deagle.muzzle"] or 0, M.slotFx or 0
+local glued, follows, offs = 0, 0, 0
+for _, c in ipairs(M.native) do
+	if c:find("^%[DN%] flash 0x%x+ [-%d.]+ [-%d.]+ [-%d.]+$") then glued = glued + 1 end
+	if c:find("^%[DN%] flashpos ") then follows = follows + 1 end
+	if c == "[DN] flashoff" then offs = offs + 1 end
+end
+print("   flash (" .. Deagle.cfg.flashMode .. "): glued by the plugin", glued, " muzzle updates", follows, " off", offs, " in the world", fx["deagle.muzzle"], " smoke", fx["deagle.muzzle_smoke"])
+if glued ~= 7 or follows < 7 or offs < 1 or (fx["deagle.muzzle"] or 0) ~= 0 or (fx["deagle.muzzle_smoke"] or 0) ~= 7 then table.insert(M.errors, "flash not glued to the gun every shot") end
+step("flash left in the world", function()   -- flashMode world: spawned where it was fired
+	Deagle.cfg.flashMode = "world"; Deagle.state.ammo = 7; M.advance(0.5)
+	local w0 = (M.fxNames or {})["deagle.muzzle"] or 0
 	Deagle:OnAction("deagle_fire", "press"); M.advance(0.1)
-	local e = Deagle.flashEntId and System.GetEntity(Deagle.flashEntId)
-	print("   flash entity:", e and e.name, " slot effects:", (M.slotFx or 0) - s0, " world flashes:", ((M.fxNames or {})["deagle.muzzle"] or 0) - w0)
-	if not e or (M.slotFx or 0) - s0 ~= 1 or ((M.fxNames or {})["deagle.muzzle"] or 0) ~= w0 then error("flash entity not used") end
-	Deagle.cfg.flashMode = "world"; Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
+	print("   world flashes:", ((M.fxNames or {})["deagle.muzzle"] or 0) - w0)
+	if ((M.fxNames or {})["deagle.muzzle"] or 0) - w0 ~= 1 then error("world flash not spawned") end
+	Deagle.cfg.flashMode = "entity"; Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
 end)
 step("slow motion (F9)", function()
 	Deagle:OnAction("deagle_slowmo", "press"); local on = M.cvars and M.cvars.t_Scale

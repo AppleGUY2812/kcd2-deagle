@@ -33,9 +33,10 @@ Deagle.cfg = {
 	reloadTrigger = nil,
 	muzzleFx = "deagle.muzzle",         -- Libs/Particles/deagle.xml (preloaded via PreloadList.txt): the flash, rides on the gun
 	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
-	-- "world": the flash stays where it was fired; "entity": it rides a small entity kept on the muzzle every frame (so
-	-- walking forward doesn't walk into it). A viewmodel slot can't be used: emitters there never render.
-	flashMode = "world",
+	-- "entity": the flash rides a small entity the plugin keeps on the muzzle in the same step it places the gun (glued,
+	-- like CS2 / CoD / Ready or Not); "world": it stays where it was fired. A viewmodel slot can't be used: emitters
+	-- there never render.
+	flashMode = "entity",
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
@@ -260,6 +261,8 @@ function Deagle:MuzzleFlash(dir)
 	local ok = false
 	if e then
 		pcall(e.SetWorldPos, e, pos); pcall(e.SetDirectionVector, e, dir)
+		local l = self:MuzzleLocal()
+		if self.native and l then self:Native(string.format("flash 0x%s %.4f %.4f %.4f", string.match(tostring(e.id), "(%x+)%s*$") or "0", l.x, l.y, l.z)) end
 		-- alternate two slots, cleared first: loading into a slot that still holds the effect doesn't restart it
 		self.flashSlotN = ((self.flashSlotN or 0) + 1) % 2
 		pcall(e.FreeSlot, e, self.flashSlotN)
@@ -282,10 +285,38 @@ function Deagle:FlashEntity()
 	return e
 end
 
+-- while the flash burns: the plugin glues it to the gun (it only needs the muzzle in the gun's axes, which the shot
+-- animation moves); without the plugin Lua moves it, a frame behind the gun
 function Deagle:FlashFollow()
-	if not self.flashEntId or System.GetCurrTime() > (self.flashUntil or 0) then return end
+	if not self.flashEntId then return end
+	if System.GetCurrTime() > (self.flashUntil or 0) then
+		if self.flashGlued then self.flashGlued = false; self:Native("flashoff") end
+		return
+	end
+	if self.native then
+		local l = self:MuzzleLocal()
+		if l then self.flashGlued = true; self:Native(string.format("flashpos %.4f %.4f %.4f", l.x, l.y, l.z)) end
+		return
+	end
 	local e = System.GetEntity(self.flashEntId)
 	if e then pcall(e.SetWorldPos, e, self:MuzzlePos()); pcall(e.SetDirectionVector, e, System.GetViewCameraDir()) end
+end
+
+-- the muzzle bone in the viewmodel's own axes (x right, y forward, z up)
+function Deagle:MuzzleLocal()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	local m = self:VmBone(self.gun.bones.muzzle)
+	if not (vm and m) then return nil end
+	local okP, p = pcall(vm.GetWorldPos, vm)
+	if not okP or not p then return nil end
+	local d = { x = m.x - p.x, y = m.y - p.y, z = m.z - p.z }
+	local out = {}
+	for i, k in ipairs({ "x", "y", "z" }) do
+		local ok, a = pcall(vm.GetDirectionVector, vm, i - 1)
+		if not ok or type(a) ~= "table" then return nil end
+		out[k] = d.x * a.x + d.y * a.y + d.z * a.z
+	end
+	return out
 end
 
 -- slow motion for checking effects (F9): KCD2 has CryEngine's t_Scale
