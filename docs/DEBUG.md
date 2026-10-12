@@ -27,6 +27,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `deagle_arms medieval` / `mw` | sleeve and glove look |
 | `deagle_ads 1` / `0` | aim down sights on / off |
 | `deagle_motion 0`..`2` | gun bob / sway / sprint pose strength (0 = off, 1 = normal) |
+| `deagle_mparam <key> <value>` | weapon-movement tunable, kept until restart (`src/Scripts/Deagle/motion.lua`, `native/src/motion.h`). Keys (defaults = RoN G19; the Deagle overrides drag_aim_loc 0.875, drag_strafe_loc 0.05, move_rot_p 35, hang_k 80, land 1.2): `drag_aim_rot` 0.6 / `drag_aim_loc` 0.4 (look sway rotation / shift), `drag_strafe_rot` 0.4 / `drag_strafe_loc` 0.2 (strafe roll / shift), `move_scale_x/y/z` 10/10/5 and `move_rot_p` 60 (move inertia), `mesh_interp` 55 (sway follow speed), `hang_k` 100 / `hang_c` 8 / `hang_ads` 0.3 (the soft hang spring), `sprint_ron` 1 (0 = the old sprint pose), `sprint_x/y/z` m and `sprint_pitch/roll/yaw` deg (pose), `jump` / `land` / `crouch` / `dodge` / `bob` 1 (strengths), `test_roll` 0 (deg, a constant roll for the sign check) |
 | `deagle_tracers 0` / `1` | glowing tracer on every round off / on |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
 | `deagle_zoom <n>` | debug zoom (F10 steps x4 / x10 / off) |
@@ -74,6 +75,10 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |
 | `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
+| `gore.headPop` | `true` | a killing Deagle head shot takes the head off (head, hair, helmet hidden; blood burst, neck pulses) |
+| `gore.headPopEnergy` | `1200` | joules a round must land with to take a head off (Deagle out to ~100 m, never a 9 mm) |
+| `gore.ragdollOnKill` | `true` | a killing round drops the body at once instead of after KCD2's death animation |
+| `gore.killPush` | `1` | how hard a kill shoves the body (x the round's real momentum x punch) |
 
 Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `deagle_set flashMode world`,
 `deagle_set muzzleFxScale 0.5`.
