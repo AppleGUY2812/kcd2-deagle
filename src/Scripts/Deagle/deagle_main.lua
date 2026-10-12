@@ -27,6 +27,10 @@ Deagle.cfg = {
 	spreadHip = 1.6,          -- degrees
 	spreadAim = 0.25,
 	aimFovScale = 0.8,
+	hitReactions = true,      -- KCD2's own flinch / stagger on a hit NPC (plugin hitreact)
+	hitReactType = 0,         -- the game's hit type for it: 0 has the living rows (weak / minor / major, 4 directions)
+	hitReactMajor = 50,       -- health lost from which a hit is a major injury (the game's own threshold)
+	hitReactFlags = 0x3F,     -- event flags (0x3F all: game impact FX, AI / crime alert...; plugin bits in main.cpp)
 	hitMode = "soul",         -- "soul" = soul:DealDamage with native hit reactions; "hit" = gamerules ServerHit (no effect on souls in KCD2)
 	hitType = "bullet",
 	shotTrigger = "c_f_firearm_shot",   -- the game's gunshot; skipped while the plugin plays the MWII shots
@@ -626,6 +630,28 @@ function Deagle:Bleed(e, hit, dir)
 	end
 end
 
+-- KCD2's own flinch / stagger on the one hit: Lua's DealDamage tags every hit as a fall, which has no reactions
+-- (docs/kcd2_hit_reaction_re.md), so the plugin builds the game's hit-reaction event itself. Strength by the game's
+-- own rule for a hit: any health lost = minor injury (5), 50 or more = major (6). Not on the dead or unconscious.
+function Deagle:HitReact(e, hit, dir, dmg)
+	local c = self.cfg
+	if not c.hitReactions then return end
+	if not self.native then
+		if not self.saidNoHitReact then
+			self.saidNoHitReact = true
+			log("$4hit reactions: the native plugin isn't running (deagle_native.asi): NPCs won't flinch")
+		end
+		return
+	end
+	local down = false
+	pcall(function() down = e.actor:IsDead() or e.actor:GetHealth() <= 0 or (e.actor.IsUnconscious and e.actor:IsUnconscious()) end)
+	if down then return end
+	local strength = dmg >= c.hitReactMajor and 6 or 5
+	self:Native(string.format("hitreact 0x%s 0x%s %d %d %s %.3f %.3f %.3f %.4f %.4f %.4f %x", entityHex(e.id),
+		entityHex(self:Player().id), c.hitReactType, strength, hit.bodyPart or "torso", hit.pos.x, hit.pos.y, hit.pos.z,
+		dir.x, dir.y, dir.z, c.hitReactFlags))
+end
+
 function Deagle:ApplyHit(hit, dir, phys)
 	local c = self.cfg
 	phys = phys or self:ShotPhysics()
@@ -654,6 +680,7 @@ function Deagle:ApplyHit(hit, dir, phys)
 			end
 			hit.bodyPart = part
 			try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end)
+			self:HitReact(e, hit, dir, dmg)
 		end
 		self:Bleed(e, hit, dir)
 		local hp = "?"

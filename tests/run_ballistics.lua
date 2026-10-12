@@ -12,7 +12,7 @@ local function vec(x, y, z) return { x = x, y = y, z = z } end
 local world = { wallY = nil, npcY = nil }
 local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0 }
 function npc:GetName() return "target" end
-function npc:GetWorldPos() return vec(100, world.npcY or 0, 30) end
+function npc:GetWorldPos() return vec(100, world.npcY or 0, 30.3) end   -- the shot (z 31.75) lands on the torso
 function npc:GetDirectionVector() return vec(0, -1, 0) end
 function npc.soul:DealDamage(st, hp) npc.damage = npc.damage + hp; npc.hitAt = M.t end
 function npc.actor:IsDead() return false end
@@ -132,6 +132,21 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	npc.damage, npc.hitAt = 0, nil
 	t0 = fire()
 	check(string.format("%s: NPC at 5 m hit in the frame of the shot (%.1f HP)", id, npc.damage), npc.hitAt == t0 and npc.damage > 0, npc.hitAt)
+	-- KCD2's own reaction through the plugin: the game's strength rule (50+ HP = major 6, else minor 5), torso, the
+	-- round's direction; none for an NPC the hit left dead
+	local react
+	for i = #M.native, 1, -1 do if M.native[i]:find("^%[DN%] hitreact ") then react = M.native[i]; break end end
+	local victim, attacker, htype, strength, part, px, py, pz, dx, dy, dz, flags = (react or ""):match(
+		"^%[DN%] hitreact (0x%x+) (0x%x+) (%d+) (%d+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%x+)$")
+	local wantStrength = npc.damage >= 50 and "6" or "5"
+	check(string.format("%s: hit reaction sent: %s", id, tostring(react)), victim and htype == "0" and strength == wantStrength and part == "torso"
+		and math.abs(tonumber(py) - 205) < 1e-3 and tonumber(dy) > 0.99 and flags == "3f", react)
+	local nReact = #M.native
+	npc.damage = 100                  -- dead
+	fire()
+	local again = false
+	for i = nReact + 1, #M.native do if M.native[i]:find("^%[DN%] hitreact ") then again = true end end
+	check(string.format("%s: no reaction on a dead NPC", id), not again, again)
 	world.npcY = nil
 
 	-- two rounds in flight at once both land
