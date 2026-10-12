@@ -188,3 +188,56 @@ the session's blood converter from `E:\Tools\deagle-work\ron_fx\blood\` (86 PNG)
 `tools/fx_impact_textures.ps1` compiles them along with the impact set (presets: particles AlbedoWithGenericAlpha,
 decals Decal_AlbedoWithOpacity / NormalsWithSmoothness). Staged total: 318 DDS files. Contact sheet:
 `Desktop\Deagle Progress\blood_textures_sheet.png`.
+
+## 7. Impact sounds (`src/Scripts/Deagle/guns/impact_sounds.lua`)
+Source: Ready or Not's FMOD banks (`Content/FMOD/Desktop/Interactions.bank`, `Weapons.bank`, `SWAT.bank`). The
+banks' FSB5 sample banks are Vorbis, 48 kHz. RoN's bullet-impact events (`Bullet_Impact_Surfaces`, `Ricochets`,
+`Whizz Bys/...`, `PlayerImpacts/PlyrImp`) pick one of these samples at random. The event-to-sample routing and the
+3D attenuation (min / max distance) sit in compiled event data I did **not** decode. So `Deagle.impactRange` is a
+**guess** to tune in game, and the sets below are grouped by sample name.
+
+- `Deagle.impactSounds[key]` = list of `impacts/<key>_<n>.wav`. Pick one at random per hit.
+- `Deagle.impactGain[file]` = gain bringing that file's loudest 50 ms to -12 dBFS, the gunshot reference
+  (shot_gain.lua). Gains are <= 1. Files are peak-normalised to -1 dBFS and never clipped.
+- `sand` reuses `soil`, and `straw` reuses `soft` (RoN's soft-object hits). Every other family has its own RoN set.
+
+| key | files | RoN samples |
+|---|---|---|
+| `armor` | 10 | PlyrImp_SAPI, weap_shield_bullet_hit |
+| `armor_body` | 10 | weap_impact_armor_body_v4, weap_impact_armor_side_v3 |
+| `armor_helmet` | 5 | weap_impact_armor_helmet_v2 |
+| `bell` | 5 | imp_bullet_hit_bell |
+| `brick` | 6 | imp_bricks |
+| `ceramic` | 9 | imp_tile |
+| `cloth` | 5 | imp_fabric |
+| `crack` | 13 | impact_1p_hit_crack_A_whizz, sonic_crackV2 |
+| `flesh` | 7 | weap_impact_gore |
+| `flesh_player` | 5 | PlyrImp_Flesh |
+| `glass` | 14 | imp_glass, imp_glass_sweet |
+| `glass_break` | 10 | Hotel_GlassBreaking_BulletImpact |
+| `grass` | 11 | imp_trash_heap_foliage |
+| `metal` | 10 | imp_steel, imp_steel_b |
+| `metal_thin` | 12 | imp_alum, imp_galv |
+| `plaster` | 12 | imp_dry_wall, imp_dry_wall_sweet |
+| `ricochet` | 8 | ricochet |
+| `ricochet_close` | 8 | weap_impact_ricochet_close |
+| `ricochet_far` | 8 | weap_impact_ricochet_far |
+| `soft` | 10 | Interaction_BulletSoft |
+| `soil` | 5 | imp_soil |
+| `spall` | 4 | Spalling_Impact |
+| `stone` | 13 | imp_concrete, imp_concrete_sweet |
+| `water` | 8 | imp_water |
+| `whiz` | 18 | weap_whizzby_mid, weap_whizzby_softmid |
+| `wood` | 9 | imp_pine, imp_wood |
+
+Use: impact family -> its key (`metal` solid, `metal_thin` for sheet / door metal, `stone` / `brick` / `ceramic`,
+`plaster`, `wood`, `soil` / `sand` / `grass`, `water`, `cloth` / `straw`, `glass`, plus `glass_break` when a pane goes).
+Body hits use `flesh`, the player being hit uses `flesh_player`, plate armour on people uses `armor_body` /
+`armor_helmet`, and `armor` is a plate (SAPI) or shield ping. Ricochets use `ricochet` (with `ricochet_close` /
+`_far` by listener distance). Near misses use `whiz` (subsonic, 9 mm) and `crack` (supersonic snap), and `spall` is
+fragments off armour.
+
+Rebuild (needs ffmpeg and a Python with `fsb5` + `numpy`):
+`python3 -m venv /tmp/fsbenv && /tmp/fsbenv/bin/pip install fsb5 numpy && /tmp/fsbenv/bin/python tools/impact_sounds.py .`
+That writes 235 files (21 MB) to `assets/build/sounds/impacts/` (gitignored, ships as `Mods/deagle/sounds`) and
+regenerates `impact_sounds.lua`.
