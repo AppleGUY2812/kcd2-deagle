@@ -20,11 +20,14 @@ Deagle.cfg = {
 	kickPitchVar = 0.0,
 	range = 250,              -- m a round flies before it's dropped (tools/gen_tracers.py RANGE matches)
 	tracers = true,           -- a glowing tracer on every round (deagle_tracers 0 / 1)
+	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
+	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
+	accuracy = { scale = 1, crouchEye = 1.27, crouchBand = 0.05 },
 	damage = 60,              -- health damage (game applies body_part coeff: head 1.5, limbs 0.7)
 	headshotMult = 3.0,       -- extra on top: .50 AE to the head should drop anyone
 	stamina = 40,
 	impulse = 220,            -- physics push on props and bodies
-	spreadHip = 1.6,          -- degrees
+	spreadHip = 1.6,          -- degrees (guns without a CS2 profile; CS2 guns use CS2's accuracy, Deagle:CsAccuracy)
 	spreadAim = 0.25,
 	aimFovScale = 0.8,
 	hitReactions = true,      -- KCD2's own flinch / stagger on a hit NPC (plugin hitreact)
@@ -277,6 +280,17 @@ local function coneDir(dir, degrees)
 	local r = math.tan(math.rad(degrees)) * math.sqrt(math.random())
 	local a = math.random() * 2 * math.pi
 	return vnorm(vadd(dir, vadd(vscale(right, r * math.cos(a)), vscale(realUp, r * math.sin(a)))))
+end
+
+-- CS2's shot direction: an inaccuracy part and a spread part, each at a random angle with a radius uniform from 0 to
+-- its size (so shots bunch toward the middle), radians (CS:GO / CS2 FX_FireBullets)
+local function csDir(dir, inacc, spread)
+	local right = vnorm(vcross(dir, { x = 0, y = 0, z = 1 }))
+	local up = vnorm(vcross(right, dir))
+	local t0, r0 = math.random() * 2 * math.pi, math.random() * inacc
+	local t1, r1 = math.random() * 2 * math.pi, math.random() * spread
+	local x, y = math.cos(t0) * r0 + math.cos(t1) * r1, math.sin(t0) * r0 + math.sin(t1) * r1
+	return vnorm(vadd(dir, vadd(vscale(right, x), vscale(up, y))))
 end
 
 local function camBasis()
@@ -1196,7 +1210,15 @@ function Deagle:Shoot(force)
 	s.ammo = s.ammo - 1
 
 	local pos = System.GetViewCameraPos()
-	local dir = coneDir(System.GetViewCameraDir(), (s.aiming and c.spreadAim or c.spreadHip) + s.heat)
+	local w = self.gun.cs2 and self.cs2 and self.cs2[self.gun.cs2]
+	local dir
+	if w and w.inStand then                     -- CS2's accuracy, the gun's own numbers
+		local inacc, spread = self:CsAccuracy(w)
+		dir = csDir(System.GetViewCameraDir(), inacc, spread)
+		s.accFire = s.accFire + w.inFire
+	else
+		dir = coneDir(System.GetViewCameraDir(), (s.aiming and c.spreadAim or c.spreadHip) + s.heat)
+	end
 	-- the bullet leaves along the barrel, which may still be kicked up / sideways from the last shot
 	local kp, ky = self:GunKickNow()
 	if kp ~= 0 or ky ~= 0 then
@@ -2199,6 +2221,29 @@ end
 -- recoil (scaled so the Deagle keeps the kick it was tuned with), fire modes. Without one the defaults above stay.
 local BASE = { damage = Deagle.cfg.damage, headshotMult = Deagle.cfg.headshotMult, interval = Deagle.cfg.interval,
 	rangeMod = Deagle.cfg.rangeMod, kickPitch = Deagle.cfg.kickPitch, kickPitchVar = Deagle.cfg.kickPitchVar, kickYaw = Deagle.cfg.kickYaw }
+-- CS2's accuracy, for guns with a CS2 profile (user: "like CS2", it was too hard to hit; Ready or Not's guns will
+-- bring their own): CS:GO / CS2 GetInaccuracy with the gun's own numbers (guns/cs2.lua, radians). Inaccuracy standing
+-- or crouched (KCD2 gives Lua no stance: crouched = the eye under cfg.accuracy.crouchEye; measured live 1.54 m
+-- standing, 1.02 crouched), + moving (a ramp from 34 % to 95 % of the gun's max speed, so walking slowly costs nothing),
+-- + in the air (jumping, falling), + what recent shots left: each shot adds inFire, gone to 10 % over the recovery
+-- time (shorter crouched). Returns the inaccuracy and the base spread for this shot.
+function Deagle:CsAccuracy(w)
+	local s, a, p = self.state, self.cfg.accuracy, self:Player()
+	local now = System.GetCurrTime()
+	local eye = System.GetViewCameraPos().z - p:GetWorldPos().z
+	s.crouched = eye < a.crouchEye + (s.crouched and a.crouchBand or -a.crouchBand)   -- a band so a bob can't flicker it
+	local ok, v = pcall(p.GetVelocity, p)
+	local speed = ok and v and math.sqrt(v.x * v.x + v.y * v.y) or 0
+	local air = false
+	pcall(function() air = p.actor:IsFlying() end)
+	s.accFire = (s.accFire or 0) * math.exp(-math.log(10) * math.max(0, now - (s.accT or now)) / (s.crouched and w.recCrouch or w.recStand))
+	s.accT = now
+	local lo, hi = 0.34 * w.maxSpeed, 0.95 * w.maxSpeed
+	local move = math.max(0, math.min(1, (speed - lo) / (hi - lo)))
+	local k = a.scale
+	return k * ((s.crouched and w.inCrouch or w.inStand) + move * w.inMove + (air and w.inJump or 0) + s.accFire), k * w.spread
+end
+
 function Deagle:ApplyGunStats(g)
 	local c = self.cfg
 	for k, v in pairs(BASE) do c[k] = v end

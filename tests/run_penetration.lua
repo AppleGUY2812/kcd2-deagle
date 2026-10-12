@@ -77,6 +77,7 @@ local function fire(pitch)
 	Deagle.state.ammo, Deagle.state.lastShot = Deagle.gun.magSize, -100
 	Deagle.cfg.spreadHip, Deagle.cfg.spreadAim, Deagle.cfg.heatPerShot, Deagle.state.heat = 0, 0, 0, 0
 	Deagle.cfg.physics.barrelAim = 0
+	Deagle.cfg.accuracy.scale = 0                      -- a straight shot (CS2 accuracy has its own test)
 	M.view.pitch, M.view.yaw = pitch or 0, 0
 	M.fxNames = {}
 	Deagle:Shoot(true)

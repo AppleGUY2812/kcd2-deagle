@@ -46,6 +46,7 @@ def parse_kv3(text):
 FIELDS = ["m_nDamage", "m_flCycleTime", "m_bIsFullAuto", "m_flHeadshotMultiplier", "m_flArmorRatio", "m_flRange",
           "m_flRangeModifier", "m_flPenetration", "m_iMaxClip1", "m_nNumBullets", "m_flSpread", "m_flInaccuracyStand",
           "m_flInaccuracyCrouch", "m_flInaccuracyMove", "m_flInaccuracyJumpInitial", "m_flRecoveryTimeStand",
+          "m_flInaccuracyFire", "m_flInaccuracyJump", "m_flInaccuracyLand", "m_flRecoveryTimeCrouch",
           "m_flRecoilMagnitude", "m_flRecoilMagnitudeVariance", "m_flRecoilAngle", "m_flRecoilAngleVariance",
           "m_nRecoilSeed", "m_flMaxSpeed", "m_bHasBurstMode", "m_bIsRevolver", "m_nBurstShotCount"]
 

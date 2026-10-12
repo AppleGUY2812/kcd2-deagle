@@ -20,6 +20,14 @@ for name in sorted(stats):
         "rangeMod": d.get("m_flRangeModifier", 0.85), "armorRatio": d.get("m_flArmorRatio", 1.0), "pen": d.get("m_flPenetration", 1.0),
         "recoil": first(d.get("m_flRecoilMagnitude", 20.0)), "recoilVar": first(d.get("m_flRecoilMagnitudeVariance", 0.0)),
         "angleVar": first(d.get("m_flRecoilAngleVariance", 30.0)), "pellets": d.get("m_nNumBullets", 1), "mag": d.get("m_iMaxClip1"),
+        # accuracy (radians; CS2 / CS:GO GetInaccuracy): base spread + inaccuracy standing / crouched, + moving x a
+        # 0..1 ramp between 34 % and 95 % of maxSpeed, + jumping in the air; each shot adds inFire, which decays to
+        # 10 % over recStand / recCrouch seconds. maxSpeed in m/s (CS units are inches)
+        "spread": first(d.get("m_flSpread")), "inStand": first(d.get("m_flInaccuracyStand")),
+        "inCrouch": first(d.get("m_flInaccuracyCrouch")), "inMove": first(d.get("m_flInaccuracyMove")),
+        "inJump": first(d.get("m_flInaccuracyJump")), "inLand": first(d.get("m_flInaccuracyLand")),
+        "inFire": first(d.get("m_flInaccuracyFire")), "recStand": d.get("m_flRecoveryTimeStand"),
+        "recCrouch": d.get("m_flRecoveryTimeCrouch"), "maxSpeed": round(first(d.get("m_flMaxSpeed", 250.0)) * 0.0254, 3),
     }
     val = lambda v: ("true" if v else "false") if isinstance(v, bool) else (f"{v:g}" if isinstance(v, float) else str(v))
     lines.append(f"\t{name} = {{ " + ", ".join(f"{k} = {val(v)}" for k, v in f.items()) + " },")

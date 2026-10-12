@@ -70,7 +70,8 @@ local function fire()
 	Deagle.state.ammo = Deagle.gun.magSize
 	Deagle.state.lastShot = -100
 	Deagle.cfg.spreadHip, Deagle.cfg.spreadAim, Deagle.cfg.heatPerShot, Deagle.state.heat = 0, 0, 0, 0
-	Deagle.cfg.physics.barrelAim = 0                 -- straight along the camera (the kick would tilt it)
+	Deagle.cfg.physics.barrelAim = 0
+	Deagle.cfg.accuracy.scale = 0                      -- a straight shot (CS2 accuracy has its own test)                 -- straight along the camera (the kick would tilt it)
 	M.view.pitch, M.view.yaw = 0, 0
 	M.fxNames = {}
 	local lead = Deagle.frameDt   -- the round's first step: the last frame's length
