@@ -2,14 +2,14 @@
 """When each clip's work is done, measured from its tracks (tools/vm_tracks_dump.py, tools/gb/gb_tracks_dump.py),
 in clip-timeline seconds (frames / the clip's fps), for the script's reload / inspect / draw timing:
   cancel  until then a shot cancels a reload cleanly: the old mag is still in and the spare still off screen
-  seat    the new mag sits in the gun for good (ammo goes in)
+  seat    the new mag clicks in (its mag-in sound; else when it sits in the gun for good): the ammo goes in
   ready   the gun is back near its firing pose (30 mm / 10 deg; 3 mm / 1 deg when the clip ends with the spare mag
           seated, because the cut out of it switches to idle first), and on an empty reload the slide has closed:
           the reload is over and a shot may cut the rest
   trim    the hands have settled (3 mm / 1 deg to the end): the clip ends there
 usage: clip_times.py <tracks.json> [--cues <{key: [[t, file]...]} .json> | --profile guns/<slug>.json]
                      [--swap reload,reload_empty] [--lua]"""
-import json, sys, math, argparse
+import json, sys, math, argparse, re
 
 BODY = ("j_gun", "j_wrist_ri", "j_wrist_le")
 KEY = {"reload": "reload", "reload_empty": "reloadEmpty", "inspect": "inspect", "inspect_empty": "inspectEmpty",
@@ -55,6 +55,11 @@ def times(t, cues=None, swap=()):
                 if j < n:
                     k = min(k, j)
             r["cancel"], r["seat"] = c / fps, k / fps
+        # the magazine's click (its mag-in sound) is the moment it's in: the ammo counts from there
+        if clip.startswith("reload") and cues:
+            clicks = [c[0] for c in cues.get(key, []) if re.search(r"mag_?in(?![a-z])", c[1].lower())]
+            if clicks:
+                r["seat"] = clicks[0]
         ready = settled(3, 1) if clip in swap else settled(30, 10)
         r["ready"] = ready / fps
         if clip == "reload_empty" and cues:

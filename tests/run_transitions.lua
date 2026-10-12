@@ -63,7 +63,10 @@ expect("a shot before the mag leaves cancels the reload", Deagle.state.ammo .. "
 reset(3); act("deagle_reload"); M.advance(0.6); act("deagle_fire"); M.advance(0.05)
 local hiddenMid = tostring(M.hidden and M.hidden.vm_mag1) .. "/" .. tostring(M.hidden and M.hidden.vm_mag2)
 M.advance(0.4)
-expect("a shot mid-swap cancels, mags hidden while the hands blend", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. hiddenMid .. " then " .. tostring(M.hidden.vm_mag1), "2 false true/true then false")
+-- realistic: the old mag is out, so the shot is the chambered round and the gun stays without a mag
+expect("a shot mid-swap fires the chambered round, no mag after", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. hiddenMid .. " then " .. tostring(M.hidden.vm_mag1), "0 false true/true then true")
+act("deagle_reload"); M.advance(0.7); local magBack = tostring(M.hidden.vm_mag1); M.advance(2.6)
+expect("  ...the next reload brings a mag back (new mag in the hand)", magBack .. " ammo " .. Deagle.state.ammo, "false ammo 7")
 reset(3); act("deagle_reload"); M.advance(1.5); act("deagle_fire"); M.advance(0.05)
 local queued = Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading)
 M.advance(0.6)

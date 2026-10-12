@@ -37,6 +37,9 @@ Deagle.cfg = {
 	-- walking forward doesn't walk into it). A viewmodel slot can't be used: emitters there never render.
 	flashMode = "world",
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
+	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
+	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
+	cancelKeepsRounds = false,
 	muzzleFxScale = 1.0,
 	portFx = "deagle.port_smoke",
 	bloodFx = "collisions.combat.hit_passed_bullet_fabric",
@@ -144,8 +147,8 @@ do
 		-- faster (measured against YabrakProds' own video of the mod: reload back at idle ~1.7 s, as at 30 fps)
 		rate = { default = 30 / 24, shoot = 40 / 24, shootAdd = 40 / 24 },
 		-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
-		times = { reload = { cancel = 0.375, ready = 2.375, seat = 1.542, trim = 2.375 },
-			reloadEmpty = { cancel = 0.333, ready = 2.292, seat = 1.292, trim = 2.542 },
+		times = { reload = { cancel = 0.375, ready = 2.375, seat = 1.375, trim = 2.375 },
+			reloadEmpty = { cancel = 0.333, ready = 2.292, seat = 1.125, trim = 2.542 },
 			inspect = { trim = 5.833 }, inspectEmpty = { trim = 5.833 },
 			draw = { ready = 0.958, trim = 1.292 }, drawEmpty = { ready = 0.958, trim = 1.292 } } })
 end
@@ -257,7 +260,10 @@ function Deagle:MuzzleFlash(dir)
 	local ok = false
 	if e then
 		pcall(e.SetWorldPos, e, pos); pcall(e.SetDirectionVector, e, dir)
-		local okL, slot = pcall(e.LoadParticleEffect, e, 0, c.muzzleFx, { Scale = c.muzzleFxScale })
+		-- alternate two slots, cleared first: loading into a slot that still holds the effect doesn't restart it
+		self.flashSlotN = ((self.flashSlotN or 0) + 1) % 2
+		pcall(e.FreeSlot, e, self.flashSlotN)
+		local okL, slot = pcall(e.LoadParticleEffect, e, self.flashSlotN, c.muzzleFx, { Scale = c.muzzleFxScale })
 		ok = okL and type(slot) == "number" and slot >= 0
 		if ok then self.flashUntil = System.GetCurrTime() + 0.2 end
 	end
@@ -501,6 +507,9 @@ function Deagle:Fire(force, burstRound)
 		local midSwap = System.GetCurrTime() >= (s.reloadCancel or 0)
 		if midSwap and not self.gun.mags then return end
 		self:CancelReload()
+		if midSwap and not self.cfg.cancelKeepsRounds then
+			s.ammo, s.magOut = math.min(s.ammo, 1), true     -- the old mag is out: the chambered round is all there is
+		end
 		if midSwap then self:VmMagsHidden(self.cfg.vm.cutBlend) end
 		if s.ammo <= 0 then        -- an empty gun: the click, and the hands go back to the rest pose
 			self:Shoot(force)
@@ -599,7 +608,7 @@ function Deagle:Reload()
 	self:UpdateAim()
 	if key == "reloadEmpty" and self.gun.newMagAt then
 		Script.SetTimer(math.floor(self.gun.newMagAt / self:Rate(key) * 1000), function()
-			if mine() then Deagle:VmRounds(Deagle.cfg.magSize) end   -- a full magazine in the hand
+			if mine() then Deagle:VmMagIn(); Deagle:VmRounds(Deagle.cfg.magSize) end   -- a full magazine in the hand
 		end)
 	end
 end
@@ -609,6 +618,7 @@ function Deagle:SeatMag()
 	local s, c = self.state, self.cfg
 	if s.magSeated then return end
 	s.magSeated = true
+	self:VmMagIn()
 	local take = c.magSize - s.ammo
 	if c.useAmmoItems then
 		take = math.min(take, self:CountOf(c.ammoId))
@@ -755,7 +765,9 @@ function Deagle:VmMagsHidden(t)
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if not vm or not self.gun.mags then return end
 	local function show(on)
-		for _, a in ipairs({ "vm_mag1", "vm_mag2" }) do pcall(vm.HideAttachment, vm, 0, a, not on, not on) end
+		pcall(vm.HideAttachment, vm, 0, "vm_mag2", not on, not on)
+		local m1 = on and not self.state.magOut      -- a gun whose mag came out stays without one until the next reload
+		pcall(vm.HideAttachment, vm, 0, "vm_mag1", not m1, not m1)
 		self.vmRoundsShown = nil
 		self:VmRounds(on and self:MagRounds() or 0)
 	end
@@ -763,6 +775,14 @@ function Deagle:VmMagsHidden(t)
 	self.magsToken = (self.magsToken or 0) + 1
 	local tok = self.magsToken
 	Script.SetTimer(math.floor((t + 0.05) * 1000), function() if Deagle.magsToken == tok then show(true) end end)
+end
+
+-- the gun's magazine is back (a reload after one was left out by a cancel)
+function Deagle:VmMagIn()
+	if not self.state.magOut then return end
+	self.state.magOut = false
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if vm then pcall(vm.HideAttachment, vm, 0, "vm_mag1", false, false) end
 end
 
 -- rounds in the magazine: with any ammo, one of them is in the chamber
@@ -924,7 +944,7 @@ function Deagle:DrawHud()
 	end
 	self.hudOk = true
 	hudText(x + 0.028 * W, y + 0.012 * H, "/ " .. self.cfg.magSize, h.size * 0.9, h.col)
-	local label = s.reloading and "RELOADING" or string.upper(self.gun.short or self.gun.title or "DESERT EAGLE")
+	local label = (s.reloading and not s.magSeated) and "RELOADING" or string.upper(self.gun.short or self.gun.title or "DESERT EAGLE")
 	if #self:FireModes() > 1 then label = label .. "   " .. string.upper(self:FireMode()) end
 	hudText(x - 0.004 * W, y + 0.05 * H, label, h.size * 0.55, { h.col[1], h.col[2], h.col[3], 0.7 })
 end
@@ -1100,7 +1120,9 @@ function Deagle:VmShow()
 	pcall(vm.Hide, vm, 0)
 	self:VmPlace()
 	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or "draw", false)
+	self.vmRoundsShown = nil
 	self:VmRounds(self:MagRounds())
+	if self.state.magOut and self.gun.mags then pcall(vm.HideAttachment, vm, 0, "vm_mag1", true, true) end
 	self.vmToken = (self.vmToken or 0) + 1
 	local token = self.vmToken
 	Script.SetTimer(0, function() Deagle:VmTick(token) end)
@@ -1282,6 +1304,7 @@ function Deagle:OnGameplayStarted()
 	log("gameplay started")
 	local s = self.state
 	s.reloading, s.drawn, s.aiming, s.aimHeld, s.lastShot, s.ammo = false, false, false, false, -100, self.cfg.magSize
+	s.magOut, s.fireQueued = false, false
 	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
