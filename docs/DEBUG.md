@@ -35,7 +35,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_reset` | every setting back as shipped, the kept ones forgotten |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
 | `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
-| `\` or `deagle_freecam` | free camera: time keeps running. **WASD** fly, **Space** up, **Left Ctrl** down, **Shift** 5x faster; Henry doesn't walk. The **mouse turns the camera** and Henry's aim stays put; **hold right mouse** to aim Henry instead (the camera stays). A red line shows where a shot goes; left click fires. `deagle_freecam speed 10`. Turns itself off on a save load. (testing) |
+| `\` or `deagle_freecam` | free camera: time keeps running. **WASD** fly, **Space** up, **Left Ctrl** down, **Shift** 5x faster; Henry doesn't walk. The **mouse turns the camera** and Henry's aim stays put; **hold right mouse** to aim Henry instead (the camera stays). A red line shows where a shot goes; left click fires. **Scroll** = faster / slower (or `deagle_freecam speed 10`). Turns itself off on a save load. (testing) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.on 0`) is an unknown command.
@@ -66,6 +66,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `physics.gunBackPerVel` | `0.0113` | gun model push-back per m/s of recoil (Deagle 5.5 cm) |
 | `physics.flashPerUnit` | `0.30` | flash size per unit of blast (Deagle 0.63, Glock 0.30) |
 | `tracers` | `true` | a tracer on every round (same as `deagle_tracers`) |
+| `tracer.fx` | `deagle_tracers.trail_040` | tracer streak length: how long each piece glows. `deagle_tracers.trail_025` (shortest, ~1 frame), `_040`, `_060`, `_080`, `deagle_tracers.trail` (0.12 s, long laser) |
 | `tracer.mode` | `trail` | `trail`: the round's real path drawn as it flies, muzzle to hit (ricochets and wallbangs too); `flying`: the old self-flying particle |
 | `tracer.scaled` | `false` | the last piece of a trail shortened to end exactly on the hit (only once the scale-length check passes in game) |
 | `range` | `250` | metres a round flies before it's dropped |

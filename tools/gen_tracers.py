@@ -55,7 +55,8 @@ def piece(life, fade=True, forward=True):
     # from birth; a streak reaching back from its particle only grows as the particle ages (seen in game 2026-10-12:
     # 0.15 m dashes). The effect sits at its piece's start (cfg.tracer.anchor "start").
     alpha = "ParticleAge=(v=1;t=0.45,v=1;t=1)" if fade else "1"
-    stretch = f"{DASH / 2:.3f},OffsetRatio=1" if forward else f"{DASH / 2:.3f}"
+    # forward streaks drew about half their spacing (gaps between pieces, in game 2026-10-12): 1.3x the half length
+    stretch = f"{DASH / 2 * 1.3:.3f},OffsetRatio=1" if forward else f"{DASH / 2:.3f}"
     base = {"Count": "1", "ParticleLifeTime": f"{life}", "OrientToVelocity": "true", "BlendType": "Additive",
             "Texture": SPARK, "DiffuseLighting": "0", "DiffuseBacklighting": "0", "Speed": "1",
             "Stretch": stretch, "AirResistance": "WindScale=0", "GravityScale": "0"}
@@ -95,8 +96,12 @@ def drop(d, *keys):
 def main(repo):
     pdir = os.path.join(repo, "src", "Libs", "Particles")
     # trail pieces: the default, and longer-lived ones to compare (a fading tail that stays longer)
+    # short ones: with the plugin setting a new piece's place again for its first frames (fxs), a piece shows the
+    # frame after its spawn, so a short life makes a streak that runs with the round (RoN: ~6 m) instead of a 50 m line
     tracers = ([effect("trail", childs=piece(TRAIL_LIFE)), effect("trail_25", childs=piece(0.25)),
-                effect("trail_40", childs=piece(0.4))] + [effect(f"v{v}", flying(v)) for v in SPEEDS])
+                effect("trail_40", childs=piece(0.4))]
+               + [effect(f"trail_{int(l * 1000):03d}", childs=piece(l, fade=False)) for l in (0.025, 0.04, 0.06, 0.08)]
+               + [effect(f"v{v}", flying(v)) for v in SPEEDS])
     library(os.path.join(pdir, "deagle_tracers.xml"), "deagle_tracers",
             "the trail piece and one flying tracer per muzzle speed (see the script for what each value means)", tracers)
 

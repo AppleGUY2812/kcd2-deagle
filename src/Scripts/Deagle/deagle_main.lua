@@ -29,9 +29,10 @@ Deagle.cfg = {
 	-- fx: in game 2026-10-12, single Lua-spawned pieces showed only with 0.4 s of life (trail_40, "like a shooting
 	-- star"); 0.12 / 0.25 s never did, nor plugin-spawned ones with a box written at spawn. The plugin now sets each
 	-- new piece's location again for its first frames, as it moves the flash (seen a frame after its spawn): to test
-	-- with spawn "plugin" and fx deagle_tracers.trail
-	tracer = { mode = "trail", fx = "deagle_tracers.trail_40", dash = 1.0, start = 1.0, scaled = true, anchor = "start",
-		spawn = "lua" },
+	-- with spawn "plugin" and fx deagle_tracers.trail: seen at once (user). trail_025 / _040 / _060 / _080: pieces
+	-- living that long (no fade), a streak running with the round; trail (0.12 s) drew as a 50 m "laser"
+	tracer = { mode = "trail", fx = "deagle_tracers.trail_040", dash = 1.0, start = 1.0, scaled = true, anchor = "start",
+		spawn = "plugin" },
 	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
 	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
 	accuracy = { scale = 1, crouchEye = 1.27, crouchBand = 0.05 },
@@ -2402,6 +2403,14 @@ function Deagle:OnAction(action, activation, value)
 	end
 	if action == "deagle_slowmo" then
 		if activation == "press" then self:SlowMo(not self.slowOn) end
+		return true
+	end
+	if action == "deagle_fc_faster" or action == "deagle_fc_slower" then   -- scroll: free camera speed
+		if not self.fc or activation ~= "press" then return false end
+		local k = action == "deagle_fc_faster" and 1.5 or 1 / 1.5
+		self.fcSpeed = math.max(0.5, math.min(200, (self.fcSpeed or 4) * k))
+		self:Native(string.format("freecam speed %.2f", self.fcSpeed))
+		self:Notify(string.format("free camera %.1f m/s", self.fcSpeed))
 		return true
 	end
 	if action == "deagle_freecam_aim" then   -- right mouse in the free camera: the mouse aims Henry while held
