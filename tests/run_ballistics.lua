@@ -13,6 +13,7 @@ local world = { wallY = nil, npcY = nil, wallSurface = 1, barrierY = nil }
 local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0 }
 function npc:GetName() return "target" end
 function npc:GetWorldPos() return vec(100, world.npcY or 0, 30.3) end   -- the shot (z 31.75) lands on the torso
+npc.GetBonePos = M.skeleton
 function npc:GetDirectionVector() return vec(0, -1, 0) end
 function npc.soul:DealDamage(st, hp) npc.damage = npc.damage + hp; npc.hitAt = M.t end
 function npc.actor:IsDead() return false end
@@ -173,7 +174,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		"^%[DN%] hitreact (0x%x+) (0x%x+) (%d+) (%d+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%x+)$")
 	local wantStrength = npc.damage >= 50 and "6" or "5"
 	check(string.format("%s: hit reaction sent: %s", id, tostring(react)), victim and htype == "0" and strength == wantStrength and part == "torso"
-		and math.abs(tonumber(py) - 205) < 1e-3 and tonumber(dy) > 0.99 and flags == "3f", react)
+		and tonumber(py) > 204.7 and tonumber(py) <= 205 and tonumber(dy) > 0.99 and flags == "3f", react)
 	local nReact = #M.native
 	npc.damage = 100                  -- dead
 	fire()

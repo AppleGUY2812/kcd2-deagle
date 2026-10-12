@@ -23,7 +23,8 @@ local function newNpc(y, outfit)
 	end
 	n.inventory = { GetInventoryTable = function() return n.inv end }
 	function n:GetName() return self.id end
-	function n:GetWorldPos() return vec(100, self.y, 30.3) end   -- a shot at camera height (31.75) is a torso hit
+	function n:GetWorldPos() return vec(self.x or 100, self.y, self.z or 30.3) end   -- a shot at camera height (31.75) is a torso hit
+	n.GetBonePos = M.skeleton
 	function n:GetDirectionVector() return vec(0, -1, 0) end
 	function n.soul:DealDamage(st, hp) n.damage = n.damage + hp; n.stamina = n.stamina + st; n.hits = (n.hits or 0) + 1 end
 	function n.soul:AddBuff() end
@@ -48,7 +49,8 @@ Physics.RayWorldIntersection = function(pos, dir, _, _, skip1, skip2, hits)
 		if n.id ~= skip2 and dir.y ~= 0 then
 			local t = (n.y - pos.y) / dir.y
 			local x, z = pos.x + dir.x * t, pos.z + dir.z * t
-			if x > 99.7 and x < 100.3 and z > 30.3 and z < 32.2 then try(t, { normal = vec(0, -1, 0), entity = n }) end
+			local b = n:GetWorldPos()   -- the living capsule round the body: wider than it
+			if math.abs(x - b.x) < 0.45 and z > b.z and z < b.z + 1.95 then try(t, { normal = vec(0, -1, 0), entity = n }) end
 		end
 	end
 	if not best then return 0 end
@@ -169,6 +171,34 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		first.hits == 1 and second.hits == 1 and second.damage > 0 and second.damage < first.damage, second.hits)
 	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 end
+
+-- hit zones from the bones (guns/hitbones.lua on the mock skeleton): head height -> head, 23 cm to the side at the
+-- arm -> left arm (the NPC faces the shooter, so its left is the shooter's right), 40 cm out -> past the arm: the round
+-- flies on into the wall behind and the man takes nothing
+Deagle:UseGun("glock_17"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+local function zoneShot(x, z)
+	reset()
+	local man = newNpc(210)
+	man.x, man.z = 100 - x, 31.75 - z
+	world.slabs = { { y0 = 220, y1 = 221, surface = 1 } }
+	local l0 = #M.logs
+	fire()
+	local part
+	for i = l0 + 1, #M.logs do part = M.logs[i]:match("hit npc%d+ part (%S+)") or part end
+	return part, man, landed
+end
+local part = zoneShot(0, 1.75)
+check("head height -> head (" .. tostring(part) .. ")", part == "head", part)
+part = zoneShot(0, 1.35)
+check("chest height -> torso (" .. tostring(part) .. ")", part == "torso", part)
+part = zoneShot(0.235, 1.25)
+check("23 cm out at the arm -> arm_left (" .. tostring(part) .. ")", part == "arm_left", part)
+local man, hits
+part, man, hits = zoneShot(0.40, 1.25)
+check(string.format("40 cm out: past the arm, into the wall behind (man %d hits, wall %s)", man.hits or 0, tostring(hits[#hits] and hits[#hits].surface)),
+	(man.hits or 0) == 0 and hits[#hits] and hits[#hits].surface == "mat_rock", man.hits)
+part = zoneShot(0.10, 0.75)
+check("thigh height, 10 cm out -> leg_left (" .. tostring(part) .. ")", part == "leg_left", part)
 
 -- the armour math on its own: punch vs a layer's stab defense, condition, angle, glance
 local phys9 = Deagle:ShotPhysics(Deagle.guns.glock_17)

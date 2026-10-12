@@ -158,6 +158,18 @@ _G.UIAction = { RegisterEventSystemListener = function() end }
 _G.Sound = {}
 _G.AudioUtils = { LookupTriggerID = function() return 1 end, ExecuteAudioTrigger = function() M.gameShot = (M.gameShot or 0) + 1 end }
 _G.CryAction = {}
+-- a standing human's bones (m from its feet; facing -y, so its left is +x), for test NPCs: e.GetBonePos = M.skeleton
+M.bones = {
+	Hips = { 0, 0, 0.95 }, Spine = { 0, 0, 1.05 }, Spine3 = { 0, 0, 1.25 }, Neck = { 0, 0, 1.5 }, Head = { 0, 0, 1.6 },
+	HeadEnd = { 0, 0, 1.95 }, LeftShoulder = { 0.06, 0, 1.43 }, LeftArm = { 0.19, 0, 1.43 }, LeftForeArm = { 0.24, 0, 1.16 },
+	LeftHand = { 0.27, 0, 0.9 }, LeftHandSlot = { 0.28, 0, 0.83 }, LeftUpLeg = { 0.1, 0, 0.95 }, LeftLeg = { 0.1, 0, 0.53 },
+	LeftFoot = { 0.1, 0, 0.1 }, LeftToeBase = { 0.1, -0.13, 0.02 },
+}
+for k, v in pairs(M.bones) do if k:find("^Left") then M.bones["Right" .. k:sub(5)] = { -v[1], v[2], v[3] } end end
+function M.skeleton(e, name)
+	local b, base = M.bones[name], e:GetWorldPos()
+	return b and { x = base.x + b[1], y = base.y + b[2], z = base.z + b[3] } or nil
+end
 -- game paths load from the repo's src/ (gun files etc.); missing files fail like the engine (0)
 M.loaded = {}
 M.surfaceNames = { [1] = "mat_rock", [2] = "mat_window", [3] = "mat_wood", [4] = "mat_level_barrier" }   -- ray hits' surface ids

@@ -626,6 +626,82 @@ local function bodyPartFor(e, pos)
 	return "torso"
 end
 
+-- first entry of a ray (origin o, unit direction d) into a sphere / a capsule from pa to pb (radius r): distance
+-- along the ray, 0 when it starts inside, nil when it misses (the capsule: nearest of its body and its two end spheres)
+local function raySphere(o, d, c, r)
+	local oc = vsub(o, c)
+	local b, cc = vdot(d, oc), vdot(oc, oc) - r * r
+	if cc <= 0 then return 0 end
+	local h = b * b - cc
+	if h < 0 then return nil end
+	local t = -b - math.sqrt(h)
+	return t >= 0 and t or nil
+end
+local function rayCapsule(o, d, pa, pb, r)
+	local best
+	local function take(t) if t and (not best or t < best) then best = t end end
+	local ba, oa = vsub(pb, pa), vsub(o, pa)
+	local baba = vdot(ba, ba)
+	if baba > 1e-10 then
+		local bard, baoa = vdot(ba, d), vdot(ba, oa)
+		local a = baba - bard * bard
+		if a > 1e-10 then
+			local b = baba * vdot(d, oa) - baoa * bard
+			local cc = baba * vdot(oa, oa) - baoa * baoa - r * r * baba
+			local h = b * b - a * cc
+			if h >= 0 then
+				local t = (-b - math.sqrt(h)) / a
+				local y = baoa + t * bard
+				if t >= 0 and y > 0 and y < baba then take(t) end
+			end
+		end
+		take(raySphere(o, d, pb, r))
+	end
+	take(raySphere(o, d, pa, r))
+	return best
+end
+
+-- Where a round really hits a person. Rays only report the living capsule round an NPC (checked live: surface
+-- mat_flesh, no part), so the round's line is tested against the body's own capsules (guns/hitbones.lua: KCD2's
+-- ragdoll proxies measured from male.chr, placed on the live skeleton by GetBonePos): the first one it enters. Torso
+-- capsules use their outer radius (the chest's flat sides), limbs and head their fitted one. Returns the capsule
+-- entry, its point and the outward normal there; false when the line misses every capsule (past an arm, between the
+-- legs: the round flies on); nil when the skeleton can't be read (not a human).
+function Deagle:BoneHit(e, from, dir)
+	if not (self.hitBones and e.human and e.GetBonePos) then return nil end
+	local cache, read = {}, 0
+	local function bone(name)
+		local p = cache[name]
+		if p == nil then
+			local ok, v = pcall(e.GetBonePos, e, name)
+			p = ok and type(v) == "table" and v.x and v or false
+			if p then read = read + 1 end
+			cache[name] = p
+		end
+		return p or nil
+	end
+	local best, bestT, bestR, pa0, pb0
+	for _, c in ipairs(self.hitBones) do
+		local a, b = bone(c.a), bone(c.b)
+		if a and b then
+			local ab = vsub(b, a)
+			local pa, pb = vadd(a, vscale(ab, c.t0)), vadd(a, vscale(ab, c.t1))
+			local r = c.zone == "torso" and c.rMax or c.r
+			local t = rayCapsule(from, dir, pa, pb, r)
+			if t and t >= 0 and (not bestT or t < bestT - 1e-4 or (math.abs(t - bestT) <= 1e-4 and r < bestR)) then
+				best, bestT, bestR, pa0, pb0 = c, t, r, pa, pb
+			end
+		end
+	end
+	if read == 0 then return nil end
+	if not best then return false end
+	local pos = vadd(from, vscale(dir, bestT))
+	local ab = vsub(pb0, pa0)
+	local k = vdot(ab, ab) > 1e-10 and math.max(0, math.min(1, vdot(vsub(pos, pa0), ab) / vdot(ab, ab))) or 0
+	local normal = vnorm(vsub(pos, vadd(pa0, vscale(ab, k))))
+	return best, pos, normal
+end
+
 -- Blood on what's behind the target and under it, Ready or Not's way: a spray on a wall within splatRange (3 m) behind
 -- when the round came out the back (a burst behind a head), drips on the floor under the wound. Their decals at natural
 -- size (m, docs/impact_fx_build.md section 6) x the round's impact scale, +-15 %, turned at random.
@@ -865,7 +941,21 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			end)
 			self:Bleed(e, hit, dir)
 		else
-			local part = bodyPartFor(e, hit.pos)
+			local bone, at, normal = self:BoneHit(e, vsub(hit.pos, vscale(dir, 1.5)), dir)
+			if bone == false then                       -- through the gaps of the body: on past it
+				if r then r.skip, r.pos = e.id, hit.pos end
+				return r ~= nil
+			end
+			local part
+			if bone then
+				part, hit.pos, hit.normal, hit.zone = bone.armor, at, normal, bone.zone
+			else
+				if e.human and not self.saidNoBones then
+					self.saidNoBones = true
+					log("$4hit zones: can't read " .. tostring(e:GetName()) .. "'s skeleton (GetBonePos): zone from the hit height")
+				end
+				part = bodyPartFor(e, hit.pos)
+			end
 			hit.bodyPart = part
 			local dmg, stam, through = 0, 0, nil
 			local stopped, hard, glance, padded, scale
