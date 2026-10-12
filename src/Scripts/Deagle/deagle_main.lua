@@ -79,8 +79,9 @@ Deagle.cfg = {
 		gunFlipPerFlip = 0.29,  -- gun model flip (deg) per rad/s, on top of the shot animation
 		-- felt kick: physics alone makes a 9 mm Glock kick a third of a .50 AE Deagle; shooters (and games like Ready or
 		-- Not) feel a much smaller gap. Kick goes as (flip / Deagle's flip)^kickExponent x Deagle's: the Deagle is
-		-- unchanged, smaller guns are lifted toward it, the order stays (1 = pure physics: Glock 0.35x; 0.6: 0.53x)
-		kickExponent = 0.6,
+		-- unchanged, smaller guns are lifted toward it, the order stays (1 = pure physics: Glock 0.35x; 0.22: 0.79x,
+		-- Glock camera kick 3.5 deg, picked by the user in game 2026-10-12)
+		kickExponent = 0.22,
 		kickRefFlip = 20.26,    -- rad/s: the Deagle's muzzle flip (the gun whose kick the constants above are set on)
 		kickRefVel = 4.84,      -- m/s: the Deagle's free recoil speed
 		flashPerUnit = 0.30,    -- flash size per unit of blast scale G (9 mm = 1: Glock 0.30, Deagle 0.62)

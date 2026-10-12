@@ -36,7 +36,7 @@ Open the console with the key under Esc (`~`). Settings changed with `deagle_set
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
 | `cancelKeepsRounds` | `0` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
 | `recoil` | `1` | **master kick**: scales every recoil effect together (camera kick, sideways, gun model flip and push). `1.5` = 50 % harder for every gun |
-| `physics.kickExponent` | `0.6` | how much smaller guns are lifted toward the Deagle's kick: `1` = pure physics (Glock a third of the Deagle), `0.6` = Glock about half, `0` = every gun kicks like the Deagle |
+| `physics.kickExponent` | `0.22` | how much smaller guns are lifted toward the Deagle's kick: `1` = pure physics (Glock a third of the Deagle), `0.22` = Glock 0.79x (3.5 deg), `0` = every gun kicks like the Deagle |
 | `physics.loudnessSpan` | `0.25` | how much quieter small guns are than the Deagle: `0` = all as loud, `0.25` = Glock 0.83x, `0.5` = 0.69x, `1` = real difference |
 | `physics.camPerFlip` | `0.217` | camera kick per unit of muzzle flip (all guns in proportion) |
 | `physics.holdRange` | `2.9` | degrees of kick your grip takes back by itself (more = more of each kick returns) |
