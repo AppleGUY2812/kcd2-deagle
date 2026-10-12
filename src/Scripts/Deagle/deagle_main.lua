@@ -67,7 +67,11 @@ Deagle.cfg = {
 		adsMult = 0.7,          -- aimed: steadier
 		gunBackPerVel = 0.007,  -- gun pushed back (m) per m/s of free recoil (Deagle 4.95 -> 3.5 cm)
 		gunFlipPerFlip = 0.29,  -- gun model flip (deg) per rad/s, on top of the shot animation
-		flashPerUnit = 0.476,   -- flash size per (powder g)^(1/3) x short-barrel factor (Deagle -> 0.6, Glock -> 0.3)
+		flashPerUnit = 0.30,    -- flash size per unit of blast scale G (9 mm = 1: Glock 0.30, Deagle 0.62)
+		damageRef = 35,         -- HP a 9 mm 124 gr FMJ at 360 m/s takes from the torso (3 hits on a 100 HP NPC)
+		staminaRef = 20,        -- stamina a 9 mm's shove takes; others by momentum
+		headMult = 2.0,         -- on a head hit, on top of KCD2's own x1.5: a round through the skull kills
+		punchPerMomentum = 25.6,-- physics push on bodies / props per kg m/s of bullet momentum (Deagle 8.6 -> 220)
 	},
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
@@ -274,7 +278,7 @@ function Deagle:MuzzleFlash(dir)
 	local c = self.cfg
 	local pos = self:MuzzlePos()
 	local phys = self:ShotPhysics()
-	local scale = (phys and c.physics.flashPerUnit * phys.flash or 1) * c.muzzleFxScale
+	local scale = (phys and c.physics.flashPerUnit * phys.blast or 1) * c.muzzleFxScale
 	if c.flashMode == "world" then
 		try("fx", Particle.SpawnEffect, c.muzzleFx, pos, dir, scale)
 	elseif self.vmInFp and self.vmShown then
@@ -320,24 +324,54 @@ function Deagle:SlowMo(on)
 	log("slow motion " .. (on and ("x" .. tostring(self.cfg.slowmo)) or "off"))
 end
 
--- What one shot does, from the gun's cartridge and build (SI units): recoil impulse (bullet momentum + powder gas,
--- the gas leaving ~1.75x faster: the SAAMI-style free recoil formula), free recoil velocity / energy (impulse over the
--- gun's mass), muzzle flip rate (impulse x bore height, turning gun + hand around the wrist), bullet energy, flash
--- (powder charge; a short barrel burns more of it outside).
+-- What one shot does, from the gun's cartridge and build (SI units; docs/handling-physics-design.md):
+-- - recoil impulse = bullet momentum + powder gas leaving ~1.5x the bullet's speed from a pistol, 1.75x from a rifle
+--   (SAAMI free-recoil formula); free recoil speed / energy = that over the gun's mass;
+-- - muzzle flip = impulse x bore height, turning gun + hand around the wrist;
+-- - muzzle gas energy = the powder's heat (~4.5 MJ/kg) minus what went into the bullet: it makes the flash and the bang,
+--   and the blast scale G = its cube root against a 9 mm (Hopkinson-Cranz scaling of blasts and fireballs);
+-- - air-drag length for the bullet's energy (range loss).
 local WRIST_ARM, HAND_INERTIA = 0.10, 0.004    -- m from the wrist to the gun's centre of mass; kg m^2 of the hand
+local POWDER_HEAT = 4.5e6                      -- J/kg released by double-base pistol powder (typical value)
+local AIR_RHO, AIR_CD = 1.2, 0.37              -- kg/m^3; drag coefficient fitted to factory tables (~8 % speed lost by 50 yd)
+local function muzzleGas(cal, v) return cal.powder * POWDER_HEAT - 0.5 * cal.bullet * v * v end
 function Deagle:ShotPhysics(g)
 	g = g or self.gun
 	local ph = g.physics or (g.cs2 and self.gunPhysics and self.gunPhysics[g.cs2])
 	local cal = ph and self.calibers and self.calibers[ph.caliber]
 	if not cal then return nil end
 	local v = cal.velocity * (ph.barrel / cal.barrel) ^ 0.25          -- longer barrel, faster bullet (pistol rule of thumb)
-	local impulse = cal.bullet * v + cal.powder * 1.75 * v
+	local impulse = cal.bullet * v + cal.powder * (ph.hold == "rifle" and 1.75 or 1.5) * v
 	local vr = impulse / ph.mass
 	local inertia = ph.mass * WRIST_ARM * WRIST_ARM + HAND_INERTIA
 	if ph.hold == "rifle" then inertia = inertia * 4 end               -- a stock in the shoulder: the body takes it
-	return { caliber = cal.name, velocity = v, energy = 0.5 * cal.bullet * v * v, impulse = impulse, recoilVel = vr,
-		recoilEnergy = 0.5 * ph.mass * vr * vr, flip = impulse * ph.bore / inertia,
-		flash = (cal.powder * 1000) ^ (1 / 3) * (cal.barrel / ph.barrel) ^ 0.5 }
+	local ref = self.calibers["9x19"]
+	local gas = muzzleGas(cal, v)
+	local area = math.pi * (cal.d / 2) ^ 2
+	return { caliber = cal.name, bullet = cal.bullet, d = cal.d, velocity = v, energy = 0.5 * cal.bullet * v * v,
+		momentum = cal.bullet * v, impulse = impulse, recoilVel = vr, recoilEnergy = 0.5 * ph.mass * vr * vr,
+		inertia = inertia, flip = impulse * ph.bore / inertia, gasEnergy = gas,
+		blast = (gas / muzzleGas(ref, ref.velocity)) ^ (1 / 3),
+		dragLength = 2 * cal.bullet / (AIR_RHO * AIR_CD * area) }
+end
+
+-- Wounding from the energy the bullet leaves in the body (crush + stretch; FBI 1989, Fackler): tissue drag slows it
+-- along the path, a through-and-through round carries the rest out. Health damage grows with the square root of that
+-- energy (wounds grow slower than energy); one anchor: a 9 mm 124 gr FMJ at 360 m/s takes 35 HP. Stamina (the shove
+-- of a hit) follows momentum. Phase 2 puts armour layers before this (BALLISTICS.md).
+local TISSUE_RHO, TISSUE_CD, BODY_PATH = 1000, 0.3, 0.3   -- kg/m^3, drag in tissue (gelatin fits), torso path m
+local function deposited(bullet, d, energy)
+	local k = TISSUE_RHO * TISSUE_CD * math.pi * (d / 2) ^ 2 / (2 * bullet)
+	return energy * (1 - math.exp(-2 * k * BODY_PATH))
+end
+function Deagle:Wound(phys, dist)
+	local m = self.cfg.physics
+	local eIn = phys.energy * math.exp(-2 * (dist or 0) / phys.dragLength)
+	local ref = self.calibers["9x19"]
+	local eRef = deposited(ref.bullet, ref.d, 0.5 * ref.bullet * 360 * 360)
+	local health = m.damageRef * math.sqrt(deposited(phys.bullet, phys.d, eIn) / eRef)
+	local stamina = m.staminaRef * (math.sqrt(2 * eIn / phys.bullet) * phys.bullet) / (ref.bullet * 360)
+	return health, stamina, eIn
 end
 
 function Deagle:Recoil()
@@ -496,9 +530,17 @@ function Deagle:ApplyHit(hit, dir)
 			end)
 		else
 			local part = bodyPartFor(e, hit.pos)
-			local dmg = c.damage * (part == "head" and c.headshotMult or 1) * c.rangeMod ^ ((hit.dist or 0) / 12.7)
+			local dmg, stam
+			local phys = self:ShotPhysics()
+			if phys then        -- from the cartridge: energy left in the body, air drag over the distance
+				dmg, stam = self:Wound(phys, hit.dist)
+				if part == "head" then dmg = dmg * c.physics.headMult end
+			else                -- a gun without cartridge data: its CS2 numbers
+				dmg = c.damage * (part == "head" and c.headshotMult or 1) * c.rangeMod ^ ((hit.dist or 0) / 12.7)
+				stam = c.stamina
+			end
 			hit.bodyPart = part
-			try("DealDamage", function() e.soul:DealDamage(c.stamina, dmg, p.id, false, part) end)
+			try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end)
 		end
 		self:Bleed(e, hit, dir)
 		local hp = "?"
@@ -510,7 +552,9 @@ function Deagle:ApplyHit(hit, dir)
 		if self.state.logActions then log("impact " .. tostring(surface) .. " -> " .. fx) end
 	end
 	if e and e.AddImpulse and (not e.soul or (e.IsDead and e:IsDead())) then
-		try("impulse", function() e:AddImpulse(hit.partid or -1, hit.pos, dir, c.impulse, 1) end)
+		local phys = self:ShotPhysics()
+		local push = phys and c.physics.punchPerMomentum * phys.momentum or c.impulse   -- the shove follows momentum
+		try("impulse", function() e:AddImpulse(hit.partid or -1, hit.pos, dir, push, 1) end)
 	end
 end
 
@@ -1602,9 +1646,12 @@ function Deagle:PrintPhysics()
 	local ph = self:ShotPhysics()
 	if not ph then log("no cartridge data for " .. tostring(self.gun.id) .. " (guns/calibers.lua)") return end
 	local m = self.cfg.physics
-	log(string.format("%s %s: bullet %.0f m/s %.0f J; recoil %.2f N s, %.2f m/s, %.1f J; flip %.1f rad/s -> camera %.1f deg, gun %.1f deg %.1f cm back; flash x%.2f",
+	local hp, st = self:Wound(ph, 0)
+	local hp50 = self:Wound(ph, 50)
+	log(string.format("%s %s: bullet %.0f m/s %.0f J; recoil %.2f N s, %.2f m/s, %.1f J; flip %.1f rad/s -> camera %.1f deg, gun %.1f deg %.1f cm back; muzzle gas %.0f J, blast x%.2f, flash x%.2f; torso hit %.0f HP (%.0f at 50 m), head %.0f, stamina %.0f",
 		self.gun.id, ph.caliber, ph.velocity, ph.energy, ph.impulse, ph.recoilVel, ph.recoilEnergy, ph.flip, m.camPerFlip * ph.flip,
-		m.gunFlipPerFlip * ph.flip, m.gunBackPerVel * ph.recoilVel * 100, m.flashPerUnit * ph.flash))
+		m.gunFlipPerFlip * ph.flip, m.gunBackPerVel * ph.recoilVel * 100, ph.gasEnergy, ph.blast, m.flashPerUnit * ph.blast,
+		hp, hp50, hp * m.headMult * 1.5, st))
 end
 System.AddCCommand("deagle_physics", "Deagle:PrintPhysics()", "deagle_physics: what the current gun's cartridge does (recoil, flip, flash, energy)")
 System.AddCCommand("deagle_gun", "Deagle:UseGun((([[%1]]):gsub('\"','')))", "deagle_gun <id>: which gun the pistol looks / sounds like (no id: list)")

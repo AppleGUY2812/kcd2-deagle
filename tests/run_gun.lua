@@ -74,7 +74,7 @@ if phys then
 	local kicks = 0
 	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] kick ") then kicks = kicks + 1 end end
 	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = 1 - Deagle.cfg.physics.returnPct,
-		flashScale = M.lastAttachScale, flashPrime = false, wantScale = Deagle.cfg.physics.flashPerUnit * phys.flash * Deagle.cfg.muzzleFxScale }
+		flashScale = M.lastAttachScale, flashPrime = false, wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
 step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
@@ -130,6 +130,13 @@ if recoil then
 		recoil.peak > 0.5 * recoil.up and recoil.peak < 1.2 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.2 * recoil.up and recoil.kicks == 1, recoil.peak)
 	check(string.format("flash on the muzzle at the cartridge size x%.2f (got %s)", recoil.wantScale, tostring(recoil.flashScale)),
 		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-6 and recoil.flashPrime == false, recoil.flashScale)
+end
+if phys then   -- the wound model: 9 mm torso 35 HP by definition, .50 AE ~1.8x (CS2 has 1.77x), little loss at 50 m
+	local hp, st = Deagle:Wound(phys, 0)
+	local hp50 = Deagle:Wound(phys, 50)
+	local want = ({ ["9x19mm"] = 35, [".50 AE"] = 62 })[phys.caliber]
+	check(string.format("%s torso hit %.1f HP (%.1f at 50 m), stamina %.0f", phys.caliber, hp, hp50, st),
+		(not want or math.abs(hp - want) < 1.5) and hp50 < hp and hp50 > 0.85 * hp, hp)
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))
