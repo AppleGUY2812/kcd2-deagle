@@ -61,8 +61,15 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
 - [ ] Head pop when a round goes through the head (Phase 2 decides "through")
 - [ ] Exit-wound gore scaled by the energy left; dismemberment by big energy at limbs (native bone scaling)
 
+## Decided
+- **Small rounds bounce off plate** (2026-10-12, for fun, even though a 9 mm would often get through): plate deflects
+  anything under an energy threshold with sparks, a ping and a ricochet; big rounds (.50 AE and up) go through.
+- **Shove = momentum (mass x speed)**; penetration and wound size = energy (1/2 x mass x speed^2). Real momentum barely
+  moves a person (.50 BMG: ~0.5 m/s on 80 kg), so the shove uses momentum for the ratio between rounds, times a
+  tunable "punch" multiplier. 9 mm 2.9 / .50 AE 9.1 / .50 BMG 38 kg m/s; 520 J / 2,100 J / 17,000 J.
+
 ## Decisions for you
-- Realism vs fun: should armored knights shrug off pistol rounds, or should every gun kill fast?
+- Realism vs fun for everything else: how fast should guns kill unarmored and lightly armored people?
 - Tracers on every round (looks great) or every 3rd-5th (realistic)?
 - Ammo: limited and scarce, or unlimited like now?
 - Guards reacting to the noise of a gunshot?
