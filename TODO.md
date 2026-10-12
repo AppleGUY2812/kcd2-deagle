@@ -28,6 +28,9 @@
 5. If anything is off: send kcd.log + deagle_native.log lines; native off = native/install.ps1 -Remove
 
 ## Next
+- Test in game: `deagle_gun glock_17` (first GameBanana gun through tools/gb), then `deagle_gun deagle`
+- Move the Deagle itself onto tools/gb (it still plays at 24 fps; its source clips are 30 / 40 fps, so ~25-40% slow)
+- Gore: headshot head-pop on kills (hide the head attachment + blood burst + gib), later real dismemberment (native)
 - Movement poses: walk / sprint / crouch / jump hand animations (today only procedural bob + sprint tilt; the hands
   themselves don't change). Need clips (MW19/MWII pistol sprint + walk) or hand-made poses blended by speed/stance
 - Tune from the first test (offsets, motion strength, flash size, HUD position, sound volume)

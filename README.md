@@ -76,4 +76,14 @@ bones, attachments), the soundscripts and the weapon script, and writes a guesse
 `guns/<slug>.json` (which clip is draw / shoot / reload..., which bones are slide / mag / rounds / muzzle / brass,
 magazine size, sound cues, gunshot sounds). Correct anything wrong in that file. A contact sheet of every clip lands
 on the Desktop (`Deagle Progress\<slug> clips.png`). Checks: `python3 tests/test_profile_guess.py`.
-Converting a profile into an in-game gun is the next step (TODO).
+
+```
+tools/gb/gb_convert.sh glock_17 [--install]   # profile -> in-game gun, about 1.5 min
+```
+Builds the clips from the profile (Source section gaps repaired, unkeyed bones filled, a settle / ease-in wherever a
+clip doesn't start or end on its rest pose, empty idle / draw / holster / inspect generated, clips faster than 30 fps
+resampled for rc, magazine-swap timings measured), compiles them, converts the textures, stages everything under
+`src/` (`Scripts/Deagle/guns/<slug>.lua` holds the gun's data) and runs the tests (`tests/run_gun.lua <slug>`).
+Audit it like the Deagle: `tools/gb/gb_tracks_dump.py` on `<slug>_vm_roles.blend`, then
+`tools/vm_transition_audit.py`; `tools/gb/gb_roles_preview.py` + `gb_sheet.py` render the converted clips.
+In game: `deagle_gun glock_17` (no argument lists the guns); the gameplay stays the Deagle's.

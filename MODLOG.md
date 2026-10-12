@@ -145,3 +145,18 @@ LoadCharacter(cdf); Lua places it each frame on System.GetViewCameraPos/Dir/UpDi
 - Script flash light removed (intensity 6 / 9 m whited out the scene); the muzzle particle has its own light.
 - Casings: ejectImpulse 0.035 (~1.75 m/s), higher arc; were on screen ~2 frames at 3 m/s.
 - Slow motion for checking VFX in game: t_Scale 0.1 (exists in KCD2), back with t_Scale 1.
+
+## 2026-10-11 ~23:00 — GameBanana CS importer + converter (tools/gb), Glock 17 converted
+- gb_import.sh <id>: download, extract (Windows tar: zip/rar/7z), inspect MDL (SourceIO MdlV49: sequences with
+  activity / frames / fps / events, bones, attachments), soundscripts + weapon script (clip_size, cycletime) ->
+  guns/<slug>.json; preview sheet. gb_convert.sh <slug>: gb_build.py -> gb_anims.ps1 -> gb_vtf.py + gb_tex.py -> stage.
+- Source sequences have their own fps (Deagle 30 / shots 40, Glock 30 / shots 50 / last shot 45); our Deagle pipeline
+  assumed 24. rc stores i_caf keys on a 30 fps grid: >30 fps clips fail ("repeated or non-sorted time key") -> resample.
+- Blender sub-frame evaluation of the imported curves swings through garbage between frames: never sample between
+  frames (the resampler blends whole frames itself).
+- Zero transforms are only a Source section gap when the same bone moves elsewhere in the clip: the Glock's
+  tag_barrel_attach.001 is genuinely at its parent origin in every clip (repairing it moved slide + barrel 1 m away).
+- Rigs differ per gun: Glock rounds hang on one bone per round (tag_origin.00N under j_ammo_0N under j_mag1); both of
+  its reloads end with BOTH mags seated (overlapping); its empty reload uses the spare mag as the new one and brings
+  j_mag1 back at 1.65 s. All measured by gb_build (swapTail, newMagAt), the script reads them per gun.
+- Shared MW-hands materials (arms / sleeve / gloves) are found in other imported guns' folders automatically.

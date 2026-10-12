@@ -6,7 +6,9 @@
 # speed limits (gun / hands / elbows, slide and magazines relative to the gun).
 import json, math, sys
 T = json.load(open(sys.argv[1]))
+FPSMAP = T.pop("__fps__", {})          # per-clip frame rates (converted guns); the Deagle dump is all 24 fps
 FPS = 24.0
+fps_of = lambda n: FPSMAP.get(n, FPS)
 R = dict(blend=0.08, ads=0.14, lead=0.2, refire=0.12, cut=0.2, inspect_cut=0.3)
 LIM = dict(pos=1500, ang=400, part=1500)          # mm/s, deg/s, mm/s
 INST = dict(pos=2.0, ang=1.0, part=2.0)           # instant switch tolerances
@@ -35,7 +37,7 @@ def gap(fa, fb):
 NAT = {}
 for name, frames in T.items():
     sp = [gap(frames[i], frames[i + 1]) for i in range(len(frames) - 1)] or [(0, 0, 0, 0, 0)]
-    NAT[name] = (max(x[0] for x in sp) * FPS, max(x[1] for x in sp) * FPS, max(max(x[2], x[3]) for x in sp) * FPS)
+    NAT[name] = (max(x[0] for x in sp) * fps_of(name), max(x[1] for x in sp) * fps_of(name), max(max(x[2], x[3]) for x in sp) * fps_of(name))
 CAP = dict(pos=2000, ang=700, part=2000)
 def limits(a, b):
     na, nb = NAT.get(a, (0, 0, 0)), NAT.get(b, (0, 0, 0))
@@ -43,17 +45,40 @@ def limits(a, b):
     return (min(CAP["pos"], max(LIM["pos"], k * max(na[0], nb[0]))), min(CAP["ang"], max(LIM["ang"], k * max(na[1], nb[1]))),
             min(CAP["part"], max(LIM["part"], k * max(na[2], nb[2]))))
 rows = []
-first = lambda n: T[n][0]
-last = lambda n: T[n][-1]
-L = lambda n: (len(T[n]) - 1) / FPS
-at = lambda n, s: T[n][max(0, min(len(T[n]) - 1, int(round(s * FPS))))]
+# a gun without some clip (no ADS, no empty variants) skips the transitions that need it
+first = lambda n: T[n][0] if n in T else None
+last = lambda n: T[n][-1] if n in T else None
+L = lambda n: (len(T[n]) - 1) / fps_of(n) if n in T else 0.0
+at = lambda n, s: T[n][max(0, min(len(T[n]) - 1, int(round(s * fps_of(n)))))] if n in T else None
+skipped = []
+
+def visible_mags(fr):
+    """mag positions near the gun, overlapping ones merged (two identical mags in one spot look like one)"""
+    pts = []
+    for m in ("j_mag1", "j_mag2"):
+        if m in fr:
+            p = rel(fr, m)
+            if math.hypot(*p) < 350 and not any(math.dist(p, q) < 3 for q in pts):
+                pts.append(p)
+    return pts
+def mags_seen_gap(fa, fb):
+    a, b = visible_mags(fa), visible_mags(fb)
+    if not a and not b:
+        return 0.0
+    if not a or not b:
+        return 1e3
+    return max(max(min(math.dist(p, q) for q in b) for p in a), max(min(math.dist(p, q) for q in a) for p in b))
 
 def instant(label, fa, fb):
+    if fa is None or fb is None:
+        skipped.append(label); return
     pos, ang, slide, ms, mw = gap(fa, fb)
-    part = max(slide, min(ms, mw))
+    part = max(slide, mags_seen_gap(fa, fb))      # an instant switch is judged by what's on screen
     bad = pos > INST["pos"] or ang > INST["ang"] or part > INST["part"]
     rows.append((bad, "instant " + label, f"gap {pos:5.1f}mm {ang:4.1f}deg slide/mags {part:5.1f}mm", max(pos / INST["pos"], ang / INST["ang"], part / INST["part"])))
 def blended(label, fa, fb, blend, names=("", "")):
+    if fa is None or fb is None:
+        skipped.append(label); return
     pos, ang, slide, ms, mw = gap(fa, fb)   # a blend interpolates each bone: mags move by their own (same-bone) distance
     part = max(slide, ms)
     sp = (pos / blend, ang / blend, part / blend)
@@ -61,6 +86,8 @@ def blended(label, fa, fb, blend, names=("", "")):
     sc = max(sp[0] / lp, sp[1] / la, sp[2] / lq)
     rows.append((sc > 1, f"blend {blend:.2f}s " + label, f"gap {pos:5.1f}mm {ang:4.1f}deg part {part:5.1f}mm -> {sp[0]:5.0f}mm/s {sp[1]:4.0f}deg/s part {sp[2]:5.0f}mm/s", sc))
 def blended_worst(label, a, b, blend, t0=0.0, t1=None, via_idle=False):
+    if a not in T or b not in T:
+        skipped.append(label); return
     t1 = L(a) if t1 is None else t1
     worst = None
     t = t0
@@ -70,7 +97,7 @@ def blended_worst(label, a, b, blend, t0=0.0, t1=None, via_idle=False):
         lp, la, lq = limits(a, b)
         sc = max(pos / blend / lp, ang / blend / la, max(slide, ms) / blend / lq)
         if worst is None or sc > worst[0]: worst = (sc, t)
-        t += 1 / FPS
+        t += 1 / fps_of(a)
     blended(f"{label} (worst at {worst[1]:.2f}s)", at(a, worst[1]), first(b), blend, (a, b))
 
 # clip end -> rest: instant
@@ -109,6 +136,7 @@ instant("queued draw end -> holster start", last("draw"), first("holster"))
 instant("queued draw_empty end -> holster_empty start", last("draw_empty"), first("holster_empty"))
 
 bad = [r for r in rows if r[0]]
+print(f"skipped (clip missing): {len(skipped)}" + (": " + "; ".join(skipped) if skipped else ""))
 print(f"TRANSITIONS {len(rows)}, JUMPS {len(bad)}  (blend limits {LIM}, instant tolerance {INST})")
 for r in sorted(rows, key=lambda r: -r[3]):
     print(f"  {'JUMP' if r[0] else 'ok  '} {r[1]:58s} {r[2]}")

@@ -115,7 +115,7 @@ _G.System = {
 }
 _G.Script = {
 	SetTimer = function(ms, fn) table.insert(M.timers, { at = M.t + (ms or 0) / 1000, fn = fn }) return #M.timers end,
-	LoadScript = function() return true end, ReloadScript = function() end,
+	LoadScript = function(path) return M.loadScript(path) end, ReloadScript = function(path) return M.loadScript(path) end,
 }
 _G.Game = { SendInfoText = function(t) M.info = t end, HideInfoText = function() end }
 _G.Particle = { SpawnEffect = function(n) M.fx = (M.fx or 0) + 1 M.lastFx = n end, CreateMatDecal = function() end }
@@ -125,6 +125,15 @@ _G.UIAction = { RegisterEventSystemListener = function() end }
 _G.Sound = {}
 _G.AudioUtils = { LookupTriggerID = function() return 1 end, ExecuteAudioTrigger = function() M.gameShot = (M.gameShot or 0) + 1 end }
 _G.CryAction = {}
+-- game paths load from the repo's src/ (gun files etc.); missing files fail like the engine (0)
+function M.loadScript(path)
+	local f = io.open("src/" .. path, "r")
+	if not f then return 0 end
+	f:close()
+	local ok, err = pcall(dofile, "src/" .. path)
+	if not ok then table.insert(M.errors, "load " .. path .. ": " .. tostring(err)) return 0 end
+	return 1
+end
 -- run due timers, frame by frame (each frame also fires 0 ms timers once)
 function M.advance(sec, fps)
 	fps = fps or 60

@@ -63,8 +63,6 @@ Deagle.cfg.vm = {
 	adsBlend = 0.14,          -- seconds to blend hip <-> ADS (pose and zoom)
 	adsLead = 0.2,            -- reload / draw hand over to a held aim this long before they end, blending as long
 	holsterSpeed = 1.6,
-	newMagAt = 0.69,          -- empty reload: the dropped mag is off screen and the same bone comes back as the new one
-	reloadSwapped = 0.6,      -- last seconds of the reload in which the spare mag is the seated one (frames 50-65)
 	anims = {   -- clip, frame count (24 fps)
 		draw = { "deagle_vm_draw", 37 }, holster = { "deagle_vm_holster", 37 },
 		idle = { "deagle_vm_idle1", 2 }, idleEmpty = { "deagle_vm_idle_empty", 2 },
@@ -112,6 +110,25 @@ for _, c in ipairs(Deagle.vmSoundCues["inspect"]) do
 	if not c[2]:find("slideclose") then table.insert(Deagle.vmSoundCues["inspect_empty"], c) end
 end
 local CUE_SEQ = { shoot = "shoot1", shootEmpty = "shoot_empty", reload = "reload", reloadEmpty = "reload_empty", draw = "draw", drawEmpty = "draw", inspect = "inspect", inspectEmpty = "inspect_empty" }
+
+-- ---- guns: the built-in Deagle plus every converted GameBanana gun (Scripts/Deagle/guns/<id>.lua, made by tools/gb).
+-- A gun brings its viewmodel, clips (with their own frame rates), sound cues, gunshot sounds, muzzle / ejection
+-- bones, magazine size and magazine-swap timings; the gameplay (damage, recoil, hits) stays the same.
+Deagle.guns = {}
+function Deagle:RegisterGun(id, g)
+	g.id = id
+	self.guns[id] = g
+end
+do
+	local cues, shots = {}, {}
+	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
+	for i = 1, 8 do shots[i] = "decho/decho-" .. i .. ".wav" end
+	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
+		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = true,
+		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true })
+end
+Deagle.gun = Deagle.guns.deagle
+local SHOT_CUE = { { 0, "shot" } }
 local REST = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }   -- looping rest poses
 local HOLDS_AIM = { draw = true, drawEmpty = true, holster = true, holsterEmpty = true, reload = true, reloadEmpty = true }   -- aim waits for these; shots and inspect it cuts
 local DRAWING = { draw = true, drawEmpty = true }        -- no shooting, reloading or inspecting until the gun is up
@@ -323,12 +340,12 @@ end
 -- shooting, casings
 -- ---------------------------------------------------------------------------
 function Deagle:MuzzlePos()
-	return self:VmBone("tag_flash") or vadd(System.GetViewCameraPos(), vscale(System.GetViewCameraDir(), 0.5))
+	return self:VmBone(self.gun.bones.muzzle) or vadd(System.GetViewCameraPos(), vscale(System.GetViewCameraDir(), 0.5))
 end
 
 -- casing out of the viewmodel's ejection port: random cone, speed and spin so no two take the same path; port smoke
 function Deagle:EjectCase()
-	local port = self:VmBone("tag_brass")
+	local port = self:VmBone(self.gun.bones.brass)
 	if not port then return end
 	local c = self.cfg
 	try("eject case", function()
@@ -453,7 +470,8 @@ function Deagle:Reload()
 		return
 	end
 	local key = s.ammo == 0 and "reloadEmpty" or "reload"
-	local len = c.vm.anims[key][2] / c.vm.fps
+	local a = c.vm.anims[key]
+	local len = a[2] / (a[3] or c.vm.fps)
 	s.reloading = true
 	s.reloadEnd = System.GetCurrTime() + len
 	self:Notify("Desert Eagle  reloading...")
@@ -461,9 +479,9 @@ function Deagle:Reload()
 	Script.SetTimer(math.floor(len * 1000) + 20, function() self:FinishReload() end)
 	self:VmPlay(key, false)
 	self:UpdateAim()
-	if key == "reloadEmpty" then
+	if key == "reloadEmpty" and self.gun.newMagAt then
 		local this = s.reloadEnd
-		Script.SetTimer(math.floor(c.vm.newMagAt * 1000), function()
+		Script.SetTimer(math.floor(self.gun.newMagAt * 1000), function()
 			if Deagle.state.reloading and Deagle.state.reloadEnd == this then Deagle:VmRounds(true) end
 		end)
 	end
@@ -490,7 +508,7 @@ end
 -- Aim input. Aiming (zoom + ADS pose) follows the button, except while a reload / draw / holster runs: those finish
 -- first and hand over to ADS in their last moments. Hip shots and inspect are cut by it.
 function Deagle:SetAim(on)
-	self.state.aimHeld = on and self.cfg.vm.ads or false
+	self.state.aimHeld = on and self.cfg.vm.ads and self.cfg.vm.anims.ads ~= nil or false
 	self:UpdateAim()
 end
 
@@ -587,7 +605,7 @@ end
 -- the rounds in the gun's magazine (own skin attachment) show only while it holds any
 function Deagle:VmRounds(show)
 	local vm = self.vmId and System.GetEntity(self.vmId)
-	if not vm or self.vmRoundsShown == show then return end
+	if not vm or not self.gun.rounds or self.vmRoundsShown == show then return end
 	self.vmRoundsShown = show
 	pcall(vm.HideAttachment, vm, 0, "vm_rounds", not show, not show)
 end
@@ -612,7 +630,7 @@ end
 -- tiled from the game's own Textures/cloth set)
 function Deagle:VmApplyArms()
 	local vm = self.vmId and System.GetEntity(self.vmId)
-	if not vm then return end
+	if not vm or not self.gun.armsLooks then return end
 	local mtl = "objects/manmade/weapons/deagle/vm/" .. (self.cfg.vm.arms == "mw" and "deagle_vm" or "deagle_vm_medieval")
 	local ok = pcall(vm.ChangeAttachmentMaterial, vm, "vm_mesh", mtl)
 	log("arms look " .. self.cfg.vm.arms .. " (" .. tostring(ok) .. ")")
@@ -810,7 +828,8 @@ function Deagle:VmPlay(key, loop, speed, blend)
 	local cur = self.vmAnim
 	-- the reload ends with the spare mag seated and the main one parked off screen: switch to idle (identical image)
 	-- before any blend, or the blend would fly both magazines across the view
-	local swapped = cur and cur.key == "reload" and System.GetCurrTime() >= (cur.ends or 0) - c.reloadSwapped
+	local tail = cur and self.gun.swapTail and self.gun.swapTail[cur.key]
+	local swapped = tail and System.GetCurrTime() >= (cur.ends or 0) - tail
 	if (cur and cur.name == name and not REST[key]) or (swapped and blend > 0 and key ~= "idle") then
 		pcall(vm.StartAnimation, vm, 0, c.anims.idle[1], c.layer, 0, 1.0, true)
 	end
@@ -819,7 +838,7 @@ function Deagle:VmPlay(key, loop, speed, blend)
 		self.vmLastFail = name
 		log("$4viewmodel anim did not start: " .. name .. " " .. tostring(started))
 	end
-	local len = frames / c.fps / speed
+	local len = frames / (a[3] or c.fps) / speed
 	self.vmAnimToken = (self.vmAnimToken or 0) + 1
 	local tok = self.vmAnimToken
 	self.vmAnim = { key = key, name = name, loop = loop, ends = System.GetCurrTime() + len }
@@ -855,7 +874,7 @@ function Deagle:VmRecoilAdd(empty)
 	local tok = self.vmRecoilToken
 	pcall(vm.StartAnimation, vm, 0, a[1], c.recoilLayer, 0.0, 1.0, false)
 	self:PlayCues(empty and "shootEmpty" or "shoot")
-	Script.SetTimer(math.floor(a[2] / c.fps * 1000), function()
+	Script.SetTimer(math.floor(a[2] / (a[3] or c.fps) * 1000), function()
 		if Deagle.vmRecoilToken ~= tok then return end
 		-- same frame: rest loop in (adsEmpty after the last round keeps the slide locked), recoil offset out
 		if Deagle.vmShown and not Deagle.vmHolstering and not Deagle:VmBusy() then Deagle:VmPlay(Deagle:VmRestKey(), true, 1.0, 0) end
@@ -865,8 +884,8 @@ end
 
 -- sound cues of a clip, played by the plugin; cues of an interrupted clip are dropped (shots always play)
 function Deagle:PlayCues(key)
-	local seq = CUE_SEQ[key]
-	local cues = seq and Deagle.vmSoundCues[seq]
+	local g = self.gun
+	local cues = g.cues[key] or ((key == "shoot" or key == "shootEmpty") and SHOT_CUE) or nil
 	if not cues then return end
 	local tok = self.vmAnimToken
 	local v = self.cfg.vm.soundVol
@@ -874,7 +893,9 @@ function Deagle:PlayCues(key)
 		local t, file = c[1], c[2]
 		local function fire()
 			if Deagle.vmAnimToken ~= tok and key ~= "shoot" and key ~= "shootEmpty" then return end
-			if file == "shot" then Deagle:Snd("decho/decho-" .. math.random(1, 8) .. ".wav", v.shot)
+			if file == "shot" then
+				local shots = g.shotSounds or {}
+				if #shots > 0 then Deagle:Snd(shots[math.random(1, #shots)], v.shot) end
 			else Deagle:Snd(file, v.foley) end
 		end
 		if t <= 0.001 then fire() else Script.SetTimer(math.floor(t * 1000), fire) end
@@ -1161,4 +1182,37 @@ if not Deagle.listening then
 	end)
 end
 
-log("loaded v2.0")
+-- switch the pistol's look: viewmodel, clips, sounds, magazine (ammo is kept, up to the new magazine size)
+function Deagle:UseGun(id)
+	id = id ~= "" and id or nil
+	local g = id and self.guns[id]
+	if not g then
+		local ids = {}
+		for k in pairs(self.guns) do ids[#ids + 1] = k end
+		table.sort(ids)
+		log((id and "$4no gun " .. id .. ". " or "") .. "guns: " .. table.concat(ids, ", ") .. " (current: " .. tostring(self.gun.id) .. ")")
+		return false
+	end
+	self.gun, self.gunId = g, id
+	self.cfg.vm.cdf, self.cfg.vm.anims, self.cfg.magSize = g.cdf, g.anims, g.magSize
+	self.state.ammo = math.min(self.state.ammo, g.magSize)
+	self.vmAnim, self.vmArmsApplied = nil, nil
+	if self.vmShown then
+		self:VmRespawn()
+	elseif self.vmId then                       -- holstered: the next draw builds the new viewmodel
+		pcall(System.RemoveEntity, self.vmId); self.vmId, self.vmInFp = nil, nil
+	end
+	log("gun " .. id .. ": " .. tostring(g.title))
+	return true
+end
+
+function Deagle:LoadGuns()
+	local load = Script.ReloadScript or Script.LoadScript
+	pcall(load, "Scripts/Deagle/guns/index.lua")
+	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end
+end
+Deagle:LoadGuns()
+if Deagle.gunId and Deagle.gunId ~= "deagle" and Deagle.guns[Deagle.gunId] then Deagle:UseGun(Deagle.gunId) end   -- keep it across a dev reload
+System.AddCCommand("deagle_gun", "Deagle:UseGun((([[%1]]):gsub('\"','')))", "deagle_gun <id>: which gun the pistol looks / sounds like (no id: list)")
+
+log("loaded v2.1")
