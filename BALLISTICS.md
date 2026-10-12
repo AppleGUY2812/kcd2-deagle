@@ -47,6 +47,8 @@ API: speed, mass, drag, damage, penetration, armor damage, ricochet / fragmentat
   `suppressHitreaction=false` alone doesn't make a small hit visible. Open: does a full-strength hit (Deagle torso
   ~40 hp) play one, and does KCD2 pick the reaction from the hit strength (hit_reaction.xml rows: weak / minor / major)?
   If not, reactions come from our own path (wh_HitReaction physical impulse, or a native PlayRagdollHitReaction call).
+- Full-strength hit (user shot ttkc_man_13 with the Deagle, 1.8 m): logged "part arm_left hp 22.9/100". Whether it
+  flinched: asked. Hit reaction RE handed to another session (docs/kcd2_hit_reaction_re.md).
 - Next (needs the user: save first, pick an NPC): CreateHit with type "bullet" (or its id) on an NPC with tiny damage,
   log health / armor / reaction, then compare with soul:DealDamage.
 
