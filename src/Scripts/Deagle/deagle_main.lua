@@ -89,7 +89,7 @@ Deagle.cfg = {
 	-- where the player is, for guns with per-place gunshots (gun.envShots: Ready or Not's MK V sets, docs/mk5_sound_spec.md):
 	-- rays from the eye every period s; starting values from the spec, to tune by ear (deagle_env prints the numbers)
 	-- takes: recordings per place (shot-1..takes.wav; every bang x echo combination the game plays, once rendered)
-	env = { on = true, period = 0.25, takes = 8, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
+	env = { on = true, period = 0.25, takes = 32, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
 		ringInside = 12, small = 3.5, hall = 7, corrNarrow = 2.5, corrWide = 6, share = 0.5, vegShare = 0.25, trunks = 6 },
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
 	                          -- shots weren't drawn, in game 2026-10-12)
