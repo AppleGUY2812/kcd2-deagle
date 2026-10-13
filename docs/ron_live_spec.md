@@ -35,8 +35,20 @@ limiters and room snapshots). Nothing is pre-rendered. Research: `docs/ron_fmod_
 - `Deagle:EnvFade` moves the globals there over `cfg.env.fade` s (RoN fades them across doorways).
 - The fire event gets `IsOutside` 0/1 from the class.
 
-## Still to do
-- Handling events (draw, holster, reloads, ammo check, ADS start/stop, dry fire, mag drop) at RoN's offsets.
-- Casings: `9mmShell` with Surface on each bounce.
-- Bullet impacts through `Bullet Impact Surfaces` with the KCD2 mat_* -> Surface map.
-- A RoN event for the Glock.
+## Other gun sounds (all RoN events)
+- **Impacts:** `Bullet Impact Surfaces` with Surface from `RON_SURFACE` (KCD2 mat_* -> RoN index; none of RoN's silent
+  ones), played 3D at the hit and delayed by the speed of sound. Also `Ricochets`, and 3P Armor Head/Body
+  (`... Block` when the plate stops the round).
+- **Per gun (`gun.ron`):**
+  - dry fire: Deagle `FN57 Dry Fire`, Glock `G19 Dryfire Old`;
+  - aim in/out: `ADS Pistol Start` / `Stop`;
+  - casings: `9mmShell` on each bounce (velocity read every frame; Surface from a ray down; bounces under 0.5 m/s
+    are silent).
+- **Handling (`guns/ron_handling.lua`):** RoN's part events on our clips. Each one starts early by its measured click
+  time (`Deagle.ronClick`) so the click lands on the clip's moment. Empty reloads drop the mag (`Pistol Mag Drop`) at
+  the feet 0.45 s after it leaves the gun.
+- **Live mix blocks:** 256 x 4 (~21 ms latency).
+
+## Not done
+- 3P events (other shooters): no NPC in KCD2 fires a gun.
+- Occlusion / PropagateDistance stay 0: RoN gets them from its portal volumes, and KCD2 has none.
