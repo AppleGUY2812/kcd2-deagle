@@ -21,7 +21,7 @@ Deagle.cfg = {
 	range = 1000,             -- m a round flies before it's dropped (tools/gen_tracers.py RANGE matches); its tracer burns
 	                          -- all the way (a real one burns for seconds: the user's .50 cal reference clip)
 	tracers = true,           -- a glowing tracer on every round (deagle_tracers 0 / 1)
-	-- mode "trail": the round's path drawn as it flies, from the muzzle to what it hit (Deagle:TrailAdd; fx pieces dash
+	-- mode "trail": the round glowing as it flies (Deagle:TracerBullet: length m behind it each frame; fx pieces dash
 	-- m long at scale 1, tools/gen_tracers.py DASH), from start m out; "flying": one particle per round flying by itself
 	-- (deagle_tracers.v<speed>; not seen in game 2026-10-12). scaled: a piece's scale sets its length (seen in game:
 	-- scale 3 = 3x longer). anchor: where the effect sits on its piece (mid / start / end, by how its streak extends;
@@ -34,7 +34,7 @@ Deagle.cfg = {
 	-- (trail_025 / _040 / _060 by the frame time), so the tracer is one streak running with the round, like a real one
 	-- filmed (the user's reference clip), not a line left behind it. trail_025 / _040 / _060 / _080: pieces
 	-- living that long (no fade), a streak running with the round; trail (0.12 s) drew as a 50 m "laser"
-	tracer = { mode = "trail", fx = "auto", dash = 1.0, start = 1.0, scaled = true, anchor = "start",
+	tracer = { mode = "trail", fx = "auto", dash = 1.0, start = 1.0, length = 1.5, scaled = true, anchor = "start",
 		spawn = "plugin" },
 	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
 	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
@@ -1405,7 +1405,6 @@ function Deagle:MoveRound(r, h)
 			local speed = vlen(r.vel)
 			hit.energy = 0.5 * r.phys.bullet * speed * speed
 			self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
-			self:TrailAdd(r, r.pos, hit.pos, r.dist)
 			self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
 			r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
 			if not self:ApplyHit(hit, vnorm(move), r.phys, r) then r.landed = true; return true end
@@ -1417,18 +1416,18 @@ function Deagle:MoveRound(r, h)
 		end
 	end
 	self:PathAdd(r.pos, vadd(r.pos, move), (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
-	self:TrailAdd(r, r.pos, vadd(r.pos, move), r.dist)
 	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
 	return r.dist > self.cfg.range or r.age > ROUND_LIFE
 end
 
 function Deagle:StepRound(r, dt)
-	local done = false
+	local done, from = false, r.pos
 	while dt > 1e-6 do
 		local h = math.min(dt, ROUND_STEP)
 		dt = dt - h
 		if self:MoveRound(r, h) then done = true; break end
 	end
+	self:TracerBullet(r, from)
 	if r.logId then
 		log(string.format("shot %d t=%.4f pos %.2f %.2f %.2f speed %.1f dist %.1f%s", r.logId, System.GetCurrTime(), r.pos.x, r.pos.y,
 			r.pos.z, vlen(r.vel), r.dist, done and (r.landed and " HIT" or " END") or ""))
@@ -1511,37 +1510,31 @@ function Deagle:TrailPoint(trail, p, d)
 	return w > 0 and vadd(p, vscale(trail.off, w)) or p
 end
 
--- a bit of path the round just flew, from a (d0 m along its path) to b: pieces cfg.tracer.dash long end to end; the
--- last one ends on b (shorter when cfg.tracer.scaled: a piece's length follows its scale; else a whole piece, over the
--- one before it); none within cfg.tracer.start m of the muzzle (the flash is there)
-function Deagle:TrailAdd(r, a, b, d0)
+-- The tracer is the round itself glowing: once a frame, a short streak (cfg.tracer.length m) ending where the round is,
+-- along the way it's going. Far away it's a dot, close by a short dash; it doesn't draw the whole stretch flown in the
+-- frame (that drew a laser line: a filmed tracer is a line only in the frames the camera's motion blur smears it, the
+-- user's reference clip). Pieces glow about one frame (fx "auto"), the plugin spawning them so they show at once.
+function Deagle:TracerBullet(r, from)
 	local trail, c = r.trail, self.cfg.tracer
-	if not trail or not self.cfg.tracers then return end
-	local len = vlen(vsub(b, a))
-	if len < 1e-4 then return end
-	local u, dash = vscale(vsub(b, a), 1 / len), c.dash
+	if not trail or not self.cfg.tracers or r.dist < c.start then return end
+	local move = vsub(r.pos, from)
+	local ml = vlen(move)
+	local u = ml > 1e-4 and vscale(move, 1 / ml) or vnorm(r.vel)
+	local l = math.min(c.length, r.dist - c.start)
+	if l < 0.05 then return end
+	local p1 = self:TrailPoint(trail, r.pos, r.dist)
+	local p0 = self:TrailPoint(trail, vsub(r.pos, vscale(u, l)), r.dist - l)
+	local dir = vnorm(vsub(p1, p0))
 	local fx = c.fx
-	if fx == "auto" then   -- pieces glow about a frame: never shorter than the frame, or they're never drawn
+	if fx == "auto" then   -- glows about a frame: never shorter than the frame, or it's never drawn
 		local dt = self.frameDt or 1 / 60
 		fx = dt <= 1 / 50 and "deagle_tracers.trail_025" or dt <= 1 / 30 and "deagle_tracers.trail_040" or "deagle_tracers.trail_060"
 	end
-	local n = math.max(1, math.ceil(len / dash - 1e-6))
-	for k = 1, n do
-		local e = math.min(len, k * dash)                                -- this piece ends e m from a
-		local l = (k == n and c.scaled) and (e - (k - 1) * dash) or dash  -- and is l m long
-		if d0 + e - l / 2 >= c.start then
-			local p0 = self:TrailPoint(trail, vadd(a, vscale(u, e - l)), d0 + e - l)
-			local p1 = self:TrailPoint(trail, vadd(a, vscale(u, e)), d0 + e)
-			local dir = vnorm(vsub(p1, p0))
-			-- where the effect sits on its piece: the middle (a streak both ways), its start (a streak reaching forward
-			-- only) or its end; the piece's end is exactly p1
-			local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2
-			local at = vsub(p1, vscale(dir, back))
-			if c.spawn == "plugin" and self.native then   -- seen from its first frame (plugin fxs: a box at once)
-				self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", fx, l / dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
-			else self:SpawnFx(fx, at, dir, l / dash) end
-		end
-	end
+	local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2   -- where the effect sits; the end is p1
+	local at = vsub(p1, vscale(dir, back))
+	if c.spawn == "plugin" and self.native then   -- seen from its first frame (plugin fxs)
+		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", fx, l / c.dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
+	else self:SpawnFx(fx, at, dir, l / c.dash) end
 end
 
 function Deagle:MuzzlePos()

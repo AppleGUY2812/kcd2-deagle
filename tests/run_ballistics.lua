@@ -221,32 +221,38 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 				out[#out + 1] = { a = a, b = vec(a.x + f.dir.x * l, a.y + f.dir.y * l, a.z + f.dir.z * l), dir = f.dir, t = f.t }
 			end
 		end
-		table.sort(out, function(x, y) return x.b.y < y.b.y end)
+		table.sort(out, function(x, y) return x.t < y.t or (x.t == y.t and x.b.y < y.b.y) end)
 		return out
 	end
 	local function dist(a, b) return math.sqrt((a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 + (a.z - b.z) ^ 2) end
 	world.wallY = 300
 	local ps, hit
-	for _, anchor in ipairs({ "start", "end", "mid" }) do   -- every anchor lays the same pieces (checked for mid below)
+	for _, anchor in ipairs({ "start", "end", "mid" }) do   -- every anchor puts the same streak in the same place
 		tc.anchor = anchor
 		landed, M.fxLog, M.fxsFrom = {}, {}, #M.native + 1
 		fire()
 		M.advance(1.0, 60)
 		ps, hit = pieces(), landed[1] and landed[1].hit
 		local q = ps[#ps]
-		check(string.format("%s: trail anchor %s: %d pieces, the last ends on the hit (%.4f m)", id, anchor, #ps, q and hit and dist(q.b, hit.pos) or -1),
-			#ps >= 99 and q and hit and dist(q.b, hit.pos) < 1e-3, #ps)
+		check(string.format("%s: tracer anchor %s: %d streaks, the last ends on the hit (%.4f m)", id, anchor, #ps, q and hit and dist(q.b, hit.pos) or -1),
+			#ps >= 10 and q and hit and dist(q.b, hit.pos) < 1e-3, #ps)
 	end
-	local gap, along = 0, true
-	for i = 2, #ps do gap = math.max(gap, ps[i].a.y - ps[i - 1].b.y) end
-	for _, q in ipairs(ps) do along = along and q.dir.y > 0.99 end
-	local first, last = ps[1], ps[#ps]
-	check(string.format("%s: trail %d pieces, no gap (widest %.4f m), all along the shot", id, #ps, gap),
-		#ps >= 99 and #ps <= 115 and gap < 1e-3 and along, #ps)
-	check(string.format("%s: trail ends on the hit (%.4f m off) and starts %.2f m past the muzzle", id, hit and last and dist(last.b, hit.pos) or -1,
-		first and shot and shot.muzzle and dist(first.a, shot.muzzle) or -1),
-		hit and last and dist(last.b, hit.pos) < 1e-3 and first and shot and shot.muzzle and math.abs(dist(first.a, shot.muzzle) - tc.start) < 0.05,
-		hit and last and dist(last.b, hit.pos))
+	-- one short streak a frame (the round glowing), each at most cfg.tracer.length long, each further on than the last
+	-- by about a frame's flight, all along the shot
+	local longest, along, ahead = 0, true, true
+	for i, q in ipairs(ps) do
+		longest = math.max(longest, dist(q.a, q.b)); along = along and q.dir.y > 0.99
+		if i > 1 then ahead = ahead and q.b.y > ps[i - 1].b.y + (i < #ps and 2 or 0) end   -- the last: part of a frame, to the hit
+	end
+	local frames = {}
+	for _, q in ipairs(ps) do frames[q.t] = (frames[q.t] or 0) + 1 end
+	local perFrame = 0
+	for _, k in pairs(frames) do perFrame = math.max(perFrame, k) end
+	check(string.format("%s: tracer: %d streaks, at most %d a frame, longest %.2f m (cfg %.1f), each a frame further on",
+		id, #ps, perFrame, longest, tc.length), perFrame == 1 and longest <= tc.length + 1e-3 and along and ahead, longest)
+	local first = ps[1]
+	check(string.format("%s: first streak leaves from the muzzle side (%.2f m from it)", id, first and shot and shot.muzzle and dist(first.a, shot.muzzle) or -1),
+		first and shot and shot.muzzle and dist(first.a, shot.muzzle) < 8, first)
 	local used = {}
 	for _, f in ipairs(M.fxLog or {}) do if f.n:find("^deagle_tracers%.trail") then used[f.n] = true end end
 	for i = 1, #M.native do local fx = M.native[i]:match("^%[DN%] fxs (%S+) ") if fx then used[fx] = true end end
@@ -262,8 +268,8 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	ps, hit = pieces(), landed[1] and { pos = landed[1].at }   -- where the round met the body (zones move hit.pos in)
 	local now = true
 	for _, q in ipairs(ps) do now = now and q.t == t1 end
-	check(string.format("%s: NPC at 5 m: %d pieces in the frame of the shot, ending on the hit (%.4f m off)", id, #ps,
-		hit and ps[#ps] and dist(ps[#ps].b, hit.pos) or -1), #ps >= 4 and #ps <= 5 and now and hit and dist(ps[#ps].b, hit.pos) < 1e-3, #ps)
+	check(string.format("%s: NPC at 5 m: %d streak in the frame of the shot, ending on the hit (%.4f m off)", id, #ps,
+		hit and ps[#ps] and dist(ps[#ps].b, hit.pos) or -1), #ps == 1 and now and hit and dist(ps[#ps].b, hit.pos) < 1e-3, #ps)
 	world.npcY = nil
 	M.advance(1.0, 60)
 	-- off: nothing; "flying": the speed's own particle once, no pieces
