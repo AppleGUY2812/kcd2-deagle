@@ -1162,6 +1162,49 @@ function Deagle:HitSound(what, pos, scale)
 	if c.hearing.on then try("AI hears the hit", XGenAIModule.ProduceSound, enum_sound.bullet_hit, pos, c.hearing.hit * (scale or 1)) end
 end
 
+-- deagle_testnpc [light|medium|heavy] [count]: friendly Rattay soldiers in that armour, 5 m ahead, that our rounds don't
+-- hurt (no damage, so no crime); for testing hits, armour and sounds. KCD2's own CombatDebug souls and clothing presets
+-- (Scripts/Debug/CombatDebug.lua: its spawner calls XGenAIModule.SpawnEntity, missing in the shipped game, so this
+-- spawns the NPC class with the soul directly). deagle_testnpc clear removes them.
+local TEST_SOULS = { "61cbb0a5-922d-4eb0-b0d9-6cfdf00807ee", "5977088c-fca3-4a3a-9eb8-be8006d17381", "c60c97b7-f46b-4fc4-b304-ed26bbdb6127" }
+local TEST_ARMOR = {
+	light = { "279bf58e-8394-4306-b80b-c99145b147aa", "e09441c6-e9b9-463e-be4e-4c80acf233c7", "70aab62e-b4e3-4ab4-a982-cb8efb214337" },
+	medium = { "fd1f3c9e-ca9a-4775-b149-6b624b8d9256", "65eae61d-b819-4104-9dd5-cb9fbf3215f8", "e824bdf5-43d8-4e16-b0e4-9bf9b51c8d1d" },
+	heavy = { "5a9c81da-e69f-42c3-8dc5-437ccbf237fa", "fe31e28a-d4c9-4b8c-9e87-82dc40123042", "5a22022a-f8b9-4be1-a64f-241d953982a8" },
+}
+function Deagle:IsTestNpc(e)
+	local ok, name = pcall(e.GetName, e)
+	return ok and type(name) == "string" and name:find("^deagle_test_npc") ~= nil
+end
+function Deagle:TestNpc(args)
+	local words = {}
+	for w in tostring(args or ""):gmatch("%S+") do words[#words + 1] = w:lower() end
+	local n = 1
+	while System.GetEntityByName("deagle_test_npc_" .. n) do n = n + 1 end
+	if words[1] == "clear" then
+		for i = 1, n - 1 do local e = System.GetEntityByName("deagle_test_npc_" .. i); if e then System.RemoveEntity(e.id) end end
+		self:Notify("test NPCs removed")
+		return
+	end
+	local armor = TEST_ARMOR[words[1] or "heavy"] and (words[1] or "heavy") or "heavy"
+	local count = math.max(1, math.min(6, tonumber(words[2] or words[1]) or 1))
+	local pl = self:Player()
+	if not pl then return end
+	local p, d = pl:GetPos(), pl:GetWorldDir()
+	for i = 1, count do
+		local side = (i - (count + 1) / 2) * 1.5
+		local pos = { x = p.x + 5 * d.x - side * d.y, y = p.y + 5 * d.y + side * d.x, z = p.z }
+		local name = "deagle_test_npc_" .. (n + i - 1)
+		local ok, e = pcall(System.SpawnEntity, { class = "NPC", position = pos, name = name, flags = ENTITY_FLAG_NO_SAVE,
+			properties = { sharedSoulGuid = TEST_SOULS[(i - 1) % #TEST_SOULS + 1] } })
+		if ok and e then
+			local set = TEST_ARMOR[armor]
+			try("test NPC armour", function() e.actor:EquipClothingPreset(set[(i - 1) % #set + 1]) end)
+		else log("$4test NPC didn't spawn: " .. tostring(e)) end
+	end
+	self:Notify(string.format("%d test NPC(s) in %s armour, 5 m ahead: our rounds don't hurt them (deagle_testnpc clear)", count, armor))
+end
+
 -- KCD2's AI hears the shot: its own gun_fired sound (rpg_sound.xml, the loudest a person makes; guards look around,
 -- come to investigate, panic up close; docs/kcd2_ai_hearing.md), on the shooter, louder for a louder gun (x the blast
 -- loudness over a 9 mm's, the same blast level the gunshot plays at)
@@ -1347,7 +1390,11 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 				dmg = c.damage * (part == "head" and c.headshotMult or 1) * c.rangeMod ^ ((hit.dist or 0) / 12.7)
 				stam = c.stamina
 			end
-			try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end)
+			local dummy = self:IsTestNpc(e)
+			if dummy then   -- deagle_testnpc: takes no damage (no crime either); says what the hit would have done
+				self:Notify(string.format("test NPC: %s, %s%s, would lose %.0f health %.0f stamina", tostring(part),
+					hard and "armour " or "", stopped and "stopped it" or "went through", dmg or 0, stam or 0))
+			else try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end) end
 			self:HitReact(e, hit, dir, dmg, stam)
 			local killed = false
 			pcall(function() killed = e.actor:GetHealth() <= 0 end)
@@ -3079,6 +3126,7 @@ System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give(Deagle.A
 System.AddCCommand("deagle_arms", "Deagle:Set('vm.arms ' .. (Deagle.Arg([[%1]]):find('mw') and 'mw' or 'medieval'))", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
 System.AddCCommand("deagle_motion", "Deagle:Set('vm.motion ' .. (tonumber(Deagle.Arg([[%1]])) or 1))", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
 System.AddCCommand("deagle_ads", "Deagle:SetOnOff('vm.ads', [[%1]])", "deagle_ads 1|0: aim down sights on right click")
+System.AddCCommand("deagle_testnpc", "Deagle:TestNpc([[%line]])", "deagle_testnpc [light|medium|heavy] [count] | clear: unhurtable friendly soldiers to shoot at")
 System.AddCCommand("deagle_sounds", "Deagle:Set('sounds ' .. (Deagle.Arg([[%1]]):find('orig') and 'original' or 'ron'))", "deagle_sounds ron|original: Ready or Not's sound engine, or the gun mods' own shot and animation sounds")
 System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")
 System.AddCCommand("deagle_hud", "Deagle:SetOnOff('hud.enabled', [[%1]])", "deagle_hud 1|0: ammo HUD on/off")
