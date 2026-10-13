@@ -1185,6 +1185,52 @@ function Deagle:TestNpc(args)
 	self:Notify("test NPC: " .. name .. " takes no damage from your rounds (deagle_testnpc clear)")
 end
 
+-- deagle_testwall: a row of KCD2's own objects 4 m ahead, one per surface type, to shoot and hear / see each impact.
+-- Each is a real game model whose physics proxy has that SurfaceType (found by parsing every .cgf's material chunk and
+-- its .mtl: IPL_Objects paks; scratch notes in MODLOG 2026-10-13). Static, never saved. deagle_testwall clear.
+-- KCD2 has no object with mat_bells (church bells are mat_metal) and none flat in mat_wood_soft / mat_stairs_stone.
+local TEST_WALL = {
+	{ "stone", "objects/manmade/common_decorations/streets_deco/guard_stone_wall_a.cgf" },
+	{ "plaster", "objects/manmade/task_specific_props/food_processing/baking/oven_bread_a.cgf" },
+	{ "pots", "objects/manmade/task_specific_props/container_making/pottery/ceramics_set_c.cgf" },
+	{ "wood door", "objects/manmade/common_fixtures/doors/lvl2_door_a_static.cgf" },
+	{ "wood crate", "objects/manmade/common_furniture/crates/crate_short.cgf" },
+	{ "wicker", "objects/manmade/common_furniture/baskets/basket_with_lid_a.cgf" },
+	{ "metal door", "objects/manmade/common_fixtures/doors/lvl4_door_b_static.cgf" },
+	{ "anvil", "objects/manmade/task_specific_props/metal_industry/smithing/anvil_small.cgf" },
+	{ "glass", "objects/intermediates/elements/window_glass_a.cgf" },
+	{ "sack", "objects/manmade/common_furniture/sacks/sack_b.cgf" },
+	{ "straw target", "objects/manmade/task_specific_props/combat/archery/target_b.cgf" },
+	{ "hay", "objects/manmade/structures/industrial/hay/hay_sheaf_a.cgf" },
+	{ "vegetables", "objects/manmade/food/food/vegetable/basket_rectangular_a_turnip.cgf" },
+	{ "leather", "objects/manmade/common_tools/repairkit/repairkit_armour_big.cgf" },
+}
+function Deagle:TestWall(args)
+	for _, id in ipairs(self.testWall or {}) do if System.GetEntity(id) then System.RemoveEntity(id) end end
+	self.testWall = nil
+	if tostring(args or ""):lower():find("clear") then self:Notify("test wall removed") return end
+	local pl = self:Player()
+	if not pl then return end
+	local p, d = pl:GetPos(), pl:GetWorldDir()
+	local yaw = math.atan2(-d.x, d.y)
+	local gap, ids, names = 1.6, {}, {}
+	for i, w in ipairs(TEST_WALL) do
+		local side = (i - (#TEST_WALL + 1) / 2) * gap
+		local pos = { x = p.x + 4 * d.x + side * d.y, y = p.y + 4 * d.y - side * d.x, z = p.z }
+		local ok, e = pcall(System.SpawnEntity, { class = "BasicEntity", name = "deagle_testwall_" .. i, position = pos,
+			flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = w[2], Physics = { bPhysicalize = true, bRigidBody = false, Mass = 0, Density = -1 } } })
+		if ok and e then
+			pcall(e.SetFlags, e, ENTITY_FLAG_NO_SAVE, 0)
+			pcall(e.SetAngles, e, { x = 0, y = 0, z = yaw })
+			ids[#ids + 1] = e.id
+			names[#names + 1] = w[1]
+		else log("$4test wall: " .. w[1] .. " didn't spawn: " .. tostring(e)) end
+	end
+	self.testWall = ids
+	local msg = "test wall, left to right: " .. table.concat(names, ", ") .. " (deagle_testwall clear)"
+	log(msg); self:Notify(msg)
+end
+
 -- KCD2's AI hears the shot: its own gun_fired sound (rpg_sound.xml, the loudest a person makes; guards look around,
 -- come to investigate, panic up close; docs/kcd2_ai_hearing.md), on the shooter, louder for a louder gun (x the blast
 -- loudness over a 9 mm's, the same blast level the gunshot plays at)
@@ -3108,6 +3154,7 @@ System.AddCCommand("deagle_arms", "Deagle:Set('vm.arms ' .. (Deagle.Arg([[%1]]):
 System.AddCCommand("deagle_motion", "Deagle:Set('vm.motion ' .. (tonumber(Deagle.Arg([[%1]])) or 1))", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
 System.AddCCommand("deagle_ads", "Deagle:SetOnOff('vm.ads', [[%1]])", "deagle_ads 1|0: aim down sights on right click")
 System.AddCCommand("deagle_testnpc", "Deagle:TestNpc([[%line]])", "deagle_testnpc: the NPC you aim at takes no damage from your rounds | deagle_testnpc clear")
+System.AddCCommand("deagle_testwall", "Deagle:TestWall([[%line]])", "deagle_testwall: a row of KCD2 objects, one per surface (stone, plaster, pots, wood, wicker, metal, glass, sack, straw, hay, food, leather), 4 m ahead | clear")
 System.AddCCommand("deagle_shotsound", "Deagle:SetOnOff('shotSound', [[%1]])", "deagle_shotsound 0|1: gunshot sound off / on (impacts still play)")
 System.AddCCommand("deagle_sounds", "Deagle:Set('sounds ' .. (Deagle.Arg([[%1]]):find('orig') and 'original' or 'ron'))", "deagle_sounds ron|original: Ready or Not's sound engine, or the gun mods' own shot and animation sounds")
 System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")

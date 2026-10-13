@@ -393,3 +393,14 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   got no answer.
 - Most likely cause: an NPC spawned outside XGenAIModule. `deagle_testnpc` no longer spawns: it makes the NPC you
   aim at unhurtable instead.
+
+## 2026-10-13: KCD2 objects per surface type (for deagle_testwall)
+- The .cgf and .mtl files are in `IPL_Objects-part0..5.pak`; `Objects-part*.pak` holds only streamed meshes
+  (.cgfm) and textures.
+- What a cgf's material chunk tells you (0x1014 v0x802): the mtl path it uses, and the physics type of each
+  sub-material: 0x1100 = proxy, 0x1000 = physicalised mesh, -1 = render only.
+- The proxy sub-materials line up in order with the .mtl's SurfaceType values.
+- No object uses mat_bells: church bells are mat_metal (bell_alarm.mtl, "proxymetal").
+- Hay sheaves, hay stands and straw targets are mat_thatch. mat_organic_stuff is used for food, fish and mushrooms.
+- mat_wood_soft is only on small items: lute, twigs, whip, and the like.
+- Every stairs-stone object also has a mat_slope proxy, which is pierceable.

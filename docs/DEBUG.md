@@ -36,6 +36,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_shotsound 0` / `1` | gunshot sound off / on (kept). Impacts, ricochets and casings still play: use it to hear impacts on their own |
 | `deagle_sounds ron` / `original` | Ready or Not's sound engine (default), or the gun mods' own shot and animation sounds (kept) |
 | `deagle_env` | where the mod thinks you are (room type + material) and the ray numbers behind it |
+| `deagle_testwall` | a row of real KCD2 objects 4 m ahead, one per surface: stone, plaster, pots, wood door, crate, wicker, metal door, anvil, glass, sack, straw target, hay, vegetables, leather (listed left to right on screen). `deagle_testwall clear` removes them; never saved |
 | `deagle_testnpc` | aim at an NPC (within 60 m) and type it: your rounds don't hurt that NPC (no crime), and each hit shows the body part, whether armour stopped it, and the damage it would have done. `deagle_testnpc clear` ends it. (Spawning test NPCs froze the game, so it marks real ones instead) |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
 | `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
