@@ -89,15 +89,17 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 	int r = st.create(&sys, 0x00020310);   // FMOD 2.03.10, the version Ready or Not ships
 	if (r || !sys) { Log("ron: create %d", r); return false; }
 	st.core(sys, &g_core);
-	unsigned sflags = 0;
+	// SYNCHRONOUS_UPDATE: Studio's command and loading work runs inside our RonUpdate (every camera step) instead of on
+	// its own threads; the mixer still has its own thread. With Studio's own threads, loading Master.bank fails with
+	// FMOD_ERR_PLUGIN_MISSING (54), in game and in ron_coexist live (2026-10-12); in this mode all 7 banks load.
+	unsigned sflags = 0x2;
 	// live: 256-sample mix blocks x 4 (~21 ms at 48 kHz) instead of FMOD's 1024 x 4 (~85 ms): the bang comes with the
 	// muzzle flash, not two frames after it
 	if (!wavOut) st.buffer(g_core, 256, 4);
 	if (wavOut) {
 		st.output(g_core, 5);                 // WAVWRITER_NRT
 		st.format(g_core, 48000, 3, 0);       // 48 kHz stereo, like the FmodRender renders
-		st.buffer(g_core, 1024, 4);
-		sflags = 0x2;                         // SYNCHRONOUS_UPDATE: each update mixes one block
+		st.buffer(g_core, 1024, 4);           // offline: each update mixes one block
 	}
 	r = st.init(sys, 512, sflags, 0, (void*)wavOut);
 	if (r) { Log("ron: init %d", r); st.release(sys); g_core = nullptr; return false; }

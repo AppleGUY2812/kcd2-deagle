@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 
 int main(int argc, char** argv) {
@@ -23,7 +24,8 @@ int main(int argc, char** argv) {
 	int r2 = ((Init)GetProcAddress(c, "FMOD_System_Init"))(kcdSys, 64, 0, nullptr);
 	printf("KCD2's 2.02 core system: create %d init %d\n", r1, r2);
 	printf("module fmod.dll is %p (must stay KCD2's)\n", (void*)GetModuleHandleA("fmod.dll"));
-	if (!RonInit(argv[2], argv[3])) { printf("RonInit FAILED (see ron_coexist.log)\n"); return 1; }
+	bool live = !strcmp(argv[3], "-");   // "-": play to the speakers, like in game
+	if (!RonInit(argv[2], live ? nullptr : argv[3])) { printf("RonInit FAILED (see ron_coexist.log)\n"); return 1; }
 	printf("module fmor.dll %p fmorstudio.dll %p\n", (void*)GetModuleHandleA("fmor.dll"), (void*)GetModuleHandleA("fmorstudio.dll"));
 	const char* snap = argc > 4 ? argv[4] : "snapshot:/Reverb_IN_Small01";
 	const char* outside = argc > 5 ? argv[5] : "0";
@@ -32,11 +34,12 @@ int main(int argc, char** argv) {
 		char name[64] = {}; float v = 0;
 		if (sscanf_s(argv[i], "%63[^=]=%f", name, (unsigned)sizeof(name), &v) == 2) { RonGlobal(name, v); printf("global %s = %.2f\n", name, v); }
 	}
-	RonStep(200);
+	if (live) { for (int i = 0; i < 20; i++) { RonUpdate(nullptr); Sleep(20); } } else RonStep(200);
 	std::string params = std::string("IsOutside=") + outside;
 	bool ok = RonPlay("event:/Weapons/Grizzly/1P Grizzly Fire", params.c_str(), nullptr);
 	printf("play: %d\n", (int)ok);
-	RonStep(190);   // ~4 s at 1024 samples / 48 kHz
+	if (live) { for (int i = 0; i < 200; i++) { RonUpdate(nullptr); Sleep(20); } }
+	else RonStep(190);   // ~4 s at 1024 samples / 48 kHz
 	RonRelease();
 	printf("wrote %s\n", argv[3]);
 	return ok ? 0 : 1;
