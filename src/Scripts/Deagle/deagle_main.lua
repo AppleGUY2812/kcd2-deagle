@@ -83,6 +83,9 @@ Deagle.cfg = {
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F2 / mouse 4 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
+	-- deagle_set debugShotLog 1: every shot logs Henry's eye, the aim, the free camera (plugin log) and the round's place
+	-- each frame to kcd.log ("[Deagle] shot N ..."), to line a recording up with where the round really was
+	debugShotLog = false,
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
 	                          -- shots weren't drawn, in game 2026-10-12)
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
@@ -1410,16 +1413,29 @@ function Deagle:MoveRound(r, h)
 end
 
 function Deagle:StepRound(r, dt)
+	local done = false
 	while dt > 1e-6 do
 		local h = math.min(dt, ROUND_STEP)
 		dt = dt - h
-		if self:MoveRound(r, h) then return true end
+		if self:MoveRound(r, h) then done = true; break end
 	end
-	return false
+	if r.logId then
+		log(string.format("shot %d t=%.4f pos %.2f %.2f %.2f speed %.1f dist %.1f%s", r.logId, System.GetCurrTime(), r.pos.x, r.pos.y,
+			r.pos.z, vlen(r.vel), r.dist, done and (r.landed and " HIT" or " END") or ""))
+	end
+	return done
 end
 
 function Deagle:LaunchRound(pos, dir, phys, trail)
 	local r = { pos = pos, vel = vscale(dir, phys.velocity), phys = phys, dist = 0, age = 0, t = System.GetCurrTime(), trail = trail }
+	if self.cfg.debugShotLog then
+		self.shotLogN = (self.shotLogN or 0) + 1
+		r.logId = self.shotLogN
+		log(string.format("shot %d t=%.4f FIRED eye %.2f %.2f %.2f dir %.4f %.4f %.4f speed %.1f gun %s fov %.3f", r.logId, r.t, pos.x, pos.y, pos.z,
+			dir.x, dir.y, dir.z, phys.velocity, self.gun.id, System.GetViewCameraFov and System.GetViewCameraFov() or -1))
+		if self.fc then log(string.format("shot %d freecam aim pitch %.4f yaw %.4f", r.logId, self.fc.camP, self.fc.camY)) end
+		self:Native("freecam status")   -- the free camera's place, in the plugin log
+	end
 	if self:StepRound(r, self.frameDt or 1 / 30) then return r end   -- landed in this frame
 	self.rounds = self.rounds or {}
 	table.insert(self.rounds, r)
