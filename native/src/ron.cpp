@@ -90,6 +90,9 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 	if (r || !sys) { Log("ron: create %d", r); return false; }
 	st.core(sys, &g_core);
 	unsigned sflags = 0;
+	// live: 256-sample mix blocks x 4 (~21 ms at 48 kHz) instead of FMOD's 1024 x 4 (~85 ms): the bang comes with the
+	// muzzle flash, not two frames after it
+	if (!wavOut) st.buffer(g_core, 256, 4);
 	if (wavOut) {
 		st.output(g_core, 5);                 // WAVWRITER_NRT
 		st.format(g_core, 48000, 3, 0);       // 48 kHz stereo, like the FmodRender renders

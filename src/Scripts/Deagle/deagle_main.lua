@@ -2370,9 +2370,21 @@ end
 -- Cues follow the clip's own playhead (GetAnimationTime, 0..1 through the clip; checked every frame by CueTick), not a
 -- timer: in F9 slow motion the viewmodel's animation runs ~1.5x faster than game time while timers run on game time, so
 -- timed sounds fell behind the later they came (mag-in ~2 s, slide close ~5 s late, the user's recording 2026-10-12).
+-- a gun's Ready or Not handling cues (guns/ron_handling.lua) as plain cues: each event starts early by its click time,
+-- so the click lands on the clip's moment ("ron:<event>", or "ronfeet:<event>" at the player's feet)
+function Deagle:RonCues(key)
+	local rc = self.gun.ronCues and self.gun.ronCues[key]
+	if not rc then return nil end
+	local out = {}
+	for _, c in ipairs(rc) do
+		local lead = c.start and 0 or (self.ronClick[c[2]] or 0) / 1000
+		out[#out + 1] = { math.max(0, c[1] - lead), (c.feet and "ronfeet:" or "ron:") .. c[2] }
+	end
+	return out
+end
 function Deagle:PlayCues(key)
 	local g = self.gun
-	local cues = g.cues[key] or ((key == "shoot" or key == "shootEmpty") and SHOT_CUE) or nil
+	local cues = (g.ronCues and self:RonCues(key)) or g.cues[key] or ((key == "shoot" or key == "shootEmpty") and SHOT_CUE) or nil
 	if not cues then return end
 	local a = self.cfg.vm.anims[key]
 	if key == "shoot" then a = a[((self.vmShot or 1) - 1) % #a + 1] end
@@ -2387,6 +2399,15 @@ function Deagle:PlayCues(key)
 end
 function Deagle:CueFire(key, file)
 	local v = self.cfg.vm.soundVol
+	local ev = file:match("^ron:(.+)$")
+	if ev then return self:RonHere(ev) end
+	ev = file:match("^ronfeet:(.+)$")
+	if ev then
+		local p = self:Player()
+		local at = p and p:GetWorldPos()
+		if at and self.native then self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|", v.ron, at.x, at.y, at.z + 0.05, ev)) end
+		return
+	end
 	if file == "shot" then
 		local ron = self.gun.ron
 		if ron then
@@ -2800,6 +2821,10 @@ function Deagle:RonWarm()
 	self.envMixNow = nil   -- the plugin's engine may be new: send every weight again
 	for _, g in pairs(self.guns) do
 		if g.ron then for _, ev in pairs(g.ron) do self:Native("ronload " .. ev) end end
+		local seen = {}
+		for _, list in pairs(g.ronCues or {}) do
+			for _, c in ipairs(list) do if not seen[c[2]] then seen[c[2]] = true; self:Native("ronload " .. c[2]) end end
+		end
 	end
 	for _, ev in ipairs(self.ronHitEvents) do self:Native("ronload " .. ev) end
 end
@@ -3188,6 +3213,7 @@ function Deagle:LoadGuns()
 	pcall(load, "Scripts/Deagle/guns/shot_gain.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end
+	pcall(load, "Scripts/Deagle/guns/ron_handling.lua")   -- after the guns: it adds their Ready or Not handling cues
 end
 Deagle:LoadGuns()
 if Deagle.gunId and Deagle.gunId ~= "deagle" and Deagle.guns[Deagle.gunId] then Deagle:UseGun(Deagle.gunId)   -- keep it across a dev reload

@@ -29,11 +29,14 @@ step("one shot + reload", function()
 	local n0, t0 = #M.native, M.t
 	act("deagle_reload"); M.advance(4)
 	-- the reload's sounds land where its clip is (they follow the playhead): each at its cue time / Rate, within a frame
-	local cues = g.cues.reload or {}
+	-- (a gun with Ready or Not handling: each RoN event starts its click time early, "ron <vol> <event>|")
+	local cues = Deagle:RonCues("reload") or g.cues.reload or {}
 	local worst, heard = 0, 0
 	for _, c in ipairs(cues) do
+		local ev = c[2]:match("^ron:(.+)$")
+		local want = ev and ("ron [%d%.]+ " .. ev:gsub("%p", "%%%0") .. "|") or ("snd " .. c[2]:gsub("%p", "%%%0"))
 		for i = n0 + 1, #M.native do
-			if M.native[i]:find("snd " .. c[2]:gsub("%p", "%%%0"), 1) then
+			if M.native[i]:find(want) then
 				heard = heard + 1
 				worst = math.max(worst, math.abs((M.nativeT[i] - t0) - c[1] / Deagle:Rate("reload")))
 				break

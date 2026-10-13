@@ -104,6 +104,19 @@ check("every hit surface has an audible RoN Surface: missing " .. table.concat(m
 n0 = #M.native
 Deagle:RonHere(Deagle.gun.ron.dry)
 check("dry fire: " .. M.native[#M.native], M.native[#M.native]:find("^%[DN%] ron [%d%.]+ event:/Weapons/FN57/FN57 Dry Fire|$") ~= nil, M.native[#M.native])
+-- every Ready or Not handling cue can start early enough for its click to land on its moment, and every event has a click time
+local late, unknown = {}, {}
+for id, g in pairs(Deagle.guns) do
+	for key, list in pairs(g.ronCues or {}) do
+		for _, c in ipairs(list) do
+			local click = Deagle.ronClick[c[2]]
+			if not click then unknown[#unknown + 1] = c[2]
+			elseif not c.start and c[1] < click / 1000 - 0.005 then late[#late + 1] = string.format("%s %s %s %.0f ms", id, key, c[2], click - 1000 * c[1]) end
+		end
+	end
+end
+check("RoN handling clicks all land on time: " .. table.concat(late, "; "), #late == 0, #late)
+check("every RoN handling event has a measured click: " .. table.concat(unknown, "; "), #unknown == 0, #unknown)
 Deagle:UseGun("glock_17")
 check("a gun without RoN events plays its own recordings", (Deagle:ShotFile() or ""):find("%.wav$") ~= nil, Deagle:ShotFile())
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
