@@ -117,14 +117,12 @@ for id, g in pairs(Deagle.guns) do
 end
 check("RoN handling clicks all land on time: " .. table.concat(late, "; "), #late == 0, #late)
 check("every RoN handling event has a measured click: " .. table.concat(unknown, "; "), #unknown == 0, #unknown)
--- an impact 12 m away tells RoN's event its distance (the event's own fade: silent from ~20 m)
+-- an impact: RoN's event, its distance left to the plugin (from the listener, the free camera too) as PropagateDistance=@
 n0 = #M.native
 local cp = System.GetViewCameraPos()
 Deagle:HitSound(8, { x = cp.x, y = cp.y + 12, z = cp.z }, 1)
-for _, t in ipairs(M.timers) do if t.fn and t.at <= M.t + 1 then pcall(t.fn) end end
-local imp
-for i = n0 + 1, #M.native do imp = imp or M.native[i]:match("Surface=8 Occlusion=0 PropagateDistance=([%d%.]+)") end
-check("impact 12 m away: PropagateDistance " .. tostring(imp), tonumber(imp) and math.abs(tonumber(imp) - 12) < 0.2, imp)
+local imp = M.native[#M.native]
+check("impact: " .. tostring(imp), #M.native == n0 + 1 and imp:find("^%[DN%] ron3 [%d%.]+ [%-%d%.]+ [%-%d%.]+ [%-%d%.]+ event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces|Surface=8 Occlusion=0 PropagateDistance=@$") ~= nil, imp)
 -- deagle_sounds original: the gun mod's own shot and animation sounds, no RoN events from the gun
 M.console("deagle_sounds", "original")
 n0 = #M.native

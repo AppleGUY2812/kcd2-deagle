@@ -15,6 +15,9 @@ void RonUpdate(const float* cam);
 bool RonPlay(const char* event, const char* params, const float* at, float vol = 1.0f);
 // load an event's audio now (it loads in the background), so its first play has no delay
 bool RonLoad(const char* event);
+// a 3D event at a world point, heard after the sound's travel time from there to the listener (343 m/s, stretched by
+// the game speed); "PropagateDistance=@" in params becomes that distance in m (RoN's impact events fade by it)
+bool RonPlayAt(const char* event, const char* params, const float* at, float vol);
 void RonGlobal(const char* name, float value);
 // start (on) or stop (fade out as authored) a snapshot or any looping event, e.g. snapshot:/Reverb_IN_Small01
 bool RonHold(const char* event, bool on);

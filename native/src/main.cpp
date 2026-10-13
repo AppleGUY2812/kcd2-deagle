@@ -393,7 +393,7 @@ static void PlaySound3D(const std::string& rel, float vol, const float* at, floa
 		int r = fm.createSound(g_fmod, path.c_str(), 0x00000001 | 0x00000010 | 0x00000100, nullptr, &snd);   // LOOP_OFF|3D|CREATESAMPLE
 		if (r != 0) { Log("sound load failed %d: %s", r, path.c_str()); snd = nullptr; g_sounds.erase(rel + "|3d"); return; }
 	}
-	UpdateListener(g_cam);
+	{ float fc[12]; UpdateListener(Freecam_Matrix(fc) ? fc : g_cam); }
 	void* ch = nullptr;
 	if (fm.play(g_fmod, snd, nullptr, 1, &ch) != 0 || !ch) return;    // paused: placed before it makes a sound
 	FVec pos = ToFmod(at[0], at[1], at[2]), vel = { 0, 0, 0 };
@@ -735,11 +735,12 @@ static void Command(const char* line) {
 			if (!RonPlay(ev.c_str(), params.c_str(), nullptr, v)) Log("ron: %s didn't play", ev.c_str());
 		}
 	}
-	else if (!strcmp(cmd, "ron3")) {   // ron3 <vol> <x> <y> <z> <event path>|<name=value ...>: at a world point
+	else if (!strcmp(cmd, "ron3")) {   // ron3 <vol> <x> <y> <z> <event path>|<name=value ...>: at a world point, heard after
+	                                     // its travel time (RonPlayAt; PropagateDistance=@ = the distance to the listener)
 		float v = 1.0f, at[3] = {}; int used = 0;
 		if (sscanf_s(rest, "%f %f %f %f %n", &v, &at[0], &at[1], &at[2], &used) >= 4 && used > 0 && Finite(&v, 1) && Finite(at, 3) && RonEnsure()) {
 			std::string ev, params; RonSplit(rest + used, ev, params);
-			if (!RonPlay(ev.c_str(), params.c_str(), at, v)) Log("ron: %s didn't play", ev.c_str());
+			if (!RonPlayAt(ev.c_str(), params.c_str(), at, v)) Log("ron: %s didn't play", ev.c_str());
 		}
 	}
 	else if (!strcmp(cmd, "ronload")) {   // ronload <event path>: the gun's events, at draw (no load delay on the first shot)
@@ -859,8 +860,12 @@ static void OnCamera(uintptr_t camera) {
 	uint64_t n = ++g_viewFrames;
 	UpdateMotion(g_cam);
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
-	if (g_fmod) { UpdateListener(g_cam); fm.update(g_fmod); }
-	if (RonReady()) RonUpdate(g_cam);
+	{   // our sounds are heard from where the view is: the free camera while it's on, else Henry's eye
+		float fc[12];
+		const float* ear = Freecam_Matrix(fc) ? fc : g_cam;
+		if (g_fmod) { UpdateListener(ear); fm.update(g_fmod); }
+		if (RonReady()) RonUpdate(ear);
+	}
 	ApplyFilters();
 	TouchPieces();
 	ReleaseOldPieces(false);

@@ -1128,12 +1128,13 @@ function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip)
 	return out
 end
 
--- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (direction), late by the time sound
--- takes to get here (343 m/s). what = a RoN Surface index (Bullet Impact Surfaces) or a RON_HIT key.
+-- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (direction). what = a RoN Surface
+-- index (Bullet Impact Surfaces) or a RON_HIT key.
 -- These events don't fade with FMOD's own 3D distance: RoN's game code sets PropagateDistance (m along the sound's path)
 -- and the event's volume follows it (impacts measured: -3 dB at 5 m, -22 dB at 10 m, silent from 20 m; ricochets carry
--- to ~45 m). KCD2 has no portal volumes, so the path is the straight line: PropagateDistance = the distance, Occlusion
--- 0. KCD2's AI hears it too (enum_sound.bullet_hit at the spot).
+-- to ~45 m). KCD2 has no portal volumes, so the path is the straight line. The plugin works it out from wherever the
+-- listener is (the free camera too) and holds the sound back by its travel time (343 m/s): "PropagateDistance=@".
+-- KCD2's AI hears it too (enum_sound.bullet_hit at the spot).
 local SOUND_SPEED = 343
 local RON_IMPACT = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces"
 local RON_HIT = {
@@ -1149,16 +1150,11 @@ for _, ev in pairs(RON_HIT) do Deagle.ronHitEvents[#Deagle.ronHitEvents + 1] = e
 function Deagle:HitSound(what, pos, scale)
 	local c = self.cfg
 	if self.native and what then
-		local d = vlen(vsub(pos, System.GetViewCameraPos()))
 		local ev, params
-		local prop = string.format("Occlusion=0 PropagateDistance=%.1f", math.min(d, 250))
+		local prop = "Occlusion=0 PropagateDistance=@"
 		if type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d %s", what, prop)
 		else ev, params = RON_HIT[what], prop end
-		if ev then
-			local cmd = string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume, pos.x, pos.y, pos.z, ev, params)
-			local delay = math.floor(1000 * d / SOUND_SPEED)
-			if delay > 10 then Script.SetTimer(delay, function() Deagle:Native(cmd) end) else self:Native(cmd) end
-		end
+		if ev then self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume, pos.x, pos.y, pos.z, ev, params)) end
 	end
 	if c.hearing.on then try("AI hears the hit", XGenAIModule.ProduceSound, enum_sound.bullet_hit, pos, c.hearing.hit * (scale or 1)) end
 end

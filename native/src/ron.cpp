@@ -3,9 +3,11 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 // The FMOD C API, by GetProcAddress from RoN's renamed DLLs (KCD2's own fmod.dll / fmodstudio.dll 2.02 are loaded
 // under the original names; the studio copy's import was patched to fmor.dll, so the two versions never mix).
@@ -47,6 +49,16 @@ static float g_speed = 1.0f, g_vol = 1.0f;
 static F3D g_listener = { {0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 1, 0} };
 static std::unordered_map<std::string, void*> g_desc;     // event path -> description (sample data loaded on first use)
 static std::unordered_map<std::string, void*> g_held;     // snapshots / loops started by RonHold
+static float g_ear[3] = {};                                 // the listener, CryEngine axes (the free camera when it's on)
+struct Pending { double due; std::string ev, params; float at[3]; float vol; };
+static std::vector<Pending> g_pending;                      // RonPlayAt sounds still on their way (speed of sound)
+static double Now() {
+	static LARGE_INTEGER f{}; LARGE_INTEGER c;
+	if (!f.QuadPart) QueryPerformanceFrequency(&f);
+	QueryPerformanceCounter(&c);
+	return (double)c.QuadPart / (double)f.QuadPart;
+}
+static bool PlayLocked(const char* event, const char* params, const float* at, float vol);
 
 static const char* kBanks[] = { "Master.bank", "Master.strings.bank", "Weapons.bank", "Interactions.bank", "UI.bank", "SWAT.bank",
 	"Global Amb.bank" };
@@ -130,6 +142,7 @@ void RonUpdate(const float* cam) {
 	std::lock_guard<std::mutex> lk(g_mu);
 	if (!g_sys) return;
 	if (cam) {
+		g_ear[0] = cam[3]; g_ear[1] = cam[7]; g_ear[2] = cam[11];
 		g_listener.pos = ToF(cam[3], cam[7], cam[11]);
 		g_listener.fwd = ToF(cam[1], cam[5], cam[9]);
 		g_listener.up = ToF(cam[2], cam[6], cam[10]);
@@ -137,6 +150,15 @@ void RonUpdate(const float* cam) {
 		static int said = 0;
 		if (r && said++ < 3) Log("ron: listener rejected (%d): fwd %.3f %.3f %.3f up %.3f %.3f %.3f", r, g_listener.fwd.x, g_listener.fwd.y,
 			g_listener.fwd.z, g_listener.up.x, g_listener.up.y, g_listener.up.z);
+	}
+	if (!g_pending.empty()) {   // sounds whose travel time is up
+		double t = Now();
+		std::vector<Pending> due;
+		for (size_t i = 0; i < g_pending.size();) {
+			if (g_pending[i].due <= t) { due.push_back(std::move(g_pending[i])); g_pending.erase(g_pending.begin() + i); }
+			else i++;
+		}
+		for (auto& p : due) PlayLocked(p.ev.c_str(), p.params.c_str(), p.at, p.vol);
 	}
 	st.update(g_sys);
 }
@@ -154,7 +176,36 @@ static void* Desc(const char* path) {
 
 bool RonPlay(const char* event, const char* params, const float* at, float vol) {
 	std::lock_guard<std::mutex> lk(g_mu);
-	if (!g_sys) return false;
+	return g_sys && PlayLocked(event, params, at, vol);
+}
+
+static float EarDistance(const float* at) {
+	float dx = at[0] - g_ear[0], dy = at[1] - g_ear[1], dz = at[2] - g_ear[2];
+	return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+bool RonPlayAt(const char* event, const char* params, const float* at, float vol) {
+	std::lock_guard<std::mutex> lk(g_mu);
+	if (!g_sys || !at) return false;
+	float d = EarDistance(at);
+	double delay = d / 343.0 / (g_speed > 0.01f ? g_speed : 0.01f);   // slow motion stretches it like the sound itself
+	if (delay < 0.01) return PlayLocked(event, params, at, vol);
+	Pending p{ Now() + delay, event, params ? params : "", { at[0], at[1], at[2] }, vol };
+	g_pending.push_back(std::move(p));
+	return Desc(event) != nullptr;
+}
+
+static bool PlayLocked(const char* event, const char* params, const float* at, float vol) {
+	// "PropagateDistance=@": RoN's game code gives its impact events the length of the sound's path; ours is the straight
+	// line from the listener, worked out now (the free camera may have moved while the sound travelled)
+	std::string ps = params ? params : "";
+	size_t k = ps.find("PropagateDistance=@");
+	if (k != std::string::npos) {
+		char num[32];
+		snprintf(num, sizeof(num), "%.1f", at ? (EarDistance(at) < 250.0f ? EarDistance(at) : 250.0f) : 0.0f);
+		ps.replace(k + 18, 1, num);
+	}
+	params = ps.c_str();
 	void* d = Desc(event);
 	if (!d) return false;
 	void* inst = nullptr;
