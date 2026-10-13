@@ -127,6 +127,22 @@ def render(i):
 
 with ThreadPoolExecutor(3) as ex: list(ex.map(render, range(len(rows))))
 
+# FmodRender records its ~4.8 s silent warm-up (room snapshots fading in, audio loading): cut each file to its sound,
+# from 50 ms before the first sample over the noise floor to 100 ms after the last
+import wave
+import numpy as np
+for r in rows:
+    if not r["ok"]: continue
+    path = os.path.join(OUT, r["file"])
+    with wave.open(path) as w:
+        prm, a = w.getparams(), np.frombuffer(w.readframes(w.getnframes()), np.int16).reshape(-1, w.getnchannels())
+    loud = np.nonzero(np.abs(a).max(1) > 30)[0]
+    if len(loud) == 0: r["silent"] = True; continue
+    sr = prm.framerate
+    a = a[max(0, loud[0] - sr // 20): min(len(a), loud[-1] + sr // 10)]
+    with wave.open(path, "wb") as w:
+        w.setparams(prm); w.writeframes(a.tobytes())
+
 out, sec = [], None
 for i, r in enumerate(rows):
     if r["section"] != sec:
@@ -134,7 +150,7 @@ for i, r in enumerate(rows):
         sec = r["section"]
         out.append(f"<h2>{html.escape(sec)}</h2><table><tr><th>#</th><th>used for</th><th>sound</th><th>pick</th><th></th></tr>")
     cls = "cur" if r["pick"] == "current" else "opt"
-    play = f'<audio controls preload="none" src="{r["file"]}"></audio>' if r["ok"] else f'<b>render failed</b> {html.escape(r.get("err", ""))}'
+    play = "<b>silent in Ready or Not's engine</b>" if r.get("silent") else f'<audio controls preload="none" src="{r["file"]}"></audio>' if r["ok"] else f'<b>render failed</b> {html.escape(r.get("err", ""))}'
     out.append(f'<tr class="{cls}"><td>{i + 1}</td><td>{html.escape(r["what"])}</td><td>{html.escape(r["label"])}</td>'
                f'<td>{html.escape(r["pick"])}</td><td>{play}</td></tr>')
 out.append("</table>")

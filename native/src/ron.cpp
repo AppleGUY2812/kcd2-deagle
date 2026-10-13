@@ -133,7 +133,10 @@ void RonUpdate(const float* cam) {
 		g_listener.pos = ToF(cam[3], cam[7], cam[11]);
 		g_listener.fwd = ToF(cam[1], cam[5], cam[9]);
 		g_listener.up = ToF(cam[2], cam[6], cam[10]);
-		st.listener(g_sys, 0, &g_listener, nullptr);
+		int r = st.listener(g_sys, 0, &g_listener, nullptr);
+		static int said = 0;
+		if (r && said++ < 3) Log("ron: listener rejected (%d): fwd %.3f %.3f %.3f up %.3f %.3f %.3f", r, g_listener.fwd.x, g_listener.fwd.y,
+			g_listener.fwd.z, g_listener.up.x, g_listener.up.y, g_listener.up.z);
 	}
 	st.update(g_sys);
 }
@@ -170,7 +173,9 @@ bool RonPlay(const char* event, const char* params, const float* at, float vol) 
 		F3D a = g_listener;
 		if (at) a.pos = ToF(at[0], at[1], at[2]);
 		a.vel = { 0, 0, 0 };
-		st.inst3d(inst, &a);
+		int r3 = st.inst3d(inst, &a);
+		static int said = 0;
+		if (r3 && said++ < 3) Log("ron: %s position rejected (%d)", event, r3);
 	}
 	int r = st.start(inst);
 	st.instRelease(inst);   // freed by the engine when it finishes

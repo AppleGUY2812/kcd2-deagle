@@ -29,6 +29,7 @@ int main(int argc, char** argv) {
 	printf("module fmor.dll %p fmorstudio.dll %p\n", (void*)GetModuleHandleA("fmor.dll"), (void*)GetModuleHandleA("fmorstudio.dll"));
 	const char* snap = argc > 4 ? argv[4] : "snapshot:/Reverb_IN_Small01";
 	const char* outside = argc > 5 ? argv[5] : "0";
+	if (const char* pre = getenv("RON_EVENT")) printf("load %s: %d\n", pre, (int)RonLoad(pre));   // as the game does at the handshake
 	printf("hold %s: %d\n", snap, (int)RonHold(snap, true));
 	for (int i = 6; i < argc; i++) {
 		char name[64] = {}; float v = 0;
@@ -36,7 +37,16 @@ int main(int argc, char** argv) {
 	}
 	if (live) { for (int i = 0; i < 20; i++) { RonUpdate(nullptr); Sleep(20); } } else RonStep(200);
 	std::string params = std::string("IsOutside=") + outside;
-	bool ok = RonPlay("event:/Weapons/Grizzly/1P Grizzly Fire", params.c_str(), nullptr);
+	// RON_EVENT / RON_PARAMS / RON_AT=x,y,z (CryEngine axes; the listener stays at the origin facing +y): any event
+	const char* ev = getenv("RON_EVENT");
+	if (const char* p = getenv("RON_PARAMS")) params = p;
+	float at[3] = {}; const char* as = getenv("RON_AT");
+	bool hasAt = as && sscanf_s(as, "%f,%f,%f", &at[0], &at[1], &at[2]) == 3;
+	if (hasAt) {   // the listener: camera at the origin looking down +y, z up (3x4, columns x / forward / up / pos)
+		float cam[12] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0 };
+		RonUpdate(cam);
+	}
+	bool ok = RonPlay(ev ? ev : "event:/Weapons/Grizzly/1P Grizzly Fire", params.c_str(), hasAt ? at : nullptr);
 	printf("play: %d\n", (int)ok);
 	if (live) { for (int i = 0; i < 200; i++) { RonUpdate(nullptr); Sleep(20); } }
 	else RonStep(190);   // ~4 s at 1024 samples / 48 kHz
