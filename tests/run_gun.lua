@@ -62,7 +62,7 @@ for i = 1, #modes do
 	for i = n0 + 1, #M.native do
 		local f = M.native[i]:match("^%[DN%] snd (%S+)")
 		for _, sf in ipairs(g.shotSounds or {}) do if f == sf then shots = shots + 1 end end
-		if f and g.envShots and f:find("^" .. g.envShots .. "/[%w_]+/shot%-%d%.wav$") then shots = shots + 1 end   -- the place's take
+		if f and g.envShots and f:find("^" .. g.envShots .. "/[%w_]+/shot%-%d+%.wav$") then shots = shots + 1 end   -- the place's take
 	end
 	modeResults[#modeResults + 1] = { mode = mode, used = before - after, started = table.concat(started, " "), shots = shots }
 	act("deagle_firemode"); M.advance(0.1)

@@ -60,7 +60,7 @@ for i = 1, 40 do
 	last = f
 end
 local nfiles = 0
-for f in pairs(files) do nfiles = nfiles + 1; if not f:find("^mk5/in_cave_stone/shot%-%d%.wav$") then nfiles = -99 end end
+for f in pairs(files) do nfiles = nfiles + 1; if not f:find("^mk5/in_cave_stone/shot%-%d+%.wav$") then nfiles = -99 end end
 check(string.format("shots play the cellar's takes (%d different), never the same twice running (%d)", nfiles, repeats), nfiles >= 6 and repeats == 0, nfiles)
 check("every take has a gain in shot_gain.lua", Deagle.shotGain["mk5/in_cave_stone/shot-1.wav"] ~= nil and Deagle.shotGain["mk5/out_forest/shot-8.wav"] ~= nil, nil)
 Deagle:UseGun("glock_17")
