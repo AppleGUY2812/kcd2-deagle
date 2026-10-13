@@ -383,3 +383,14 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   instead of ~20; shot log t= advanced 0.21 s over 1.68 s real = 0.125). So in slow motion every timer-scheduled cue drifts
   late with its time in the clip (mag-in +2.2 s real, slide close +5.2 s): not a cue error. Judging sync in slow motion
   needs cues driven by the clip's own time (e.g. polling GetAnimationTime), not SetTimer.
+
+## 2026-10-13: spawned test NPCs froze the game
+- `CombatDebug.SpawnFriend` (Scripts/Debug/CombatDebug.lua) fails in the shipped game: it calls `XGenAIModule.SpawnEntity`,
+  which is nil.
+- `System.SpawnEntity{ class = "NPC", properties = { sharedSoulGuid = ... } }` returns an entity with soul and actor,
+  and `actor:EquipClothingPreset` works. But a few minutes after two such spawns (game paused in the menu, plus a dev
+  reload), the game hung: the window went "Not Responding", the plugin's camera frames slowed, then stopped, and rcon
+  got no answer.
+- Most likely cause: an NPC spawned outside XGenAIModule. `deagle_testnpc` spawning is now off
+  (`cfg.testNpcSpawn`).
+- Safer idea: make an existing NPC unhurtable instead of spawning one.

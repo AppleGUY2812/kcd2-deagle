@@ -93,6 +93,7 @@ Deagle.cfg = {
 	-- "original" = the gun mods' own recordings (MWII Deagle, Insurgency / MWII Glock: shots and animation sounds).
 	-- Impacts and casings are Ready or Not's either way. deagle_sounds ron|original
 	sounds = "ron",
+	testNpcSpawn = false,     -- deagle_testnpc spawning: froze the game once (see Deagle:TestNpc)
 	env = { on = true, period = 0.25, fade = 0.4, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
 		ringInside = 12, small = 3.5, hall = 7, corrNarrow = 2.5, corrWide = 6, share = 0.5, vegShare = 0.25, trunks = 6 },
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
@@ -1184,6 +1185,12 @@ function Deagle:TestNpc(args)
 	if words[1] == "clear" then
 		for i = 1, n - 1 do local e = System.GetEntityByName("deagle_test_npc_" .. i); if e then System.RemoveEntity(e.id) end end
 		self:Notify("test NPCs removed")
+		return
+	end
+	-- spawning the NPC class with a soul (outside XGenAIModule) froze the game a few minutes later (2026-10-13, two
+	-- spawned in a paused game; window "Not Responding", plugin frames stopped): off until a safe way is found
+	if not self.cfg.testNpcSpawn then
+		self:Notify("deagle_testnpc is off: spawning froze the game (deagle_set testNpcSpawn 1 to force)")
 		return
 	end
 	local armor = TEST_ARMOR[words[1] or "heavy"] and (words[1] or "heavy") or "heavy"
