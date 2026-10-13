@@ -391,6 +391,5 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   and `actor:EquipClothingPreset` works. But a few minutes after two such spawns (game paused in the menu, plus a dev
   reload), the game hung: the window went "Not Responding", the plugin's camera frames slowed, then stopped, and rcon
   got no answer.
-- Most likely cause: an NPC spawned outside XGenAIModule. `deagle_testnpc` spawning is now off
-  (`cfg.testNpcSpawn`).
-- Safer idea: make an existing NPC unhurtable instead of spawning one.
+- Most likely cause: an NPC spawned outside XGenAIModule. `deagle_testnpc` no longer spawns: it makes the NPC you
+  aim at unhurtable instead.
