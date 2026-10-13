@@ -363,3 +363,10 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   The capture repeats a frame until the game redraws, so count unique frames. 2026-10-12, gun mode: first recoil
   frame without flash, flash on the next game frame, gone the one after (game at ~25 fps while recorded unfocused).
   Size and colour look right (white-hot, orange edge); the flash is one game frame late.
+- Tracers, settled in game 2026-10-12 evening: a single Lua-spawned piece only showed with >= 0.4 s of life (0.12 / 0.25
+  never; the game skips a new emitter for ~0.3 s). Plugin-spawned pieces whose location the plugin sets again for their
+  first 3 camera steps (like the flash it moves every frame) show the frame after the shot. With pieces glowing about
+  one frame (fx "auto": trail_025 at >= 50 fps), the tracer is one short white-hot streak running with the round, one
+  per frame, like the user's filmed .50 cal reference; user recording 17-17-41 (Glock mag dump, freecam from the side):
+  flash on frame 0, streak from frame 1 at the muzzle, then one streak per frame receding along the aim line.
+  Rounds / tracers now fly 1000 m (round life 6 s).
