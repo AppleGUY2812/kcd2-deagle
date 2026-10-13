@@ -13,6 +13,7 @@
 #include "gore.h"
 #include "settings.h"
 #include "freecam.h"
+#include "ron.h"
 #include <deque>
 #include <mutex>
 #include <string>
@@ -334,6 +335,7 @@ static float g_soundSpeed = 1.0f;   // game speed (F9 slow motion): our sounds p
 static void* g_fmod = nullptr;
 static std::unordered_map<std::string, void*> g_sounds;
 static std::string g_soundRoot;
+static std::string g_ronDir;     // <game>\Mods\deagle\ron\: Ready or Not's FMOD + banks (ron.cpp)
 static float g_masterVol = 1.0f;
 
 // every sound of ours, playing or not, at the game's speed (the master channel group's pitch: 0.1 = ten times slower
@@ -411,6 +413,35 @@ static void PlaySoundFile(const std::string& rel, float vol) {
 	}
 	void* ch = nullptr;
 	if (fm.play(g_fmod, snd, nullptr, 0, &ch) == 0 && ch) fm.vol(ch, vol * g_masterVol);
+}
+
+// Ready or Not's own engine (ron.cpp), brought up on the first gun sound. Its final fader is 0.5 x the mod's volume:
+// RoN's indoor shots go over full scale at 1.0 (measured on the renders), and the mod's gunshot levels were set
+// against renders made at 0.5. ReverbMaster runs for good: its 12 snapshots follow the Reverb* globals Lua sets.
+static void RonState(bool ok) {
+	std::lock_guard<std::mutex> lk(g_consoleMu);
+	g_console.push_back(ok ? "deagle_ron_state 1" : "deagle_ron_state 0");
+}
+static bool RonEnsure() {
+	static bool tried = false;
+	if (RonReady()) return true;
+	if (tried) return false;
+	tried = true;
+	bool ok = RonInit(g_ronDir);
+	if (ok) {
+		RonVolume(0.5f * g_masterVol);
+		RonSpeed(g_soundSpeed);
+		ok = RonHold("event:/Levels/Reverbs/ReverbMaster", true);
+		if (!ok) Log("ron: ReverbMaster didn't start");
+	}
+	RonState(ok);
+	return ok;
+}
+// "<event path>|<name=value ...>": event paths have spaces
+static void RonSplit(const char* s, std::string& ev, std::string& params) {
+	const char* bar = strchr(s, '|');
+	ev = bar ? std::string(s, bar - s) : std::string(s);
+	params = bar ? std::string(bar + 1) : std::string();
 }
 
 // ---- hit reactions: KCD2's own flinch / stagger on a living actor (RE: docs/kcd2_hit_reaction_re.md, WHGame 1.5.6)
@@ -692,7 +723,32 @@ static void Command(const char* line) {
 		if (sscanf_s(rest, "%259s %f %f %f %f %f %f", file, (unsigned)sizeof(file), &v, &at[0], &at[1], &at[2], &mn, &mx) >= 5 && Finite(at, 3))
 			PlaySound3D(file, v, at, mn, mx);
 	}
-	else if (!strcmp(cmd, "speed")) { float v = (float)atof(rest); if (Finite(&v, 1)) SetSoundSpeed(v); Log("sound speed %.2f", g_soundSpeed); }
+	else if (!strcmp(cmd, "speed")) {
+		float v = (float)atof(rest);
+		if (Finite(&v, 1)) { SetSoundSpeed(v); if (RonReady()) RonSpeed(g_soundSpeed); }
+		Log("sound speed %.2f", g_soundSpeed);
+	}
+	else if (!strcmp(cmd, "ron")) {    // ron <vol> <event path>|<name=value ...>: a Ready or Not event at the listener
+		float v = 1.0f; int used = 0;
+		if (sscanf_s(rest, "%f %n", &v, &used) >= 1 && used > 0 && Finite(&v, 1) && RonEnsure()) {
+			std::string ev, params; RonSplit(rest + used, ev, params);
+			if (!RonPlay(ev.c_str(), params.c_str(), nullptr, v)) Log("ron: %s didn't play", ev.c_str());
+		}
+	}
+	else if (!strcmp(cmd, "ron3")) {   // ron3 <vol> <x> <y> <z> <event path>|<name=value ...>: at a world point
+		float v = 1.0f, at[3] = {}; int used = 0;
+		if (sscanf_s(rest, "%f %f %f %f %n", &v, &at[0], &at[1], &at[2], &used) >= 4 && used > 0 && Finite(&v, 1) && Finite(at, 3) && RonEnsure()) {
+			std::string ev, params; RonSplit(rest + used, ev, params);
+			if (!RonPlay(ev.c_str(), params.c_str(), at, v)) Log("ron: %s didn't play", ev.c_str());
+		}
+	}
+	else if (!strcmp(cmd, "ronload")) {   // ronload <event path>: the gun's events, at draw (no load delay on the first shot)
+		if (RonEnsure() && !RonLoad(rest)) Log("ron: no event %s", rest);
+	}
+	else if (!strcmp(cmd, "rong")) {   // rong <global> <value>: a Ready or Not global parameter (room / material weights)
+		char name[64] = {}; float v = 0;
+		if (sscanf_s(rest, "%63s %f", name, (unsigned)sizeof(name), &v) == 2 && Finite(&v, 1) && RonEnsure()) RonGlobal(name, v);
+	}
 	else if (!strcmp(cmd, "flasharm")) {   // flasharm <effect> <scale> <pos xyz> <dir xyz>: the live flash for the drawn gun
 		char effect[96] = {}; float scale = 1;
 		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &g_flashPos[0], &g_flashPos[1],
@@ -737,7 +793,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
 	else if (!strcmp(cmd, "notorch")) g_filters[F_NO_TORCH].want = atoi(rest) != 0 ? 1 : 0;
 	else if (!strcmp(cmd, "nocamera")) g_filters[F_NO_CAMERA].want = atoi(rest) != 0 ? 1 : 0;   // the freecam's mouse look
-	else if (!strcmp(cmd, "vol")) g_masterVol = (float)atof(rest);
+	else if (!strcmp(cmd, "vol")) { g_masterVol = (float)atof(rest); if (RonReady()) RonVolume(0.5f * g_masterVol); }
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
 	else if (!strcmp(cmd, "vel")) { float r = 0, f = 0, u = 0; if (sscanf_s(rest, "%f %f %f", &r, &f, &u) == 3) MotionVel(r, f, u); }   // world m/s (player:GetVelocity), every frame
@@ -804,6 +860,7 @@ static void OnCamera(uintptr_t camera) {
 	UpdateMotion(g_cam);
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
 	if (g_fmod) { UpdateListener(g_cam); fm.update(g_fmod); }
+	if (RonReady()) RonUpdate(g_cam);
 	ApplyFilters();
 	TouchPieces();
 	ReleaseOldPieces(false);
@@ -885,6 +942,8 @@ static DWORD WINAPI Init(LPVOID) {
 		char exe[MAX_PATH] = {}; GetModuleFileNameA(nullptr, exe, MAX_PATH);
 		std::string p(exe); for (int i = 0; i < 3; i++) p = p.substr(0, p.find_last_of('\\'));
 		g_soundRoot = p + "\\Mods\\deagle\\sounds\\";
+		g_ronDir = p + "\\Mods\\deagle\\ron\\";
+		g_ronDir = p + "\\Mods\\deagle\\ron\\";
 		Log("sound root %s", g_soundRoot.c_str());
 	}
 	uintptr_t gp = FindUnique(g_game, "48 89 5C 24 08 57 48 83 EC ?? 48 8B 01 49 8B F8 4C 8D 44 24 20 C7 44 24 20 05 00 00 00 FF 50 38 32 DB 84 C0 74 11");

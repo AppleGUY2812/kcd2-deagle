@@ -1,6 +1,6 @@
--- Where the player is, for per-place gunshots (docs/mk5_sound_spec.md): the classifier on made-up ray results for an
--- open field, a forest, a porch, a cottage room, a wooden tavern hall, a corridor and a stone cellar; a shot plays a
--- take of the current place (never the same take twice running), and a class only takes over after 2 agreeing reads.
+-- Where the player is, for Ready or Not's live room sound (docs/ron_live_spec.md): the classifier on made-up ray results
+-- for an open field, a forest, a porch, a cottage room, a wooden tavern hall, a corridor, a stone cellar and a stone room;
+-- a class only takes over after 2 agreeing reads; its room / material weights fade in; a shot fires RoN's event.
 -- usage: luajit tests/run_env.lua   (from the repo root)
 local M = dofile("tests/mock_engine.lua")
 dofile("src/Scripts/Deagle/deagle_main.lua")
@@ -36,6 +36,8 @@ local cases = {
 	{ "tavern hall (wood)", sample(5, 6, "wood", 9, "wood"), "in_hall_wood" },
 	{ "corridor", sample(5, 3, "other", corridor, "other"), "in_corridor" },
 	{ "stone cellar", sample(5, 2.2, "stone", 4.5, "stone"), "in_cave_stone" },
+	{ "stone room, wooden roof", sample(5, 3, "wood", 5, "stone"), "in_mid_stone" },
+	{ "smithy (metal)", sample(5, 3, "wood", 2.5, "metal"), "in_small_metal" },
 }
 for _, c in ipairs(cases) do
 	local got = Deagle:EnvClassify(c[2])
@@ -52,19 +54,47 @@ M.advance(0.3); Deagle:EnvTick(); local c2 = Deagle.envClass
 M.advance(0.3); Deagle:EnvTick(); local c3 = Deagle.envClass
 check(string.format("first read takes the class (%s), one different read doesn't (%s), the second does (%s)", tostring(c1), tostring(c2), tostring(c3)),
 	c1 == "in_small" and c2 == "in_small" and c3 == "in_cave_stone", c2)
-local files, repeats, last = {}, 0, nil
-for i = 1, 40 do
-	local f = Deagle:ShotFile()
-	files[f] = true
-	if f == last then repeats = repeats + 1 end
-	last = f
+-- the cellar's weights: CAVE + CONCRETE at 1, everything else 0, inside
+local mix, outside = Deagle:EnvMix("in_cave_stone")
+local on = {}
+for g, v in pairs(mix) do if v > 0 then on[#on + 1] = g .. "=" .. v end end
+table.sort(on)
+check("cellar = " .. table.concat(on, " "), table.concat(on, " ") == "ReverbCAVE=1 ReverbMaterialCONCRETE=1" and not outside, table.concat(on, " "))
+local pm = Deagle:EnvMix("out_covered")
+check("porch = MID + CONCRETE, outside", pm.ReverbMID == 1 and pm.ReverbMaterialCONCRETE == 1 and select(2, Deagle:EnvMix("out_covered")), nil)
+-- fading: from the small room (set at once) to the cellar over cfg.env.fade s, sent as rong lines
+local function sentG(from)
+	local got = {}
+	for i = from + 1, #M.native do
+		local g, v = M.native[i]:match("^%[DN%] rong (%S+) ([%d%.]+)$")
+		if g then got[g] = tonumber(v) end
+	end
+	return got
 end
-local nfiles = 0
-for f in pairs(files) do nfiles = nfiles + 1; if not f:find("^mk5/in_cave_stone/shot%-%d+%.wav$") then nfiles = -99 end end
-check(string.format("shots play the cellar's takes (%d different), never the same twice running (%d)", nfiles, repeats), nfiles >= 6 and repeats == 0, nfiles)
-check("every take has a gain in shot_gain.lua", Deagle.shotGain["mk5/in_cave_stone/shot-1.wav"] ~= nil and Deagle.shotGain["mk5/out_forest/shot-8.wav"] ~= nil, nil)
+Deagle.envClass, Deagle.envMixNow, Deagle.envFadeT = "in_small", nil, nil
+local n0 = #M.native
+Deagle:EnvFade(10)
+local g0 = sentG(n0)
+check("first class is set at once (SMALL 1, CAVE 0)", g0.ReverbSMALL == 1 and g0.ReverbCAVE == 0, g0.ReverbSMALL)
+Deagle.envClass = "in_cave_stone"
+n0 = #M.native
+Deagle:EnvFade(10 + Deagle.cfg.env.fade / 2)
+local g1 = sentG(n0)
+check(string.format("halfway through the fade: SMALL %.2f CAVE %.2f", g1.ReverbSMALL or -1, g1.ReverbCAVE or -1),
+	math.abs((g1.ReverbSMALL or 0) - 0.5) < 0.01 and math.abs((g1.ReverbCAVE or 0) - 0.5) < 0.01, g1.ReverbSMALL)
+Deagle:EnvFade(10 + Deagle.cfg.env.fade + 0.1)
+check("after the fade: the cellar's weights", Deagle.envMixNow.ReverbSMALL == 0 and Deagle.envMixNow.ReverbCAVE == 1 and Deagle.envMixNow.ReverbMaterialCONCRETE == 1, Deagle.envMixNow.ReverbSMALL)
+-- a shot: Ready or Not's MK V event with IsOutside from the place
+n0 = #M.native
+Deagle:CueFire("shoot", "shot")
+local line = M.native[#M.native]
+check("a shot fires RoN's event, inside: " .. tostring(line), #M.native == n0 + 1 and line:find("^%[DN%] ron [%d%.]+ event:/Weapons/Grizzly/1P Grizzly Fire|IsOutside=0$") ~= nil, line)
+Deagle.envClass = "out_forest"
+Deagle:CueFire("shoot", "shot")
+check("outside: IsOutside=1", M.native[#M.native]:find("|IsOutside=1$") ~= nil, M.native[#M.native])
+check("the handshake loads the event", (function() for i = 1, #M.native do if M.native[i] == "[DN] ronload event:/Weapons/Grizzly/1P Grizzly Fire" then return true end end end)(), nil)
 Deagle:UseGun("glock_17")
-check("a gun without per-place shots plays its own", (Deagle:ShotFile() or ""):find("^mk5/") == nil, Deagle:ShotFile())
+check("a gun without RoN events plays its own recordings", (Deagle:ShotFile() or ""):find("%.wav$") ~= nil, Deagle:ShotFile())
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("env: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

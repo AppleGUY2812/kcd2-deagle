@@ -62,7 +62,7 @@ for i = 1, #modes do
 	for i = n0 + 1, #M.native do
 		local f = M.native[i]:match("^%[DN%] snd (%S+)")
 		for _, sf in ipairs(g.shotSounds or {}) do if f == sf then shots = shots + 1 end end
-		if f and g.envShots and f:find("^" .. g.envShots .. "/[%w_]+/shot%-%d+%.wav$") then shots = shots + 1 end   -- the place's take
+		if g.ron and M.native[i]:find("^%[DN%] ron [%d%.]+ " .. g.ron.fire:gsub("%p", "%%%0") .. "|IsOutside=[01]$") then shots = shots + 1 end   -- Ready or Not's event
 	end
 	modeResults[#modeResults + 1] = { mode = mode, used = before - after, started = table.concat(started, " "), shots = shots }
 	act("deagle_firemode"); M.advance(0.1)
@@ -202,11 +202,11 @@ if recoil then
 		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-4, recoil.flashScale)
 	check("no live flash armed or shown (" .. tostring(recoil.flash or recoil.shot) .. ")", recoil.flash == nil and recoil.shot == nil, recoil.flash)
 end
-if phys then   -- loudness: evened-out files x the blast level; the Glock plays ~0.83x the Deagle (a quarter of 6.5 dB)
+if phys then   -- loudness: the blast level (times each file's own evened-out gain, or RoN's own mix); the Glock plays ~0.83x the Deagle (a quarter of 6.5 dB)
 	local other = Deagle.guns[id == "deagle" and "glock_17" or "deagle"]
-	local mine = Deagle:ShotGain(g.shotSounds[1]) / Deagle.shotGain[g.shotSounds[1]]
+	local mine = Deagle:ShotGain(nil, 1)
 	local saved = Deagle.gun; Deagle.gun = other
-	local theirs = Deagle:ShotGain(other.shotSounds[1]) / Deagle.shotGain[other.shotSounds[1]]
+	local theirs = Deagle:ShotGain(nil, 1)
 	Deagle.gun = saved
 	check(string.format("blast loudness x%.2f vs %s x%.2f", mine, other.id, theirs), math.max(mine, theirs) == 1 and math.abs(math.min(mine, theirs) - 0.83) < 0.02, mine)
 end

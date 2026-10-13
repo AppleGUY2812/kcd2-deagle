@@ -86,10 +86,10 @@ Deagle.cfg = {
 	-- deagle_set debugShotLog 1: every shot logs Henry's eye, the aim, the free camera (plugin log) and the round's place
 	-- each frame to kcd.log ("[Deagle] shot N ..."), to line a recording up with where the round really was
 	debugShotLog = false,
-	-- where the player is, for guns with per-place gunshots (gun.envShots: Ready or Not's MK V sets, docs/mk5_sound_spec.md):
-	-- rays from the eye every period s; starting values from the spec, to tune by ear (deagle_env prints the numbers)
-	-- takes: recordings per place (shot-1..takes.wav; every bang x echo combination the game plays, once rendered)
-	env = { on = true, period = 0.25, takes = 32, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
+	-- where the player is, for guns that fire through Ready or Not's own sound engine (gun.ron, docs/ron_live_spec.md):
+	-- rays from the eye every period s; starting values from the spec, to tune by ear (deagle_env prints the numbers).
+	-- fade: seconds a room / material weight takes from 0 to 1 when the place changes (RoN fades them across doorways)
+	env = { on = true, period = 0.25, fade = 0.4, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
 		ringInside = 12, small = 3.5, hall = 7, corrNarrow = 2.5, corrWide = 6, share = 0.5, vegShare = 0.25, trunks = 6 },
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
 	                          -- shots weren't drawn, in game 2026-10-12)
@@ -272,11 +272,10 @@ function Deagle:RegisterGun(id, g)
 	self.guns[id] = g
 end
 do
-	local cues, shots = {}, {}
+	local cues = {}
 	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
-	for i = 1, 8 do shots[i] = "decho/decho-" .. i .. ".wav" end
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
-		cues = cues, shotSounds = shots, envShots = "mk5", bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
+		cues = cues, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire" }, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
 		cycle = 0.08,             -- the mod's weapon script (cycletime): CS2's Deagle is 0.225
 		-- the clips were exported frame for frame at 24 fps, but the mod's sequences run at 30 (shots at 40): play them
@@ -657,8 +656,8 @@ end
 -- times the gun's blast level against the loudest gun in the mod. Blast peak pressure grows with the cube root of the
 -- muzzle-gas energy (Hopkinson-Cranz): +(20/3) log10 of the energy ratio in dB (9 mm vs .357 measured within 1 dB).
 local function blastDb(phys) return (20 / 3) * math.log10(phys.gasEnergy) end
-function Deagle:ShotGain(file)
-	local g = self.shotGain and self.shotGain[file]
+function Deagle:ShotGain(file, own)   -- own: the gain itself (Ready or Not's live engine: its mix sets the level)
+	local g = own or (self.shotGain and self.shotGain[file])
 	if not g then
 		log("$4no loudness for " .. tostring(file) .. " (run tools/shot_loudness.py)")
 		g = 1
@@ -2300,6 +2299,11 @@ end
 function Deagle:CueFire(key, file)
 	local v = self.cfg.vm.soundVol
 	if file == "shot" then
+		local ron = self.gun.ron
+		if ron then
+			if self.native then self:Native(string.format("ron %.3f %s|IsOutside=%d", v.shot * self:ShotGain(nil, 1), ron.fire, self:EnvOutside() and 1 or 0)) end
+			return
+		end
 		local f = self:ShotFile()
 		if f then self:Snd(f, v.shot * self:ShotGain(f)) end
 	else self:Snd(file, v.foley) end
@@ -2562,19 +2566,24 @@ function Deagle:OnGameplayStarted()
 end
 
 -- ---------------------------------------------------------------------------
--- where the player is (docs/mk5_sound_spec.md): guns with per-place gunshots (gun.envShots) play the take of the place
--- the player stands in, like Ready or Not's MK V (its rooms come from hand-placed map boxes; KCD2 has none, so rays
--- from the eye classify it every cfg.env.period s). Classes: out_forest out_street out_covered in_small(_wood)
--- in_mid(_wood) in_hall(_wood) in_corridor(_wood) in_cave(_stone). A class takes over after 2 reads in a row agree.
+-- where the player is (docs/ron_live_spec.md): guns with gun.ron fire Ready or Not's own event through its own engine
+-- (the plugin runs it: native/src/ron.cpp). RoN's room sound comes from 8 room and 4 material snapshots whose strength
+-- follows global parameters (ReverbSMALL ... ReverbMaterialFABRIC, 0..1; its map boxes set them and fade them across
+-- doorways). KCD2 has no such boxes, so rays from the eye classify the place every cfg.env.period s, a class takes over
+-- after 2 reads in a row agree, and its weights fade in over cfg.env.fade s.
+-- Classes: out_forest out_street out_covered in_<small|mid|hall|corridor>[_<stone|wood|metal|fabric>] in_cave(_stone)
 -- ---------------------------------------------------------------------------
 local ENV_UP, ENV_RING = {}, {}
 local function envSurf(name)
-	if name:find("^mat_rock") or name:find("stone") then return "stone" end
-	if name:find("wood") or name:find("bark") or name:find("tree") then return "wood" end
-	if name:find("vegetation") or name:find("bush") or name:find("canopy") or name:find("leaves") then return "veg" end
+	if name:find("^mat_rock") or name:find("stone") or name:find("brick") or name:find("plaster") or name:find("ceramic") then return "stone" end
+	if name:find("wood") or name:find("bark") or name:find("tree") or name:find("wicker") then return "wood" end
+	if name:find("metal") or name:find("chain") or name:find("plate") or name:find("bell") or name:find("iron") then return "metal" end
+	if name:find("fabric") or name:find("cloth") or name:find("sack") or name:find("carpet") or name:find("leather") then return "fabric" end
+	if name:find("vegetation") or name:find("bush") or name:find("canopy") or name:find("leaves") or name:find("thatch") then return "veg" end
 	if name:find("soil") or name:find("grass") or name:find("sand") or name:find("gravel") or name:find("mud") then return "terrain" end
 	return "other"
 end
+local ENV_MATS = { "stone", "wood", "metal", "fabric" }
 -- one sample: up = { {dist, kind}... } (nil dist = nothing), ring = 16 of { dist, kind } (index i = i x 22.5 deg)
 function Deagle:EnvClassify(sample)
 	local c = self.cfg.env
@@ -2596,7 +2605,8 @@ function Deagle:EnvClassify(sample)
 	local hits = 0
 	for _, n in pairs(kinds) do hits = hits + n end
 	local function share(k) return hits > 0 and (kinds[k] or 0) / hits or 0 end
-	local info = { roofHits = roofN, ringHits = hits, ringNear = near }
+	local info = { roofHits = roofN, ringHits = hits, ringNear = near, shares = {} }
+	for _, m in ipairs(ENV_MATS) do info.shares[m] = share(m) end
 	if roof and near >= c.ringInside then
 		table.sort(dists)
 		local d = dists[math.ceil(#dists / 2)] or 0
@@ -2608,13 +2618,39 @@ function Deagle:EnvClassify(sample)
 		end
 		if share("stone") > c.share and roofStone then return share("stone") > 0.8 and "in_cave_stone" or "in_cave", info end
 		local size = corridor and "corridor" or d < c.small and "small" or d <= c.hall and "mid" or "hall"
-		return "in_" .. size .. (share("wood") > c.share and "_wood" or ""), info
+		local mat, best = nil, c.share   -- the walls' material: the kind most ring rays hit, if it's over half of them
+		for _, m in ipairs(ENV_MATS) do if share(m) > best then mat, best = m, share(m) end end
+		return "in_" .. size .. (mat and ("_" .. mat) or ""), info
 	end
 	if roof then return "out_covered", info end
 	local trunks = 0
 	for _, r in ipairs(sample.ring) do if r.dist and r.kind == "wood" then trunks = trunks + 1 end end
 	if share("veg") > c.vegShare or trunks >= c.trunks then return "out_forest", info end
 	return "out_street", info
+end
+-- a class as Ready or Not's globals: the room's snapshot (and material's) at 1, every other at 0; outside = IsOutside
+local ENV_ROOMS = { "BATHROOM", "SMALL", "CORRIDOR", "MID", "HALL", "STREET", "FOREST", "CAVE" }
+local ENV_MAT_GLOBAL = { stone = "CONCRETE", wood = "WOOD", metal = "METAL", fabric = "FABRIC" }
+local ENV_GLOBALS = {}
+for _, r in ipairs(ENV_ROOMS) do ENV_GLOBALS[#ENV_GLOBALS + 1] = "Reverb" .. r end
+for _, m in ipairs(ENV_MATS) do ENV_GLOBALS[#ENV_GLOBALS + 1] = "ReverbMaterial" .. ENV_MAT_GLOBAL[m] end
+function Deagle:EnvMix(cls)
+	local mix = {}
+	for _, g in ipairs(ENV_GLOBALS) do mix[g] = 0 end
+	local room, mat
+	if cls == "out_street" then room = "STREET"
+	elseif cls == "out_forest" then room = "FOREST"
+	elseif cls == "out_covered" then room, mat = "MID", "stone"   -- a roof with open sides: a mid room's ring off it
+	else
+		local size, m = cls:match("^in_(%a+)_?(%a*)$")
+		room, mat = size and size:upper(), m ~= "" and m or nil
+	end
+	if room then mix["Reverb" .. room] = 1 end
+	if mat then mix["ReverbMaterial" .. ENV_MAT_GLOBAL[mat]] = 1 end
+	return mix, cls:find("^out_") ~= nil
+end
+function Deagle:EnvOutside()
+	return self.envClass == nil or self.envClass:find("^out_") ~= nil
 end
 -- rays from the eye: static things and terrain, not the player
 function Deagle:EnvSample()
@@ -2636,37 +2672,69 @@ function Deagle:EnvSample()
 	for i, d in ipairs(ENV_RING) do sample.ring[i] = cast(d, c.ringLen) end
 	return sample
 end
--- every viewmodel frame: a new read every period s; the class changes after 2 agreeing reads
+-- every viewmodel frame: a new read every period s; the class changes after 2 agreeing reads; the weights fade to it
 function Deagle:EnvTick()
 	local c = self.cfg.env
-	if not c.on or not (self.gun and self.gun.envShots) then return end
+	if not (self.gun and self.gun.ron) then return end
 	local now = System.GetCurrTime()
-	if self.envT and now - self.envT < c.period then return end
-	self.envT = now
-	local cls, info = self:EnvClassify(self:EnvSample())
-	self.envInfo = info
-	if cls == self.envClass then self.envPending = nil
-	elseif cls == self.envPending or not self.envClass then self.envClass, self.envPending = cls, nil
-	else self.envPending = cls end
-end
--- the gunshot file for a shot: the place's take (never the same one twice running) or the gun's own shots
-function Deagle:ShotFile()
-	local g = self.gun
-	if g.envShots and self.cfg.env.on and self.envClass then
-		local n
-		local takes = math.max(1, self.cfg.env.takes)
-		repeat n = math.random(1, takes) until n ~= self.envLastTake or takes == 1
-		self.envLastTake = n
-		return string.format("%s/%s/shot-%d.wav", g.envShots, self.envClass, n)
+	if c.on and (not self.envT or now - self.envT >= c.period) then
+		self.envT = now
+		local cls, info = self:EnvClassify(self:EnvSample())
+		self.envInfo = info
+		if cls == self.envClass then self.envPending = nil
+		elseif cls == self.envPending or not self.envClass then self.envClass, self.envPending = cls, nil
+		else self.envPending = cls end
 	end
-	local shots = g.shotSounds or {}
+	self:EnvFade(now)
+end
+-- move every global toward the class's value at 1 / fade per second and send the ones that moved; the first class
+-- after a load is set at once (nothing to fade from)
+function Deagle:EnvFade(now)
+	if not self.envClass or not self.native then return end
+	local target = self:EnvMix(self.envClass)
+	local cur, first = self.envMixNow, self.envMixNow == nil
+	if first then cur = {}; self.envMixNow = cur end
+	local dt = math.max(0, now - (self.envFadeT or now))
+	self.envFadeT = now
+	local step = self.cfg.env.fade > 0 and dt / self.cfg.env.fade or 1
+	for _, g in ipairs(ENV_GLOBALS) do
+		local was, want = cur[g], target[g]
+		local v = (first or was == nil) and want or (was < want and math.min(want, was + step) or math.max(want, was - step))
+		if v ~= was then
+			cur[g] = v
+			self:Native(string.format("rong %s %.3f", g, v))
+		end
+	end
+end
+-- the gun's Ready or Not events load at the handshake, so the first shot has no load delay
+function Deagle:RonWarm()
+	self.envMixNow = nil   -- the plugin's engine may be new: send every weight again
+	for _, g in pairs(self.guns) do
+		if g.ron then for _, ev in pairs(g.ron) do self:Native("ronload " .. ev) end end
+	end
+end
+function Deagle:RonState(ok)
+	self.ronOk = ok == "1"
+	if not self.ronOk then
+		local msg = "Ready or Not's sound engine didn't start: Mods/deagle/ron is missing or broken (see deagle_native.log)"
+		log("$4" .. msg); self:Notify(msg)
+	end
+end
+-- the gunshot file for a gun that plays its own recordings
+function Deagle:ShotFile()
+	local shots = self.gun.shotSounds or {}
 	return #shots > 0 and shots[math.random(1, #shots)] or nil
 end
 function Deagle:EnvPrint()
 	if not self.envClass then self:EnvTick() end
 	local i = self.envInfo or {}
-	local msg = string.format("place %s (roof rays %s, ring hits %s, near %s, median %.1f m)", tostring(self.envClass),
-		tostring(i.roofHits), tostring(i.ringHits), tostring(i.ringNear), i.median or -1)
+	local mix, outside = self:EnvMix(self.envClass or "out_street")
+	local on = {}
+	for _, g in ipairs(ENV_GLOBALS) do if mix[g] > 0 then on[#on + 1] = g end end
+	local sh = i.shares or {}
+	local msg = string.format("place %s = %s%s (roof rays %s, ring hits %s, near %s, median %.1f m; stone %.0f%% wood %.0f%% metal %.0f%% fabric %.0f%%)",
+		tostring(self.envClass), table.concat(on, " + "), outside and " outside" or " inside", tostring(i.roofHits), tostring(i.ringHits),
+		tostring(i.ringNear), i.median or -1, 100 * (sh.stone or 0), 100 * (sh.wood or 0), 100 * (sh.metal or 0), 100 * (sh.fabric or 0))
 	log(msg); self:Notify(msg)
 end
 
@@ -2865,7 +2933,7 @@ end
 
 System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
 System.AddCCommand("deagle_freecam", "Deagle:Native('freecam ' .. Deagle.Arg([[%line]]))", "deagle_freecam [on|off|status|speed <m/s>|fast <x>|max <m>|keys wasd|nav|arrows|key <vk>]: free camera (time runs, Henry still aims and shoots, and doesn't walk). \\ toggles; WASD fly, Space up, Left Ctrl down, Shift faster")
-System.AddCCommand("deagle_env", "Deagle.envT = nil Deagle:EnvTick() Deagle:EnvPrint()", "deagle_env: the place the gunshot sound is picked for (Ready or Not MK V sets) and the ray numbers")
+System.AddCCommand("deagle_env", "Deagle.envT = nil Deagle:EnvTick() Deagle:EnvPrint()", "deagle_env: the place the gunshot sounds like (Ready or Not's room and material weights) and the ray numbers")
 System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "internal: the plugin's free camera came on (1) or went off (0)")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
@@ -2887,7 +2955,8 @@ System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key 
 System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.state.logActions", "Toggle logging of every input action")
 System.AddCCommand("deagle_fx", "Deagle:FxTest(Deagle.Arg([[%1]]))", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
-System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end", "internal: native plugin handshake")
+System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end; Deagle:RonWarm()", "internal: native plugin handshake")
+System.AddCCommand("deagle_ron_state", "Deagle:RonState([[%1]])", "internal: Ready or Not's sound engine started in the plugin (1) or failed (0)")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
 System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")
 System.AddCCommand("deagle_lua", "Deagle:DevLua([==[%line]==])", "deagle_lua <code>: run Lua (dev)")
