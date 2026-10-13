@@ -11,7 +11,7 @@ repo = sys.argv[1]
 sounds = os.path.join(repo, "assets", "build", "sounds")
 REF_DB = -12.0                       # every blast is brought down to this (dBFS, loudest 50 ms)
 
-files = [f"decho/decho-{i}.wav" for i in range(1, 9)]          # the Deagle's (deagle_main.lua: shots[i])
+files = [f"decho_orig/decho-{i}.wav" for i in range(1, 9)]     # the Deagle's own (MWII) shots: deagle_main.lua origShots
 for lua in glob.glob(os.path.join(repo, "src", "Scripts", "Deagle", "guns", "*.lua")):
     m = re.search(r"shotSounds\s*=\s*\{([^}]*)\}", open(lua, encoding="utf-8").read())
     if m:

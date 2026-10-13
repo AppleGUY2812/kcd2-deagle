@@ -89,6 +89,10 @@ Deagle.cfg = {
 	-- where the player is, for guns that fire through Ready or Not's own sound engine (gun.ron, docs/ron_live_spec.md):
 	-- rays from the eye every period s; starting values from the spec, to tune by ear (deagle_env prints the numbers).
 	-- fade: seconds a room / material weight takes from 0 to 1 when the place changes (RoN fades them across doorways)
+	-- gun sounds: "ron" = Ready or Not's engine (shots with room sound, reloads / draw / inspect, empty click, aim);
+	-- "original" = the gun mods' own recordings (MWII Deagle, Insurgency / MWII Glock: shots and animation sounds).
+	-- Impacts and casings are Ready or Not's either way. deagle_sounds ron|original
+	sounds = "ron",
 	env = { on = true, period = 0.25, fade = 0.4, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
 		ringInside = 12, small = 3.5, hall = 7, corrNarrow = 2.5, corrWide = 6, share = 0.5, vegShare = 0.25, trunks = 6 },
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
@@ -275,10 +279,11 @@ function Deagle:RegisterGun(id, g)
 	self.guns[id] = g
 end
 do
-	local cues = {}
+	local cues, origShots = {}, {}
 	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
+	for i = 1, 8 do origShots[i] = "decho_orig/decho-" .. i .. ".wav" end   -- the MWII Deagle's own shots (deagle_sounds original)
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
-		cues = cues, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire", dry = "event:/Weapons/FN57/FN57 Dry Fire",   -- SoundData_Grizzly
+		cues = cues, shotSounds = origShots, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire", dry = "event:/Weapons/FN57/FN57 Dry Fire",   -- SoundData_Grizzly
 			adsIn = "event:/Weapons/Shared/ADS/ADS Pistol Start", adsOut = "event:/Weapons/Shared/ADS/ADS Pistol Stop", shell = "event:/Weapons/Shared/9mmShell" },
 		bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
@@ -851,29 +856,31 @@ surfaces("pass", nil, { "mat_none", "mat_window", "mat_player_collider", "mat_pl
 	"mat_vegetation_horse_ignore", "mat_bushes", "mat_grass_tall" })
 -- the hit's sound: Ready or Not's Bullet Impact Surfaces event with its Surface index (RoN's physical surfaces,
 -- docs/ron_fmod_events.md "Surface / Material numbers"; RoN's Soil / Mud / Leaves / Snow play nothing, so earth is Dirt
--- and plants are Grass)
+-- and plants are Grass). Picked by the user by ear from tools/sound/ron_sound_check.py (2026-10-13): stone is
+-- ConcreteStrong (RoN's "Rock" and "Limestone" play its brick clatter), glass is Glass_Windshield, hay is Grass, bells
+-- ring RoN's Tower Bell event.
 local RON_SURFACE = {}
 local function ronSurface(index, names) for _, n in ipairs(names) do RON_SURFACE[n] = index end end
-ronSurface(39, { "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_default", "mat_invulnerable" })       -- Rock
-ronSurface(26, { "mat_stairs_stone" })                                                                              -- Limestone
+ronSurface(8, { "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_default", "mat_invulnerable",
+	"mat_stairs_stone" })                                                                                           -- ConcreteStrong
 ronSurface(34, { "mat_plaster" })                                                                                   -- Plaster
 ronSurface(6, { "mat_ceramics" })                                                                                   -- Ceramic
 ronSurface(33, { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_stairs_wood", "mat_railing_wood_seethrough" }) -- Pine
 ronSurface(46, { "mat_wood_soft" })                                                                                 -- Treewood
 ronSurface(36, { "mat_shield_wood" })                                                                               -- Plywood
 ronSurface(5, { "mat_wicker" })                                                                                     -- Cardboard
-ronSurface(44, { "mat_metal", "mat_super_cool_sparkly_type", "mat_door_metal", "mat_metal_seethrough", "mat_bells", "mat_plate",
+ronSurface(44, { "mat_metal", "mat_super_cool_sparkly_type", "mat_door_metal", "mat_metal_seethrough", "mat_plate",
 	"mat_chainmail", "mat_chainmail_plate", "mat_fabric_plate", "mat_fabric_chainmail", "mat_fabric_chainmail_plate",
 	"mat_leather_chainmail" })                                                                                          -- Steel
 ronSurface(9, { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_road", "mat_field", "mat_forest" })                  -- Dirt
 ronSurface(21, { "mat_gravel" })                                                                                    -- Gravel
-ronSurface(20, { "mat_grass", "mat_grassdry", "mat_thatch" })                                                       -- Grass
+ronSurface(20, { "mat_grass", "mat_grassdry", "mat_thatch", "mat_organic_stuff" })                                  -- Grass
 ronSurface(48, { "mat_water", "mat_mudwater", "mat_slowwater", "mat_rockwater", "mat_puddle" })                     -- Water
-ronSurface(18, { "mat_glass" })                                                                                     -- Glass_Plate
+ronSurface(19, { "mat_glass" })                                                                                     -- Glass_Windshield
 ronSurface(15, { "mat_fabric", "mat_fabric_items", "mat_sack" })                                                    -- Fabric_Thin
-ronSurface(14, { "mat_organic_stuff" })                                                                             -- Fabric_Stuffing
 ronSurface(53, { "mat_leather" })                                                                                   -- Leather
 ronSurface(16, { "mat_flesh" })                                                                                     -- Flesh
+RON_SURFACE.mat_bells = "bell"                                                                                      -- Tower Bell event
 for n, sf in pairs(SURFACES) do sf.ron = RON_SURFACE[n] end
 Deagle.surfaces = SURFACES
 
@@ -1120,10 +1127,12 @@ function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip)
 	return out
 end
 
--- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (its distance falloff), late by the
--- time sound takes to get here (343 m/s). what = a RoN Surface index (Bullet Impact Surfaces) or a RON_HIT key.
--- Occlusion / PropagateDistance stay 0 (RoN sets them from its portal volumes; KCD2 has none). KCD2's AI hears it too
--- (enum_sound.bullet_hit at the spot).
+-- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (direction), late by the time sound
+-- takes to get here (343 m/s). what = a RoN Surface index (Bullet Impact Surfaces) or a RON_HIT key.
+-- These events don't fade with FMOD's own 3D distance: RoN's game code sets PropagateDistance (m along the sound's path)
+-- and the event's volume follows it (impacts measured: -3 dB at 5 m, -22 dB at 10 m, silent from 20 m; ricochets carry
+-- to ~45 m). KCD2 has no portal volumes, so the path is the straight line: PropagateDistance = the distance, Occlusion
+-- 0. KCD2's AI hears it too (enum_sound.bullet_hit at the spot).
 local SOUND_SPEED = 343
 local RON_IMPACT = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces"
 local RON_HIT = {
@@ -1132,18 +1141,21 @@ local RON_HIT = {
 	armor_body = "event:/Surfaces/Impacts/Armor Impacts/3P/3P Armor Body",
 	armor_helmet_block = "event:/Surfaces/Impacts/Armor Impacts/Blocks/3P Armor Head Block",
 	armor_body_block = "event:/Surfaces/Impacts/Armor Impacts/Blocks/3P Armor Body Block",
+	bell = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Tower Bell",
 }
 Deagle.ronHitEvents = { RON_IMPACT }
 for _, ev in pairs(RON_HIT) do Deagle.ronHitEvents[#Deagle.ronHitEvents + 1] = ev end
 function Deagle:HitSound(what, pos, scale)
 	local c = self.cfg
 	if self.native and what then
+		local d = vlen(vsub(pos, System.GetViewCameraPos()))
 		local ev, params
-		if type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d Occlusion=0 PropagateDistance=0", what)
-		else ev, params = RON_HIT[what], "Occlusion=0 PropagateDistance=0" end
+		local prop = string.format("Occlusion=0 PropagateDistance=%.1f", math.min(d, 250))
+		if type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d %s", what, prop)
+		else ev, params = RON_HIT[what], prop end
 		if ev then
 			local cmd = string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume, pos.x, pos.y, pos.z, ev, params)
-			local delay = math.floor(1000 * vlen(vsub(pos, System.GetViewCameraPos())) / SOUND_SPEED)
+			local delay = math.floor(1000 * d / SOUND_SPEED)
 			if delay > 10 then Script.SetTimer(delay, function() Deagle:Native(cmd) end) else self:Native(cmd) end
 		end
 	end
@@ -1656,6 +1668,7 @@ function Deagle:CaseTick()
 					local okR, n = pcall(Physics.RayWorldIntersection, vadd(pos, { x = 0, y = 0, z = 0.05 }), { x = 0, y = 0, z = -0.3 }, 1,
 						ent_static + ent_terrain, id, nil, hits)
 					local sf = okR and n and n > 0 and hits[1] and RON_SURFACE[surfaceName(hits[1])]
+					if sf == "bell" then sf = 44 end   -- a casing on a bell: steel
 					if sf and self.native then
 						self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|Surface=%d", c.volume, pos.x, pos.y, pos.z, f.ev, sf))
 					end
@@ -1664,6 +1677,11 @@ function Deagle:CaseTick()
 			f.v = v
 		end
 	end
+end
+
+-- the gun's Ready or Not events while cfg.sounds is "ron" (nil: play the gun mod's own recordings)
+function Deagle:RonSounds()
+	return self.cfg.sounds == "ron" and self.gun and self.gun.ron or nil
 end
 
 -- a Ready or Not event at the player (handling, dry fire, aim): 3D events sit on the listener
@@ -1685,7 +1703,8 @@ function Deagle:Shoot(force)
 	local now = System.GetCurrTime()
 	if not force and now - s.lastShot < c.interval - 0.005 then return false end
 	if s.ammo <= 0 then
-		if self.gun.ron and self.gun.ron.dry then self:RonHere(self.gun.ron.dry) else self:PlayTrigger(c.dryTrigger) end
+		local ron = self:RonSounds()
+		if ron and ron.dry then self:RonHere(ron.dry) else self:PlayTrigger(c.dryTrigger) end
 		self:ShowAmmo()
 		return false
 	end
@@ -1916,7 +1935,7 @@ function Deagle:UpdateAim(blend)
 		s.aiming = want
 		self:EaseFov(want)
 		if self.native then self:Native("aim " .. (want and "1" or "0")) end
-		local ron = self.gun.ron
+		local ron = self:RonSounds()
 		if ron and (want and ron.adsIn or not want and ron.adsOut) then self:RonHere(want and ron.adsIn or ron.adsOut) end
 	end
 	if self.vmShown and not blocked then
@@ -2384,7 +2403,7 @@ function Deagle:RonCues(key)
 end
 function Deagle:PlayCues(key)
 	local g = self.gun
-	local cues = (g.ronCues and self:RonCues(key)) or g.cues[key] or ((key == "shoot" or key == "shootEmpty") and SHOT_CUE) or nil
+	local cues = (self:RonSounds() and g.ronCues and self:RonCues(key)) or g.cues[key] or ((key == "shoot" or key == "shootEmpty") and SHOT_CUE) or nil
 	if not cues then return end
 	local a = self.cfg.vm.anims[key]
 	if key == "shoot" then a = a[((self.vmShot or 1) - 1) % #a + 1] end
@@ -2409,8 +2428,8 @@ function Deagle:CueFire(key, file)
 		return
 	end
 	if file == "shot" then
-		local ron = self.gun.ron
-		if ron then
+		local ron = self:RonSounds()
+		if ron and ron.fire then
 			if self.native then self:Native(string.format("ron %.3f %s|IsOutside=%d", v.shot * self:ShotGain(nil, 1), ron.fire, self:EnvOutside() and 1 or 0)) end
 			return
 		end
@@ -3060,6 +3079,7 @@ System.AddCCommand("deagle_give_ammo", "Deagle:EnsureInit() Deagle:Give(Deagle.A
 System.AddCCommand("deagle_arms", "Deagle:Set('vm.arms ' .. (Deagle.Arg([[%1]]):find('mw') and 'mw' or 'medieval'))", "deagle_arms medieval|mw: viewmodel sleeve/glove look")
 System.AddCCommand("deagle_motion", "Deagle:Set('vm.motion ' .. (tonumber(Deagle.Arg([[%1]])) or 1))", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
 System.AddCCommand("deagle_ads", "Deagle:SetOnOff('vm.ads', [[%1]])", "deagle_ads 1|0: aim down sights on right click")
+System.AddCCommand("deagle_sounds", "Deagle:Set('sounds ' .. (Deagle.Arg([[%1]]):find('orig') and 'original' or 'ron'))", "deagle_sounds ron|original: Ready or Not's sound engine, or the gun mods' own shot and animation sounds")
 System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")
 System.AddCCommand("deagle_hud", "Deagle:SetOnOff('hud.enabled', [[%1]])", "deagle_hud 1|0: ammo HUD on/off")
 System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting; kept across game starts (deagle_reset)")
