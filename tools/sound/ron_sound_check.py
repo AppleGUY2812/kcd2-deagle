@@ -18,9 +18,9 @@ SURF = {1: "Aluminium", 2: "Asphalt", 3: "Brick", 5: "Cardboard", 6: "Ceramic", 
         41: "Sand", 44: "Steel", 45: "Tin", 46: "Treewood", 48: "Water", 50: "Cloth", 53: "Leather"}
 
 rows = []   # (section, what it's for, label, event, params, plays, secs, globals, starts, pick: "current" / "option" / "")
-def row(section, what, label, event, params="", plays=3, secs=1.2, globs=(), starts=(), pick="current"):
+def row(section, what, label, event, params="", plays=3, secs=1.2, globs=(), starts=(), pick="current", game="ron"):
     rows.append(dict(section=section, what=what, label=label, event=event, params=params, plays=plays, secs=secs,
-                     globs=list(globs), starts=list(starts), pick=pick))
+                     globs=list(globs), starts=list(starts), pick=pick, game=game))
 
 # ---- gunshots, per place (RoN's ReverbMaster + the globals the mod sets for that place)
 RM = "event:/Levels/Reverbs/ReverbMaster"
@@ -84,6 +84,26 @@ row("Bullet impacts", "worn armour: plate stops the round", "3P Armor Body Block
 row("Bullet impacts", "worn armour: helmet stops the round", "3P Armor Head Block", A + "Blocks/3P Armor Head Block", "Occlusion=0 PropagateDistance=12")
 row("Bullet impacts", "worn armour (any)", "Surface 44 Steel instead", IMP, "Surface=44 Occlusion=0 PropagateDistance=0", pick="option")
 
+# ---- metal and armour: the user found RoN's steel / armour clank goofy (2026-10-13). More of RoN's metal sounds, and
+# KCD2's own arrow / weapon hits on plate and mail (its banks: Data/Sounds.pak -> E:/Tools/deagle-work/kcd2_fmod)
+MA = "Metal and armour options (pick one for metal, one for armour)"
+for sf in (49, 51, 24, 17, 45, 1):
+    row(MA, "RoN bullet impact", f"Surface {sf} {SURF.get(sf, {49: 'Shield', 51: 'Vehicle', 24: 'Lead'}.get(sf))}", IMP,
+        f"Surface={sf} Occlusion=0 PropagateDistance=0", pick="option")
+for ev in ("1P/1P Armor Body", "1P/1P Armor Side", "1P/1P Armor Head", "3P/3P Armor Side", "Blocks/3P Armor Side Block"):
+    row(MA, "RoN armour hit", ev.split("/")[-1], A + ev, "Occlusion=0 PropagateDistance=2", pick="option")
+for ev in ("1P Bullet Impacts/1P SAPI", "1P Bullet Impacts/1P Helmet", "1P Bullet Impacts/1P Armor"):
+    row(MA, "RoN armour hit (on you)", ev.split("/")[-1], "event:/Surfaces/Impacts/Bullet Impacts/" + ev, "", pick="option")
+K = "event:/combat/weapons/"
+for ev, what in (("bow/impacts/arrow_plate_stopped", "KCD2: arrow stopped by plate"), ("bow/impacts/arrow_plate_passed", "KCD2: arrow through plate"),
+                 ("bow/impacts/arrow_chainmail_stopped", "KCD2: arrow stopped by mail"), ("bow/impacts/arrow_chainmail_passed", "KCD2: arrow through mail"),
+                 ("bow/mat/arrow_metal", "KCD2: arrow on metal"), ("sword/impacts/plate_stopped_npc", "KCD2: sword stopped by plate"),
+                 ("mace/impacts/plate_stopped_npc", "KCD2: mace on plate"), ("sword/mat/sword_metal", "KCD2: sword on metal")):
+    row(MA, what, ev.split("/")[-1], K + ev, "", pick="option", game="kcd2")
+for ev, what in (("foleys/professions/blacksmith/anvil_plate_hit", "KCD2: hammer on plate (smithy)"),
+                 ("foleys/collisions/f_ge_body_plate_stopped", "KCD2: body in plate hits something")):
+    row(MA, what, ev.split("/")[-1], "event:/" + ev, "", pick="option", game="kcd2")
+
 # ---- casings (9mmShell, Surface = where it lands)
 for sf in (8, 9, 33, 44, 20, 21, 48):
     row("Shell casings landing", f"casing on {SURF[sf].lower()}", f"9mmShell Surface {sf}", "event:/Weapons/Shared/9mmShell", f"Surface={sf}")
@@ -112,15 +132,18 @@ os.makedirs(OUT, exist_ok=True)
 env = dict(os.environ, WSLENV="FMOD_EXTRA_BANKS:FMOD_MASTER_GAIN", FMOD_MASTER_GAIN="0.5",
            FMOD_EXTRA_BANKS="Interactions.bank;SWAT.bank;Global Amb.bank;UI.bank")
 
+KCD2_BANKS = r"E:\Tools\deagle-work\kcd2_fmod"
+env_kcd2 = dict(env, FMOD_EXTRA_BANKS="kcd.bank;kcd.strings.bank;kcd.assets.bank;kcd_streamed.bank;kcd_streamed.assets.bank")
+
 def render(i):
     r = rows[i]
     r["file"] = f"{i + 1:03d}.wav"
     p = r["params"].split()
-    args = [EXE, "render", BANKS, OUTWIN + "\\" + r["file"], r["event"], str(r["secs"])] + p
+    args = [EXE, "render", KCD2_BANKS if r["game"] == "kcd2" else BANKS, OUTWIN + "\\" + r["file"], r["event"], str(r["secs"])] + p
     args += [f"global:{g}" for g in r["globs"]] + [f"start:{s}" for s in r["starts"]]
     for _ in range(r["plays"] - 1): args += ["+", str(r["secs"])] + p
     for _ in range(4):   # WSL's Windows interop sometimes drops a launch under load (UtilAcceptVsock): try again
-        res = subprocess.run(args, capture_output=True, text=True, env=env, timeout=600)
+        res = subprocess.run(args, capture_output=True, text=True, env=env_kcd2 if r["game"] == "kcd2" else env, timeout=600)
         r["ok"] = res.returncode == 0 and os.path.exists(os.path.join(OUT, r["file"]))
         if r["ok"]: break
     if not r["ok"]: r["err"] = (res.stdout + res.stderr)[-300:]
