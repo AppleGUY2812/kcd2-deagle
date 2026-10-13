@@ -115,7 +115,7 @@ Deagle.cfg = {
 	-- weaker worn one (132: 106) within ~12 m, a new one never; the Deagle (~200) through most plate at any range
 	armor = { punch = 104, conditionFloor = 0.6, glanceAngle = 70, bruise = 0.1, ricochetKeep = 0.3, scatter = 30 },
 	armorRicochetFx = "deagle_impacts.ricochet_metal",
-	impactVolume = 1.0,       -- bullet impact / ricochet / armour sounds (Ready or Not's), x their evened-out level
+	impactVolume = 1.0,       -- bullet impact / ricochet / armour sounds: x Ready or Not's own level
 	-- KCD2's AI hearing (XGenAIModule.ProduceSound*): shot = the gun_fired multiplier for a 9 mm (louder guns more;
 	-- GUESS ~80 m, calibrate live), hit = bullet_hit multiplier at an impact for a 9 mm
 	hearing = { on = true, shot = 3.2, hit = 1.0 },
@@ -175,6 +175,9 @@ Deagle.cfg = {
 	kickPitch = 2.6,          -- degrees of muzzle climb per shot
 	kickYaw = 0.8,
 	modelDir = "objects/manmade/weapons/deagle/",
+	-- casing bounce sounds (Deagle:CaseTick): bounces under minSpeed m/s are silent (RoN's ShellNormalizeMin 0.5), at
+	-- most max per casing, followed for life s; volume x RoN's own level
+	caseBounce = { minSpeed = 0.5, drop = 0.4, max = 3, life = 4, volume = 1.0 },
 	ejectImpulse = 0.035,     -- casing (20 g) out at ~1.75 m/s, up and to the right
 }
 
@@ -208,7 +211,7 @@ Deagle.cfg.vm = {
 	hideBody = true,          -- Henry's body and worn gear are hidden in first person while the gun is up (shadow stays)
 	fpMaxDist = 0.35,         -- camera within this of the Head bone = first person (dialogue / cutscene cameras aren't)
 	gearDist = 0.35,          -- worn items within this of the hips / spine are hidden with the body
-	soundVol = { shot = 1.0, foley = 0.75 },
+	soundVol = { shot = 1.0, foley = 0.75, ron = 1.0 },   -- ron: Ready or Not handling events, x its own level
 	motion = 1.0,             -- plugin bob / turn sway / sprint pose / landing strength (deagle_motion)
 	arms = Deagle.cfg and Deagle.cfg.vm and Deagle.cfg.vm.arms or "mw",   -- "mw" or "medieval" (deagle_arms)
 }
@@ -275,7 +278,9 @@ do
 	local cues = {}
 	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
-		cues = cues, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire" }, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
+		cues = cues, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire", dry = "event:/Weapons/FN57/FN57 Dry Fire",   -- SoundData_Grizzly
+			adsIn = "event:/Weapons/Shared/ADS/ADS Pistol Start", adsOut = "event:/Weapons/Shared/ADS/ADS Pistol Stop", shell = "event:/Weapons/Shared/9mmShell" },
+		bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
 		cycle = 0.08,             -- the mod's weapon script (cycletime): CS2's Deagle is 0.225
 		-- the clips were exported frame for frame at 24 fps, but the mod's sequences run at 30 (shots at 40): play them
@@ -844,6 +849,32 @@ surfaces("pass", nil, { "mat_none", "mat_window", "mat_player_collider", "mat_pl
 	"mat_cart_slowdown", "mat_corpses_barrier", "mat_prepadeni_roadTocamp_barrier", "mat_slope", "mat_barrier_navignore",
 	"mat_nodraw_designer", "mat_raycast", "mat_canopy", "mat_vegetation", "mat_vegetation_seethrough",
 	"mat_vegetation_horse_ignore", "mat_bushes", "mat_grass_tall" })
+-- the hit's sound: Ready or Not's Bullet Impact Surfaces event with its Surface index (RoN's physical surfaces,
+-- docs/ron_fmod_events.md "Surface / Material numbers"; RoN's Soil / Mud / Leaves / Snow play nothing, so earth is Dirt
+-- and plants are Grass)
+local RON_SURFACE = {}
+local function ronSurface(index, names) for _, n in ipairs(names) do RON_SURFACE[n] = index end end
+ronSurface(39, { "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_default", "mat_invulnerable" })       -- Rock
+ronSurface(26, { "mat_stairs_stone" })                                                                              -- Limestone
+ronSurface(34, { "mat_plaster" })                                                                                   -- Plaster
+ronSurface(6, { "mat_ceramics" })                                                                                   -- Ceramic
+ronSurface(33, { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_stairs_wood", "mat_railing_wood_seethrough" }) -- Pine
+ronSurface(46, { "mat_wood_soft" })                                                                                 -- Treewood
+ronSurface(36, { "mat_shield_wood" })                                                                               -- Plywood
+ronSurface(5, { "mat_wicker" })                                                                                     -- Cardboard
+ronSurface(44, { "mat_metal", "mat_super_cool_sparkly_type", "mat_door_metal", "mat_metal_seethrough", "mat_bells", "mat_plate",
+	"mat_chainmail", "mat_chainmail_plate", "mat_fabric_plate", "mat_fabric_chainmail", "mat_fabric_chainmail_plate",
+	"mat_leather_chainmail" })                                                                                          -- Steel
+ronSurface(9, { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_road", "mat_field", "mat_forest" })                  -- Dirt
+ronSurface(21, { "mat_gravel" })                                                                                    -- Gravel
+ronSurface(20, { "mat_grass", "mat_grassdry", "mat_thatch" })                                                       -- Grass
+ronSurface(48, { "mat_water", "mat_mudwater", "mat_slowwater", "mat_rockwater", "mat_puddle" })                     -- Water
+ronSurface(18, { "mat_glass" })                                                                                     -- Glass_Plate
+ronSurface(15, { "mat_fabric", "mat_fabric_items", "mat_sack" })                                                    -- Fabric_Thin
+ronSurface(14, { "mat_organic_stuff" })                                                                             -- Fabric_Stuffing
+ronSurface(53, { "mat_leather" })                                                                                   -- Leather
+ronSurface(16, { "mat_flesh" })                                                                                     -- Flesh
+for n, sf in pairs(SURFACES) do sf.ron = RON_SURFACE[n] end
 Deagle.surfaces = SURFACES
 
 local function surfaceName(hit)
@@ -1089,22 +1120,32 @@ function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip)
 	return out
 end
 
--- A hit's sound from where it happened (Ready or Not's, guns/impact_sounds.lua; plugin snd3: 3D around the camera),
--- late by the time sound takes to get here (343 m/s); too far to hear = nothing. Louder for a bigger round (x the
--- square root of its impact scale). KCD2's AI hears it too (enum_sound.bullet_hit at the spot).
+-- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (its distance falloff), late by the
+-- time sound takes to get here (343 m/s). what = a RoN Surface index (Bullet Impact Surfaces) or a RON_HIT key.
+-- Occlusion / PropagateDistance stay 0 (RoN sets them from its portal volumes; KCD2 has none). KCD2's AI hears it too
+-- (enum_sound.bullet_hit at the spot).
 local SOUND_SPEED = 343
-function Deagle:HitSound(kind, pos, scale)
+local RON_IMPACT = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces"
+local RON_HIT = {
+	ricochet = "event:/Surfaces/Impacts/Bullet Impacts/Ricochets",
+	armor_helmet = "event:/Surfaces/Impacts/Armor Impacts/3P/3P Armor Head",
+	armor_body = "event:/Surfaces/Impacts/Armor Impacts/3P/3P Armor Body",
+	armor_helmet_block = "event:/Surfaces/Impacts/Armor Impacts/Blocks/3P Armor Head Block",
+	armor_body_block = "event:/Surfaces/Impacts/Armor Impacts/Blocks/3P Armor Body Block",
+}
+Deagle.ronHitEvents = { RON_IMPACT }
+for _, ev in pairs(RON_HIT) do Deagle.ronHitEvents[#Deagle.ronHitEvents + 1] = ev end
+function Deagle:HitSound(what, pos, scale)
 	local c = self.cfg
-	local set = self.impactSounds and self.impactSounds[kind]
-	if not set or #set == 0 then return end
-	local range = self.impactRange and (self.impactRange[kind] or self.impactRange.default) or { min = 2, max = 40 }
-	local d = vlen(vsub(pos, System.GetViewCameraPos()))
-	if d <= range.max and self.native then
-		local file = set[math.random(#set)]
-		local gain = (self.impactGain and self.impactGain[file] or 1) * c.impactVolume * math.sqrt(scale or 1)
-		local cmd = string.format("snd3 %s %.3f %.2f %.2f %.2f %.1f %.1f", file, gain, pos.x, pos.y, pos.z, range.min, range.max)
-		local delay = math.floor(1000 * d / SOUND_SPEED)
-		if delay > 10 then Script.SetTimer(delay, function() Deagle:Native(cmd) end) else self:Native(cmd) end
+	if self.native and what then
+		local ev, params
+		if type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d Occlusion=0 PropagateDistance=0", what)
+		else ev, params = RON_HIT[what], "Occlusion=0 PropagateDistance=0" end
+		if ev then
+			local cmd = string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume, pos.x, pos.y, pos.z, ev, params)
+			local delay = math.floor(1000 * vlen(vsub(pos, System.GetViewCameraPos())) / SOUND_SPEED)
+			if delay > 10 then Script.SetTimer(delay, function() Deagle:Native(cmd) end) else self:Native(cmd) end
+		end
 	end
 	if c.hearing.on then try("AI hears the hit", XGenAIModule.ProduceSound, enum_sound.bullet_hit, pos, c.hearing.hit * (scale or 1)) end
 end
@@ -1127,7 +1168,7 @@ end
 function Deagle:Mark(s, hit, dir, scale, size)
 	local c = self.cfg
 	if s.fx then self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale) end
-	if s.snd then self:HitSound(s.snd, hit.pos, scale) end
+	if s.ron then self:HitSound(s.ron, hit.pos, scale) end
 	if s.hole then
 		size = (size or c.holeSize) * scale * (0.85 + 0.3 * math.random())
 		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
@@ -1166,8 +1207,7 @@ function Deagle:Impact(hit, dir, phys, r)
 			self:Mark(s, hit, dir, scale * 0.6)
 			local out = self:Deflect(r, hit.pos, hit.normal, dir, c.ricochetKeep, c.ricochetScatter)
 			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale)
-			local d = vlen(vsub(hit.pos, System.GetViewCameraPos()))
-			self:HitSound(d < 8 and "ricochet_close" or d > 40 and "ricochet_far" or "ricochet", hit.pos, scale)
+			self:HitSound("ricochet", hit.pos, scale)
 			if self.state.logActions then log(string.format("ricochet %s at %.0f deg", name, graze)) end
 			return true
 		end
@@ -1188,7 +1228,7 @@ function Deagle:Impact(hit, dir, phys, r)
 	local exitPos = vadd(hit.pos, vscale(dir, thick))
 	local exitNormal = far and vdot(far.normal, dir) > 0 and far.normal or dir
 	if EXIT_FX[s.fx] then self:SpawnFx("deagle_impacts." .. s.fx .. "_exit", exitPos, dir, scale) end
-	if s.fx == "glass" then self:HitSound("glass_break", exitPos, scale) end
+	if s.fx == "glass" then self:HitSound(s.ron, exitPos, scale) end
 	if s.hole then
 		self:Mark({ hole = s.hole }, { pos = exitPos, normal = exitNormal, entity = hit.entity }, dir, scale, c.holeExitSize)
 	end
@@ -1283,9 +1323,9 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 				end
 				if hard then
 					self:SpawnFx(c.armorFx, hit.pos, hit.normal or vscale(dir, -1), self:ImpactScale(phys, hit.dist, energy))
-					self:HitSound(part == "head" and "armor_helmet" or "armor_body", hit.pos, scale)
+					self:HitSound((part == "head" and "armor_helmet" or "armor_body") .. (stopped and "_block" or ""), hit.pos, scale)
 				end
-				if not stopped then self:HitSound("flesh", hit.pos, scale) end
+				if not stopped then self:HitSound(RON_SURFACE.mat_flesh, hit.pos, scale) end
 				if stopped and hard and r then         -- turned by plate / mail: off it goes, sparks along its new way
 					local out = self:Deflect(r, hit.pos, hit.normal or vscale(dir, -1), dir, c.armor.ricochetKeep, c.armor.scatter, e.id)
 					self:SpawnFx(c.armorRicochetFx, hit.pos, out, self:ImpactScale(phys, hit.dist, energy))
@@ -1581,8 +1621,54 @@ function Deagle:EjectCase()
 		local dir = vnorm(vadd(vscale(r, jr), vadd(vscale(u, ju), vscale(f, jf))))
 		local spinAt = vadd(port, { x = (math.random() - 0.5) * 0.02, y = (math.random() - 0.5) * 0.02, z = (math.random() - 0.5) * 0.02 })
 		case:AddImpulse(-1, spinAt, dir, c.ejectImpulse * (0.8 + math.random() * 0.45), 1)
+		if self.gun.ron and self.gun.ron.shell then
+			self.casesFlying = self.casesFlying or {}
+			self.casesFlying[case.id] = { t = System.GetCurrTime(), bounces = 0, ev = self.gun.ron.shell }
+		end
 	end)
 	self:SpawnFx(c.portFx, port, System.GetViewCameraUpDir(), 1.0)
+end
+
+-- A casing's bounces: Ready or Not plays its shell event (9mmShell) on every bounce with Surface = what it landed on
+-- (BulletShell, ShellBounceFMODAudio; it skips bounces under 0.5 m/s). KCD2 doesn't report physics contacts to Lua,
+-- so each frame a flying casing's velocity is read: a bounce is a frame where it was falling and now isn't (or lost
+-- over cfg.caseBounce.drop of its speed). The surface is a short ray down from it.
+function Deagle:CaseTick()
+	local flying = self.casesFlying
+	if not flying or not next(flying) then return end
+	local c, now = self.cfg.caseBounce, System.GetCurrTime()
+	for id, f in pairs(flying) do
+		local e = System.GetEntity(id)
+		local ok, v = false, nil
+		if e then ok, v = pcall(e.GetVelocity, e) end
+		if not ok or not v or now - f.t > c.life or f.bounces >= c.max then flying[id] = nil
+		else
+			local speed = vlen(v)
+			local was = f.v
+			if was then
+				local wasSpeed = vlen(was)
+				local landed = was.z < -c.minSpeed and v.z > -0.25 * math.abs(was.z)
+				local lost = wasSpeed > c.minSpeed and speed < wasSpeed * (1 - c.drop)
+				if (landed or lost) and wasSpeed >= c.minSpeed then
+					f.bounces = f.bounces + 1
+					local pos = e:GetWorldPos()
+					local hits = {}
+					local okR, n = pcall(Physics.RayWorldIntersection, vadd(pos, { x = 0, y = 0, z = 0.05 }), { x = 0, y = 0, z = -0.3 }, 1,
+						ent_static + ent_terrain, id, nil, hits)
+					local sf = okR and n and n > 0 and hits[1] and RON_SURFACE[surfaceName(hits[1])]
+					if sf and self.native then
+						self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|Surface=%d", c.volume, pos.x, pos.y, pos.z, f.ev, sf))
+					end
+				end
+			end
+			f.v = v
+		end
+	end
+end
+
+-- a Ready or Not event at the player (handling, dry fire, aim): 3D events sit on the listener
+function Deagle:RonHere(ev)
+	if self.native and ev then self:Native(string.format("ron %.3f %s|", self.cfg.vm.soundVol.ron, ev)) end
 end
 
 -- one shot: ray, effects, ammo. Returns true when a round was fired.
@@ -1599,7 +1685,7 @@ function Deagle:Shoot(force)
 	local now = System.GetCurrTime()
 	if not force and now - s.lastShot < c.interval - 0.005 then return false end
 	if s.ammo <= 0 then
-		self:PlayTrigger(c.dryTrigger)
+		if self.gun.ron and self.gun.ron.dry then self:RonHere(self.gun.ron.dry) else self:PlayTrigger(c.dryTrigger) end
 		self:ShowAmmo()
 		return false
 	end
@@ -1830,6 +1916,8 @@ function Deagle:UpdateAim(blend)
 		s.aiming = want
 		self:EaseFov(want)
 		if self.native then self:Native("aim " .. (want and "1" or "0")) end
+		local ron = self.gun.ron
+		if ron and (want and ron.adsIn or not want and ron.adsOut) then self:RonHere(want and ron.adsIn or ron.adsOut) end
 	end
 	if self.vmShown and not blocked then
 		self:VmPlay(self:VmRestKey(), true, 1.0, blend or (not self:VmBusy() and self.cfg.vm.adsBlend or nil))
@@ -2091,6 +2179,7 @@ function Deagle:VmTick(token)
 	self:FlashMeshTick()
 	self:CueTick()
 	self:EnvTick()
+	self:CaseTick()
 	if self.flashLightUntil and self.vmFrame >= self.flashLightUntil then
 		local vm = self.vmId and System.GetEntity(self.vmId)
 		if vm then pcall(vm.FreeSlot, vm, FLASH_LIGHT_SLOT) end
@@ -2712,6 +2801,7 @@ function Deagle:RonWarm()
 	for _, g in pairs(self.guns) do
 		if g.ron then for _, ev in pairs(g.ron) do self:Native("ronload " .. ev) end end
 	end
+	for _, ev in ipairs(self.ronHitEvents) do self:Native("ronload " .. ev) end
 end
 function Deagle:RonState(ok)
 	self.ronOk = ok == "1"
@@ -3094,7 +3184,6 @@ function Deagle:LoadGuns()
 	pcall(load, "Scripts/Deagle/guns/penetration.lua")
 	pcall(load, "Scripts/Deagle/guns/armor.lua")
 	pcall(load, "Scripts/Deagle/guns/hitbones.lua")
-	pcall(load, "Scripts/Deagle/guns/impact_sounds.lua")
 	pcall(load, "Scripts/Deagle/motion.lua")          -- weapon movement inputs (Deagle:MotionTick / MotionParams)
 	pcall(load, "Scripts/Deagle/guns/shot_gain.lua")
 	pcall(load, "Scripts/Deagle/guns/index.lua")

@@ -24,7 +24,8 @@ PY
 # loose sound files for the native plugin (Mods/deagle/sounds); private-use MWII audio, not in git
 if [[ -d "$here/assets/build/sounds" ]]; then
   mkdir -p "$out/sounds" && cp -r "$here/assets/build/sounds/." "$out/sounds/"
-  rm -rf "$out/sounds/mk5"   # the old pre-rendered MK V rooms: the Deagle fires through Ready or Not's engine now
+  # the old pre-rendered MK V rooms and impact samples: Ready or Not's engine plays its own events now
+  rm -rf "$out/sounds/mk5" "$out/sounds/impacts"
 fi
 # Ready or Not's own FMOD + banks for the plugin (Mods/deagle/ron, native/src/ron.cpp); private use, not in git
 [[ -f "$here/assets/build/ron/fmorstudio.dll" ]] || { echo "assets/build/ron missing: run tools/sound/make_ron_engine.py" >&2; exit 1; }

@@ -245,7 +245,7 @@ local function shotMult(id)
 		if a.kind == 14 then shot = a end
 		if a.kind == 16 then hit = a end
 	end
-	for i = n0 + 1, #M.native do snd = snd or M.native[i]:match("^%[DN%] snd3 (impacts/stone_%d+%.wav)") end
+	for i = n0 + 1, #M.native do snd = snd or M.native[i]:match("^%[DN%] ron3 [%d%.]+ [%-%d%.]+ 2[12]%d%.%d+ [%-%d%.]+ (event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces|Surface=39) ") end
 	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
 	return shot, hit, snd
 end
@@ -253,7 +253,7 @@ local gShot, gHit, gSnd = shotMult("glock_17")
 local dShot = shotMult("deagle")
 check(string.format("AI hears the shots: Glock x%.1f, Deagle x%.1f (louder); the impact x%.2f", gShot and gShot.mult or -1, dShot and dShot.mult or -1, gHit and gHit.mult or -1),
 	gShot and dShot and gHit and gShot.wuid ~= nil and dShot.mult > gShot.mult and gHit.pos.y >= 220 - 1e-6, gShot)
-check("the stone wall's impact sound played from the wall (" .. tostring(gSnd) .. ")", gSnd ~= nil, gSnd)
+check("the stone wall's impact sound (Ready or Not's Rock) played from the wall (" .. tostring(gSnd) .. ")", gSnd ~= nil, gSnd)
 
 -- bullet paths (deagle_paths): a shot through a plank into stone leaves flight (yellow), inside (red), on (cyan)
 -- pieces and hit crosses, drawn every frame until cleared

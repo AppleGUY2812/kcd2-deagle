@@ -93,6 +93,17 @@ Deagle.envClass = "out_forest"
 Deagle:CueFire("shoot", "shot")
 check("outside: IsOutside=1", M.native[#M.native]:find("|IsOutside=1$") ~= nil, M.native[#M.native])
 check("the handshake loads the event", (function() for i = 1, #M.native do if M.native[i] == "[DN] ronload event:/Weapons/Grizzly/1P Grizzly Fire" then return true end end end)(), nil)
+-- every surface a round stops on has a Ready or Not Surface index (none of RoN's silent ones)
+local missing, silent = {}, { [4] = 1, [11] = 1, [12] = 1, [22] = 1, [23] = 1, [25] = 1, [30] = 1, [31] = 1, [37] = 1, [42] = 1, [43] = 1 }
+for name, sf in pairs(Deagle.surfaces) do
+	if sf.fx ~= "pass" and (not sf.ron or silent[sf.ron]) then missing[#missing + 1] = name end
+end
+table.sort(missing)
+check("every hit surface has an audible RoN Surface: missing " .. table.concat(missing, " "), #missing == 0, #missing)
+-- the empty click and aiming play the gun's RoN events
+n0 = #M.native
+Deagle:RonHere(Deagle.gun.ron.dry)
+check("dry fire: " .. M.native[#M.native], M.native[#M.native]:find("^%[DN%] ron [%d%.]+ event:/Weapons/FN57/FN57 Dry Fire|$") ~= nil, M.native[#M.native])
 Deagle:UseGun("glock_17")
 check("a gun without RoN events plays its own recordings", (Deagle:ShotFile() or ""):find("%.wav$") ~= nil, Deagle:ShotFile())
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
