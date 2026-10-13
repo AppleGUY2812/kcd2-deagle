@@ -88,7 +88,8 @@ Deagle.cfg = {
 	debugShotLog = false,
 	-- where the player is, for guns with per-place gunshots (gun.envShots: Ready or Not's MK V sets, docs/mk5_sound_spec.md):
 	-- rays from the eye every period s; starting values from the spec, to tune by ear (deagle_env prints the numbers)
-	env = { on = true, period = 0.25, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
+	-- takes: recordings per place (shot-1..takes.wav; every bang x echo combination the game plays, once rendered)
+	env = { on = true, period = 0.25, takes = 8, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
 		ringInside = 12, small = 3.5, hall = 7, corrNarrow = 2.5, corrWide = 6, share = 0.5, vegShare = 0.25, trunks = 6 },
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
 	                          -- shots weren't drawn, in game 2026-10-12)
@@ -2653,7 +2654,8 @@ function Deagle:ShotFile()
 	local g = self.gun
 	if g.envShots and self.cfg.env.on and self.envClass then
 		local n
-		repeat n = math.random(1, 8) until n ~= self.envLastTake
+		local takes = math.max(1, self.cfg.env.takes)
+		repeat n = math.random(1, takes) until n ~= self.envLastTake or takes == 1
 		self.envLastTake = n
 		return string.format("%s/%s/shot-%d.wav", g.envShots, self.envClass, n)
 	end
