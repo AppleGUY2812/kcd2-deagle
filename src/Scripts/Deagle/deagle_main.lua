@@ -86,6 +86,10 @@ Deagle.cfg = {
 	-- deagle_set debugShotLog 1: every shot logs Henry's eye, the aim, the free camera (plugin log) and the round's place
 	-- each frame to kcd.log ("[Deagle] shot N ..."), to line a recording up with where the round really was
 	debugShotLog = false,
+	-- where the player is, for guns with per-place gunshots (gun.envShots: Ready or Not's MK V sets, docs/mk5_sound_spec.md):
+	-- rays from the eye every period s; starting values from the spec, to tune by ear (deagle_env prints the numbers)
+	env = { on = true, period = 0.25, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
+		ringInside = 12, small = 3.5, hall = 7, corrNarrow = 2.5, corrWide = 6, share = 0.5, vegShare = 0.25, trunks = 6 },
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
 	                          -- shots weren't drawn, in game 2026-10-12)
 	-- a shot after the old mag has left the gun mid-reload: false = only the chambered round is left (the gun has no mag
@@ -271,7 +275,7 @@ do
 	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
 	for i = 1, 8 do shots[i] = "decho/decho-" .. i .. ".wav" end
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
-		cues = cues, shotSounds = shots, bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
+		cues = cues, shotSounds = shots, envShots = "mk5", bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
 		cycle = 0.08,             -- the mod's weapon script (cycletime): CS2's Deagle is 0.225
 		-- the clips were exported frame for frame at 24 fps, but the mod's sequences run at 30 (shots at 40): play them
@@ -2086,6 +2090,7 @@ function Deagle:VmTick(token)
 	self:FlashArm()
 	self:FlashMeshTick()
 	self:CueTick()
+	self:EnvTick()
 	if self.flashLightUntil and self.vmFrame >= self.flashLightUntil then
 		local vm = self.vmId and System.GetEntity(self.vmId)
 		if vm then pcall(vm.FreeSlot, vm, FLASH_LIGHT_SLOT) end
@@ -2294,8 +2299,8 @@ end
 function Deagle:CueFire(key, file)
 	local v = self.cfg.vm.soundVol
 	if file == "shot" then
-		local shots = self.gun.shotSounds or {}
-		if #shots > 0 then local f = shots[math.random(1, #shots)] self:Snd(f, v.shot * self:ShotGain(f)) end
+		local f = self:ShotFile()
+		if f then self:Snd(f, v.shot * self:ShotGain(f)) end
 	else self:Snd(file, v.foley) end
 end
 -- every viewmodel frame: the cues the playhead has passed
@@ -2556,6 +2561,114 @@ function Deagle:OnGameplayStarted()
 end
 
 -- ---------------------------------------------------------------------------
+-- where the player is (docs/mk5_sound_spec.md): guns with per-place gunshots (gun.envShots) play the take of the place
+-- the player stands in, like Ready or Not's MK V (its rooms come from hand-placed map boxes; KCD2 has none, so rays
+-- from the eye classify it every cfg.env.period s). Classes: out_forest out_street out_covered in_small(_wood)
+-- in_mid(_wood) in_hall(_wood) in_corridor(_wood) in_cave(_stone). A class takes over after 2 reads in a row agree.
+-- ---------------------------------------------------------------------------
+local ENV_UP, ENV_RING = {}, {}
+local function envSurf(name)
+	if name:find("^mat_rock") or name:find("stone") then return "stone" end
+	if name:find("wood") or name:find("bark") or name:find("tree") then return "wood" end
+	if name:find("vegetation") or name:find("bush") or name:find("canopy") or name:find("leaves") then return "veg" end
+	if name:find("soil") or name:find("grass") or name:find("sand") or name:find("gravel") or name:find("mud") then return "terrain" end
+	return "other"
+end
+-- one sample: up = { {dist, kind}... } (nil dist = nothing), ring = 16 of { dist, kind } (index i = i x 22.5 deg)
+function Deagle:EnvClassify(sample)
+	local c = self.cfg.env
+	local roofN, roofStone = 0, false
+	for _, u in ipairs(sample.up) do
+		if u.dist and u.dist <= c.roof then
+			roofN = roofN + 1
+			roofStone = roofStone or u.kind == "stone" or u.kind == "terrain"
+		end
+	end
+	local roof = roofN >= c.roofHits
+	local near, dists, kinds = 0, {}, {}
+	for _, r in ipairs(sample.ring) do
+		if r.dist then
+			kinds[r.kind] = (kinds[r.kind] or 0) + 1
+			if r.dist <= c.ringNear then near = near + 1; dists[#dists + 1] = r.dist end
+		end
+	end
+	local hits = 0
+	for _, n in pairs(kinds) do hits = hits + n end
+	local function share(k) return hits > 0 and (kinds[k] or 0) / hits or 0 end
+	local info = { roofHits = roofN, ringHits = hits, ringNear = near }
+	if roof and near >= c.ringInside then
+		table.sort(dists)
+		local d = dists[math.ceil(#dists / 2)] or 0
+		info.median = d
+		local function dist(i) local r = sample.ring[(i - 1) % 16 + 1]; return r.dist or math.huge end
+		local corridor = false
+		for i = 1, 8 do
+			if dist(i) < c.corrNarrow and dist(i + 8) < c.corrNarrow and dist(i + 4) > c.corrWide and dist(i + 12) > c.corrWide then corridor = true end
+		end
+		if share("stone") > c.share and roofStone then return share("stone") > 0.8 and "in_cave_stone" or "in_cave", info end
+		local size = corridor and "corridor" or d < c.small and "small" or d <= c.hall and "mid" or "hall"
+		return "in_" .. size .. (share("wood") > c.share and "_wood" or ""), info
+	end
+	if roof then return "out_covered", info end
+	local trunks = 0
+	for _, r in ipairs(sample.ring) do if r.dist and r.kind == "wood" then trunks = trunks + 1 end end
+	if share("veg") > c.vegShare or trunks >= c.trunks then return "out_forest", info end
+	return "out_street", info
+end
+-- rays from the eye: static things and terrain, not the player
+function Deagle:EnvSample()
+	local c, eye, pl = self.cfg.env, System.GetViewCameraPos(), self:Player()
+	local function cast(dir, len)
+		local hits = {}
+		local ok, n = pcall(Physics.RayWorldIntersection, eye, vscale(dir, len), 1, ent_static + ent_terrain, pl and pl.id, nil, hits)
+		if ok and n and n > 0 and hits[1] then return { dist = hits[1].dist, kind = envSurf(surfaceName(hits[1])) } end
+		return { dist = nil }
+	end
+	if #ENV_UP == 0 then
+		local a = math.rad(c.upCone)
+		ENV_UP[1] = { x = 0, y = 0, z = 1 }
+		for k = 0, 3 do local h = k * math.pi / 2; ENV_UP[#ENV_UP + 1] = { x = math.sin(a) * math.cos(h), y = math.sin(a) * math.sin(h), z = math.cos(a) } end
+		for k = 0, 15 do local h = k * math.pi / 8; ENV_RING[k + 1] = { x = math.cos(h), y = math.sin(h), z = 0 } end
+	end
+	local sample = { up = {}, ring = {} }
+	for i, d in ipairs(ENV_UP) do sample.up[i] = cast(d, c.upLen) end
+	for i, d in ipairs(ENV_RING) do sample.ring[i] = cast(d, c.ringLen) end
+	return sample
+end
+-- every viewmodel frame: a new read every period s; the class changes after 2 agreeing reads
+function Deagle:EnvTick()
+	local c = self.cfg.env
+	if not c.on or not (self.gun and self.gun.envShots) then return end
+	local now = System.GetCurrTime()
+	if self.envT and now - self.envT < c.period then return end
+	self.envT = now
+	local cls, info = self:EnvClassify(self:EnvSample())
+	self.envInfo = info
+	if cls == self.envClass then self.envPending = nil
+	elseif cls == self.envPending or not self.envClass then self.envClass, self.envPending = cls, nil
+	else self.envPending = cls end
+end
+-- the gunshot file for a shot: the place's take (never the same one twice running) or the gun's own shots
+function Deagle:ShotFile()
+	local g = self.gun
+	if g.envShots and self.cfg.env.on and self.envClass then
+		local n
+		repeat n = math.random(1, 8) until n ~= self.envLastTake
+		self.envLastTake = n
+		return string.format("%s/%s/shot-%d.wav", g.envShots, self.envClass, n)
+	end
+	local shots = g.shotSounds or {}
+	return #shots > 0 and shots[math.random(1, #shots)] or nil
+end
+function Deagle:EnvPrint()
+	if not self.envClass then self:EnvTick() end
+	local i = self.envInfo or {}
+	local msg = string.format("place %s (roof rays %s, ring hits %s, near %s, median %.1f m)", tostring(self.envClass),
+		tostring(i.roofHits), tostring(i.ringHits), tostring(i.ringNear), i.median or -1)
+	log(msg); self:Notify(msg)
+end
+
+-- ---------------------------------------------------------------------------
 -- free camera look (the plugin flies the camera: freecam.cpp). While it's on, KCD2's own "no_camera" filter keeps the
 -- mouse from turning Henry, and the mouse's raw movement (our deagle_look_x / _y on maxis_x / _y) turns the camera;
 -- holding right mouse lifts the filter so the mouse aims Henry (the camera stays). A line from Henry's eye shows where a
@@ -2750,6 +2863,7 @@ end
 
 System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
 System.AddCCommand("deagle_freecam", "Deagle:Native('freecam ' .. Deagle.Arg([[%line]]))", "deagle_freecam [on|off|status|speed <m/s>|fast <x>|max <m>|keys wasd|nav|arrows|key <vk>]: free camera (time runs, Henry still aims and shoots, and doesn't walk). \\ toggles; WASD fly, Space up, Left Ctrl down, Shift faster")
+System.AddCCommand("deagle_env", "Deagle.envT = nil Deagle:EnvTick() Deagle:EnvPrint()", "deagle_env: the place the gunshot sound is picked for (Ready or Not MK V sets) and the ray numbers")
 System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "internal: the plugin's free camera came on (1) or went off (0)")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")

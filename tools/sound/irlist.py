@@ -1,0 +1,22 @@
+"""Which OpenAIR files test 4 uses (paths under irlib.ROOT). Licences: Koli is CC BY 4.0; the others are listed per
+place on OpenAIR (mostly Creative Commons) and were not checked one by one. Private use only, not shipped."""
+F = {"koli s1": "koli-national-park-summer/b-format/koli_summer_site1_4way_bformat.wav",
+ "koli s2": "koli-national-park-summer/b-format/koli_summer_site2_4way_bformat.wav",
+ "koli s3": "koli-national-park-summer/b-format/koli_summer_site3_4way_bformat.wav",
+ "koli s4": "koli-national-park-summer/b-format/koli_summer_site4_4way_bformat.wav",
+ "trollers s1": "trollers-gill/b-format/dales_site1_4way_bformat.wav",
+ "trollers s2": "trollers-gill/b-format/dales_site2_4way_bformat.wav",
+ "trollers s3": "trollers-gill/b-format/dales_site3_4way_bformat.wav",
+ "tyndall": "tyndall-bruce-monument/stereo/tyndall_bruce_ortf.wav",
+ "maes howe": "maes-howe/stereo/mh3_000_ortf_48k.wav",
+ "bottle dungeon": "falkland-palace-bottle-dungeon/b-format/bottledungeon1_sf_edited.wav",
+ "terrys typing": "terrys-typing-room/stereo/terrys_typing_ortf.wav",
+ "guildhall s1r1": "york-guildhall-council-chamber/b-format/councilchamber_s1_r1_ir_1_96000.wav",
+ "guildhall s2r3": "york-guildhall-council-chamber/b-format/councilchamber_s2_r3_ir_1_96000.wav",
+ "elveden marble": "elveden-hall-suffolk-england/stereo/1a_marble_hall.wav",
+ "elveden smoking": "elveden-hall-suffolk-england/stereo/18a_smoking_room.wav",
+ "creswell main": "creswell-crags/b-format/1_s_mainlevel_r_mainlevel.wav",
+ "creswell further": "creswell-crags/b-format/3_s_mainlevel_r_furtherin.wav",
+ "creswell gorge": "creswell-crags/b-format/4_r_cragent_s_boathouse.wav",
+ "mine s1": "gill-heads-mine/b-format/mine_site1_2way_bformat.wav",
+ "mine s2": "gill-heads-mine/b-format/mine_site2_2way_bformat.wav"}
