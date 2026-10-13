@@ -53,11 +53,11 @@ expect("empty gun: draw_empty -> idle_empty", since(m), "draw_empty/0.08 idle_em
 m = mark(); act("deagle_reload"); M.advance(3.2)
 expect("empty reload settles into idle", since(m), "reload_empty/0.08 idle1/0.10")
 
--- reload timing (Deagle times / rate 1.25): mag clicks in 1.10 s, ready 1.90 s, clean cancel until 0.30 s, old mag out
--- at 0.67 s. Staged like Insurgency: Sandstorm; a chambered round stays (7 + 1).
-reset(3); act("deagle_reload"); M.advance(1.15)
+-- reload timing (Deagle times / rate 1.25): mag clicks in 1.18 s (the retimed mag-in cue), ready 1.90 s, clean cancel
+-- until 0.30 s, old mag out at 0.67 s. Staged like Insurgency: Sandstorm; a chambered round stays (7 + 1).
+reset(3); act("deagle_reload"); M.advance(1.25)
 expect("the mag clicks in: 7 + the chambered round", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading), "8 true")
-M.advance(0.8)
+M.advance(0.7)
 expect("  ...and the reload is over once the gun is up", tostring(Deagle.state.reloading), "false")
 reset(3); m = mark(); act("deagle_reload"); M.advance(0.15); act("deagle_fire"); M.advance(1.5)
 expect("a shot before the spare shows cancels cleanly", Deagle.state.ammo .. " " .. tostring(Deagle.state.reloading) .. " " .. since(m), "2 false reload/0.08 shoot")

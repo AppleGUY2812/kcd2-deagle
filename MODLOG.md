@@ -370,3 +370,16 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   per frame, like the user's filmed .50 cal reference; user recording 17-17-41 (Glock mag dump, freecam from the side):
   flash on frame 0, streak from frame 1 at the muzzle, then one streak per frame receding along the aim line.
   Rounds / tracers now fly 1000 m (round life 6 s).
+
+## 2026-10-12 — reload sound cues vs the clips, and slow motion's two clocks
+- Cue check from tracks.json (gun-space j_mag1 / j_mag2 / j_slide): the MWII events sit ~4 frames before the impacts in
+  our clips and every file has a lead-in (magin 53 ms, empty magin 42, slideback 42, slideclose 53), so at normal speed
+  the hits came 80-90 ms early. Retimed (deagle_main.lua vmSoundCues, seat times follow the mag-in cue): reload magin
+  1.375 -> 1.475 (seat frame 37), empty magin 1.125 -> 1.240 (frame 31), slideback 1.750 -> 1.781 (rearmost frame 44),
+  slideclose 1.833 -> 1.934 (home frame 48). Glock: only the empty mag_in was off (48 ms late): 0.733 -> 0.685.
+  Inspect cues are 3-7 frames early as well (not retimed).
+- Slow motion (t_Scale 0.1) runs two clocks: Script.SetTimer follows t_Scale exactly (cue spacing in recording
+  2026-10-12 17-24-44 = 10x), but the viewmodel clip ran ~1.4-1.6x faster than that (the empty reload took ~13 s real
+  instead of ~20; shot log t= advanced 0.21 s over 1.68 s real = 0.125). So in slow motion every timer-scheduled cue drifts
+  late with its time in the clip (mag-in +2.2 s real, slide close +5.2 s): not a cue error. Judging sync in slow motion
+  needs cues driven by the clip's own time (e.g. polling GetAnimationTime), not SetTimer.

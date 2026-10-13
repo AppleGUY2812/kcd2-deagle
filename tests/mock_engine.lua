@@ -53,12 +53,28 @@ local function newEntity(name, props)
 	-- like the engine: a layer keeps its clip (a finished one-shot holds its last frame) until replaced or stopped;
 	-- asking for the clip that is already on the layer is refused
 	e.layers = {}
+	e.layerPlay = {}
 	function e:StartAnimation(slot, name, layer, blend, speed, loop)
 		if self.layers[layer] == name then return false end
 		self.layers[layer] = name
+		self.layerPlay[layer] = { t = M.t, speed = speed or 1, loop = loop }
 		table.insert(M.anims, { t = M.t, name = name, layer = layer, loop = loop, blend = blend }) return true
 	end
 	function e:StopAnimation(slot, layer) self.layers[layer] = nil end
+	function e:GetCurAnimation(slot, layer) return self.layers[layer] end
+	-- 0..1 through the clip, like KCD2: its length from the mod's own clip table (frames at the clip's fps)
+	function e:GetAnimationTime(slot, layer)
+		local name, play = self.layers[layer], self.layerPlay[layer]
+		if not name or not play or not Deagle then return 0 end
+		local frames, fps
+		for _, a in pairs(Deagle.cfg.vm.anims) do
+			local list = type(a[1]) == "table" and a or { a }
+			for _, c in ipairs(list) do if c[1] == name then frames, fps = c[2], c[3] or Deagle.cfg.vm.fps end end
+		end
+		if not frames then return 0 end
+		local t = (M.t - play.t) * play.speed / (math.max(1, frames - 1) / fps)
+		return play.loop and t % 1 or math.min(1, t)
+	end
 	e.flags = 0
 	function e:GetFlags() return self.flags end
 	function e:SetFlags(f, mode) if mode == 0 then self.flags = bit.bor(self.flags, f) elseif mode == 2 then self.flags = bit.band(self.flags, bit.bnot(f)) else self.flags = f end end

@@ -23,7 +23,25 @@ local roundsWhenEmpty = Deagle.vmRoundsShown
 step("inspect (empty)", function() act("deagle_inspect"); M.advance(6) end)
 step("empty reload", function() act("deagle_reload"); M.advance(4) end)
 local ammoAfterReload = Deagle.state.ammo
-step("one shot + reload", function() act("deagle_fire"); M.advance(0.5); act("deagle_reload"); M.advance(4) end)
+local cueCheck
+step("one shot + reload", function()
+	act("deagle_fire"); M.advance(0.5)
+	local n0, t0 = #M.native, M.t
+	act("deagle_reload"); M.advance(4)
+	-- the reload's sounds land where its clip is (they follow the playhead): each at its cue time / Rate, within a frame
+	local cues = g.cues.reload or {}
+	local worst, heard = 0, 0
+	for _, c in ipairs(cues) do
+		for i = n0 + 1, #M.native do
+			if M.native[i]:find("snd " .. c[2]:gsub("%p", "%%%0"), 1) then
+				heard = heard + 1
+				worst = math.max(worst, math.abs((M.nativeT[i] - t0) - c[1] / Deagle:Rate("reload")))
+				break
+			end
+		end
+	end
+	cueCheck = { n = #cues, heard = heard, worst = worst }
+end)
 step("inspect", function() act("deagle_inspect"); M.advance(6) end)
 -- fire modes: every mode the gun has (B cycles); burst = 3 rounds a press, auto = rounds while held
 local modeResults = {}
@@ -215,6 +233,10 @@ if mesh then
 		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] ~= mesh.f0[1] and #mesh.f2 == 0 and mesh.rolled == 2 and not mesh.particleFlash, mesh.rolled)
 	check(string.format("mesh flash under 40 fps: card %s, then %s", table.concat(mesh.s0, ","), table.concat(mesh.s1, ",")),
 		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
+end
+if cueCheck then
+	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
+		cueCheck.heard == cueCheck.n and cueCheck.worst <= 1 / 60 + 1e-3, cueCheck.worst)
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))

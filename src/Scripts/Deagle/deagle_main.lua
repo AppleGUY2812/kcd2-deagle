@@ -231,14 +231,24 @@ Deagle.state = Deagle.state or {
 	baseFov = nil,
 }
 
--- MWII sound cues per clip (seconds from clip start), from assets/build/vm_sound_cues.json; "shot" = random gunshot
+-- MWII sound cues per clip (clip-timeline seconds from clip start, i.e. 24 fps export frames / 24; PlayCues divides by
+-- Rate()), from assets/build/vm_sound_cues.json; "shot" = random gunshot.
+-- Retimed 2026-10-12 from the clips' own tracks (E:\Tools\deagle-work\out\tracks.json, gun-space j_mag1/j_mag2/j_slide):
+-- the MWII events sit ~4 frames before the impacts in our clips, and each file has a lead-in before its hit, so the
+-- hits came 80-90 ms (game time) before the impacts. Now cue = impact frame / 24 - lead-in x Rate (1.25):
+--   reload       magin       1.375 -> 1.475  (j_mag2 seats at frame 37 = 1.542; hit 53 ms into the file)
+--   reload_empty magin       1.125 -> 1.240  (j_mag1 seats at frame 31 = 1.292; hit 42 ms in)
+--   reload_empty slideback   1.750 -> 1.781  (j_slide rearmost at frame 44 = 1.833; hit 42 ms in)
+--   reload_empty slideclose  1.833 -> 1.934  (j_slide home at frame 48 = 2.000; hit 53 ms in)
+-- Mag release / mag out already land within a frame of the mag leaving. (The inspect cues are 3-7 frames early too;
+-- not retimed yet.)
 Deagle.vmSoundCues = {
 	["shoot1"] = { { 0, "shot" } },
 	["shoot2"] = { { 0, "shot" } },
 	["shoot_empty"] = { { 0, "shot" } },
-	["reload"] = { { 0.000, "decho/p25_pi_decho_reload_raise.wav" }, { 0.667, "decho/p25_pi_decho_reload_magrelease.wav" }, { 0.708, "decho/p25_pi_decho_reload_magout.wav" }, { 1.042, "decho/p25_pi_decho_reload_magfindwell.wav" }, { 1.375, "decho/p25_pi_decho_reload_magin.wav" }, { 1.750, "decho/p25_pi_decho_reload_end.wav" } },
+	["reload"] = { { 0.000, "decho/p25_pi_decho_reload_raise.wav" }, { 0.667, "decho/p25_pi_decho_reload_magrelease.wav" }, { 0.708, "decho/p25_pi_decho_reload_magout.wav" }, { 1.042, "decho/p25_pi_decho_reload_magfindwell.wav" }, { 1.475, "decho/p25_pi_decho_reload_magin.wav" }, { 1.750, "decho/p25_pi_decho_reload_end.wav" } },
 	["draw"] = { { 0.000, "decho/p25_pi_decho_raise_first_raise.wav" }, { 0.417, "decho/p25_pi_decho_raise_first_switch.wav" }, { 0.625, "decho/p25_pi_decho_raise_first_end.wav" } },
-	["reload_empty"] = { { 0.000, "decho/p25_pi_decho_reload_empty_raise.wav" }, { 0.125, "decho/p25_pi_decho_reload_empty_pivot.wav" }, { 0.208, "decho/p25_pi_decho_reload_empty_magout.wav" }, { 0.917, "decho/p25_pi_decho_reload_empty_magfindwell.wav" }, { 1.125, "decho/p25_pi_decho_reload_empty_magin.wav" }, { 1.375, "decho/p25_pi_decho_reload_empty_tilt.wav" }, { 1.750, "decho/p25_pi_decho_reload_empty_slideback.wav" }, { 1.833, "decho/p25_pi_decho_reload_empty_slideclose.wav" }, { 2.042, "decho/p25_pi_decho_reload_empty_end.wav" } },
+	["reload_empty"] = { { 0.000, "decho/p25_pi_decho_reload_empty_raise.wav" }, { 0.125, "decho/p25_pi_decho_reload_empty_pivot.wav" }, { 0.208, "decho/p25_pi_decho_reload_empty_magout.wav" }, { 0.917, "decho/p25_pi_decho_reload_empty_magfindwell.wav" }, { 1.240, "decho/p25_pi_decho_reload_empty_magin.wav" }, { 1.375, "decho/p25_pi_decho_reload_empty_tilt.wav" }, { 1.781, "decho/p25_pi_decho_reload_empty_slideback.wav" }, { 1.934, "decho/p25_pi_decho_reload_empty_slideclose.wav" }, { 2.042, "decho/p25_pi_decho_reload_empty_end.wav" } },
 	["inspect"] = { { 0.000, "decho/p25_pi_decho_inspect_raise.wav" }, { 0.083, "decho/p25_pi_decho_inspect_pivot.wav" }, { 0.208, "decho/p25_pi_decho_inspect_magrelease.wav" }, { 0.208, "decho/p25_pi_decho_inspect_magout.wav" }, { 0.750, "decho/p25_pi_decho_inspect_magcatch.wav" }, { 2.500, "decho/p25_pi_decho_inspect_magfindwell.wav" }, { 2.917, "decho/p25_pi_decho_inspect_magin.wav" }, { 3.375, "decho/p25_pi_decho_inspect_rotate.wav" }, { 3.792, "decho/p25_pi_decho_inspect_slideback.wav" }, { 4.542, "decho/p25_pi_decho_inspect_slideclose.wav" }, { 4.667, "decho/p25_pi_decho_inspect_end.wav" } },
 }
 -- empty inspect: same cues, but the locked slide never closes
@@ -268,8 +278,8 @@ do
 		-- faster (measured against YabrakProds' own video of the mod: reload back at idle ~1.7 s, as at 30 fps)
 		rate = { default = 30 / 24, shoot = 40 / 24, shootAdd = 40 / 24 },
 		-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
-		times = { reload = { cancel = 0.375, out = 0.833, ready = 2.375, seat = 1.375, trim = 2.375 },
-			reloadEmpty = { cancel = 0.333, out = 0.333, ready = 2.292, seat = 1.125, trim = 2.542 },
+		times = { reload = { cancel = 0.375, out = 0.833, ready = 2.375, seat = 1.475, trim = 2.375 },   -- seat = the mag-in cue
+			reloadEmpty = { cancel = 0.333, out = 0.333, ready = 2.292, seat = 1.240, trim = 2.542 },
 			inspect = { trim = 5.833 }, inspectEmpty = { trim = 5.833 },
 			draw = { ready = 0.958, trim = 1.292 }, drawEmpty = { ready = 0.958, trim = 1.292 } } })
 end
@@ -2082,6 +2092,7 @@ function Deagle:VmTick(token)
 	self:VmPlace()
 	self:FlashArm()
 	self:FlashMeshTick()
+	self:CueTick()
 	if self.flashLightUntil and self.vmFrame >= self.flashLightUntil then
 		local vm = self.vmId and System.GetEntity(self.vmId)
 		if vm then pcall(vm.FreeSlot, vm, FLASH_LIGHT_SLOT) end
@@ -2268,25 +2279,48 @@ function Deagle:VmRecoilAdd(empty)
 	end)
 end
 
--- sound cues of a clip, played by the plugin; cues of an interrupted clip are dropped (shots always play)
+-- sound cues of a clip, played by the plugin; cues of an interrupted clip are dropped (shots always play).
+-- Cues follow the clip's own playhead (GetAnimationTime, 0..1 through the clip; checked every frame by CueTick), not a
+-- timer: in F9 slow motion the viewmodel's animation runs ~1.5x faster than game time while timers run on game time, so
+-- timed sounds fell behind the later they came (mag-in ~2 s, slide close ~5 s late, the user's recording 2026-10-12).
 function Deagle:PlayCues(key)
 	local g = self.gun
 	local cues = g.cues[key] or ((key == "shoot" or key == "shootEmpty") and SHOT_CUE) or nil
 	if not cues then return end
-	local tok = self.vmAnimToken
-	local v = self.cfg.vm.soundVol
-	local rate = self:Rate(key)
+	local a = self.cfg.vm.anims[key]
+	if key == "shoot" then a = a[((self.vmShot or 1) - 1) % #a + 1] end
+	local span = math.max(1, a[2] - 1) / (a[3] or self.cfg.vm.fps)   -- clip-timeline seconds from first to last frame
+	local list = {}
 	for _, c in ipairs(cues) do
-		local t, file = c[1] / rate, c[2]
-		local function fire()
-			if Deagle.vmAnimToken ~= tok and key ~= "shoot" and key ~= "shootEmpty" then return end
-			if file == "shot" then
-				local shots = g.shotSounds or {}
-				if #shots > 0 then local f = shots[math.random(1, #shots)] Deagle:Snd(f, v.shot * Deagle:ShotGain(f)) end
-			else Deagle:Snd(file, v.foley) end
-		end
-		if t <= 0.001 then fire() else Script.SetTimer(math.floor(t * 1000), fire) end
+		local at = math.min(1, c[1] / span)
+		if at <= 0.001 then self:CueFire(key, c[2]) else list[#list + 1] = { at = at, file = c[2] } end
 	end
+	table.sort(list, function(x, y) return x.at < y.at end)
+	self.cuesPending = #list > 0 and { key = key, name = a[1], tok = self.vmAnimToken, list = list } or nil
+end
+function Deagle:CueFire(key, file)
+	local v = self.cfg.vm.soundVol
+	if file == "shot" then
+		local shots = self.gun.shotSounds or {}
+		if #shots > 0 then local f = shots[math.random(1, #shots)] self:Snd(f, v.shot * self:ShotGain(f)) end
+	else self:Snd(file, v.foley) end
+end
+-- every viewmodel frame: the cues the playhead has passed
+function Deagle:CueTick()
+	local p = self.cuesPending
+	if not p then return end
+	if self.vmAnimToken ~= p.tok and p.key ~= "shoot" and p.key ~= "shootEmpty" then self.cuesPending = nil return end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm then return end
+	local layer = self.cfg.vm.layer
+	local okN, cur = pcall(vm.GetCurAnimation, vm, 0, layer)
+	if not okN or cur ~= p.name then return end                  -- not ours on the layer yet (blending in)
+	local okT, t = pcall(vm.GetAnimationTime, vm, 0, layer)
+	if not okT or type(t) ~= "number" then return end
+	while p.list[1] and p.list[1].at <= t + 1e-4 do
+		self:CueFire(p.key, table.remove(p.list, 1).file)
+	end
+	if not p.list[1] then self.cuesPending = nil end
 end
 
 -- ---------------------------------------------------------------------------
