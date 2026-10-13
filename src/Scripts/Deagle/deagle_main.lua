@@ -834,14 +834,14 @@ end
 local SURFACES = {}
 local function surfaces(fx, hole, names, snd) for _, n in ipairs(names) do SURFACES[n] = { fx = fx, hole = hole, snd = snd or fx } end end
 surfaces("metal", "metal", { "mat_metal", "mat_super_cool_sparkly_type" })
-surfaces("metal", "metal", { "mat_door_metal", "mat_metal_seethrough" }, "metal_thin")
+surfaces("metal", "metal", { "mat_door_metal" }, "metal_thin")
 surfaces("metal", "metal", { "mat_bells" }, "bell")
 surfaces("metal", nil, { "mat_plate", "mat_chainmail", "mat_chainmail_plate", "mat_fabric_plate", "mat_fabric_chainmail",
 	"mat_fabric_chainmail_plate", "mat_leather_chainmail" }, "armor")
 surfaces("stone", "stone", { "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_stairs_stone", "mat_default", "mat_invulnerable" })
 surfaces("stone", "ceramic", { "mat_ceramics" }, "ceramic")
 surfaces("plaster", "plaster", { "mat_plaster" })
-surfaces("wood", "wood", { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood", "mat_railing_wood_seethrough" })
+surfaces("wood", "wood", { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood" })
 surfaces("wood", "wood_soft", { "mat_wood_soft", "mat_wicker" })
 surfaces("soil", "soil", { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_gravel", "mat_road", "mat_field" })
 surfaces("soil", "soil", { "mat_forest", "mat_grass", "mat_grassdry" }, "grass")
@@ -850,6 +850,12 @@ surfaces("straw", nil, { "mat_thatch", "mat_organic_stuff" })
 surfaces("cloth", "cloth", { "mat_sack", "mat_fabric_items", "mat_fabric", "mat_leather" })
 surfaces("glass", "glass", { "mat_glass" })
 surfaces("blood", nil, { "mat_flesh" }, "flesh")
+-- The "see-through" surfaces are crude hulls that block walking, not shots: KCD2 gives them pierceability 11, like its
+-- invisible map barriers (SurfaceTypes.xml), and its own arrows pierce anything above 9 (Ammo/Arrow.xml). 402 models
+-- use them: most forest trees (a box over the branches; the trunks have their own mat_wood proxy), fences, palisades,
+-- scaffolds, ladders, vines. A round flies through them like an arrow does (in game 2026-10-13: rounds stopped in the
+-- air between a coppiced beech's trunks).
+surfaces("pass", nil, { "mat_railing_wood_seethrough", "mat_metal_seethrough" })
 surfaces("pass", nil, { "mat_none", "mat_window", "mat_player_collider", "mat_player_only", "mat_no_photomode", "mat_npc_only",
 	"mat_horse_only", "mat_horse_ignore", "mat_player_only_with_bark", "mat_level_barrier", "mat_deep_water_barrier",
 	"mat_cart_slowdown", "mat_corpses_barrier", "mat_prepadeni_roadTocamp_barrier", "mat_slope", "mat_barrier_navignore",
@@ -866,11 +872,11 @@ ronSurface(8, { "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_def
 	"mat_stairs_stone" })                                                                                           -- ConcreteStrong
 ronSurface(34, { "mat_plaster" })                                                                                   -- Plaster
 ronSurface(6, { "mat_ceramics" })                                                                                   -- Ceramic
-ronSurface(33, { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_stairs_wood", "mat_railing_wood_seethrough" }) -- Pine
+ronSurface(33, { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_stairs_wood" })                                 -- Pine
 ronSurface(46, { "mat_wood_soft" })                                                                                 -- Treewood
 ronSurface(36, { "mat_shield_wood" })                                                                               -- Plywood
 ronSurface(5, { "mat_wicker" })                                                                                     -- Cardboard
-ronSurface(44, { "mat_metal", "mat_super_cool_sparkly_type", "mat_door_metal", "mat_metal_seethrough", "mat_plate",
+ronSurface(44, { "mat_metal", "mat_super_cool_sparkly_type", "mat_door_metal", "mat_plate",
 	"mat_chainmail", "mat_chainmail_plate", "mat_fabric_plate", "mat_fabric_chainmail", "mat_fabric_chainmail_plate",
 	"mat_leather_chainmail" })                                                                                          -- Steel
 ronSurface(9, { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_road", "mat_field", "mat_forest" })                  -- Dirt
@@ -2858,10 +2864,19 @@ end
 -- rays from the eye: static things and terrain, not the player
 function Deagle:EnvSample()
 	local c, eye, pl = self.cfg.env, System.GetViewCameraPos(), self:Player()
-	local function cast(dir, len)
-		local hits = {}
-		local ok, n = pcall(Physics.RayWorldIntersection, eye, vscale(dir, len), 1, ent_static + ent_terrain, pl and pl.id, nil, hits)
-		if ok and n and n > 0 and hits[1] then return { dist = hits[1].dist, kind = envSurf(surfaceName(hits[1])) } end
+	local function cast(dir, len)   -- the first thing a sound would bounce off: on through foliage, helpers, see-through hulls
+		local from, done = eye, 0
+		for _ = 1, 8 do
+			local hits = {}
+			local ok, n = pcall(Physics.RayWorldIntersection, from, vscale(dir, len - done), 1, ent_static + ent_terrain, pl and pl.id, nil, hits)
+			if not (ok and n and n > 0 and hits[1]) then break end
+			local name = surfaceName(hits[1])
+			local sf = SURFACES[name]
+			if not (sf and sf.fx == "pass") then return { dist = done + hits[1].dist, kind = envSurf(name) } end
+			done = done + hits[1].dist + 0.01
+			if done >= len then break end
+			from = vadd(eye, vscale(dir, done))
+		end
 		return { dist = nil }
 	end
 	if #ENV_UP == 0 then

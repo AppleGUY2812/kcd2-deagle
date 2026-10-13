@@ -70,15 +70,16 @@ Deagle.penetration = {
 local S = Deagle.penetration
 for _, m in ipairs({
 	{ S.metal, "mat_metal", "mat_bells" },
-	{ S.metal_thin, "mat_door_metal", "mat_metal_seethrough", "mat_plate", "mat_fabric_plate", "mat_chainmail_plate", "mat_fabric_chainmail_plate" },
+	{ S.metal_thin, "mat_door_metal", "mat_plate", "mat_fabric_plate", "mat_chainmail_plate", "mat_fabric_chainmail_plate" },
 	{ S.chainmail, "mat_chainmail", "mat_fabric_chainmail", "mat_leather_chainmail" },
 	{ S.stone, "mat_rock", "mat_rock_unwalk", "mat_rock_horse_ignore", "mat_stairs_stone", "mat_rockwater" },
 	{ S.ceramic, "mat_ceramics" },
 	{ S.plaster, "mat_plaster" },
-	{ S.wood, "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood", "mat_railing_wood_seethrough" },
+	{ S.wood, "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood" },
 	{ S.wood_soft, "mat_wood_soft", "mat_wicker" },
 	{ S.soil, "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_gravel", "mat_road", "mat_field", "mat_forest", "mat_grass", "mat_grassdry" },
-	{ S.foliage, "mat_grass_tall", "mat_bushes", "mat_vegetation", "mat_vegetation_seethrough", "mat_canopy" },
+	{ S.foliage, "mat_grass_tall", "mat_bushes", "mat_vegetation", "mat_vegetation_seethrough", "mat_canopy",
+		"mat_railing_wood_seethrough", "mat_metal_seethrough" },   -- walk-blocking hulls rounds fly through (deagle_main SURFACES)
 	{ S.water, "mat_water", "mat_mudwater", "mat_slowwater", "mat_puddle" },
 	{ S.straw, "mat_thatch", "mat_organic_stuff" },
 	{ S.sack, "mat_sack", "mat_fabric_items" },

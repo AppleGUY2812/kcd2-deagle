@@ -99,6 +99,8 @@ for name, sf in pairs(Deagle.surfaces) do
 	if sf.fx ~= "pass" and (not sf.ron or silent[sf.ron]) then missing[#missing + 1] = name end
 end
 table.sort(missing)
+check("see-through hulls (tree branch boxes, fences) let rounds through, like KCD2's arrows",
+	Deagle.surfaces.mat_railing_wood_seethrough.fx == "pass" and Deagle.surfaces.mat_metal_seethrough.fx == "pass" and Deagle.surfaces.mat_wood.fx == "wood", nil)
 check("every hit surface has an audible RoN Surface: missing " .. table.concat(missing, " "), #missing == 0, #missing)
 -- the empty click and aiming play the gun's RoN events
 n0 = #M.native
