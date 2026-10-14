@@ -19,6 +19,9 @@ EXE = "/mnt/e/Tools/deagle-work/ron/fmodrender/bin/FmodRender.exe"
 BANKS = r"C:\Program Files (x86)\Steam\steamapps\common\Ready Or Not\ReadyOrNot\Content\FMOD\Desktop"
 DESK = "/mnt/c/Users/<user>/Desktop/Deagle Progress/15 Metal hit loudness"
 CLIP = "/mnt/c/Users/<user>/Downloads/Sunday Shoot-a-Round # 351_8_50.mp3"
+# Hickok45 "Desert Eagle 50 AE" (youtu.be/nb7tWcohYSY, audio fetched with yt-dlp): 734.5-744.5 s = 3 shots that all
+# ring the same far plate (a 5.5 kHz tone 0.92-0.96 s later, like 25 shots in the video; misses leave no tone)
+DE = "/mnt/e/Tools/deagle-work/sound/hickok/nb7tWcohYSY.wav"
 RM = "event:/Levels/Reverbs/ReverbMaster"
 IMP = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces"
 SHOT = "event:/Weapons/Grizzly/1P Grizzly Fire"
@@ -56,9 +59,12 @@ def main():
     for f in os.listdir(out):
         if f.endswith(".wav"): os.remove(os.path.join(out, f))
     rows = []   # (section, label, file)
-    if os.path.exists(clip):   # 3 of the clip's shots with their dings (1.2-5.8 s)
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "1.15", "-t", "4.7", "-i", clip, out + "/hickok45_clip.wav"], check=True)
-        rows.append(("Real recording", "Hickok45 (your clip): listen for the DING about 1 s after each shot", "hickok45_clip.wav"))
+    if os.path.exists(DE):
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "734.5", "-t", "10", "-i", DE, out + "/hickok45_deagle_3_hits.wav"], check=True)
+        rows.append(("Real recordings", "Hickok45, Desert Eagle .50 AE: 3 shots, every one hits a steel plate far out. The DING comes about 1 s after each shot", "hickok45_deagle_3_hits.wav"))
+    if os.path.exists(clip):   # its first shot rings a plate about 1 s later (the second one is less clear)
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "1.15", "-t", "2.4", "-i", clip, out + "/hickok45_your_clip.wav"], check=True)
+        rows.append(("Real recordings", "Hickok45, your clip: one shot, the DING about 1 s later", "hickok45_your_clip.wav"))
     name = "metal_hit_alone.wav"
     trimmed(out, name, render(out_win + "\\" + name, [(1.5, [IMP] + HIT + [f"vol:{NOW_VOL}"])] + [(1.5, ["ev:" + IMP] + HIT + [f"vol:{NOW_VOL}"])] * 2))
     rows.append(("Each sound alone", "the metal hit alone (what to listen for)", name))
