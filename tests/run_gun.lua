@@ -89,8 +89,9 @@ if phys then
 	Deagle.state.ammo = g.magSize; M.advance(1.5)
 	local up = Deagle.cfg.physics.camPerFlip * (Deagle:FeltKick(phys))
 	local p0, n0, shotN = M.view.pitch, #M.native, Deagle.sprayN or 0
-	act("deagle_fire"); M.advance(0.1)
-	local peak = math.deg(M.view.pitch - p0)
+	act("deagle_fire")
+	local first, peak   -- a string's first frame: the kick rises (riseRate), it doesn't jump
+	for f = 1, 6 do M.advance(1 / 60); local d = math.deg(M.view.pitch - p0); first = first or d; peak = math.max(peak or d, d) end
 	M.advance(1.5)
 	local final = math.deg(M.view.pitch - p0)
 	local kicks = 0
@@ -105,7 +106,7 @@ if phys then
 	for i = 1, 5 do act("deagle_fire"); M.advance(0.08); if i == 1 then kickNow = select(1, Deagle:GunKickNow()) end end
 	M.advance(2.0)
 	local string5 = math.deg(M.view.pitch - p1)
-	recoil = { up = up, peak = peak, final = final, kicks = kicks, keep = keep, string5 = string5, kickNow = kickNow,
+	recoil = { up = up, peak = peak, first = first, final = final, kicks = kicks, keep = keep, string5 = string5, kickNow = kickNow,
 		flash = (function() local l for _, c in ipairs(M.native) do if c:find("^%[DN%] flasharm ") then l = c end end return l end)(),
 		shot = (function() local l for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] flashshot ") then l = M.native[i] end end return l end)(),
 		light = (function() local l for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx ") then l = M.native[i] end end return l end)(),
@@ -195,6 +196,9 @@ if w then
 		Deagle.cfg.damage == w.damage and math.abs(Deagle.cfg.interval - ((Deagle.cfg.fireRate == "mod" and g.cycle) or w.cycle)) < 1e-6, Deagle.cfg.damage)
 end
 if recoil then
+	-- after a pause the recoil clock was stale: the first frame counted as 0.1 s, half the springy kick was gone at once
+	check(string.format("first shot after a pause: %.2f deg on its first frame, peak %.2f of %.2f", recoil.first, recoil.peak, recoil.up),
+		recoil.first < 0.85 * recoil.peak and recoil.peak > 0.8 * recoil.up, recoil.peak)
 	check(string.format("cartridge kick %.1f deg: climbs %.1f, settles at %.1f (keeps ~%d%%), gun kick sent %d", recoil.up, recoil.peak, recoil.final, recoil.keep * 100, recoil.kicks),
 		recoil.peak > recoil.final and recoil.peak < 1.05 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.1 * recoil.up + 0.02 and recoil.kicks == 1, recoil.final)
 	-- flashMode "gun" (the default): the shot's flash spawned on the muzzle by the plugin at the cartridge's size; the

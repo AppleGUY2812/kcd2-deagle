@@ -756,8 +756,11 @@ function Deagle:PhysicsRecoil(phys)
 	local up = m.camPerFlip * feltFlip * (1 + m.vary * self:SprayRand(n, 1)) * aim * self.cfg.recoil
 	local side = up * ((ph.side or 0) + m.sideSigma * self:SprayRand(n, 2))
 	local range = m.holdRange * m.holds[ph.hold] * (s.aiming and m.adsHold or 1)
-	local r = self.camRecoil or { pitch = 0, yaw = 0, applied = { pitch = 0, yaw = 0 }, perm = { pitch = 0, yaw = 0 } }
-	self.camRecoil = r
+	local r = self.camRecoil
+	if not r then   -- a new string: its clock starts now (a stale one made the first frame 0.1 s: half the kick gone, no rise)
+		r = { pitch = 0, yaw = 0, applied = { pitch = 0, yaw = 0 }, perm = { pitch = 0, yaw = 0 } }
+		self.camRecoil, self.camRecoilLast = r, System.GetCurrTime()
+	end
 	r.rate = m.returnRate * math.sqrt(m.returnInertia / phys.inertia)
 	local back = math.min(m.holdMax * up, math.max(0, range - r.pitch))
 	r.pitch, r.perm.pitch = r.pitch + back, r.perm.pitch + up - back
