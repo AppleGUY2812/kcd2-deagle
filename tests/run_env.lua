@@ -144,7 +144,11 @@ n0 = #M.native
 local cp = System.GetViewCameraPos()
 Deagle:HitSound(8, { x = cp.x, y = cp.y + 12, z = cp.z }, 1)
 local imp = M.native[#M.native]
-check("impact: " .. tostring(imp), #M.native == n0 + 1 and imp:find("^%[DN%] ron3 [%d%.]+ [%-%d%.]+ [%-%d%.]+ [%-%d%.]+ event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces|Surface=8 Occlusion=0 PropagateDistance=@$") ~= nil, imp)
+check("impact: " .. tostring(imp), #M.native == n0 + 1 and imp:find("^%[DN%] ron3 2%.000 [%-%d%.]+ [%-%d%.]+ [%-%d%.]+ event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces|Surface=8 Occlusion=0 PropagateDistance=@ Falloff=3$") ~= nil, imp)
+-- ... with our distance law (Falloff=<m>: full level within it, -6 dB per doubling) instead of RoN's own, which fades
+-- impacts out by 12 m; the plugin handles the marker
+local cpp = io.open("native/src/ron.cpp"):read("*a")
+check("the plugin applies Falloff=", cpp:find('ps.find("Falloff=")', 1, true) ~= nil, nil)
 -- deagle_sounds original: the gun mod's own shot and animation sounds, no RoN events from the gun
 M.console("deagle_sounds", "original")
 n0 = #M.native

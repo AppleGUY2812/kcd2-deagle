@@ -199,6 +199,18 @@ static bool PlayLocked(const char* event, const char* params, const float* at, f
 	// "PropagateDistance=@": RoN's game code gives its impact events the length of the sound's path; ours is the straight
 	// line from the listener, worked out now (the free camera may have moved while the sound travelled)
 	std::string ps = params ? params : "";
+	// "Falloff=<m>": our distance law instead of RoN's (its PropagateDistance fades impacts out by ~12 m, a
+	// close-quarters game's choice): full level within <m> of the listener, then -6 dB per doubling (inverse distance),
+	// and RoN's own fade off (PropagateDistance 0). An older plugin ignores the marker and keeps RoN's fade.
+	size_t f = ps.find("Falloff=");
+	if (f != std::string::npos) {
+		float ref = (float)atof(ps.c_str() + f + 8);
+		size_t e = ps.find(' ', f);
+		ps.erase(f, e == std::string::npos ? std::string::npos : e - f + 1);
+		if (at && ref > 0) { float d = EarDistance(at); vol *= ref / (d > ref ? d : ref); }
+		size_t pd = ps.find("PropagateDistance=@");
+		if (pd != std::string::npos) ps.replace(pd + 18, 1, "0");
+	}
 	size_t k = ps.find("PropagateDistance=@");
 	if (k != std::string::npos) {
 		char num[32];

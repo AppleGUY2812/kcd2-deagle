@@ -135,7 +135,11 @@ Deagle.cfg = {
 	-- its fragments along the plate, splashAngle deg off its face
 	armor = { punch = 104, conditionFloor = 0.6, critScale = 1, bruise = 0.1, ricochetKeep = 0.3, scatter = 30, splashAngle = 20 },
 	armorRicochetFx = "deagle_impacts.ricochet_metal",
-	impactVolume = 1.0,       -- bullet impact / ricochet / armour sounds: x Ready or Not's own level
+	-- bullet impact / ricochet / armour sounds: x Ready or Not's own level (it mixes impacts ~9 dB under the shot);
+	-- impactNear: m within which they play at full level, then -6 dB per doubling of the distance (real sound). RoN's
+	-- own fade (PropagateDistance) took them out by 12 m: 5 m -4 dB, 10 m -23, a close-quarters game's choice.
+	-- Now: 6 m = RoN's point-blank level, 12 m -6 dB, 24 m -12, 48 m -18
+	impactVolume = 2.0, impactNear = 3,
 	-- KCD2's AI hearing (XGenAIModule.ProduceSound*): shot = the gun_fired multiplier for a 9 mm (louder guns more;
 	-- GUESS ~80 m, calibrate live), hit = bullet_hit multiplier at an impact for a 9 mm
 	hearing = { on = true, shot = 3.2, hit = 1.0 },
@@ -1114,7 +1118,8 @@ function Deagle:HitSound(what, pos, scale, vol)
 	local c = self.cfg
 	if self.native and what then
 		local ev, params
-		local prop = "Occlusion=0 PropagateDistance=@"
+		-- Falloff: the plugin's distance law from the listener (the free camera too), instead of RoN's PropagateDistance
+		local prop = "Occlusion=0 PropagateDistance=@ Falloff=" .. c.impactNear
 		if type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d %s", what, prop)
 		else ev, params = RON_HIT[what], prop end
 		if ev then self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume * (vol or 1), pos.x, pos.y, pos.z, ev, params)) end
