@@ -118,7 +118,7 @@ What the values mean (RoN's combining code is native and was **not read**; this 
   `1 - depth / maxDepth` of the energy.
 - **Ricochet (2026-10-13: measured critical angles, not RoN's rule):** RoN's 30 deg at 10-30 % for every surface is
   replaced by each material's critical angle from forensic tests (`crit` in penetration.lua, sources there): steel 6,
-  sheet / plate 7, stone 12, tile 16, plaster 7, plywood 16, pine 11, glass 7, water 7, soil / sand 10 (guess); cloth,
+  sheet / plate 7, stone 12, tile 16, plaster 7, plywood 16, pine 11, glass 16, water 7, packed ground / sand 10 and forest floor / grass / mud 5 (guesses); cloth,
   straw, leaves, flesh never. Chance = 1 / (1 + e^((angle - crit) / cfg.ricochet.width)): half at crit. Off hard
   surfaces it leaves flatter (cfg.ricochetLift 0.4), off yielding ones steeper (`lift`: water 3.8, soil 2). Ricochets
   tumble (cfg.tumble.pen: half the reach into the next thing).

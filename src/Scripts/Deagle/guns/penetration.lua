@@ -34,10 +34,14 @@ Deagle.penetrationAmmo = {
 -- skips off, steeper and it digs in or breaks up; at crit itself half the rounds skip (Haag & Haag, Shooting Incident
 -- Reconstruction, the definition the studies below use). Measured with pistol / rifle FMJ:
 --   steel plate 5 (9 mm, CZ 75: review table, ResearchGate 393603576); wallboard, car-body steel, wood, glass 5-9
---   (9 mm / 5.56 / 7.62, AAFS 2018 B99); water ~7 (AK, same) and ~8 (AAFS 2012 A102); concrete 10.8-11.1, cement 13.2
+--   (9 mm / 5.56 / 7.62 together, AAFS 2018 B99); float glass 15.8 for 9 mm FMJ (.32 Auto 21, .45 Auto 17.6: JFS 2016,
+--   PubMed 27644019); water ~7 (AK, same) and ~8 (AAFS 2012 A102); concrete 10.8-11.1, cement 13.2
 --   (7.62x39, Science & Justice 2021); glazed tile 14.8 floor / 16.6 wall (9 mm, JFS 2023, PubMed 36453554); plywood,
 --   MDF, melamine 14-18 (9 mm, JFS 2025); whitewood: skips at 9-12, never from 13 (9 mm, CUNY thesis); harder, denser
---   wood skips at steeper angles (same). 0 = never skips (soft: cloth, straw, leaves, flesh).
+--   wood skips at steeper angles (same). 0 = never skips (soft: cloth, straw, leaves, flesh). The bullet matters too
+--   (on glass .32 Auto 21, 9 mm 15.8, .45 Auto 17.6; on wood .32 above 9 mm), not simply by size: not modelled, one
+--   angle per material. No study of soil found: packed ground (road, gravel, field) and soft ground (forest floor,
+--   grass, mud: GUESS skips only flatter, and less steeply) are guesses.
 -- hard = unyielding (steel, stone, tile): a skipping round leaves flatter than it came (cfg.ricochetLift); the others
 -- yield and leave steeper (lift: the round ploughs a little ramp; 9 mm FMJ off water at 2.5 deg left at ~9.5,
 -- American Handgunner "The Art Of The Ricochet").
@@ -65,13 +69,14 @@ Deagle.penetration = {
 	drywall    = P("plaster", "RON_Drywall",        0.6,  0, true,  7,   false, 0.0),        -- wallboard 5-9
 	wood       = P("wood",    "RON_Plywood",        1.0,  0, true,  16,  false, 0.0),        -- plywood 14-18; density = default (GUESS 1)
 	wood_soft  = P("wood",    "RON_Pine",           1.0,  0, true,  11,  false, 0.0),        -- whitewood 9-12; density = default (GUESS 1)
-	soil       = P("soil",    "RON_Dirt",           1.0,  0, false, 10,  false, 0.0, 2.0),   -- not penetrable (ground); crit GUESS (no study found), lift GUESS
-	sand       = P("sand",    "RON_Sand",           1.0,  0, false, 10,  false, 0.0, 2.0),   -- crit GUESS (no study found), lift GUESS
+	soil       = P("soil",    "RON_Dirt",           1.0,  0, false, 10,  false, 0.0, 1.5),   -- packed ground, not penetrable; crit and lift GUESS (no study found)
+	soil_soft  = P("soil",    "RON_Dirt",           1.0,  0, false, 5,   false, 0.0, 1.5),   -- forest floor, grass, mud; GUESS
+	sand       = P("sand",    "RON_Sand",           1.0,  0, false, 10,  false, 0.0, 1.5),   -- crit GUESS (no study found), lift GUESS
 	foliage    = P("soil",    "RON_Leaves",         0.7,  0, true,  0,   false, 0.0),
 	cloth      = P("cloth",   "RON_Fabric_Thin",    0.5,  0, true,  0,   false, 0.0),
 	sack       = P("cloth",   "RON_Fabric_Stuffing", 1.0, 0, true,  0,   false, 0.0),        -- density = default (GUESS 1)
 	straw      = P("straw",   "RON_Cardboard",      0.5,  0, true,  0,   false, 0.0),        -- no RoN straw: GUESS cardboard
-	glass      = P("glass",   "RON_Glass_Plate",    0.6,  0, true,  7,   false, 0.0),        -- glass 5-9
+	glass      = P("glass",   "RON_Glass_Plate",    0.6,  0, true,  16,  false, 0.0),        -- float glass 15.8 (9 mm)
 	water      = P("water",   "RON_Water",          1.0,  0, true,  7,   false, 0.0, 3.8),   -- water 7-8; 2.5 in -> 9.5 out; density = default (GUESS 1)
 	flesh      = P("flesh",   "RON_Flesh",          3.0,  0, true,  0,   false, 0.0),        -- 9 mm: 3.3 cm, .50 AE: 10 cm
 	chainmail  = P("metal",   "RON_Tin",            1.0,  0, true,  6,   true,  0.0),        -- GUESS: rings stop little; crit GUESS as steel plate
@@ -90,7 +95,8 @@ for _, m in ipairs({
 	{ S.plaster, "mat_plaster" },
 	{ S.wood, "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood" },
 	{ S.wood_soft, "mat_wood_soft", "mat_wicker" },
-	{ S.soil, "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_gravel", "mat_road", "mat_field", "mat_forest", "mat_grass", "mat_grassdry" },
+	{ S.soil, "mat_soil", "mat_soil_unwalk", "mat_gravel", "mat_road", "mat_field" },
+	{ S.soil_soft, "mat_forest", "mat_grass", "mat_grassdry", "mat_mud" },
 	{ S.foliage, "mat_grass_tall", "mat_bushes", "mat_vegetation", "mat_vegetation_seethrough", "mat_canopy",
 		"mat_railing_wood_seethrough", "mat_metal_seethrough" },   -- walk-blocking hulls rounds fly through (deagle_main SURFACES)
 	{ S.water, "mat_water", "mat_mudwater", "mat_slowwater", "mat_puddle" },

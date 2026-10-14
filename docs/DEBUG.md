@@ -87,7 +87,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `armor.bruise` | `0.1` | share of the wound a round stopped by armour still does (blunt trauma) |
 | `wallbang.budget` | `0.1` | metres of wood a 9 mm gets through (others by energy; the Deagle ~0.19) |
 | `ricochetKeep` | `0.35` | energy a ricochet keeps |
-| `ricochet.critScale` | `1` | every world material's critical angle (stone 12, wood 11-16, steel 6, water 7 deg off the surface) x this: higher = more ricochets |
+| `ricochet.critScale` | `1` | every world material's critical angle (stone 12, wood 11-16, glass 16, steel 6, water 7, forest floor / grass 5 deg off the surface) x this: higher = more ricochets |
 | `ricochet.width` | `1` | how soft the cut-off is: at the critical angle half skip, 3 deg flatter ~95 %, 3 deg steeper ~5 % |
 | `ricochet.volume` | `2` | ricochet whine loudness x impactVolume |
 | `ricochet.fxScale` | `1.5` | ricochet sparks size |
