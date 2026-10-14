@@ -222,3 +222,56 @@ listener's 3D attributes; flags 0x3 = read-only + automatic). flags 0x8 = discre
 
   (all `Weapons/G19 New/G19 ...`, 3D 2..8 m, params Occlusion / PropagateDistance). Our Glock clips have their own
   timings, so scale the offsets to our clip lengths or retime to our clip's impacts.
+
+## Handling events: transient timings (2026-10-12, tools/sound/ron_part_transients.py)
+Each event rendered alone 6 times by Ready or Not's engine (listener at the source, Occlusion 0, PropagateDistance 0),
+256-sample mix blocks. Engine output delay (exactly 10 blocks, measured with a core oscillator) is removed.
+- **All click times are measured from the event's first audible sound** (engine-independent, +-5 ms run to run).
+  "first sound" = ms from the start call to the first audible sample; it includes the engine's own start scheduling,
+  1-3 mix blocks (5-17 ms here at 256 samples; ~20-60 ms at FMOD's default 1024). Larger values (Ammo Check 82,
+  First Draw 145, ReloadStart 116, Reload Empty Start 62, Reload Quick Start 55, ADS Stop 67) contain a designed
+  silent lead-in of roughly that minus ~10 ms. Calibrate once live: the MK V fire's bang = first sound.
+- main click = the loudest sharp rise (>= 12 dB in 8 ms); 2nd = next loudest (level vs main in dB);
+  "all clicks" lists every sharp rise within 15 dB of the main one, play 1.
+- takes: "random" = several files picked per play (main-click time then varies by take: range shown);
+  "fixed" = the same file(s) every play (times identical across the 6 plays).
+- "sounds like" is from the measurement (sharp = 1-3 clicks, busy = many; bright / mid / dull by spectral centroid)
+  plus the file names: not listened to. Grizzly MagIn / MagOut reuse Kimber recordings (KIMBER_Reload_Normal_*).
+
+| event | takes | first sound (ms) | main click (ms) | 2nd click (ms, dB) | all clicks within 15 dB (ms) | sounds like |
+|---|---|---|---|---|---|---|
+| Grizzly/1P Grizzly Fire | random (9 files, 4 at once) | 11 | 0 | - | 0 | sharp dull hit; GRIZZLY_Reflection_INT_Base_01, GRIZZLY_Reflection_INT_Base_02, GRIZZLY_Reflection_INT_Large_01 ... |
+| Grizzly/Grizzly Ammo Check | fixed, 1 file | 82 | 778 | 2374 (-0) | 309, 353, 466, 668, 738, 778, 2168, 2237, 2303, 2374, 2420 | busy bright mag; Grizzly_Mag_Check |
+| Grizzly/Grizzly First Draw | fixed, 1 file | 145 | 569 | 528 (-3) | 2, 412, 465, 528, 569, 679, 779 | busy bright draw; Grizzly_Draw_First |
+| Grizzly/Grizzly MagIn | fixed, 1 file | 15 | 251 | 136 (-7) | 136, 183, 251 | busy bright mag; KIMBER_Reload_Normal_MagIn |
+| Grizzly/Grizzly MagOut | fixed, 1 file | 17 | 239 | 164 (-6) | 10, 99, 164, 239 | busy bright mag; KIMBER_Reload_Normal_MagOut |
+| Grizzly/Grizzly Reload Empty MagIn | fixed, 1 file | 14 | 201 | 150 (-3) | 4, 150, 201, 356 | busy bright mag; GRIZZLY_Reload_Empty_MagIn |
+| Grizzly/Grizzly Reload Empty MagOut | fixed, 1 file | 6 | 138 | 3 (-2) | 3, 138 | sharp bright mag; GRIZZLY_Reload_Empty_MagOut |
+| Grizzly/Grizzly Reload Empty Slide Release | fixed, 1 file | 12 | 55 | 2 (-7) | 2, 55, 196 | sharp bright slide; GRIZZLY_Reload_Empty_SlideRelease |
+| Grizzly/Grizzly Reload Empty Start | fixed, 1 file | 62 | 243 | 199 (-10) | 130, 199, 243 | busy bright hit; GRIZZLY_Reload_Empty_Start |
+| Grizzly/Grizzly Reload Quick MagIn | fixed, 1 file | 9 | 106 | 10 (-2) | 10, 45, 106, 260 | busy bright mag; GRIZZLY_Reload_Speed_MagIN |
+| Grizzly/Grizzly Reload Quick MagOut | fixed, 1 file | 9 | 245 | 56 (-1) | 1, 56, 99, 245, 288 | busy bright mag; GRIZZLY_Reload_Speed_MagOut |
+| Grizzly/Grizzly Reload Quick Start | fixed, 1 file | 55 | 38 | 97 (-1) | 38, 97 | sharp dull hit; GRIZZLY_Reload_Speed_Start |
+| Grizzly/Grizzly ReloadStart | fixed, 1 file | 116 | 352 | 491 (-4) | 352, 387, 426, 491 | busy mid hit; GRIZZLY_Reload_Normal_Start |
+| FN57/FN57 Dry Fire | random (2 files, 1 at once) | 9 | 2 | - | 2 | sharp bright click; weap_glock_fire_dry_01, weap_glock_fire_dry_02 |
+| Shared/ADS/ADS Pistol Start | random (6 files, 1 at once) | 30 | 155-192 | 222-259 (-11) | 32, 171, 230, 276 | busy bright hit; char_foley_arms_quick_01, char_foley_arms_quick_02, char_foley_arms_quick_03 ... |
+| Shared/ADS/ADS Pistol Stop | random (12 files, 2 at once) | 67 | 73-178 | 94-178 (-6) | 129, 175 | busy bright hit; char_foley_aim_clicks_01, char_foley_aim_clicks_02, char_foley_aim_clicks_03 ... |
+| Shared/Draw/Draw Pistol V2 | random (18 files, 4 at once) | 24 | 53-86 | 1-168 (-20) | 78 | sharp bright holster; char_foley_gear_shake_short_01, char_foley_gear_shake_short_03, char_foley_gear_shake_short_04 ... |
+| Shared/Mag Drops/Pistol Mag Drop | random (6 files, 1 at once) | 5 | 1-141 | 1-145 (-3) | 1, 115, 238 | sharp bright mag; weap_pistol_mag_drop_01, weap_pistol_mag_drop_02, weap_pistol_mag_drop_03 ... |
+| Shared/Pistols Shared/Pistol Holster | random (4 files, 1 at once) | 42 | 387-431 | 269-457 (-8) | 269, 387 | sharp mid holster; Universal_Pistol_Holster_01, Universal_Pistol_Holster_02, Universal_Pistol_Holster_03 ... |
+| G19 New/1P G19 Fire | random (11 files, 5 at once) | 17 | 1-4 | - | 1 | sharp dull hit; 556_Int_Med1p-003, 556_Int_Med1p-006, Glock-1 ... |
+| G19 New/G19 Cloth-CheckDone | fixed, 1 file | 5 | 4 | 164 (-7) | 4, 164 | sharp mid cloth; Cloth-CheckDone |
+| G19 New/G19 Cloth-PouchGrab | fixed, 1 file | 41 | 253 | 73 (-17) | 253 | sharp mid cloth; Cloth-PouchGrab |
+| G19 New/G19 Cloth-ReloadEnd | fixed, 1 file | 9 | 9 | 401 (-22) | 9 | sharp mid cloth; Cloth-ReloadEnd |
+| G19 New/G19 Cloth-ReloadMagStow | fixed, 1 file | 5 | 302 | 227 (-1) | 227, 302, 369 | sharp mid cloth; Cloth-ReloadMagStow |
+| G19 New/G19 Cloth-ReloadStart | fixed, 1 file | 5 | 302 | - | 302 | sharp mid cloth; Cloth-ReloadStart |
+| G19 New/G19 Dry Mag In | fixed, 1 file | 15 | 230 | 116 (-5) | 4, 116, 167, 230, 285, 547 | busy bright click; DryMagin |
+| G19 New/G19 Dry Mag Out | fixed, 1 file | 12 | 2 | 161 (-14) | 2, 161 | sharp bright click; DryMagOut |
+| G19 New/G19 Mag Check In | fixed, 2 layers | 25 | 203 | 3-270 (-4) | 3, 149, 203, 270 | busy bright cloth; CheckMagIn, Cloth-CheckB4MagIn |
+| G19 New/G19 Mag Check Out | fixed, 2 layers | 20 | 4 | 326 (-10) | 4, 167, 326, 426, 756 | busy bright cloth; CheckMagOut, Cloth-CheckMagOut |
+| G19 New/G19 Slide | fixed, 2 layers | 26 | 176 | 32 (-6) | 32, 176 | sharp bright cloth; Cloth-SlideGrab, DrySlideGrab |
+| G19 New/G19 Wet Mag In | fixed, 1 file | 9 | 347 | 2 (-11) | 2, 47, 347 | busy bright mag; WetMagInNormal |
+| G19 New/G19 Wet Mag Out | fixed, 1 file | 12 | 10 | 305 (-4) | 10, 61, 128, 305 | busy bright mag; WetMagOutNormal |
+| G19 New/G19 WetMagInQuick | fixed, 1 file | 25 | 224 | 172 (-18) | 224 | busy bright mag; WetMagInQuick |
+| G19 New/G19 WetMagOutQuick | fixed, 1 file | 6 | 3 | 148 (-12) | 3, 148 | sharp bright mag; WetMagOutQuick |
+| G19/G19 Dryfire Old | random (6 files, 1 at once) | 5 | 0 | - | 1 | sharp bright click; weap_g19_dryfire_01, weap_g19_dryfire_02, weap_g19_dryfire_03 ... |

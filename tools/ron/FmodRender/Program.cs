@@ -37,6 +37,7 @@ static class F
     [DllImport(S)] public static extern int FMOD_Studio_Bus_GetChannelGroup(IntPtr bus, out IntPtr cg);
     [DllImport(S)] public static extern int FMOD_Studio_EventDescription_GetPath(IntPtr d, byte[] path, int size, out int got);
     [DllImport(S)] public static extern int FMOD_Studio_EventDescription_GetLength(IntPtr d, out int ms);
+    [DllImport(S)] public static extern int FMOD_Studio_EventDescription_GetID(IntPtr d, byte[] guid16);
     [DllImport(S)] public static extern int FMOD_Studio_EventDescription_Is3D(IntPtr d, out int is3d);
     [DllImport(S)] public static extern int FMOD_Studio_EventDescription_GetMinMaxDistance(IntPtr d, out float mn, out float mx);
     [DllImport(S)] public static extern int FMOD_Studio_EventDescription_GetParameterDescriptionCount(IntPtr d, out int n);
@@ -52,9 +53,13 @@ static class F
     [DllImport(S)] public static extern int FMOD_Studio_EventInstance_Release(IntPtr i);
     [DllImport(S)] public static extern int FMOD_Studio_EventInstance_GetChannelGroup(IntPtr i, out IntPtr cg);
     [DllImport(S)] public static extern int FMOD_Studio_EventInstance_GetVolume(IntPtr i, out float v, out float final);
+    [DllImport(S)] public static extern int FMOD_Studio_EventInstance_SetVolume(IntPtr i, float v);
     [DllImport(C)] public static extern int FMOD_System_SetOutput(IntPtr core, int type);
     [DllImport(C)] public static extern int FMOD_System_SetSoftwareFormat(IntPtr core, int rate, int speakermode, int raw);
     [DllImport(C)] public static extern int FMOD_System_SetDSPBufferSize(IntPtr core, uint len, int num);
+    [DllImport(C)] public static extern int FMOD_System_CreateDSPByType(IntPtr core, int type, out IntPtr dsp);
+    [DllImport(C)] public static extern int FMOD_System_PlayDSP(IntPtr core, IntPtr dsp, IntPtr group, int paused, out IntPtr ch);
+    [DllImport(C)] public static extern int FMOD_Channel_Stop(IntPtr ch);
     [DllImport(C)] public static extern int FMOD_System_GetMasterChannelGroup(IntPtr core, out IntPtr cg);
     [DllImport(C)] public static extern int FMOD_ChannelGroup_GetNumDSPs(IntPtr cg, out int n);
     [DllImport(C)] public static extern int FMOD_ChannelGroup_GetDSP(IntPtr cg, int i, out IntPtr dsp);
@@ -86,6 +91,8 @@ static class F
         [FieldOffset(0)] public IntPtr name; [FieldOffset(8)] public uint id1; [FieldOffset(12)] public uint id2;
         [FieldOffset(16)] public float min; [FieldOffset(20)] public float max; [FieldOffset(24)] public float def;
         [FieldOffset(28)] public int type; [FieldOffset(32)] public uint flags;
+        [FieldOffset(36)] public uint g0; [FieldOffset(40)] public uint g1; [FieldOffset(44)] public uint g2; [FieldOffset(48)] public uint g3;
+        public byte[] guid { get { var b = new byte[16]; BitConverter.GetBytes(g0).CopyTo(b, 0); BitConverter.GetBytes(g1).CopyTo(b, 4); BitConverter.GetBytes(g2).CopyTo(b, 8); BitConverter.GetBytes(g3).CopyTo(b, 12); return b; } }
     }
     public static byte[] Z(string s) => Encoding.UTF8.GetBytes(s + "\0");
     public static string Str(byte[] b) { int n = Array.IndexOf(b, (byte)0); return Encoding.UTF8.GetString(b, 0, n < 0 ? b.Length : n); }
@@ -96,6 +103,8 @@ static class P
 {
     const uint HEADER = 0x00020310;   // FMOD 2.03.10, the version Ready or Not ships
     static IntPtr sys, core;
+    static long blocks; static int BlockLen = 1024;                       // mix blocks rendered so far (NRT: one update = one block)
+    static void Tick() { F.FMOD_Studio_System_Update(sys); blocks++; }
 
     static void Init(string bankdir, string wavOut)
     {
@@ -103,7 +112,9 @@ static class P
         F.Ok(F.FMOD_Studio_System_GetCoreSystem(sys, out core), "core");
         F.Ok(F.FMOD_System_SetOutput(core, wavOut != null ? 5 : 4), "output");          // WAVWRITER_NRT / NOSOUND_NRT
         F.Ok(F.FMOD_System_SetSoftwareFormat(core, 48000, 3, 0), "format");              // 48 kHz stereo
-        F.Ok(F.FMOD_System_SetDSPBufferSize(core, 1024, 4), "dsp buffer");               // one update = 1024 samples
+        var bl = Environment.GetEnvironmentVariable("FMOD_BLOCK");                     // finer start timing, e.g. 256
+        BlockLen = string.IsNullOrEmpty(bl) ? 1024 : int.Parse(bl);
+        F.Ok(F.FMOD_System_SetDSPBufferSize(core, (uint)BlockLen, 4), "dsp buffer");      // one update = one block
         IntPtr extra = wavOut != null ? Marshal.StringToHGlobalAnsi(wavOut) : IntPtr.Zero;
         F.Ok(F.FMOD_Studio_System_Initialize(sys, 512, 0x2 /*SYNCHRONOUS_UPDATE*/, 0, extra), "init");
         var banks = new List<string> { "Master.bank", "Master.strings.bank", "Weapons.bank" };
@@ -112,8 +123,9 @@ static class P
         else if (!string.IsNullOrEmpty(more)) banks.AddRange(more.Split(';'));
         foreach (var b in banks)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             int r = F.FMOD_Studio_System_LoadBankFile(sys, F.Z(Path.Combine(bankdir, b)), 0, out _);
-            Console.WriteLine($"load {b}: {(r == 0 ? "ok" : "FMOD error " + r)}");
+            Console.WriteLine($"load {b}: {(r == 0 ? "ok" : "FMOD error " + r)} {sw.ElapsedMilliseconds} ms, process memory {System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / 1048576} MB");
         }
         F.FMOD_Studio_System_FlushCommands(sys);
     }
@@ -184,7 +196,7 @@ static class P
                 F.FMOD_Studio_System_GetParameterDescriptionCount(sys, out int ng);
                 var gp = new F.PDesc[Math.Max(ng, 1)]; F.FMOD_Studio_System_GetParameterDescriptionList(sys, gp, gp.Length, out ng);
                 Console.WriteLine($"global parameters: {ng}");
-                for (int i = 0; i < ng; i++) Console.WriteLine($"    global '{Marshal.PtrToStringAnsi(gp[i].name)}' type {gp[i].type} range {gp[i].min}..{gp[i].max} default {gp[i].def}");
+                for (int i = 0; i < ng; i++) Console.WriteLine($"    global '{Marshal.PtrToStringAnsi(gp[i].name)}' type {gp[i].type} range {gp[i].min}..{gp[i].max} default {gp[i].def} id {gp[i].id1:x8}{gp[i].id2:x8} guid {BitConverter.ToString(gp[i].guid).Replace("-", "")}");
                 F.FMOD_Studio_System_GetBankCount(sys, out int nb); var banks = new IntPtr[nb]; F.FMOD_Studio_System_GetBankList(sys, banks, nb, out nb);
                 foreach (var bank in banks)
                 {
@@ -196,7 +208,8 @@ static class P
                         string path = DescPath(evs[i]); if (!path.ToLowerInvariant().Contains(filt)) continue;
                         F.FMOD_Studio_EventDescription_GetLength(evs[i], out int len); F.FMOD_Studio_EventDescription_Is3D(evs[i], out int is3d);
                         F.FMOD_Studio_EventDescription_GetMinMaxDistance(evs[i], out float mn, out float mx);
-                        Console.WriteLine($"  {path}  length {len} ms  3D {is3d}  distance {mn}..{mx} m");
+                        var g16 = new byte[16]; F.FMOD_Studio_EventDescription_GetID(evs[i], g16);
+                        Console.WriteLine($"  {path}  length {len} ms  3D {is3d}  distance {mn}..{mx} m  guid {BitConverter.ToString(g16).Replace("-", "")}");
                         DumpParams(evs[i]);
                     }
                     F.FMOD_Studio_Bank_GetBusCount(bank, out int nbus);
@@ -230,21 +243,35 @@ static class P
                     var kv = a[i].Split('='); cur.ps.Add((kv[0], float.Parse(kv[1], System.Globalization.CultureInfo.InvariantCulture)));
                 }
                 shots.Add(cur);
-                const double block = 1024.0 / 48000;                 // one update = one mix block in NRT mode
+                double block = BlockLen / 48000.0;                    // one update = one mix block in NRT mode
                 foreach (var sp in snaps)                 // e.g. snapshot:/Reverb_OUT_Street01, what a map's room zone turns on
                 {
                     F.Ok(F.FMOD_Studio_System_GetEvent(sys, F.Z(sp), out IntPtr sd), sp); F.Ok(F.FMOD_Studio_EventDescription_CreateInstance(sd, out IntPtr si), sp);
-                    F.Ok(F.FMOD_Studio_EventInstance_Start(si), sp); Console.WriteLine("snapshot on: " + sp);
+                    var sv = Environment.GetEnvironmentVariable("SNAP_VOLUME");      // test: does instance volume = snapshot intensity?
+                    if (!string.IsNullOrEmpty(sv)) F.FMOD_Studio_EventInstance_SetVolume(si, float.Parse(sv, System.Globalization.CultureInfo.InvariantCulture));
+                    F.Ok(F.FMOD_Studio_EventInstance_Start(si), sp); Console.WriteLine("snapshot on: " + sp + (string.IsNullOrEmpty(sv) ? "" : " volume " + sv));
                 }
-                for (int k = 0; k < 200; k++) F.FMOD_Studio_System_Update(sys);   // let snapshots fade in (~4 s of mix time, silent)
+                for (int k = 0; k < 200; k++) Tick();   // let snapshots fade in (~4 s of mix time, silent)
+                var lsw = System.Diagnostics.Stopwatch.StartNew();
                 F.Ok(F.FMOD_Studio_EventDescription_LoadSampleData(desc), "load samples");
                 for (int k = 0; k < 2000; k++)          // wait for the event's audio to load (NRT: each update is instant)
                 {
-                    F.FMOD_Studio_System_Update(sys); F.FMOD_Studio_EventDescription_GetSampleLoadingState(desc, out int st);
+                    Tick(); F.FMOD_Studio_EventDescription_GetSampleLoadingState(desc, out int st);
                     if (st == 3) break; if (st == 4) throw new Exception("sample data failed to load");
                     System.Threading.Thread.Sleep(2);
                 }
+                Console.WriteLine($"event audio loaded in {lsw.ElapsedMilliseconds} ms, process memory {System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / 1048576} MB");
                 bool dumped = false;
+                if (Environment.GetEnvironmentVariable("CLICK") == "1")   // engine latency: a core oscillator started at a logged block
+                {
+                    F.Ok(F.FMOD_System_CreateDSPByType(core, 2, out IntPtr osc), "oscillator");
+                    for (int k = 0; k < 20; k++) Tick();
+                    Console.WriteLine($"click starts at block {blocks} = sample {blocks * BlockLen}");
+                    F.Ok(F.FMOD_System_PlayDSP(core, osc, IntPtr.Zero, 0, out IntPtr och), "play osc");
+                    for (int k = 0; k < 5; k++) Tick();
+                    F.FMOD_Channel_Stop(och);
+                    for (int k = 0; k < 40; k++) Tick();
+                }
                 foreach (var (secs, ps) in shots)
                 {
                     F.Ok(F.FMOD_Studio_EventDescription_CreateInstance(desc, out IntPtr inst), "instance");
@@ -254,11 +281,12 @@ static class P
                         if (r != 0) { r = F.FMOD_Studio_System_SetParameterByName(sys, F.Z(n), v, 1); Console.WriteLine($"  {n}={v} (global) -> {r}"); }
                         else Console.WriteLine($"  {n}={v} -> ok");
                     }
+                    Console.WriteLine($"shot starts at block {blocks} = sample {blocks * BlockLen}");
                     F.Ok(F.FMOD_Studio_EventInstance_Start(inst), "start");
                     int steps = (int)Math.Ceiling(secs / block);
                     for (int s = 0; s < steps; s++)
                     {
-                        F.FMOD_Studio_System_Update(sys);
+                        Tick();
                         if (s == 6 && (!dumped || Environment.GetEnvironmentVariable("DUMP_ALL") == "1"))
                         {
                             dumped = true; F.FMOD_Studio_EventInstance_GetVolume(inst, out float iv, out float fv);
@@ -269,7 +297,7 @@ static class P
                     }
                     F.FMOD_Studio_EventInstance_Release(inst);
                 }
-                for (int k = 0; k < 8; k++) F.FMOD_Studio_System_Update(sys);
+                for (int k = 0; k < 8; k++) Tick();
                 F.FMOD_Studio_System_Release(sys);       // the wav writer finishes the file on release
                 Console.WriteLine("wrote " + a[2]);
                 return 0;
