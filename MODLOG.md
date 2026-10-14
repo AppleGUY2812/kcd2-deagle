@@ -613,3 +613,27 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   viewmodel .cdf files (`tools/flash_cdf.py`, KCD2's own format: `RelRotation="1,0,0,0" RelPosition="0,0,0"
   BoneName=...`), named after its CGF and hidden by the script at load; a look switch only hides and shows. The
   magazines and rounds (`CA_SKIN` in the .cdf) never had the problem.
+
+## 2026-10-14: every model on the muzzle bone draws the first card; the flash cards are skins now (Claude 4)
+- The .cdf fix above failed in game (pak f66d5fb2, the user's clip `mkv sound clips/2026-10-14 08-40-10.mkv`): our look
+  and Ready or Not's drew the same fireball, and in F9 slow motion one Ready or Not flash kept that shape for its whole
+  0.95 s through all 10 stages (it should end in a 1 mm quad).
+- Live test, game in front: each of the 88 `CA_BONE` attachments reported its own CGF and `tag_flash`. Ours 2 and Ready
+  or Not's empty stage 10, held alone, drew our card 1's flame. `DestroyAttachment` on the 80 Ready or Not cards, then on
+  every card but ours 1: ours 1 still drew that flame, hidden it was gone. So every CGF attachment on the muzzle bone
+  draws one model (here the .cdf's first, `deagle_vm_flash_1`), whatever it binds; not their number, not the Ready or
+  Not models. The viewmodel's skins (gun, both magazines, 6 rounds: different models at once) each draw their own.
+- Fix: every card is a skin of its gun (`CA_SKIN`), every vertex on `tag_flash` at weight 1: `tools/flash_skin.sh`
+  (Blender + toolkit + rc, `tools/flash_skin.py`) into `<gun dir>/flash/<card>.skin`, 112 per gun (ours 2 sizes x 4
+  shapes x 4 quarter turns: the roll is baked, skins can't be turned at run time; Ready or Not's 2 x 40). Skins are
+  built per skeleton: the Deagle's from `mwii_vm_extra.blend`, the Glock's from `glock_17_vm_roles.blend`, with the
+  guns' export steps replayed (Source +X -> CryEngine +Y, bone names, the muzzle bone unkeyed).
+- A skin carries its whole skeleton (`CompiledBones` 0x2000, `CompiledPhysicalBones` 0x2001), byte-identical in the
+  gun's .chr and its skins. It is the rest pose (the Deagle's muzzle at -0.04, -0.15, 1.15), not the export frame's;
+  the card vertices are put there by the .chr's `m_DefaultB2W` (offset 264 of each 584-byte bone, after 32 bytes).
+  `tools/flash_cdf.py` checks every card skin: both chunks equal the .chr's, every vertex on the muzzle bone alone
+  (`CompiledIntSkinVertices` 0x2005: 32 bytes, then 64 per vertex, bone ids u16 x4 at 36, weights f32 x4 at 44).
+  Every Ready or Not card corner sits within 0.001 mm of the old CGF's, relative to the muzzle bone.
+- Toolkit traps: `bcry.add_cry_export_node` files a mesh of 4 vertices or fewer on an armature as `<armature>.chr` (its
+  skeleton stand-in), whatever node type you ask for: the 22 one-quad cards went missing. The script makes the
+  `<name>.skin` collections itself. rc's second pass (one rc per skin) runs on after Blender quits: wait for it.

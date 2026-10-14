@@ -114,44 +114,39 @@ if phys then
 		light = (function() local l for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx ") then l = M.native[i] end end return l end)(),
 		wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
--- the mesh flash (flashMode "mesh"): the .cdf's cards on the muzzle bone (tools/flash_cdf.py), all hidden at load; the
--- 4 of this gun's size are the look's; a shot shows one in its own frame, the same the next frame, then none (1 frame
--- under 40 fps); a fresh roll for each card it hid. Nothing is attached or loaded at run time (stale models in KCD2)
+-- the mesh flash (flashMode "mesh"): the .cdf's cards, skins of this gun on its muzzle bone (tools/flash_cdf.py), all
+-- hidden at load; the 16 of this gun's size (4 shapes x 4 turns round the barrel: the roll) are the look's; a shot shows
+-- one in its own frame, the same the next frame, then none (1 frame under 40 fps). Nothing is attached, loaded, moved or
+-- turned at run time (bone attachments drew the first card's model in KCD2; skins follow their bone)
 local mesh
 if phys then
 	local fm = Deagle.flashMesh
 	local function shown()
 		local out = {}
-		for i = 1, 4 do if M.hidden[Deagle.flashMesh.names[i]] == false then out[#out + 1] = i end end
+		for i = 1, #Deagle.flashMesh.names do if M.hidden[Deagle.flashMesh.names[i]] == false then out[#out + 1] = i end end
 		return out
 	end
 	local cdfCards, cdfShown = 0, 0
 	for n in pairs(M.cdfAttach or {}) do
-		if n:find("^deagle_vm_flash") then cdfCards = cdfCards + 1; if M.hidden[n] ~= true then cdfShown = cdfShown + 1 end end
+		if n:find("^deagle_vm_flash") and M.cdfAttach[n] == "CA_SKIN" then cdfCards = cdfCards + 1; if M.hidden[n] ~= true then cdfShown = cdfShown + 1 end end
 	end
 	local set = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and Deagle.cfg.flashMesh.large or Deagle.cfg.flashMesh.small
-	mesh = { setup = fm and #fm.names == 4 and #shown() == 0, cgf = M.attachCgf and fm and M.attachCgf[fm.names[3]], set = set,
-		cdfCards = cdfCards, cdfShown = cdfShown, want = #Deagle:FlashCardNames() }
+	local roll = Deagle.cfg.flashMesh.roll
+	Deagle.cfg.flashMesh.roll = false; local unturned = Deagle:FlashLook().variants; Deagle.cfg.flashMesh.roll = roll
+	mesh = { setup = fm and #fm.names == 16 and #shown() == 0, cgf = M.attachCgf and fm and M.attachCgf[fm.names[3]], set = set,
+		cdfCards = cdfCards, cdfShown = cdfShown, want = #Deagle:FlashCardNames(), unturned = unturned }
 	Deagle.cfg.flashMode = "mesh"
 	M.advance(0.5, 60)
-	mesh.placed = 0                                   -- on the muzzle itself (the .cdf's bone)
-	for i = 1, 4 do
-		local p = M.attachPos and M.attachPos[fm.names[i]]
-		if p and p.x == 0 and p.y == 0 and p.z == 0 then mesh.placed = mesh.placed + 1 end
-	end
-	local nf, roll0 = #M.native, M.attachAngles and M.attachAngles[fm.names[1]]
-	M.attachAngles = {}
+	local nf = #M.native
 	Deagle.state.ammo, Deagle.state.lastShot = g.magSize, -100
 	Deagle:Shoot(true)
 	Deagle.vmFrame = Deagle.vmFrame + 1; Deagle:FlashMeshTick()   -- the shot's own frame's tick (a shot comes before it)
 	local f0 = shown()
 	M.advance(1 / 60, 60); local f1 = shown()
 	M.advance(1 / 60, 60); local f2 = shown()
-	local rolled = 0
-	for _ in pairs(M.attachAngles) do rolled = rolled + 1 end
 	local particleFlash = false
 	for i = nf + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx deagle%.muzzle ") or M.native[i]:find("^%[DN%] flashfx deagle%.muzzle_large ") then particleFlash = true end end
-	mesh.f0, mesh.f1, mesh.f2, mesh.rolled, mesh.roll0, mesh.particleFlash = f0, f1, f2, rolled, roll0, particleFlash
+	mesh.f0, mesh.f1, mesh.f2, mesh.particleFlash = f0, f1, f2, particleFlash
 	M.advance(0.5, 30)                                -- under 40 fps: one frame
 	Deagle.state.lastShot = -100
 	Deagle:Shoot(true)
@@ -181,13 +176,8 @@ if phys then
 		return out
 	end
 	local rset = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and R.large or R.small
-	local hiddenAll, placedAll = #ronShown() == 0, 0
-	for i = 1, n do
-		local p = M.attachPos and M.attachPos[Deagle.flashMesh.names[i]]
-		if p and p.x == 0 and p.y == 0 and p.z == 0 then placedAll = placedAll + 1 end
-	end
-	mesh.ron = { cards = n, hidden = hiddenAll, placed = placedAll, last = M.attachCgf and M.attachCgf[Deagle.flashMesh.names[n]],
-		want = "objects/manmade/weapons/deagle/vm/" .. rset .. "_" .. R.variants .. "_" .. R.stages .. ".cgf", look = Deagle.flashMesh.look.look }
+	mesh.ron = { cards = n, hidden = #ronShown() == 0, last = M.attachCgf and M.attachCgf[Deagle.flashMesh.names[n]],
+		want = "/flash/" .. rset .. "_" .. R.variants .. "_" .. R.stages .. ".skin", look = Deagle.flashMesh.look.look }
 	local function ronShot(fps)
 		Deagle.state.lastShot = -100
 		Deagle:Shoot(true)
@@ -211,10 +201,12 @@ if phys then
 	mesh.ron.fslow, mesh.ron.okslow = ronShot(600)
 	M.console("deagle_flash", "ours")
 	M.advance(0.2, 60)
-	mesh.ron.back = Deagle.flashMesh.look.look == "ours" and #Deagle.flashMesh.names == 4
+	mesh.ron.back = Deagle.flashMesh.look.look == "ours" and #Deagle.flashMesh.names == 16
 	mesh.ron.leftOn = 0                               -- no Ready or Not card left showing after the switch back
 	for n in pairs(M.cdfAttach or {}) do if n:find("_ron") and M.hidden[n] ~= true then mesh.ron.leftOn = mesh.ron.leftOn + 1 end end
 	mesh.runtime = (M.boneAttach or 0) + (M.runtimeCgf or 0)
+	for k in pairs(M.attachPos or {}) do if k:find("^deagle_vm_flash") then mesh.runtime = mesh.runtime + 1 end end
+	for k in pairs(M.attachAngles or {}) do if k:find("^deagle_vm_flash") then mesh.runtime = mesh.runtime + 1 end end
 	Deagle.cfg.flashMode = "gun"
 	M.advance(0.5, 60)
 end
@@ -308,22 +300,22 @@ if recoil then
 	check("the spray pattern is the same every time (learnable)", a1 == a2 and Deagle:SprayRand(3, 2) ~= Deagle:SprayRand(4, 2), a1)
 end
 if mesh then
-	check(string.format("mesh flash: 4 hidden cards, %s, %d put on the muzzle bone", tostring(mesh.cgf), mesh.placed),
-		mesh.setup and mesh.cgf == "objects/manmade/weapons/deagle/vm/" .. mesh.set .. "_3.cgf" and mesh.roll0 ~= nil and mesh.placed == 4, mesh.cgf)
-	check(string.format("mesh flash at 60 fps: card %s on the shot's frame, %s the next, %s after; %d rolled; no particle flash",
-		table.concat(mesh.f0, ","), table.concat(mesh.f1, ","), table.concat(mesh.f2, ","), mesh.rolled),
-		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] == mesh.f0[1] and #mesh.f2 == 0 and mesh.rolled == 1 and not mesh.particleFlash, mesh.rolled)
+	check(string.format("mesh flash: 16 hidden cards (4 with roll off: %d), card 3 %s", mesh.unturned, tostring(mesh.cgf)),
+		mesh.setup and mesh.unturned == 4 and tostring(mesh.cgf):find("/flash/" .. mesh.set .. "_3%.skin$") ~= nil, mesh.cgf)
+	check(string.format("mesh flash at 60 fps: card %s on the shot's frame, %s the next, %s after; no particle flash",
+		table.concat(mesh.f0, ","), table.concat(mesh.f1, ","), table.concat(mesh.f2, ",")),
+		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] == mesh.f0[1] and #mesh.f2 == 0 and not mesh.particleFlash, #mesh.f2)
 	check(string.format("mesh flash under 40 fps: card %s, then %s", table.concat(mesh.s0, ","), table.concat(mesh.s1, ",")),
 		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
 	check(string.format("mesh flash in F9 slow motion: %d frames at 60 fps (0.035 s of game time = 21), %d variant (one shape, no switch)", mesh.slow, mesh.slowCards),
 		mesh.slow >= 19 and mesh.slow <= 23 and mesh.slowCards == 1, mesh.slow)
 	local r = mesh.ron
-	check(string.format("Ready or Not flash (deagle_flash ron): %d hidden cards, %d on the muzzle bone, last %s", r.cards, r.placed, tostring(r.last)),
-		r.look == "ron" and r.hidden and r.placed == r.cards and r.last == r.want, r.last)
+	check(string.format("Ready or Not flash (deagle_flash ron): %d hidden cards, last %s", r.cards, tostring(r.last)),
+		r.look == "ron" and r.hidden and tostring(r.last):sub(-#r.want) == r.want, r.last)
 	check(string.format("Ready or Not flash at 60 fps: %d frames (0.095 s = 6), one variant stepping through its stages (%s); x0.1: %d frames (57)",
 		r.f60, table.concat(r.seq60, ","), r.fslow), r.f60 >= 5 and r.f60 <= 7 and r.ok60 and r.fslow >= 54 and r.fslow <= 60 and r.okslow, r.f60)
-	check(string.format("deagle_flash ours: back to our 4 cards, %d Ready or Not cards left showing", r.leftOn), r.back and r.leftOn == 0, r.leftOn)
-	check(string.format("flash cards from the .cdf: %d (%d expected), %d showing at load; %d attached or loaded at run time",
+	check(string.format("deagle_flash ours: back to our 16 cards, %d Ready or Not cards left showing", r.leftOn), r.back and r.leftOn == 0, r.leftOn)
+	check(string.format("flash card skins from the .cdf: %d (%d expected), %d showing at load; %d attached, loaded, moved or turned at run time",
 		mesh.cdfCards, mesh.want, mesh.cdfShown, mesh.runtime), mesh.cdfCards == mesh.want and mesh.cdfShown == 0 and mesh.runtime == 0, mesh.runtime)
 end
 if cueCheck then

@@ -96,10 +96,11 @@ mags = "".join(f'\n    <Attachment Type="CA_SKIN" AName="vm_{m}" Binding="object
 # one attachment per modelled round in the magazine (vm_round_1 = the top one)
 rounds = "".join(f'\n    <Attachment Type="CA_SKIN" AName="vm_round_{i}" Binding="objects/manmade/weapons/guns/{SLUG}/{NAME}_round_{i}.skin" '
                  f'Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" Flags="0" />' for i in range(1, build.get("rounds", 0) + 1))
-# the mesh muzzle flash cards on the muzzle bone (tools/flash_cdf.py: made at load, run-time ones drew stale models)
+# the mesh muzzle flash cards: skins of this gun on its muzzle bone (tools/flash_skin.sh builds them, tools/flash_cdf.py
+# lists them; bone attachments drew the first card's model in KCD2)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from flash_cdf import block as flash_block
-flash = "".join("\n" + l for l in flash_block(REPO, bones.get("muzzle", "tag_flash")))
+flash = "".join("\n" + l for l in flash_block(REPO, f"src/Objects/manmade/weapons/guns/{SLUG}"))
 open(os.path.join(odir, f"{NAME}.cdf"), "w").write(f'''<CharacterDefinition>
   <Model File="objects/manmade/weapons/guns/{SLUG}/{NAME}.chr" Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" />
   <AttachmentList>

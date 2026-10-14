@@ -48,17 +48,18 @@ local function newEntity(name, props)
 	function e:SetWorldPos(p) self.pos = vec(p.x, p.y, p.z) end
 	function e:GetWorldAngles() return vec(0, 0, 0) end
 	function e:SetWorldAngles(a) self.ang = a end
-	-- like the engine: a .cdf's bone attachments come with the character, on their bones and shown
+	-- like the engine: a .cdf's attachments come with the character and shown, bone attachments on their bones
 	function e:LoadCharacter(slot, f)
 		local h = type(f) == "string" and io.open("src/" .. f:gsub("^objects/", "Objects/"), "r")
 		if h then
 			local ab = rawget(self, "attachBones") or {}; rawset(self, "attachBones", ab)
 			M.hidden, M.attachCgf, M.cdfAttach = M.hidden or {}, M.attachCgf or {}, M.cdfAttach or {}
 			for line in h:lines() do
-				if line:find('Type="CA_BONE"') then
+				local kind = line:match('Type="(CA_%u+)"')
+				if kind == "CA_BONE" or kind == "CA_SKIN" then
 					local n, b, bone = line:match('AName="([^"]+)"'), line:match('Binding="([^"]+)"'), line:match('BoneName="([^"]+)"')
-					ab[n] = { bone = bone, at = -math.huge }
-					M.hidden[n], M.attachCgf[n], M.cdfAttach[n] = false, b, true
+					if kind == "CA_BONE" then ab[n] = { bone = bone, at = -math.huge } end
+					M.hidden[n], M.attachCgf[n], M.cdfAttach[n] = false, b, kind
 				end
 			end
 			h:close()
