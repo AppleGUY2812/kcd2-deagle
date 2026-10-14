@@ -48,7 +48,23 @@ local function newEntity(name, props)
 	function e:SetWorldPos(p) self.pos = vec(p.x, p.y, p.z) end
 	function e:GetWorldAngles() return vec(0, 0, 0) end
 	function e:SetWorldAngles(a) self.ang = a end
-	function e:LoadCharacter(slot, f) return 0 end
+	-- like the engine: a .cdf's bone attachments come with the character, on their bones and shown
+	function e:LoadCharacter(slot, f)
+		local h = type(f) == "string" and io.open("src/" .. f:gsub("^objects/", "Objects/"), "r")
+		if h then
+			local ab = rawget(self, "attachBones") or {}; rawset(self, "attachBones", ab)
+			M.hidden, M.attachCgf, M.cdfAttach = M.hidden or {}, M.attachCgf or {}, M.cdfAttach or {}
+			for line in h:lines() do
+				if line:find('Type="CA_BONE"') then
+					local n, b, bone = line:match('AName="([^"]+)"'), line:match('Binding="([^"]+)"'), line:match('BoneName="([^"]+)"')
+					ab[n] = { bone = bone, at = -math.huge }
+					M.hidden[n], M.attachCgf[n], M.cdfAttach[n] = false, b, true
+				end
+			end
+			h:close()
+		end
+		return 0
+	end
 	function e:Hide(h) self.hidden = (h == 1) end
 	-- like the engine: a layer keeps its clip (a finished one-shot holds its last frame) until replaced or stopped;
 	-- asking for the clip that is already on the layer is refused
@@ -120,7 +136,10 @@ local function newEntity(name, props)
 	end
 	function e:SetAttachmentPos(slot, name, p) M.attachPos = M.attachPos or {}; M.attachPos[name] = p end
 	-- like KCD2 (WHGame disassembly, docs/flash_mesh_plan.md): loading a CGF onto an attachment always shows it
-	function e:SetAttachmentCGF(slot, name, cgf) M.hidden = M.hidden or {}; M.hidden[name] = false; M.attachCgf = M.attachCgf or {}; M.attachCgf[name] = cgf end
+	function e:SetAttachmentCGF(slot, name, cgf)
+		M.hidden = M.hidden or {}; M.hidden[name] = false; M.attachCgf = M.attachCgf or {}; M.attachCgf[name] = cgf
+		M.runtimeCgf = (M.runtimeCgf or 0) + 1
+	end
 	function e:SetAttachmentAngles(slot, name, a) M.attachAngles = M.attachAngles or {}; M.attachAngles[name] = a end
 	function e:ChangeAttachmentMaterial(name, mtl) M.attachMtl = M.attachMtl or {}; M.attachMtl[name] = mtl end
 	function e:SetAttachmentEffect(slot, name, fx, offset, dir, scale, flags)

@@ -571,45 +571,53 @@ function Deagle:FlashDisarm()
 	self.flashArmed = nil
 end
 
--- The mesh flash: 4 card variants as bone attachments on the muzzle (made here, so neither gun's model files change),
--- hidden. SetAttachmentCGF always shows the attachment it loads (WHGame disassembly), so each is hidden right after,
--- in the same frame. Made again with every new viewmodel (a gun change, a respawn). A bone attachment made at run time
--- gets its bone only at the character's next re-sort, and then sits at the model's origin (its offset from the bone
--- becomes the bone's inverse bind pose, a roll set in the creation frame or not): on the viewmodel that is the camera,
--- so no card was ever seen (in game 2026-10-14). FlashMeshPlace puts them on the muzzle once their bone is there.
--- the cards of the current look: ours (4 variants, one card each) or Ready or Not's (flashRon: variants x stages)
+-- The mesh flash: every card of both looks and both sizes is a bone attachment on the muzzle in the viewmodel's .cdf
+-- (tools/flash_cdf.py), named after its CGF, at the bone itself. A .cdf's attachments show at load, so all are hidden
+-- when the viewmodel is made and at every look switch; a shot shows one. Nothing is made or loaded while the game runs:
+-- attachments made at run time (CreateBoneAttachment + SetAttachmentCGF) drew stale models in KCD2, after a look switch
+-- every card the same leftover flash, even an apple put on one (in game 2026-10-14). Made at run time they also got
+-- their bone only at the character's next re-sort and sat at the model's origin, in the camera, until FlashMeshPlace.
+-- the cards of the current look: ours (4 variants, one card each) or Ready or Not's (flashRon: variants x stages);
+-- cdfMtl: the material the .cdf gives them (their CGFs' own)
 function Deagle:FlashLook()
 	local c, r, phys = self.cfg.flashMesh, self.cfg.flashRon, self:ShotPhysics()
 	local large = phys and phys.blast >= self.cfg.physics.largeFlashBlast
 	if c.look == "ron" then
-		return { look = "ron", set = large and r.large or r.small, variants = r.variants, stages = r.stages, time = r.time, roll = false, mtl = r.mtl }
+		return { look = "ron", set = large and r.large or r.small, variants = r.variants, stages = r.stages, time = r.time, roll = false,
+			mtl = r.mtl, cdfMtl = "deagle_vm_flash_ron" }
 	end
-	return { look = "ours", set = large and c.large or c.small, variants = 4, stages = 1, time = c.time, roll = c.roll, mtl = c.mtl }
+	return { look = "ours", set = large and c.large or c.small, variants = 4, stages = 1, time = c.time, roll = c.roll, mtl = c.mtl,
+		cdfMtl = "deagle_vm_flash" }
+end
+-- every card in the .cdf (both looks, both sizes): the attachments hidden at setup
+function Deagle:FlashCardNames()
+	local c, r, out = self.cfg.flashMesh, self.cfg.flashRon, {}
+	for _, set in ipairs({ c.large, c.small }) do
+		for v = 1, 4 do out[#out + 1] = set .. "_" .. v end
+	end
+	for _, set in ipairs({ r.large, r.small }) do
+		for v = 1, r.variants do
+			for st = 1, r.stages do out[#out + 1] = set .. "_" .. v .. "_" .. st end
+		end
+	end
+	return out
 end
 function Deagle:FlashMeshSetup(vm)
 	local L = self:FlashLook()
-	local dir = "objects/manmade/weapons/deagle/vm/"
+	for _, name in ipairs(self:FlashCardNames()) do pcall(vm.HideAttachment, vm, 0, name, true, true) end
 	local m = { names = {}, shown = {}, set = L.set, look = L }
 	for v = 1, L.variants do
 		for st = 1, L.stages do
-			local i = (v - 1) * L.stages + st
-			local name = (L.look == "ron" and "vm_flash_ron_" or "vm_flash_") .. i   -- a look switch never reuses a name it just destroyed
-			local cgf = L.stages > 1 and (L.set .. "_" .. v .. "_" .. st) or (L.set .. "_" .. v)
-			pcall(vm.CreateBoneAttachment, vm, 0, self.gun.bones.muzzle, name, false)
-			pcall(vm.SetAttachmentCGF, vm, 0, name, dir .. cgf .. ".cgf")
-			pcall(vm.HideAttachment, vm, 0, name, true, true)
-			m.names[i] = name
+			m.names[(v - 1) * L.stages + st] = L.stages > 1 and (L.set .. "_" .. v .. "_" .. st) or (L.set .. "_" .. v)
 		end
 	end
 	self.flashMesh = m
 	self:FlashMeshMaterial(vm)
 end
--- another look (deagle_flash ron / ours): the old cards go, the new look's are made on the same viewmodel
+-- another look (deagle_flash ron / ours): every card hidden, the new look's names taken; the .cdf's attachments stay
 function Deagle:FlashMeshRebuild()
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if not vm then return end
-	for _, name in ipairs(self.flashMesh and self.flashMesh.names or {}) do pcall(vm.DestroyAttachment, vm, 0, name) end
-	self.flashMesh = nil
 	self:FlashMeshSetup(vm)
 end
 -- every viewmodel frame until done: once each card's bone is resolved, its offset from the muzzle is set to nothing
@@ -628,14 +636,20 @@ function Deagle:FlashMeshPlace(vm)
 	m.placed = true
 	return true
 end
+-- another strength (flashMesh.mtl / flashRon.mtl: _dim, _hot, ...) on the current look's cards; only a card whose
+-- material differs from it is changed (the .cdf's own otherwise: flashCardMtl is reset with every new viewmodel)
 function Deagle:FlashMeshMaterial(vm)
 	local m = self.flashMesh
-	if not m then return end
-	local mtl = self:FlashLook().mtl
+	if not m or not vm then return end
+	local L = self:FlashLook()
+	self.flashCardMtl = self.flashCardMtl or {}
 	for _, name in ipairs(m.names) do
-		pcall(vm.ChangeAttachmentMaterial, vm, name, "objects/manmade/weapons/deagle/vm/" .. mtl)
+		if (self.flashCardMtl[name] or L.cdfMtl) ~= L.mtl then
+			pcall(vm.ChangeAttachmentMaterial, vm, name, "objects/manmade/weapons/deagle/vm/" .. L.mtl)
+			self.flashCardMtl[name] = L.mtl
+		end
 	end
-	m.mtl = mtl
+	m.mtl = L.mtl
 end
 -- a card's roll around the barrel for its next shot, set while it's hidden (keeps its offset); none with roll off
 function Deagle:FlashMeshRoll(vm, i)
@@ -2009,7 +2023,7 @@ function Deagle:VmEntity()
 		log("viewmodel fallback chr " .. tostring(ok2) .. " " .. tostring(slot2) .. " skin " .. tostring(ok3))
 	end
 	pcall(vm.SetViewDistRatio, vm, 255)
-	self.vmId, self.vmRoundsShown = vm.id, nil
+	self.vmId, self.vmRoundsShown, self.flashCardMtl = vm.id, nil, {}
 	self:FlashMeshSetup(vm)
 	vm.OnUpdate = function() Deagle:VmPlace() end    -- per-frame follow (entity update); VmTick timer as well
 	pcall(vm.Activate, vm, 1)

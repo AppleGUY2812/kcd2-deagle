@@ -114,26 +114,32 @@ if phys then
 		light = (function() local l for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx ") then l = M.native[i] end end return l end)(),
 		wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
--- the mesh flash (flashMode "mesh"): 4 hidden cards on the muzzle bone of this gun's size; a shot shows one in its own
--- frame, a different one the next frame, then none (1 frame under 40 fps); a fresh roll for each card it hid
+-- the mesh flash (flashMode "mesh"): the .cdf's cards on the muzzle bone (tools/flash_cdf.py), all hidden at load; the
+-- 4 of this gun's size are the look's; a shot shows one in its own frame, the same the next frame, then none (1 frame
+-- under 40 fps); a fresh roll for each card it hid. Nothing is attached or loaded at run time (stale models in KCD2)
 local mesh
 if phys then
 	local fm = Deagle.flashMesh
 	local function shown()
 		local out = {}
-		for i = 1, 4 do if M.hidden["vm_flash_" .. i] == false then out[#out + 1] = i end end
+		for i = 1, 4 do if M.hidden[Deagle.flashMesh.names[i]] == false then out[#out + 1] = i end end
 		return out
 	end
+	local cdfCards, cdfShown = 0, 0
+	for n in pairs(M.cdfAttach or {}) do
+		if n:find("^deagle_vm_flash") then cdfCards = cdfCards + 1; if M.hidden[n] ~= true then cdfShown = cdfShown + 1 end end
+	end
 	local set = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and Deagle.cfg.flashMesh.large or Deagle.cfg.flashMesh.small
-	mesh = { setup = fm and #fm.names == 4 and #shown() == 0, cgf = M.attachCgf and M.attachCgf.vm_flash_3, set = set }
+	mesh = { setup = fm and #fm.names == 4 and #shown() == 0, cgf = M.attachCgf and fm and M.attachCgf[fm.names[3]], set = set,
+		cdfCards = cdfCards, cdfShown = cdfShown, want = #Deagle:FlashCardNames() }
 	Deagle.cfg.flashMode = "mesh"
 	M.advance(0.5, 60)
-	mesh.placed = 0                                   -- on the muzzle itself once their bone resolved (not the model's origin)
+	mesh.placed = 0                                   -- on the muzzle itself (the .cdf's bone)
 	for i = 1, 4 do
-		local p = M.attachPos and M.attachPos["vm_flash_" .. i]
+		local p = M.attachPos and M.attachPos[fm.names[i]]
 		if p and p.x == 0 and p.y == 0 and p.z == 0 then mesh.placed = mesh.placed + 1 end
 	end
-	local nf, roll0 = #M.native, M.attachAngles and M.attachAngles.vm_flash_1
+	local nf, roll0 = #M.native, M.attachAngles and M.attachAngles[fm.names[1]]
 	M.attachAngles = {}
 	Deagle.state.ammo, Deagle.state.lastShot = g.magSize, -100
 	Deagle:Shoot(true)
@@ -171,16 +177,16 @@ if phys then
 	local n = R.variants * R.stages
 	local function ronShown()
 		local out = {}
-		for i = 1, n do if M.hidden["vm_flash_ron_" .. i] == false then out[#out + 1] = i end end
+		for i = 1, n do if M.hidden[Deagle.flashMesh.names[i]] == false then out[#out + 1] = i end end
 		return out
 	end
 	local rset = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and R.large or R.small
 	local hiddenAll, placedAll = #ronShown() == 0, 0
 	for i = 1, n do
-		local p = M.attachPos and M.attachPos["vm_flash_ron_" .. i]
+		local p = M.attachPos and M.attachPos[Deagle.flashMesh.names[i]]
 		if p and p.x == 0 and p.y == 0 and p.z == 0 then placedAll = placedAll + 1 end
 	end
-	mesh.ron = { cards = n, hidden = hiddenAll, placed = placedAll, last = M.attachCgf and M.attachCgf["vm_flash_ron_" .. n],
+	mesh.ron = { cards = n, hidden = hiddenAll, placed = placedAll, last = M.attachCgf and M.attachCgf[Deagle.flashMesh.names[n]],
 		want = "objects/manmade/weapons/deagle/vm/" .. rset .. "_" .. R.variants .. "_" .. R.stages .. ".cgf", look = Deagle.flashMesh.look.look }
 	local function ronShot(fps)
 		Deagle.state.lastShot = -100
@@ -206,6 +212,9 @@ if phys then
 	M.console("deagle_flash", "ours")
 	M.advance(0.2, 60)
 	mesh.ron.back = Deagle.flashMesh.look.look == "ours" and #Deagle.flashMesh.names == 4
+	mesh.ron.leftOn = 0                               -- no Ready or Not card left showing after the switch back
+	for n in pairs(M.cdfAttach or {}) do if n:find("_ron") and M.hidden[n] ~= true then mesh.ron.leftOn = mesh.ron.leftOn + 1 end end
+	mesh.runtime = (M.boneAttach or 0) + (M.runtimeCgf or 0)
 	Deagle.cfg.flashMode = "gun"
 	M.advance(0.5, 60)
 end
@@ -313,7 +322,9 @@ if mesh then
 		r.look == "ron" and r.hidden and r.placed == r.cards and r.last == r.want, r.last)
 	check(string.format("Ready or Not flash at 60 fps: %d frames (0.095 s = 6), one variant stepping through its stages (%s); x0.1: %d frames (57)",
 		r.f60, table.concat(r.seq60, ","), r.fslow), r.f60 >= 5 and r.f60 <= 7 and r.ok60 and r.fslow >= 54 and r.fslow <= 60 and r.okslow, r.f60)
-	check("deagle_flash ours: back to our 4 cards", r.back, r.back)
+	check(string.format("deagle_flash ours: back to our 4 cards, %d Ready or Not cards left showing", r.leftOn), r.back and r.leftOn == 0, r.leftOn)
+	check(string.format("flash cards from the .cdf: %d (%d expected), %d showing at load; %d attached or loaded at run time",
+		mesh.cdfCards, mesh.want, mesh.cdfShown, mesh.runtime), mesh.cdfCards == mesh.want and mesh.cdfShown == 0 and mesh.runtime == 0, mesh.runtime)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),

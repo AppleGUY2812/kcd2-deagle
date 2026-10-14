@@ -597,3 +597,19 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   `%ENGINE%/EngineAssets/Objects/Default.cgf`.
 - On the entity the Ready or Not fireball came out red with a white core: by Claude 2's nits -> intensity mapping its
   green (1.2 % of red) stays dark in KCD2. Brightness steps `_x10` / `_x30` added to match its on-screen colour live.
+
+## 2026-10-14: attachments made at run time draw stale models; the flash cards moved into the .cdf (Claude 4)
+- In game (pak 9ca340a3, game running and in front): on the viewmodel, a card attachment made at run time
+  (`CreateBoneAttachment` + `SetAttachmentCGF`) drew one and the same thing whatever it held: each of the 40 Ready or Not
+  cards, the empty last stage (a 1 mm quad), our own 4 cards after a look switch, KCD2's `primitive_pyramid.cgf`, an
+  apple, a basket. `ChangeAttachmentMaterial` (a plain grey material too) changed nothing either. `SetAttachmentPos`
+  moved the thing and hiding the attachment hid it: the attachment drew, just not its model. A fresh attachment showed
+  another leftover (a stage-4 card's streak). The same models on BasicEntities drew their own shapes. So "the 25
+  materials" (above) may not have been what failed the first try: that was a look switch too (4 destroyed, 40 made).
+  The "old card stayed" swap matches this. Not found: which object the renderer keeps, and why.
+- While the game sits in its pause menu (window not in front), attachment changes don't show at all: test only with
+  the game running in front.
+- Fix (not yet seen in game): every flash card (ours 2 x 4, Ready or Not's 2 x 40) is a `CA_BONE` attachment in both
+  viewmodel .cdf files (`tools/flash_cdf.py`, KCD2's own format: `RelRotation="1,0,0,0" RelPosition="0,0,0"
+  BoneName=...`), named after its CGF and hidden by the script at load; a look switch only hides and shows. The
+  magazines and rounds (`CA_SKIN` in the .cdf) never had the problem.
