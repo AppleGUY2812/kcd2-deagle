@@ -144,6 +144,7 @@ function Deagle:ArmorHit(e, hit, dir, phys, r, part)
 	for _, l in ipairs(layers) do a.padded = a.padded or l.a.layer == "padding" or l.a.layer == "mail" or l.a.layer == "plate" end
 	local left
 	left, a.stopped, a.hard, a.glance = self:ThroughArmor(layers, phys, energy, cosI, r and r.tumble)
+	a.left = not a.stopped and left or 0              -- J that reach the body (deagle_main.lua: a round into the skull kills)
 	a.scale = self:ImpactScale(phys, hit.dist, energy)
 	local bare, shove = self:Wound(phys, hit.dist, energy)
 	a.stam = shove                                    -- the shove lands whatever stops the round

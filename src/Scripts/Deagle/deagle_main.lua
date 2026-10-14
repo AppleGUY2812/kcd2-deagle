@@ -209,7 +209,9 @@ Deagle.cfg = {
 		flashPerUnit = 0.30,    -- flash size per unit of blast scale G (9 mm = 1: Glock 0.30, Deagle 0.62)
 		damageRef = 35,         -- HP a 9 mm 124 gr FMJ at 360 m/s takes from the torso (3 hits on a 100 HP NPC)
 		staminaRef = 20,        -- stamina a 9 mm's shove takes; others by momentum
-		headMult = 2.0,         -- on a head hit, on top of KCD2's own x1.5: a round through the skull kills
+		headMult = 2.0,         -- on a head hit that doesn't get into the skull (KCD2 adds nothing of its own to DealDamage)
+		skullJPerMm2 = 0.4,     -- J per mm2 of the bullet's face that perforate bone (Sellier & Kneubuehl, Wound Ballistics):
+		                        -- a round reaching the head with that much (9 mm 26 J, .50 AE 51 J) kills
 		bodyMass = 80,          -- kg: the body the wound numbers are set on (KCD2's people); smaller bodies take more
 		sizeExponent = 0.5,     -- wound x (bodyMass / target mass)^this (a hare dies to anything, a horse takes ~2.5x hits)
 		punchPerMomentum = 25.6,-- physics push on bodies / props per kg m/s of bullet momentum (Deagle 8.6 -> 220)
@@ -919,7 +921,7 @@ function Deagle:GunKickNow()
 	local p, y, keep = 0, 0, {}
 	for _, k in ipairs(kicks) do
 		local t = now - k.t
-		if t < 0.6 then
+		if t >= 0 and t < 0.6 then   -- a kick from ahead of the clock (kept over a load) is dropped
 			local f = KICK_W * math.exp(1) / wd * math.exp(-KICK_ZETA * KICK_W * t) * math.sin(wd * t)
 			p, y = p + k.pitch * f, y + k.yaw * f
 			keep[#keep + 1] = k
@@ -1383,6 +1385,21 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 		self:Bleed(e, hit, dir, true, scale)
 		self:HitSound(SURFACES.mat_flesh.ron, hit.pos, scale)   -- a corpse was silent (the user, 2026-10-13)
 		log("corpse hit " .. tostring(e:GetName()))
+	elseif e and e.flock_entity and e ~= p then
+		-- a chicken, cat, rat or fish: one Boid entity of a flock, no soul. KCD2 kills it through Boid:OnHit ->
+		-- Boids.OnBoidHit(flock, boid, hit), which reads pos, dir and damage (the body is shoved by dir x damage: the
+		-- round's momentum). Rounds only made a world impact on it (the user, 2026-10-14: "i cant shoot chickens"). A body
+		-- this small doesn't stop a round: on through it
+		local scale = self:ImpactScale(phys, hit.dist, hit.energy)
+		if not e.bWasHit then
+			e.bWasHit = 1
+			try("boid hit", function() Boids.OnBoidHit(e.flock_entity, e, { pos = hit.pos, dir = dir, damage = phys and phys.momentum or 1 }) end)
+		end
+		self:SpawnFx(c.bloodFx, hit.pos, hit.normal or vscale(dir, -1), scale)
+		self:SpawnFx(c.bloodExitFx, vadd(hit.pos, vscale(dir, 0.1)), dir, scale)
+		self:HitSound(SURFACES.mat_flesh.ron, hit.pos, scale)
+		log("boid hit " .. tostring(e:GetName()))
+		if r then r.skip, r.pos = e.id, hit.pos; goesOn = true end
 	elseif e and e.soul and e ~= p then
 		if c.hitMode == "hit" then
 			try("CreateHit", function()
@@ -1412,7 +1429,15 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 				local a = self:ArmorHit(e, hit, dir, phys, r, part)   -- ballistics.lua
 				dmg, stam, through, stopped, hard, glance, padded, scale = a.dmg, a.stam, a.through, a.stopped, a.hard, a.glance, a.padded, a.scale
 				goesOn = goesOn or a.goesOn
-				if part == "head" then dmg = dmg * c.physics.headMult end
+				if part == "head" then
+					dmg = dmg * c.physics.headMult
+					-- into the skull, dead: a Glock round through a head at 0.7 m left 31 of 100 HP (in game 2026-10-14)
+					if (a.left or 0) >= c.physics.skullJPerMm2 * math.pi * (phys.d * 1000 / 2) ^ 2 then
+						local hp = 100
+						pcall(function() hp = e.actor:GetHealth() end)
+						dmg = math.max(dmg, hp)
+					end
+				end
 				-- a wound means more to a small body: x (a man's mass / its mass)^sizeExponent (a 2.5 kg hare: x5.7, a 25 kg
 				-- dog x1.8, a 500 kg horse x0.4; KCD2 gives every creature 100 HP)
 				local mass = 0
@@ -1452,7 +1477,7 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 	end
 	-- props and corpses are shoved (dead comes from the actor: an NPC entity has no IsDead of its own, so corpses never
 	-- moved); the living get KCD2's hit reaction instead
-	if e and e ~= p and e.AddImpulse and (not e.soul or dead) then
+	if e and e ~= p and e.AddImpulse and (not e.soul or dead) and not e.flock_entity then
 		local push = phys and c.physics.punchPerMomentum * phys.momentum or c.impulse   -- the shove follows momentum
 		try("impulse", function() e:AddImpulse(hit.partid or -1, hit.pos, dir, push, 1) end)
 	end
@@ -2720,6 +2745,10 @@ function Deagle:OnGameplayStarted()
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	self.paths, self.pathsToken = nil, nil
 	self.fc, self.fcAim = nil, nil                          -- the plugin turns the free camera off at the hello
+	-- a load can set the game clock back, and times kept from before it then lie ahead: the gun's kicks grew without
+	-- bound and every shot left along NaN, hitting nothing for minutes (in game 2026-10-14, a save loaded in a house)
+	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn = nil, nil, nil, nil
+	s.heat, s.accFire, s.accT, s.burstReady = 0, 0, nil, nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()
@@ -3389,7 +3418,7 @@ function Deagle:PrintPhysics()
 	log(string.format("%s %s: bullet %.0f m/s %.0f J; recoil %.2f N s, %.2f m/s, %.1f J; flip %.1f rad/s -> camera %.1f deg, gun %.1f deg %.1f cm back; muzzle gas %.0f J, blast x%.2f, flash x%.2f; torso hit %.0f HP (%.0f at 50 m), head %.0f, stamina %.0f",
 		self.gun.id, ph.caliber, ph.velocity, ph.energy, ph.impulse, ph.recoilVel, ph.recoilEnergy, ph.flip, m.camPerFlip * ph.flip,
 		m.gunFlipPerFlip * ph.flip, m.gunBackPerVel * ph.recoilVel * 100, ph.gasEnergy, ph.blast, m.flashPerUnit * ph.blast,
-		hp, hp50, hp * m.headMult * 1.5, st))
+		hp, hp50, hp * m.headMult, st))
 end
 System.AddCCommand("deagle_physics", "Deagle:PrintPhysics()", "deagle_physics: what the current gun's cartridge does (recoil, flip, flash, energy)")
 System.AddCCommand("deagle_gun", "local id = Deagle.Arg([[%1]]) if id == '' then Deagle:UseGun('') else Deagle:Set('gun ' .. id) end", "deagle_gun <id>: which gun the pistol looks / sounds like (no id: list)")

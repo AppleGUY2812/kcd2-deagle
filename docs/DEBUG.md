@@ -113,6 +113,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |
 | `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
+| `physics.skullJPerMm2` | `0.4` | a round that reaches the head with this many J per mm² of its face (bone perforation, Sellier & Kneubuehl: 9 mm 26 J, .50 AE 51 J) kills; a helmet that stops it, or padding that drains it below that, leaves a wound |
 | `gore.ragdollOnKill` | `true` | a killing round drops the body at once instead of after KCD2's death animation |
 | `gore.killPush` | `1` | how hard a kill shoves the body (x the round's real momentum x punch) |
 | `eject.speed` | `2.8,4.2` | casing throw speed in m/s (a random pick between the two); standing they land 1.7-2.7 m to the right, plus your own movement |

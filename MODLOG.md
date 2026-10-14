@@ -651,3 +651,19 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - Still red: Ready or Not's hue is (1, 0.0118, 0.0052) x up to 327 nits/100; its tonemapper turns the core white and
   the body orange, KCD2's keeps the body red. Brightness steps `_x10` / `_x30` to compare live.
 
+## 2026-10-14: shots after a save load flew along NaN; chickens are Boids; a round in the skull didn't kill (Claude 4)
+- "Can't damage the NPCs in a house": after a save load the game clock went back 322 s (shot 97 at 15073.6, shot 98 at
+  14751.2). The gun's kicks (`gunKicks`, kept over the load) then lay ahead of the clock: `now - k.t` < 0 passed the
+  `< 0.6` test, `exp(-zeta w t)` blew up, and every shot's direction was NaN (`dir -nan(ind)` in the shot log) until the
+  clock caught up: no hits at all. Now a load clears the kicks, the camera recoil, the motion state and the CS2
+  accuracy timers, and `GunKickNow` drops a kick from ahead of the clock. The street fights worked because they came
+  before the load.
+- Chickens (also cats, rats, fish) are flocks: one `Boid` entity per animal (`Scripts/Entities/Boids/Boid.lua`), no soul.
+  The game kills one through `Boid:OnHit` -> `Boids.OnBoidHit(flock, boid, hit)` (reads `pos`, `dir`, `damage`; the body
+  is shoved by dir x damage). Rounds treated it as a prop: a world impact, no kill. Now `ApplyHit` calls
+  `Boids.OnBoidHit` (damage = the round's momentum), bleeds, and the round flies on through.
+- A Glock round through a bare head at 0.7 m left 31 of 100 HP: `headMult` 2 assumed KCD2 adds its own head x1.5, but
+  `soul:DealDamage(stam, hp, attacker, false, part)` doesn't. Now a round that reaches the head with 0.4 J/mm² of its face
+  (bone perforation, Sellier & Kneubuehl; 9 mm 26 J, .50 AE 51 J; `ArmorHit` returns `left`) kills; a helmet that stops
+  it or padding that drains it below that is a wound x `headMult`.
+
