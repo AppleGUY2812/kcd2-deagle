@@ -10,7 +10,7 @@ Hits on the same plate find the same pitches (Sunday Shoot-a-Round #351: 3 plate
 Why not SAM Audio: its laugh + music removal on hit_01 flattened 16 of the plate's 18 pitches from 10-26 dB over their
 neighbours to 1-6 dB (it regenerates the audio). A fit of decaying tones failed too: the pitches beat and the echo
 and voice overlap them (no clean decay to fit).
-Writes ring_NN.wav (the plate: its ring + the strike's clank) and left_out_NN.wav (the rest after the strike, same gain) for checking by ear.
+Writes ring_NN.wav (the plate: its ring + the strike's clank and early shimmer) and left_out_NN.wav (the rest after the strike, same gain) for checking by ear.
 Private use only: the WAVs go to E:\\Tools\\deagle-work\\sound\\hickok\\rings, never into the repo.
 
 usage: plate_rings.py <recording.wav> <hits.json> [outdir] [only index]
@@ -25,7 +25,10 @@ LO, HI = 700, 16000        # Hz searched for the plate's tones
 MAX_TONES = 48
 RING_LEN = 1.6             # s kept after the onset
 SIDE, GATE = 80.0, 6.0     # Hz to the bands a tone is compared with; dB it must stand over them
-CLANK_HOLD, CLANK_FADE = .02, .02   # s of the strike's clank kept from the original, then faded out
+# the strike's clank and the plate's early shimmer between its pitches, from the original: above SHIMMER_HZ (below
+# it nothing rises at the strike, it's the gun's echo), CLANK_HOLD s from the strike, faded out over CLANK_FADE s.
+# Measured on hit 01 against 7 shots with no plate: 2-16 kHz stands 4-8 dB over the gun's echo for ~0.3 s, then level
+CLANK_HOLD, CLANK_FADE, SHIMMER_HZ = .1, .15, 1500.0
 
 def tones(x, sr, shot, onset):
     """Frequencies (Hz) of the plate's tones: narrow peaks that stand >= 10 dB over their neighbours at the same pitch
@@ -69,7 +72,8 @@ def ring(x, sr, shot, onset, freqs):
     """The plate's tones from the strike on. Each one is kept only while it stands GATE dB over what sits next to it
     (two bands SIDE Hz either side: the gun's echo, voice, music spread over every pitch), averaged over 150 ms,
     until the last time it does, so none of that leaks in after the ring has faded into it. Plus the strike's clank.
-    Returns the plate and the rest (gun / echo / voice / music, to check by ear), both from 2 ms before the strike."""
+    Returns the plate and the rest (gun / echo / voice / music, to check by ear), both from 2 ms before the strike,
+    and where that is in x."""
     a = int((shot + onset - .01) * sr)
     lead = int(.2 * sr)
     seg = x[a - lead: a + int(RING_LEN * sr)]
@@ -86,9 +90,9 @@ def ring(x, sr, shot, onset, freqs):
         g = np.zeros(len(seg)); g[:end] = 1
         fo = int(.08 * sr); g[end: end + fo] = np.linspace(1, 0, len(g[end: end + fo]))
         y += b * g
-    # the strike itself: the sharpest rise of the level over 2 kHz within 30 ms of the finder's onset. The clank there
-    # is spread over every pitch like the gun's echo, but it's louder and short: the original's non-tonal part is taken
-    # for CLANK_HOLD s from the strike, faded out over CLANK_FADE s
+    # the strike itself: the sharpest rise of the level over 2 kHz within 30 ms of the finder's onset. The clank and
+    # shimmer there are spread over every pitch like the gun's echo, but louder for a while: the original's non-tonal
+    # part over SHIMMER_HZ is taken for CLANK_HOLD s from the strike, faded out over CLANK_FADE s
     hp = sosfiltfilt(butter(4, 2000, "high", fs=sr, output="sos"), seg)
     m = int(.001 * sr)
     lvl = 10 * np.log10(np.convolve(hp * hp, np.ones(m) / m, "same") + 1e-20)
@@ -101,11 +105,11 @@ def ring(x, sr, shot, onset, freqs):
     w[st - r1: st] = .5 - .5 * np.cos(np.linspace(0, np.pi, r1)); w[st: st + h1] = 1
     w[st + h1: st + h1 + f1] = .5 + .5 * np.cos(np.linspace(0, np.pi, f1))
     y[: st - r1] = 0; y[st - r1: st] *= np.linspace(0, 1, r1)  # the ring starts at the strike
-    clank = (seg - y) * w
+    clank = sosfiltfilt(butter(4, SHIMMER_HZ, "high", fs=sr, output="sos"), seg - y) * w
     out = st - 2 * r1
     plate = (y + clank)[out:]
     tail = int(.3 * sr); plate[-tail:] *= np.linspace(1, 0, tail) ** 2
-    return plate, seg[out:] - plate
+    return plate, seg[out:] - plate, a - lead + out
 
 def main():
     src, hits_json = sys.argv[1], sys.argv[2]
@@ -122,7 +126,7 @@ def main():
         h = dict(h, shot=1.0)                                   # times in this slice
         fr = tones(x, sr, h["shot"], h["onset"])
         if len(fr) < 3: print(f"hit {i + 1}: only {len(fr)} tones, skipped"); continue
-        y, rest = ring(x, sr, h["shot"], h["onset"], fr)
+        y, rest, _ = ring(x, sr, h["shot"], h["onset"], fr)
         k = 0.89 / np.abs(y).max()
         name = f"ring_{i + 1:02d}.wav"
         sf.write(os.path.join(out, name), y * k, sr, subtype="PCM_16")
