@@ -2781,7 +2781,7 @@ function Deagle:RonWarm()
 	for _, ev in ipairs(self.ronHitEvents) do self:Native("ronload " .. ev) end
 end
 function Deagle:RonState(ok)
-	self.ronOk = ok == "1"
+	self.ronOk = Deagle.Arg(ok) == "1"   -- the console hands %1 over in quotes ("1"): a raw compare always failed
 	if not self.ronOk then
 		local msg = "Ready or Not's sound engine didn't start: Mods/deagle/ron is missing or broken (see deagle_native.log)"
 		log("$4" .. msg); self:Notify(msg)
