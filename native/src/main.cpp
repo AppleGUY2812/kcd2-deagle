@@ -177,13 +177,16 @@ static bool LocFromDir(const float* pos, const float* dir, float scale, float* l
 }
 
 static bool g_fxsSeed = false;   // fxsseed 1: write the box at spawn too (with it, 0.4 s pieces didn't show either)
-// tracer pieces spawned by fxs: held 2 s, then let go (oldest first; a full ring lets the oldest go early)
-struct HeldPiece { uintptr_t em; LARGE_INTEGER born; float loc[8]; int touches; };
+// pieces spawned by fxs (tracers, impacts): held 2 s of game time, then let go (oldest first; a full ring lets the
+// oldest go early). Game time so F9 slow motion (x0.1) keeps them 20 s: 2 s real cut a 0.75 s splash at 0.2 s.
+struct HeldPiece { uintptr_t em; double born; float loc[8]; int touches; };
 static HeldPiece g_held[1024]; static int g_heldHead = 0, g_heldN = 0;
+static float g_gameSpeed = 1.0f;   // speed <x>: the game's speed (t_Scale)
+static double g_pieceClock = 0;    // game seconds: wall time x g_gameSpeed, advanced every camera step (steps cut at 0.1 s)
 static void HoldPiece(uintptr_t em, const float* loc) {
 	if (g_heldN == 1024) { SafeRelease(g_held[g_heldHead].em); g_heldHead = (g_heldHead + 1) % 1024; g_heldN--; }
 	int i = (g_heldHead + g_heldN) % 1024;
-	g_held[i].em = em; QueryPerformanceCounter(&g_held[i].born); memcpy(g_held[i].loc, loc, sizeof(g_held[i].loc));
+	g_held[i].em = em; g_held[i].born = g_pieceClock; memcpy(g_held[i].loc, loc, sizeof(g_held[i].loc));
 	g_held[i].touches = 3; g_heldN++;
 }
 // every camera step: set each new piece's location again (the same place) for its first frames, the way a flash is
@@ -200,8 +203,11 @@ static void TouchPieces() {
 	}
 }
 static void ReleaseOldPieces(bool all) {
+	static LARGE_INTEGER last{};
 	LARGE_INTEGER now, f; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&f);
-	while (g_heldN > 0 && (all || now.QuadPart - g_held[g_heldHead].born.QuadPart > 2 * f.QuadPart)) {
+	if (last.QuadPart) { double dt = double(now.QuadPart - last.QuadPart) / f.QuadPart; g_pieceClock += (dt < 0.1 ? dt : 0.1) * g_gameSpeed; }
+	last = now;
+	while (g_heldN > 0 && (all || g_pieceClock - g_held[g_heldHead].born > 2.0)) {
 		SafeRelease(g_held[g_heldHead].em);
 		g_heldHead = (g_heldHead + 1) % 1024; g_heldN--;
 	}
@@ -765,7 +771,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "fxs")) {   // fxs <effect> <scale> <len m> <pos xyz> <dir xyz>: a world effect (a tracer piece) seen
 		// from its first frame: a new emitter starts with an empty bounding box and is skipped until an update gives it
 		// one, which a 0.12 s piece may never get (Lua-spawned single pieces never showed, 2026-10-12): it gets the box
-		// from pos to pos + dir x len (+ 0.15 m) at once. Our reference is kept 2 s (HoldPiece): letting it go at once
+		// from pos to pos + dir x len (+ 0.15 m) at once. Our reference is kept 2 s of game time (HoldPiece): letting it go at once
 		// showed one tracer, then none (the manager holds none of its own: the release deleted them).
 		char effect[96] = {}; float scale = 1, len = 1, p[3] = {}, d[3] = {}, loc[8];
 		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &len, &p[0], &p[1], &p[2], &d[0], &d[1], &d[2]);
@@ -809,7 +815,7 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "speed")) {
 		float v = (float)atof(rest);
-		if (Finite(&v, 1)) { SetSoundSpeed(v); if (RonReady()) RonSpeed(g_soundSpeed); }
+		if (Finite(&v, 1)) { SetSoundSpeed(v); if (RonReady()) RonSpeed(g_soundSpeed); g_gameSpeed = g_soundSpeed; }
 		Log("sound speed %.2f", g_soundSpeed);
 	}
 	else if (!strcmp(cmd, "ron")) {    // ron <vol> <event path>|<name=value ...>: a Ready or Not event at the listener
