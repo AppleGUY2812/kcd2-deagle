@@ -1032,7 +1032,10 @@ RON_SURFACE.mat_bells = "bell"                                                  
 -- a plugin without "file:" sounds (deagle_native_caps) keeps RoN's Steel, ron.
 -- Every surface that played RoN's Steel plays it: doors, plate and mail too (the user: "armor as a type of steel target
 -- plate we have for hickock's sample").
-local PLATE = { files = { "steel/plate_01.wav", "steel/plate_02.wav", "steel/plate_03.wav" }, vol = 3.37, ron = 44 }
+-- near: full level within it (the plugin's Falloff), 6 m instead of impactNear: up close it was "a little too loud"
+-- (the user, 2026-10-14, at the test wall 4 m out); vol halved with it, so from 6 m out it's the level the user
+-- approved (plate_sounds.py: 3.37 at 3 m), at 4 m -3.5 dB, at 3 m and closer -6 dB.
+local PLATE = { files = { "steel/plate_01.wav", "steel/plate_02.wav", "steel/plate_03.wav" }, vol = 1.685, near = 6, ron = 44 }
 for n, v in pairs(RON_SURFACE) do if v == 44 then RON_SURFACE[n] = PLATE end end
 for n, sf in pairs(SURFACES) do sf.ron = RON_SURFACE[n] end
 Deagle.surfaces = SURFACES
@@ -1236,7 +1239,7 @@ function Deagle:HitSound(what, pos, scale, vol)
 		local prop = "Occlusion=0 PropagateDistance=@ Falloff=" .. c.impactNear
 		if type(what) == "table" then   -- our own recordings: { files, vol, ron = RoN's Surface for an older plugin }
 			if self.nativeCaps and self.nativeCaps.files then
-				ev, params, vol = "file:" .. what.files[math.random(1, #what.files)], "Falloff=" .. c.impactNear, what.vol * (vol or 1)
+				ev, params, vol = "file:" .. what.files[math.random(1, #what.files)], "Falloff=" .. (what.near or c.impactNear), what.vol * (vol or 1)
 			else what = what.ron end
 		end
 		if ev then

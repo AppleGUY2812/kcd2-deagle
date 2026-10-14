@@ -111,8 +111,8 @@ local nLoad = #M.native
 Deagle:NativeCaps('"files"')
 check("the plugin can play files: the plate takes load at once", #M.native == nLoad + 3 and M.native[#M.native]:find("^%[DN%] ronload file:steel/plate_0%d%.wav$") ~= nil, M.native[#M.native])
 Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
-check("then steel plays a plate take with the distance law: " .. M.native[#M.native],
-	M.native[#M.native]:find("^%[DN%] ron3 6%.740 1%.00 2%.00 3%.00 file:steel/plate_0%d%.wav|Falloff=3$") ~= nil, nil)
+check("then steel plays a plate take with the distance law, full level within 6 m: " .. M.native[#M.native],
+	M.native[#M.native]:find("^%[DN%] ron3 3%.370 1%.00 2%.00 3%.00 file:steel/plate_0%d%.wav|Falloff=6$") ~= nil, nil)
 local notPlate = {}
 for _, n in ipairs({ "mat_door_metal", "mat_plate", "mat_chainmail", "mat_fabric_chainmail_plate", "mat_leather_chainmail" }) do
 	if Deagle.surfaces[n].ron ~= Deagle.surfaces.mat_metal.ron then notPlate[#notPlate + 1] = n end
