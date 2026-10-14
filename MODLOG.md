@@ -468,3 +468,6 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - Bullet holes: every CreateMatDecal call succeeds, no log line, none seen. `e_Decals 2` doesn't stick in retail. KCD2's
   own bullet decals use size 0.2-0.3; ours 0.035 x energy with the hole covering 5-30 % of the texture. Open.
 - The pause menu shows a frozen frame: entities / decals spawned while it's up don't appear in window captures.
+- A save load re-runs the installed pak's scripts: every hot-reloaded change is gone until the next dev reload, and the
+  first `tools/live.sh reload` after a load runs the pak's old DevReload, which doesn't set devLoading, so guns/*.lua and
+  ballistics.lua come from the pak. Reload twice after a load (or check a value) before trusting the live state.
