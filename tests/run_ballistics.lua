@@ -10,7 +10,7 @@ Deagle:OnGameplayStarted(); M.console("deagle_native_ok")
 local function vec(x, y, z) return { x = x, y = y, z = z } end
 -- the world: a wall at y = wallY (none when nil) and an NPC box in front of the camera at y = npcY (none when nil)
 local world = { wallY = nil, npcY = nil, wallSurface = 1, barrierY = nil }
-local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0 }
+local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0, this = { id = "npcWUID" } }
 function npc:GetName() return "target" end
 function npc:GetWorldPos() return vec(100, world.npcY or 0, 30.3) end   -- the shot (z 31.75) lands on the torso
 npc.GetBonePos = M.skeleton
@@ -178,7 +178,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		"^%[DN%] hitreact (0x%x+) (0x%x+) (%d+) (%d+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%x+)$")
 	local wantStrength = npc.damage >= 50 and "6" or "5"
 	check(string.format("%s: hit reaction sent: %s", id, tostring(react)), victim and htype == "0" and strength == wantStrength and part == "torso"
-		and tonumber(py) > 204.7 and tonumber(py) <= 205 and tonumber(dy) > 0.99 and flags == "3f", react)
+		and tonumber(py) > 204.7 and tonumber(py) <= 205 and tonumber(dy) > 0.99 and flags == "1f", react)   -- 0x20 (AI) off: hitAI's message
 	local nReact = #M.native
 	npc.damage = 100                  -- dead
 	fire()
@@ -330,7 +330,7 @@ check("tracer speeds round to the nearest 25 m/s and stay in 250..1000",
 	Deagle:TracerFx(442))
 -- a corpse: the round shoves it (its ragdoll part, by momentum) and it makes RoN's flesh sound (both missing: the user,
 -- 2026-10-13 "shooting a corpse doesn't knock back, no sound")
-local corpse = { soul = {}, actor = {}, human = {}, class = "NPC" }
+local corpse = { soul = {}, actor = {}, human = {}, class = "NPC", this = { id = "corpseWUID" } }
 function corpse:GetName() return "corpse" end
 function corpse:GetWorldPos() return vec(100, 205, 30.1) end
 corpse.GetBonePos = M.skeleton

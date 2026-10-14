@@ -91,7 +91,8 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `hitReactions` | `true` | NPCs flinch / stagger when hit (KCD2's own reactions, needs the plugin) |
 | `hitReactType` | `0` | which of KCD2's reaction sets plays (0 = normal hits; 3 = collision, big staggers only) |
 | `hitReactMajor` | `50` | health lost from which a hit is a big stagger instead of a flinch |
-| `hitReactFlags` | `0x3F` | reaction event flags (plugin bits 0x100 / 0x200 / 0x400 flip direction / body part handling) |
+| `hitReactFlags` | `0x3F` | reaction event flags (plugin bits 0x100 / 0x200 / 0x400 flip direction / body part handling); with `hitAI missile` its AI bit 0x20 is left off |
+| `hitAI` | `missile` | who a shot NPC thinks hit it: `missile` = like your arrows, it knows it was you only if it had seen you, otherwise it searches toward the shot (witnesses react either way); `direct` = it always knows (the old way) |
 | `armor.punch` | `104` | how hard a 9 mm hits armour (KCD2 stab defense units). Higher = rounds get through plate more often (Glock through a worn cuirass only within ~5 m now; Deagle through most plate) |
 | `armor.critScale` | `1` | plate / mail critical angles (plate 15, mail 6 deg off their face) x this: higher = rounds skip off armour more often (separate from the world's) |
 | `armor.splashAngle` | `20` | a round plate stops flattens and its fragments spray along the plate this many degrees off its face (no bounce back) |

@@ -226,10 +226,14 @@ _G.CryAction = {}
 -- KCD2's AI hearing (XGenAIModule.ProduceSound*): every call recorded
 M.aiSounds = {}
 _G.enum_sound = { gun_fired = 14, bullet_hit = 16 }
+-- and messages to a brain (SendMessageToEntityData, built with table.MakeFromType): every one recorded
+M.aiMessages = {}
 _G.XGenAIModule = {
 	ProduceSound = function(kind, pos, mult) table.insert(M.aiSounds, { kind = kind, pos = pos, mult = mult }) end,
 	ProduceSoundWUID = function(kind, wuid, mult) table.insert(M.aiSounds, { kind = kind, wuid = wuid, mult = mult }) end,
+	SendMessageToEntityData = function(id, kind, msg) table.insert(M.aiMessages, { id = id, kind = kind, msg = msg }) end,
 }
+table.MakeFromType = function(kind, fields) local t = { __type = kind }; for k, v in pairs(fields) do t[k] = v end return t end
 -- a standing human's bones (m from its feet; facing -y, so its left is +x), for test NPCs: e.GetBonePos = M.skeleton
 M.bones = {
 	Hips = { 0, 0, 0.95 }, Spine = { 0, 0, 1.05 }, Spine3 = { 0, 0, 1.25 }, Neck = { 0, 0, 1.5 }, Head = { 0, 0, 1.6 },

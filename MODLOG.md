@@ -667,3 +667,18 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   (bone perforation, Sellier & Kneubuehl; 9 mm 26 J, .50 AE 51 J; `ArmorHit` returns `left`) kills; a helmet that stops
   it or padding that drains it below that is a wound x `headMult`.
 
+## 2026-10-14: gun hits go to the AI as arrow hits (who shot me: seen or not) (Claude 4)
+- "If you snipe with a bow they don't know it's you": KCD2's behaviour trees (Scripts.pak AI/) take a hit as the
+  engine's `hitReaction` message {attacker, hitType, hitStrength}. `crime/translateHitReaction.xml` maps hitType Bullet
+  (6) to attack kind missile; `npc/basic/switch/handleHitReaction.xml` makes a missile hit a `stimulus:shooter` (links
+  `crime_lastHitByPlayer`, spawns the crime hit volume for witnesses) and `handleStimulusShooter.xml` names the player
+  only after `HasSeenPlayer` (partial recognition counts), else adds him as a hot entity and scans toward the shot.
+  Melee kinds go to `handleStimulusHit`, which never checks perception.
+- Ours: `soul:DealDamage` posts hitType Fall and the plugin's hitreact type 0 with flags 0x3F (0x20 = its AI stimulus):
+  both "unknown" to the trees (a bark looking at the attacker), and the attacker id on DealDamage. Shot people knew it
+  was us and fled. Now (`hitAI missile`): DealDamage names no attacker (`__null`, as the game's own Quick.lua `dd`),
+  hitreact keeps its flinch without 0x20, and `Deagle:HitAI` sends the arrow's message itself:
+  `XGenAIModule.SendMessageToEntityData(e.this.id, "hitReaction", table.MakeFromType("hitReaction", {attacker =
+  player.this.id, hitType = 6, hitStrength = 5/6}))` (the game's Lua does this in Horse.lua OnStartle). Not seen in game
+  yet: whether the engine still gives the kill / murder to the player without DealDamage's attacker.
+

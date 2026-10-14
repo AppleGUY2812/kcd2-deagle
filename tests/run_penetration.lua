@@ -16,6 +16,7 @@ local nextId = 0
 local function newNpc(y, outfit)
 	nextId = nextId + 1
 	local n = { id = "npc" .. nextId, y = y, soul = {}, actor = {}, human = {}, class = "NPC", damage = 0, stamina = 0, inv = {} }
+	n.this = { id = n.id }   -- the script handle a brain message goes to (Deagle:HitAI)
 	for _, o in ipairs(outfit or {}) do
 		local iid = n.id .. "_" .. #n.inv
 		items[iid] = { class = o.guid, health = o.health or 1 }

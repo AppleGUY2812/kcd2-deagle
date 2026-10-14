@@ -50,6 +50,10 @@ Deagle.cfg = {
 	hitReactType = 0,         -- the game's hit type for it: 0 has the living rows (weak / minor / major, 4 directions)
 	hitReactMajor = 50,       -- health lost from which a hit is a major injury (the game's own threshold)
 	hitReactFlags = 0x3F,     -- event flags (0x3F all: game impact FX, AI / crime alert...; plugin bits in main.cpp)
+	-- who a hit NPC thinks shot it. "missile": like the game's arrows (Deagle:HitAI): it names the player only if it has
+	-- seen him, else it searches toward the shot. "direct": the player named on every hit (DealDamage's attacker): shot
+	-- people knew it was you even unseen, and only ran (the user, 2026-10-14: "if u snipe with a bow they dont know its you")
+	hitAI = "missile",
 	hitMode = "soul",         -- "soul" = soul:DealDamage with native hit reactions; "hit" = gamerules ServerHit (no effect on souls in KCD2)
 	hitType = "bullet",
 	shotTrigger = "c_f_firearm_shot",   -- the game's gunshot; skipped while the plugin plays the MWII shots
@@ -1205,11 +1209,33 @@ function Deagle:HitReact(e, hit, dir, dmg, stam)
 	local down = false
 	pcall(function() down = e.actor:IsDead() or e.actor:GetHealth() <= 0 or (e.actor.IsUnconscious and e.actor:IsUnconscious()) end)
 	if down then return end
-	stam = stam or 0
-	local strength = dmg > 0 and (dmg >= c.hitReactMajor and 6 or 5) or (stam >= 50 and 4 or stam >= 10 and 3 or 2)
+	local flags = c.hitReactFlags
+	if c.hitAI == "missile" and flags % 0x40 >= 0x20 then flags = flags - 0x20 end   -- its AI stimulus: HitAI's instead
 	self:Native(string.format("hitreact 0x%s 0x%s %d %d %s %.3f %.3f %.3f %.4f %.4f %.4f %x", entityHex(e.id),
-		entityHex(self:Player().id), c.hitReactType, strength, hit.bodyPart or "torso", hit.pos.x, hit.pos.y, hit.pos.z,
-		dir.x, dir.y, dir.z, c.hitReactFlags))
+		entityHex(self:Player().id), c.hitReactType, self:HitStrength(dmg, stam), hit.bodyPart or "torso", hit.pos.x,
+		hit.pos.y, hit.pos.z, dir.x, dir.y, dir.z, flags))
+end
+-- the game's HitReactionStrength for a hit: health lost = minor (5), cfg.hitReactMajor or more = major (6); stamina
+-- only (stopped by armour): under 10 tickle (2), under 50 unpleasant (3), else exhausting (4)
+function Deagle:HitStrength(dmg, stam)
+	stam = stam or 0
+	return dmg > 0 and (dmg >= self.cfg.hitReactMajor and 6 or 5) or (stam >= 50 and 4 or stam >= 10 and 3 or 2)
+end
+
+-- A gun hit as KCD2's behaviour trees take an arrow (cfg.hitAI "missile"): a hitReaction message of type Bullet (6) from
+-- the player. In the trees (Scripts.pak AI/npc/basic/switch/handleHitReaction.xml, AI/crime/translateHitReaction.xml,
+-- handleStimulusShooter.xml) Bullet is a missile hit: the player's (attack, flee, crime) if the NPC has seen him
+-- (HasSeenPlayer), else a search toward the shot; either way the player's last hit is linked and witnesses get the crime
+-- hit volume. Damage itself names no attacker (DealDamage's hits are type Fall, which the trees file as "unknown"). The
+-- game's own Lua messages a brain this way (Scripts/Entities/AI/Horse.lua OnStartle).
+local HIT_BULLET = 6   -- enum HitReactionType.Bullet (Tables.pak Libs/Tables/ai/ai_enums.xml)
+function Deagle:HitAI(e, dmg, stam)
+	if self.cfg.hitAI ~= "missile" then return end
+	local p = self:Player()
+	try("hit AI", function()
+		local msg = table.MakeFromType("hitReaction", { attacker = p.this.id, hitType = HIT_BULLET, hitStrength = self:HitStrength(dmg, stam) })
+		XGenAIModule.SendMessageToEntityData(e.this.id, "hitReaction", msg)
+	end)
 end
 
 -- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (direction). what = a RoN Surface
@@ -1454,8 +1480,13 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			if dummy then   -- deagle_testnpc: takes no damage (no crime either); says what the hit would have done
 				self:Notify(string.format("test NPC: %s, %s%s, would lose %.0f health %.0f stamina", tostring(part),
 					hard and "armour " or "", stopped and "stopped it" or "went through", dmg or 0, stam or 0))
-			else try("DealDamage", function() e.soul:DealDamage(stam, dmg, p.id, false, part) end) end
+			else
+				local attacker = p.id
+				if c.hitAI == "missile" then attacker = __null end   -- who did it is HitAI's message (no attacker: as Quick.lua's dd)
+				try("DealDamage", function() e.soul:DealDamage(stam, dmg, attacker, false, part) end)
+			end
 			self:HitReact(e, hit, dir, dmg, stam)
+			if not dummy then self:HitAI(e, dmg, stam) end
 			local killed = false
 			pcall(function() killed = e.actor:GetHealth() <= 0 end)
 			if killed and phys then self:KillShove(e, hit, dir, phys, hit.energy) end

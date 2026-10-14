@@ -16,7 +16,7 @@ local function check(name, ok, got)
 end
 
 local function newNpc()
-	local e = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0, id = "npc" }
+	local e = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0, id = "npc", this = { id = "npcWUID" } }
 	function e:GetName() return "npc" end
 	function e:GetWorldPos() return vec(100, 205, 30.1) end
 	e.GetBonePos = M.skeleton
@@ -100,6 +100,33 @@ Deagle.gunKicks = { { t = M.t + 300, pitch = 5, yaw = 1 } }
 local kp, ky = Deagle:GunKickNow()
 check(string.format("a kick from ahead of the clock is dropped (%s, %s)", tostring(kp), tostring(ky)), kp == 0 and ky == 0, kp)
 Deagle.LaunchRound = launch
+
+-- who the NPC thinks shot it (cfg.hitAI): "missile" = the game's arrow path, a hitReaction message of type Bullet (6)
+-- from the player; the damage names no attacker and the plugin's flinch drops its AI stimulus (0x20). "direct" = the
+-- player named on the damage, no message
+local pl = Deagle:Player(); pl.this = pl.this or { id = "playerWUID" }
+local function aiShot(mode)
+	Deagle.cfg.hitAI = mode
+	M.aiMessages = {}
+	local e = newNpc(); e.this = { id = "npcWUID" }
+	local by = "none"
+	function e.soul:DealDamage(st, hp, attacker) e.damage = e.damage + hp; by = attacker end
+	local n0 = #M.native
+	Deagle:UseGun("glock_17")
+	Deagle:ApplyHit({ entity = e, pos = vec(100, 205, 31.35), normal = vec(0, -1, 0), partid = 1, dist = 5 }, vec(0, 1, 0), Deagle:ShotPhysics())
+	local flags
+	for i = n0 + 1, #M.native do flags = M.native[i]:match("^%[DN%] hitreact .* (%x+)$") or flags end
+	return by, flags, M.aiMessages[1], e
+end
+local by, flags, msg = aiShot("missile")
+check(string.format("hitAI missile: a hitReaction message to the NPC (type %s, attacker %s, strength %s), damage names %s, flinch flags %s",
+	tostring(msg and msg.msg.hitType), tostring(msg and msg.msg.attacker), tostring(msg and msg.msg.hitStrength), tostring(by), tostring(flags)),
+	msg and msg.id == "npcWUID" and msg.kind == "hitReaction" and msg.msg.__type == "hitReaction" and msg.msg.hitType == 6
+		and msg.msg.attacker == pl.this.id and msg.msg.hitStrength >= 5 and by == nil and flags == "1f", flags)
+by, flags, msg = aiShot("direct")
+check(string.format("hitAI direct: no message (%s), damage names the player (%s), flinch flags %s", tostring(msg ~= nil), tostring(by), tostring(flags)),
+	msg == nil and by == pl.id and flags == "3f", flags)
+Deagle.cfg.hitAI = "missile"
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))
