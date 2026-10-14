@@ -114,7 +114,7 @@ Deagle.cfg = {
 	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)
 	wallbang = { budget = 0.10 },  -- m of density-1 material (plywood) a 9 mm at the muzzle gets through (Ready or Not's
 	                          -- 9 mm guns: 10 cm); others by energy ratio; densities in guns/penetration.lua
-	ricochetKeep = 0.35,      -- energy a round keeps when it skips off a surface (GUESS)
+	ricochetKeep = 0.35,      -- energy a round keeps when it skips off a surface without its own (guns/penetration.lua keep: GUESS)
 	ricochetLift = 0.4,       -- off hard surfaces (steel, stone): the share of its angle to the surface it leaves with
 	                          -- (unyielding ones send it off flatter); softer ones have their own (guns/penetration.lua)
 	ricochetScatter = 4,      -- deg of random turn on a ricochet
@@ -135,7 +135,8 @@ Deagle.cfg = {
 	-- weaker worn one (132: 106) within ~12 m, a new one never; the Deagle (~200) through most plate at any range.
 	-- critScale: plate / mail critical angles x this (game feel, apart from the world's); a round plate stops sprays
 	-- its fragments along the plate, splashAngle deg off its face
-	armor = { punch = 104, conditionFloor = 0.6, critScale = 1, bruise = 0.1, ricochetKeep = 0.3, scatter = 30, splashAngle = 20 },
+	-- (a glance keeps the energy guns/penetration.lua gives its layer: plate as sheet steel, mail as steel)
+	armor = { punch = 104, conditionFloor = 0.6, critScale = 1, bruise = 0.1, scatter = 30, splashAngle = 20 },
 	armorRicochetFx = "deagle_impacts.ricochet_metal",
 	-- bullet impact / ricochet / armour sounds: x Ready or Not's own level (it mixes impacts ~9 dB under the shot);
 	-- impactNear: m within which they play at full level, then -6 dB per doubling of the distance (real sound). RoN's

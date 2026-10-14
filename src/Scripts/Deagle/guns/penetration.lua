@@ -34,7 +34,8 @@ Deagle.penetrationAmmo = {
 -- skips off, steeper and it digs in or breaks up; at crit itself half the rounds skip (Haag & Haag, Shooting Incident
 -- Reconstruction, the definition the studies below use). Measured with pistol / rifle FMJ:
 --   steel plate 5 (9 mm, CZ 75: review table, ResearchGate 393603576); wallboard, car-body steel, wood, glass 5-9
---   (9 mm / 5.56 / 7.62 together, AAFS 2018 B99); float glass 15.8 for 9 mm FMJ (.32 Auto 21, .45 Auto 17.6: JFS 2016,
+--   (9 mm / 5.56 / 7.62 together, AAFS 2018 B99); 1 mm sheet steel: 9 mm FMJ 15.9 (pistol, 250 m/s) and 15 (SMG,
+--   375 m/s), 5.56 breaks up from 5 (Nishshanka et al., Science & Justice 2023); float glass 15.8 for 9 mm FMJ (.32 Auto 21, .45 Auto 17.6: JFS 2016,
 --   PubMed 27644019); water ~7 (AK, same), 6.5 (9 mm, Uzi: Gold & Schecter, JFS 1992) and ~8 (AAFS 2012 A102); concrete 10.8-11.1, cement 13.2
 --   (7.62x39, Science & Justice 2021); glazed tile 14.8 floor / 16.6 wall (9 mm, JFS 2023, PubMed 36453554); plywood,
 --   MDF, melamine 14-18 (9 mm, JFS 2025); whitewood: skips at 9-12, never from 13 (9 mm, CUNY thesis); harder, denser
@@ -59,7 +60,7 @@ end
 Deagle.penetration = {
 	-- families (RoN source surface)                                           crit hard  spall lift
 	metal      = P("metal",   "RON_Steel",          8.0,  4, true,  6,   true,  0.2),        -- solid steel: stops both; plate 5, car steel 5-9
-	metal_thin = P("metal",   "RON_Galvanized",     2.0,  3, true,  7,   true,  0.7),        -- sheet / plate armour: .50 AE through; car steel 5-9
+	metal_thin = P("metal",   "RON_Galvanized",     2.0,  3, true,  15,  true,  0.7, 1),     -- sheet / plate armour: .50 AE through; 1 mm sheet 15-16 (9 mm)
 	stone      = P("stone",   "RON_ConcreteStrong", 5.5,  3, true,  12,  true,  0.3),        -- masonry, castle stone; concrete 11-13
 	stone_soft = P("stone",   "RON_ConcreteSoft",   4.25, 2, true,  12,  true,  0.0),        -- concrete 11-13
 	brick      = P("stone",   "RON_Brick",          1.95, 0, true,  12,  true,  0.0),        -- GUESS: as concrete
@@ -85,6 +86,15 @@ Deagle.penetration = {
 -- "give up as much as 90 %" and come off tumbling: Bookstaber, "Shooting Bullets Into Water II"; destabilised flight:
 -- AAFS 2010 A199). exit = deg off the surface, keep = energy kept (others: cfg.ricochetKeep)
 Deagle.penetration.water.exit, Deagle.penetration.water.keep = 10, 0.1
+-- Off sheet steel a 9 mm leaves at ~6 deg whatever it came in at (5-15 in: 4.8-7.6 out, mean 6), never steeper than it
+-- came (Science & Justice 2023, above): lift 1 (in the table) up to exitMax.
+Deagle.penetration.metal_thin.exitMax = 6
+-- Energy kept on a skip (keep; others cfg.ricochetKeep, a GUESS): pistol bullets off steel and concrete up to 30 deg
+-- stay whole and keep ~75 % (J Forensic Sci Soc 1994, "Distribution of energy among fragments of ricocheting pistol
+-- bullets"; brick and tile as concrete). Off soft pine a .32 lost 26 % of its speed and a .45 51 % (Rathman 1987):
+-- energy 0.55 and 0.24, ~0.4 between them.
+for _, k in ipairs({ "metal", "metal_thin", "chainmail", "stone", "stone_soft", "brick", "ceramic" }) do Deagle.penetration[k].keep = 0.75 end
+Deagle.penetration.wood.keep, Deagle.penetration.wood_soft.keep = 0.4, 0.4
 -- worn armour layers (guns/armor.lua) by layer: their ricochet data
 Deagle.armorRicochet = { plate = Deagle.penetration.metal_thin, mail = Deagle.penetration.chainmail }
 

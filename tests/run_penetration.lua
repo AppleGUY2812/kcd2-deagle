@@ -99,6 +99,7 @@ end
 local function reset() world.slabs, world.npcs, world.ground, world.boxes, landed, M.decals, M.fxNames = {}, {}, nil, {}, {}, {}, {} end
 M.surfaceNames[6] = "mat_water"
 M.surfaceNames[7] = "mat_metal"
+M.surfaceNames[8] = "mat_door_metal"
 -- math.random() returns v while f runs (ricochet rolls made certain); math.random(a, b) and seeding work as before
 local function withRandom(v, f)
 	local old = math.random
@@ -206,7 +207,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		if #landed ~= 2 then return -1, -1, 1 end
 		local a, b = landed[1].hit.pos, landed[2].hit.pos
 		return math.deg(math.atan((b.z - a.z) / math.sqrt((b.x - a.x) ^ 2 + (b.y - a.y) ^ 2))), b.z - 31,
-			landed[2].energy / landed[1].energy
+			landed[2].energy / landed[1].energy, math.sqrt((b.x - a.x) ^ 2 + (b.y - a.y) ^ 2 + (b.z - a.z) ^ 2)
 	end
 	local climb3, _, kept = skim(6, 3)
 	local climb6 = skim(6, 6)
@@ -214,6 +215,16 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	check(string.format("%s: skims water and climbs ~10 deg whatever the angle in (3 in: %.1f, 6 in: %.1f), stone keeps it low (%.1f m up)",
 		id, climb3, climb6, zStone), climb3 > 5 and climb3 < 10 and climb6 > 5 and climb6 < 10 and zStone > 0 and zStone < 6, climb6)
 	check(string.format("%s: off water it keeps under 10 %% of its energy by the wall (%.1f %%)", id, kept * 100), kept > 0 and kept < 0.1, kept)
+
+	-- sheet steel (1 mm, 9 mm FMJ: Science & Justice 2023): skips below ~15 deg and leaves at ~6 deg whatever the angle,
+	-- never steeper than it came; off steel and concrete a round keeps ~75 % of its energy (J Forensic Sci Soc 1994)
+	local c10, c4 = skim(8, 10), skim(8, 4)
+	check(string.format("%s: sheet steel at 10 deg skips and climbs under 6 deg (%.1f); at 4 deg under 4 (%.1f)", id, c10, c4),
+		c10 > 3 and c10 < 6 and c4 > 1 and c4 < 4, c10)
+	local _, _, keptSteel, flown = skim(7, 3)
+	local air = math.exp(-2 * flown / Deagle:TumbleDragLength(Deagle:ShotPhysics(Deagle.gun)))   -- tumbling the whole way
+	check(string.format("%s: off steel it keeps ~75 %% of its energy (%.0f %% at the wall %.0f m on, the air took x%.2f)", id,
+		keptSteel * 100, flown, air), math.abs(keptSteel / air - 0.75) < 0.05, keptSteel / air)
 
 	-- steel hit at 45 deg (far above its ~6 deg critical angle): no bounce, the round stops and breaks up, its fragments
 	-- spraying along the face splashAngle deg off it (the user's iron door, in game 2026-10-14: hits at 45-75 deg)
@@ -425,8 +436,10 @@ check("a tumbling round (after a ricochet / corner) has less punch: the worn one
 	(select(2, Deagle:ThroughArmor(layers, phys9, e0, 1, true))) ~= nil, nil)
 local physD = Deagle:ShotPhysics(Deagle.guns.deagle)
 withRandom(0.5, function()
-	check("plate turns a hit 3 deg off its face (critical angle 7)",
+	check("plate turns a hit 3 deg off its face (critical angle 15: 1 mm sheet steel, 9 mm)",
 		select(4, Deagle:ThroughArmor(layers, physD, physD.energy, math.sin(math.rad(3)))) == true, nil)
+	check("and one 12 deg off it",
+		select(4, Deagle:ThroughArmor(layers, physD, physD.energy, math.sin(math.rad(12)))) == true, nil)
 	check("but not one 20 deg off it (the old rule always turned those)",
 		select(4, Deagle:ThroughArmor(layers, physD, physD.energy, math.sin(math.rad(20)))) ~= true, nil)
 end)

@@ -83,19 +83,17 @@ function Deagle:RicochetChance(crit, graze, critScale)
 	return 1 / (1 + math.exp((graze - crit * (critScale or c.critScale)) / c.width))
 end
 
--- A round turned off a surface or armour: mirrored, leaving at lift x its angle to the surface (hard surfaces
--- cfg.ricochetLift: flatter than it came in), or at exit deg to it whatever it came in at (water), scattered, with keep
--- of its energy, tumbling; it flies on and can hit something else. Its tracer starts again from here.
-function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip, lift, exit)
+-- A round turned off a surface or armour: on along it, leaving at lift x its angle to the surface (hard surfaces
+-- cfg.ricochetLift: flatter than it came in) up to exitMax deg, or at exit deg whatever it came in at (water);
+-- scattered, with keep of its energy, tumbling. It flies on and can hit something else; its tracer starts again here.
+function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip, lift, exit, exitMax)
 	local c = self.cfg
-	local out
-	if exit then
-		local along = vnorm(vsub(dir, vscale(normal, vdot(dir, normal))))
-		out = vadd(vscale(along, math.cos(math.rad(exit))), vscale(normal, math.sin(math.rad(exit))))
-	else
-		out = vsub(dir, vscale(normal, 2 * vdot(dir, normal)))
-		out = vnorm(vsub(out, vscale(normal, vdot(out, normal) * (1 - (lift or c.ricochetLift)))))
-	end
+	local along = vsub(dir, vscale(normal, vdot(dir, normal)))
+	if vlen(along) < 1e-6 then along = vcross(normal, math.abs(normal.z) < 0.9 and { x = 0, y = 0, z = 1 } or { x = 1, y = 0, z = 0 }) end
+	along = vnorm(along)
+	local graze = math.deg(math.asin(math.min(1, math.max(0, -vdot(dir, normal)))))
+	local a = math.rad(exit or math.min(graze * (lift or c.ricochetLift), exitMax or 90))
+	local out = vadd(vscale(along, math.cos(a)), vscale(normal, math.sin(a)))
 	out = coneDir(out, scatter)
 	local up = vdot(out, normal)
 	if up < 0.01 then out = vnorm(vadd(out, vscale(normal, 0.01 - up))) end   -- never back into the surface (>= 0.6 deg off it)
@@ -153,7 +151,9 @@ function Deagle:ArmorHit(e, hit, dir, phys, r, part)
 	end
 	if not a.stopped then self:HitSound(SURFACES.mat_flesh.ron, hit.pos, a.scale) end
 	if a.glance and r then                        -- skipped off plate / mail: off it goes, sparks along its new way
-		local out = self:Deflect(r, hit.pos, hit.normal or vscale(dir, -1), dir, c.armor.ricochetKeep, c.armor.scatter, e.id)
+		local ric = self.armorRicochet[a.stopped.a.layer]   -- the layer it skipped off: plate as sheet steel, mail as steel
+		local out = self:Deflect(r, hit.pos, hit.normal or vscale(dir, -1), dir, ric.keep, c.armor.scatter, e.id, ric.lift, ric.exit,
+			ric.exitMax)
 		self:SpawnFx(c.armorRicochetFx, hit.pos, out, a.scale * c.ricochet.fxScale)
 		self:HitSound("ricochet", hit.pos, a.scale, c.ricochet.volume)
 		a.goesOn = true
@@ -196,7 +196,7 @@ function Deagle:Impact(hit, dir, phys, r)
 	if r and pen and math.random() < self:RicochetChance(pen.crit, graze) then
 		self:Mark(s, hit, dir, scale * 0.6)
 		local out = self:Deflect(r, hit.pos, hit.normal, dir, pen.keep or c.ricochetKeep, c.ricochetScatter, nil,
-			pen.lift or (not pen.hard and 1 or nil), pen.exit)
+			pen.lift or (not pen.hard and 1 or nil), pen.exit, pen.exitMax)
 		if pen.hard then
 			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale * c.ricochet.fxScale)
 		end

@@ -83,12 +83,12 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `hitReactMajor` | `50` | health lost from which a hit is a big stagger instead of a flinch |
 | `hitReactFlags` | `0x3F` | reaction event flags (plugin bits 0x100 / 0x200 / 0x400 flip direction / body part handling) |
 | `armor.punch` | `104` | how hard a 9 mm hits armour (KCD2 stab defense units). Higher = rounds get through plate more often (Glock through a worn cuirass only within ~5 m now; Deagle through most plate) |
-| `armor.critScale` | `1` | plate / mail critical angles (plate 7, mail 6 deg off their face) x this: higher = rounds skip off armour more often (separate from the world's) |
+| `armor.critScale` | `1` | plate / mail critical angles (plate 15, mail 6 deg off their face) x this: higher = rounds skip off armour more often (separate from the world's) |
 | `armor.splashAngle` | `20` | a round plate stops flattens and its fragments spray along the plate this many degrees off its face (no bounce back) |
 | `armor.bruise` | `0.1` | share of the wound a round stopped by armour still does (blunt trauma) |
 | `wallbang.budget` | `0.1` | metres of wood a 9 mm gets through (others by energy; the Deagle ~0.19) |
-| `ricochetKeep` | `0.35` | energy a ricochet keeps |
-| `ricochet.critScale` | `1` | every world material's critical angle (stone 12, wood 11-16, glass 16, steel 6, water 7, forest floor / grass 5 deg off the surface) x this: higher = more ricochets |
+| `ricochetKeep` | `0.35` | energy a ricochet keeps off plaster, glass and ground (no study found). Measured ones are fixed: steel, stone, tile 75 %, wood 40 %, water 10 % |
+| `ricochet.critScale` | `1` | every world material's critical angle (stone 12, wood 11-16, glass 16, steel 6, sheet steel 15, water 7, forest floor / grass 5 deg off the surface) x this: higher = more ricochets |
 | `ricochet.width` | `1` | how soft the cut-off is: at the critical angle half skip, 3 deg flatter ~95 %, 3 deg steeper ~5 % |
 | `ricochet.volume` | `2` | ricochet whine loudness x impactVolume |
 | `ricochet.fxScale` | `1.5` | ricochet sparks size |
