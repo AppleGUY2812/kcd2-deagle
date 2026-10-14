@@ -84,12 +84,18 @@ function Deagle:RicochetChance(crit, graze, critScale)
 end
 
 -- A round turned off a surface or armour: mirrored, leaving at lift x its angle to the surface (hard surfaces
--- cfg.ricochetLift: flatter than it came in), scattered, slower and tumbling; it flies on and can hit something else.
--- Its tracer starts again from here.
-function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip, lift)
+-- cfg.ricochetLift: flatter than it came in), or at exit deg to it whatever it came in at (water), scattered, with keep
+-- of its energy, tumbling; it flies on and can hit something else. Its tracer starts again from here.
+function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip, lift, exit)
 	local c = self.cfg
-	local out = vsub(dir, vscale(normal, 2 * vdot(dir, normal)))
-	out = vnorm(vsub(out, vscale(normal, vdot(out, normal) * (1 - (lift or c.ricochetLift)))))
+	local out
+	if exit then
+		local along = vnorm(vsub(dir, vscale(normal, vdot(dir, normal))))
+		out = vadd(vscale(along, math.cos(math.rad(exit))), vscale(normal, math.sin(math.rad(exit))))
+	else
+		out = vsub(dir, vscale(normal, 2 * vdot(dir, normal)))
+		out = vnorm(vsub(out, vscale(normal, vdot(out, normal) * (1 - (lift or c.ricochetLift)))))
+	end
 	out = coneDir(out, scatter)
 	local up = vdot(out, normal)
 	if up < 0.01 then out = vnorm(vadd(out, vscale(normal, 0.01 - up))) end   -- never back into the surface (>= 0.6 deg off it)
@@ -189,7 +195,8 @@ function Deagle:Impact(hit, dir, phys, r)
 	local graze = math.deg(math.asin(math.min(1, cosI)))     -- between the shot and the surface
 	if r and pen and math.random() < self:RicochetChance(pen.crit, graze) then
 		self:Mark(s, hit, dir, scale * 0.6)
-		local out = self:Deflect(r, hit.pos, hit.normal, dir, c.ricochetKeep, c.ricochetScatter, nil, pen.lift or (not pen.hard and 1 or nil))
+		local out = self:Deflect(r, hit.pos, hit.normal, dir, pen.keep or c.ricochetKeep, c.ricochetScatter, nil,
+			pen.lift or (not pen.hard and 1 or nil), pen.exit)
 		if pen.hard then
 			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale * c.ricochet.fxScale)
 		end
@@ -255,10 +262,26 @@ local ROUND_STEP = 0.02          -- s: a longer frame is cut into steps this lon
 local ROUND_LIFE = 6             -- s: a round that hit nothing is dropped after this, or past cfg.range (a Deagle round
                                  -- takes ~5 s to fly 1000 m)
 
+-- A tumbling round (after a ricochet or a corner) shows its side as often as its point: it drags like a tumbling
+-- fragment. Tumbling changes only the area it shows, on average a quarter of its surface, and the drag coefficient
+-- follows the shape: Cd = 1.41 - 1.149 V^(2/3) / A, the fit to McCleskey's tumbling fragments at low Mach (a cube 0.64,
+-- a sphere 0.42, a plate 1.4: Moxnes et al., Defence Technology 2017). The round: a cylinder of its calibre holding its
+-- weight at jacketed-lead density. A .50 AE comes out Cd 0.58 on 1.6x its front, ~2.5x the drag of flying point-first
+-- (a 9 mm ~2.8x). Fragments drag more again near the speed of sound (not modelled).
+local AIR_RHO = 1.2              -- kg/m^3, as deagle_main.lua
+local BULLET_RHO = 11000         -- kg/m^3: lead (11.34) in a copper jacket (8.96)
+function Deagle:TumbleCd(shape) return 1.41 - 1.149 * shape end
+function Deagle:TumbleDragLength(phys)
+	local front = math.pi * (phys.d / 2) ^ 2
+	local len = phys.bullet / (BULLET_RHO * front)
+	local area = (2 * front + math.pi * phys.d * len) / 4       -- the area a tumbling body shows, on average
+	return 2 * phys.bullet / (AIR_RHO * self:TumbleCd((front * len) ^ (2 / 3) / area) * area)
+end
+
 -- one step of h seconds: true when the round is done (it hit something, or flew out of range / time)
 function Deagle:MoveRound(r, h)
 	local speed = vlen(r.vel)
-	local v1 = vscale(r.vel, 1 / (1 + speed * h / r.phys.dragLength))
+	local v1 = vscale(r.vel, 1 / (1 + speed * h / (r.tumble and self:TumbleDragLength(r.phys) or r.phys.dragLength)))
 	v1.z = v1.z - GRAVITY * h
 	local move = vscale(vadd(r.vel, v1), 0.5 * h)
 	local hits = {}

@@ -154,13 +154,15 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	fire()
 	check(string.format("%s: through a glass pane (%d hits)", id, #landed), #landed == 2 and landed[1].surface == "mat_glass", #landed)
 
-	-- a shot skimming stone ground (2 deg): it skids off and lands on the wall far ahead
+	-- a shot skimming stone ground (2 deg): it skids off and lands on the wall far ahead (tumbling, it may drop back and
+	-- skip again on the way)
 	reset()
 	world.ground = { z = 31.0, surface = 1 }
 	world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
 	fire(math.rad(-2))
-	check(string.format("%s: skims the ground at 2 deg -> ricochet (%s), then hits the wall", id, tostring(M.fxNames["deagle_impacts.ricochet_stone"])),
-		#landed == 2 and (M.fxNames["deagle_impacts.ricochet_stone"] or 0) == 1 and landed[2].hit.pos.y >= 300 - 1e-6, #landed)
+	local skips = M.fxNames["deagle_impacts.ricochet_stone"] or 0
+	check(string.format("%s: skims the ground at 2 deg -> ricochet (%d), then hits the wall", id, skips),
+		skips >= 1 and #landed == skips + 1 and landed[#landed].hit.pos.y >= 300 - 1e-6, #landed)
 
 	-- straight into the ground at 45 deg: no ricochet, it stays
 	reset()
@@ -192,17 +194,40 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	withRandom(0.5, function() fire(math.rad(-8)) end)
 	check(string.format("%s: wooden floor at 8 deg: skips off (%d hits)", id, #landed), #landed == 2, #landed)
 
-	-- water yields: a skipping round leaves steeper than it came (2.5 deg in, ~9.5 out); stone sends it off flatter
-	local function skimHeight(surface)
+	-- water: a skipping round leaves at ~10 deg whatever it came in at (9 mm: 2.5 -> 9.5, 5 -> 12, 8.5 -> 9.5), with
+	-- ~10 % of its energy, tumbling; stone sends it off flatter than it came. Climb = the average angle from the skip to
+	-- the wall 93 m on (gravity bends it below the 10 it left at; a 25 deg climb off a 6 deg skip was seen in game)
+	local function skim(surface, deg)
 		reset()
 		world.ground = { z = 31.0, surface = surface }
 		world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
-		withRandom(0.5, function() fire(math.rad(-3)) end)
-		return #landed == 2 and landed[2].hit.pos.z or -1
+		withRandom(0.5, function() fire(math.rad(-deg)) end)
+		if #landed ~= 2 then return -1, -1, 1 end
+		local a, b = landed[1].hit.pos, landed[2].hit.pos
+		return math.deg(math.atan((b.z - a.z) / math.sqrt((b.x - a.x) ^ 2 + (b.y - a.y) ^ 2))), b.z - 31,
+			landed[2].energy / landed[1].energy
 	end
-	local zWater, zStone = skimHeight(6), skimHeight(1)
-	check(string.format("%s: skims water at 3 deg and climbs (%.1f m up at the wall), stone keeps it low (%.1f m)", id, zWater - 31, zStone - 31),
-		zWater > 31 + 12 and zStone > 31 and zStone < 31 + 6, zWater)
+	local climb3, _, kept = skim(6, 3)
+	local climb6 = skim(6, 6)
+	local _, zStone = skim(1, 3)
+	check(string.format("%s: skims water and climbs ~10 deg whatever the angle in (3 in: %.1f, 6 in: %.1f), stone keeps it low (%.1f m up)",
+		id, climb3, climb6, zStone), climb3 > 5 and climb3 < 10 and climb6 > 5 and climb6 < 10 and zStone > 0 and zStone < 6, climb6)
+	check(string.format("%s: off water it keeps under 10 %% of its energy by the wall (%.1f %%)", id, kept * 100), kept > 0 and kept < 0.1, kept)
+
+	-- a tumbling round drags like a tumbling fragment: Cd from its shape (Moxnes 2017's fit to McCleskey's fragments:
+	-- sphere 0.42, cube 0.64), on a quarter of its surface; point-first it's AIR_CD on its front
+	local cube, sphere = Deagle:TumbleCd(1 / 1.5), Deagle:TumbleCd((4 / 3 * math.pi) ^ (2 / 3) / math.pi)
+	check(string.format("tumbling drag fit: cube %.3f (0.64), sphere %.3f (0.42)", cube, sphere),
+		math.abs(cube - 0.64) < 0.01 and math.abs(sphere - 0.42) < 0.05, cube)
+	local phys = Deagle:ShotPhysics(Deagle.gun)
+	local tumbleLen = Deagle:TumbleDragLength(phys)
+	reset()
+	local r = { pos = vec(100, 200, 50), vel = vec(0, 140, 0), phys = phys, tumble = true, dist = 0, age = 0 }
+	Deagle:MoveRound(r, 0.02)
+	local want = 140 / (1 + 140 * 0.02 / tumbleLen)
+	check(string.format("%s: tumbling, %.0f m drag length (point-first %.0f: x%.1f the drag), 140 m/s -> %.2f after 20 ms (%.2f)",
+		id, tumbleLen, phys.dragLength, phys.dragLength / tumbleLen, math.abs(r.vel.y), want),
+		phys.dragLength / tumbleLen > 2 and phys.dragLength / tumbleLen < 3.2 and math.abs(r.vel.y - want) < 0.01, r.vel.y)
 
 	-- a rock corner: 20 deg down onto a block's top, 2 cm from its back edge (no ricochet: 20 > 12 deg). The .50 AE cuts
 	-- the corner and comes out bent away from the rock (up), not straight on; the 9 mm can't get into stone at all

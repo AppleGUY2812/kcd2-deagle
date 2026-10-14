@@ -35,7 +35,7 @@ Deagle.penetrationAmmo = {
 -- Reconstruction, the definition the studies below use). Measured with pistol / rifle FMJ:
 --   steel plate 5 (9 mm, CZ 75: review table, ResearchGate 393603576); wallboard, car-body steel, wood, glass 5-9
 --   (9 mm / 5.56 / 7.62 together, AAFS 2018 B99); float glass 15.8 for 9 mm FMJ (.32 Auto 21, .45 Auto 17.6: JFS 2016,
---   PubMed 27644019); water ~7 (AK, same) and ~8 (AAFS 2012 A102); concrete 10.8-11.1, cement 13.2
+--   PubMed 27644019); water ~7 (AK, same), 6.5 (9 mm, Uzi: Gold & Schecter, JFS 1992) and ~8 (AAFS 2012 A102); concrete 10.8-11.1, cement 13.2
 --   (7.62x39, Science & Justice 2021); glazed tile 14.8 floor / 16.6 wall (9 mm, JFS 2023, PubMed 36453554); plywood,
 --   MDF, melamine 14-18 (9 mm, JFS 2025); whitewood: skips at 9-12, never from 13 (9 mm, CUNY thesis); harder, denser
 --   wood skips at steeper angles (same). 0 = never skips (soft: cloth, straw, leaves, flesh). The bullet matters too
@@ -43,8 +43,7 @@ Deagle.penetrationAmmo = {
 --   angle per material. No study of soil found: packed ground (road, gravel, field) and soft ground (forest floor,
 --   grass, mud: GUESS skips only flatter, and less steeply) are guesses.
 -- hard = unyielding (steel, stone, tile): a skipping round leaves flatter than it came (cfg.ricochetLift); the others
--- yield and leave steeper (lift: the round ploughs a little ramp; 9 mm FMJ off water at 2.5 deg left at ~9.5,
--- American Handgunner "The Art Of The Ricochet").
+-- yield and leave steeper (lift: the round ploughs a little ramp; soil and sand GUESS). Water: see below the table.
 -- family = effect family in deagle_impacts.xml; ron = RoN surface the values come from; armour = RoN ArmourLevel;
 -- spall = SpallingChance.
 local function P(family, ron, density, armour, penetrable, crit, hard, spall, lift)
@@ -77,10 +76,15 @@ Deagle.penetration = {
 	sack       = P("cloth",   "RON_Fabric_Stuffing", 1.0, 0, true,  0,   false, 0.0),        -- density = default (GUESS 1)
 	straw      = P("straw",   "RON_Cardboard",      0.5,  0, true,  0,   false, 0.0),        -- no RoN straw: GUESS cardboard
 	glass      = P("glass",   "RON_Glass_Plate",    0.6,  0, true,  16,  false, 0.0),        -- float glass 15.8 (9 mm)
-	water      = P("water",   "RON_Water",          1.0,  0, true,  7,   false, 0.0, 3.8),   -- water 7-8; 2.5 in -> 9.5 out; density = default (GUESS 1)
+	water      = P("water",   "RON_Water",          1.0,  0, true,  7,   false, 0.0),        -- water 6.5-8; density = default (GUESS 1)
 	flesh      = P("flesh",   "RON_Flesh",          3.0,  0, true,  0,   false, 0.0),        -- 9 mm: 3.3 cm, .50 AE: 10 cm
 	chainmail  = P("metal",   "RON_Tin",            1.0,  0, true,  6,   true,  0.0),        -- GUESS: rings stop little; crit GUESS as steel plate
 }
+-- Off water a round leaves at ~10 deg whatever it came in at (9 mm FMJ: 2.5 -> 9.5, 5 -> 12, 8.5 -> 9.5; .45 ACP
+-- 2.5 -> 8: American Handgunner, "The Art Of The Ricochet") with ~10 % of its energy (pointed and round-nosed bullets
+-- "give up as much as 90 %" and come off tumbling: Bookstaber, "Shooting Bullets Into Water II"; destabilised flight:
+-- AAFS 2010 A199). exit = deg off the surface, keep = energy kept (others: cfg.ricochetKeep)
+Deagle.penetration.water.exit, Deagle.penetration.water.keep = 10, 0.1
 -- worn armour layers (guns/armor.lua) by layer: their ricochet data
 Deagle.armorRicochet = { plate = Deagle.penetration.metal_thin, mail = Deagle.penetration.chainmail }
 
