@@ -151,6 +151,18 @@ if phys then
 	Deagle:Shoot(true)
 	mesh.s0 = shown()
 	M.advance(1 / 30, 30); mesh.s1 = shown()
+	M.advance(0.5, 600)                               -- F9 slow motion x0.1 at 60 fps: 1/600 s of game time a frame
+	Deagle.state.lastShot = -100
+	Deagle:Shoot(true)
+	local seen, cards = 0, {}
+	for _ = 1, 60 do
+		local sh = shown()
+		if #sh > 0 then seen = seen + 1; cards[sh[1]] = true end
+		M.advance(1 / 600, 600)
+	end
+	local nc = 0
+	for _ in pairs(cards) do nc = nc + 1 end
+	mesh.slow, mesh.slowCards = seen, nc
 	Deagle.cfg.flashMode = "gun"
 	M.advance(0.5, 60)
 end
@@ -251,6 +263,8 @@ if mesh then
 		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] ~= mesh.f0[1] and #mesh.f2 == 0 and mesh.rolled == 2 and not mesh.particleFlash, mesh.rolled)
 	check(string.format("mesh flash under 40 fps: card %s, then %s", table.concat(mesh.s0, ","), table.concat(mesh.s1, ",")),
 		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
+	check(string.format("mesh flash in F9 slow motion: %d frames at 60 fps (0.035 s of game time = 21), %d variants", mesh.slow, mesh.slowCards),
+		mesh.slow >= 19 and mesh.slow <= 23 and mesh.slowCards == 2, mesh.slow)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
