@@ -682,3 +682,19 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   player.this.id, hitType = 6, hitStrength = 5/6}))` (the game's Lua does this in Horse.lua OnStartle). Not seen in game
   yet: whether the engine still gives the kill / murder to the player without DealDamage's attacker.
 
+## 2026-10-14: the flash light: Ready or Not's two lights, no edge, no fog (Claude 4)
+- "Both guns still look like a visible sphere of light that is too small", then "i can see the cutoff which shouldnt
+  happen in real life". The old light was a particle `LightSource` (Radius 5 / 10) spawned at the flash's scale (Glock
+  x0.30: it ended at 1.5 m) a frame late, lighting the volumetric fog. KCD2 lights fall off with the square of the
+  distance from their bulb and then fade linearly to zero over the last 20 % of their radius: a radius that ends where
+  the light still shows draws a ring.
+- Ready or Not (flash_collect.json, WeaponFlash_Pistol_V3 / V2 `ParticleModuleLight`): two lights. Main: on a 25-35 cm
+  particle 25 cm (V2 10 cm) ahead, 0.04 s, brightness 70-80 x colour scale 10-25, radius 100 x size, exponent 320 (10 %
+  at 2-4.5 m). Second: 8-12 cm particle 12 (5) cm ahead, 0.035 s, brightness 15-50, exponent 16 (10 % at 3-6.6 m). Hue
+  (38250, 450, 200): red. Particle lights in UE4 don't light volumetric fog.
+- Now (`flashMesh.light.mode ron`): both as entity lights in the viewmodel's slots 3 / 4 (`LoadLight`, frame-exact,
+  freed by game time), red, `volumetric_fog = false`, radius 40 m so only the square law shapes them (bulb 0.3 m),
+  the same for both guns. `LoadLight` keys found in WHGame.dll next to `attenuation_bulbsize`: `volumetric_fog`,
+  `volumetric_fog_only`, `volumetric_multiplier_wh`, `fade_in_radius`, `this_area_only`, `indoor_only`. Brightness
+  (`flashMesh.light.intensity` 6) still to be matched to Ready or Not's clip in game.
+

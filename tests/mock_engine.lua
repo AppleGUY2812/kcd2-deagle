@@ -120,7 +120,10 @@ local function newEntity(name, props)
 		M.lastSlotEntity = self.name
 		return slot
 	end
-	function e:FreeSlot(slot) self.slots[slot] = nil end
+	function e:FreeSlot(slot) self.slots[slot] = nil; if M.lights then M.lights[slot] = nil end end
+	-- a light in a slot: its properties and where it sits, recorded (M.lights[slot])
+	function e:LoadLight(slot, props) M.lights = M.lights or {}; M.lights[slot] = { props = props }; self.slots[slot] = true; return slot end
+	function e:SetSlotPos(slot, pos) if M.lights and M.lights[slot] then M.lights[slot].pos = pos end end
 	function e:IsSlotValid(slot) return self.slots[slot] ~= nil end
 	function e:SetDirectionVector(d) self.dir = vec(d.x, d.y, d.z) end
 	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end

@@ -142,8 +142,14 @@ if phys then
 	Deagle:Shoot(true)
 	Deagle.vmFrame = Deagle.vmFrame + 1; Deagle:FlashMeshTick()   -- the shot's own frame's tick (a shot comes before it)
 	local f0 = shown()
+	local lights = {}
+	for slot, l in pairs(M.lights or {}) do lights[slot] = l end
 	M.advance(1 / 60, 60); local f1 = shown()
 	M.advance(1 / 60, 60); local f2 = shown()
+	M.advance(1 / 60, 60)
+	local lightsLeft = 0
+	for _ in pairs(M.lights or {}) do lightsLeft = lightsLeft + 1 end
+	mesh.lights, mesh.lightsLeft = lights, lightsLeft
 	local particleFlash = false
 	for i = nf + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx deagle%.muzzle ") or M.native[i]:find("^%[DN%] flashfx deagle%.muzzle_large ") then particleFlash = true end end
 	mesh.f0, mesh.f1, mesh.f2, mesh.particleFlash = f0, f1, f2, particleFlash
@@ -305,6 +311,13 @@ if mesh then
 	check(string.format("mesh flash at 60 fps: card %s on the shot's frame, %s the next, %s after; no particle flash",
 		table.concat(mesh.f0, ","), table.concat(mesh.f1, ","), table.concat(mesh.f2, ",")),
 		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] == mesh.f0[1] and #mesh.f2 == 0 and not mesh.particleFlash, #mesh.f2)
+	local l3, l4 = mesh.lights[3], mesh.lights[4]
+	local function red(l) local c = l and l.props.diffuse_color return c and c.x > 0 and c.y < 0.02 * c.x and c.z < 0.01 * c.x end
+	check(string.format("flash light: Ready or Not's two lights on the shot (radius %s / %s m: no visible edge, red %s, fog %s), gone after 0.04 s (%d left)",
+		tostring(l3 and l3.props.radius), tostring(l4 and l4.props.radius), tostring(red(l3) and red(l4)),
+		tostring(l3 and l3.props.volumetric_fog), mesh.lightsLeft),
+		l3 and l4 and l3.props.radius >= 30 and l4.props.radius >= 30 and red(l3) and red(l4) and l3.props.volumetric_fog == false
+		and l4.props.diffuse_color.x < l3.props.diffuse_color.x and l3.pos ~= nil and mesh.lightsLeft == 0, mesh.lightsLeft)
 	check(string.format("mesh flash under 40 fps: card %s, then %s", table.concat(mesh.s0, ","), table.concat(mesh.s1, ",")),
 		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
 	check(string.format("mesh flash in F9 slow motion: %d frames at 60 fps (0.035 s of game time = 21), %d variant (one shape, no switch)", mesh.slow, mesh.slowCards),

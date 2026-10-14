@@ -73,10 +73,11 @@ Deagle.cfg = {
 	-- game time (Ready or Not 0.035-0.04 s: 2 frames at 60 fps, 1 under 40 fps, ~10x longer in F9 slow motion; a second
 	-- variant halfway read as the flash switching shape: user 2026-10-14); mtl = their strength (deagle_vm_flash,
 	-- _dim, _hot); set = the cards by blast (large for big blasts, cfg.physics.largeFlashBlast). look "ron": Ready or
-	-- Not's own flash instead (flashRon). Light: the per-shot particle light (a frame late) or an entity light on the gun
-	-- (light.mode "entity", to test)
+	-- Not's own flash instead (flashRon). Light (light.mode): "ron" = Ready or Not's two flash lights on the gun from the
+	-- shot's own frame (Deagle:FlashMeshLight; intensity = the main one's, bulb = its attenuation bulb m), "particle" =
+	-- the old per-shot particle light (a frame late, sized with the flash, lit the night fog)
 	flashMesh = { look = "ours", time = 0.035, roll = true, mtl = "deagle_vm_flash", large = "deagle_vm_flash", small = "deagle_vm_flash_s",
-		light = { mode = "particle", radius = 6, intensity = 3, frames = 2 } },
+		light = { mode = "ron", intensity = 6, bulb = 0.3 } },
 	-- flashMesh.look "ron" (deagle_flash ron): Ready or Not's pistol flash, its textures and its Cascade system run and baked
 	-- onto cards (tools/ron/flash_bake.py): WeaponFlash_Pistol_V3 of the Grizzly MK V .50 AE for big blasts, the G19's V2
 	-- for small ones. variants x stages cards; a shot picks a variant and shows the stage its game time is in (sparks
@@ -517,7 +518,7 @@ function Deagle:MuzzleFlash(dir)
 		local vm = self.vmId and System.GetEntity(self.vmId)
 		local okM, lp, ld = false, nil, nil
 		if vm then okM, lp, ld = pcall(self.MuzzleLocal, self, vm) end
-		if okM and c.flashMesh.light.mode == "entity" then self:FlashMeshLight(vm, lp)
+		if okM and c.flashMesh.light.mode == "ron" then self:FlashMeshLight(vm, lp, ld, fx == c.muzzleFxLarge)
 		elseif okM then
 			local light = (fx == c.muzzleFxLarge) and c.muzzleLightLarge or c.muzzleLight
 			self:Native(string.format("flashfx %s %.4f %.4f %.4f %.4f %.4f %.4f %.4f", light, scale, lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
@@ -699,20 +700,49 @@ function Deagle:FlashMeshTick()
 	end
 	if not want then m.on = nil end
 end
--- an entity light on the gun for the frames of a shot (flashMesh.light.mode "entity"): drawn from the entity, not
--- through the particle update
-local FLASH_LIGHT_SLOT = 3
-function Deagle:FlashMeshLight(vm, lp)
+-- Ready or Not's flash lights (flashMesh.light.mode "ron"), from its WeaponFlash_Pistol_V3 (the Deagle) and V2 (the
+-- Glock) ParticleModuleLight: a main light on the burst 25 cm (V2: 10 cm) ahead of the muzzle for 0.04 s, and a second
+-- one 12 (5) cm ahead for 0.035 s at 0.43 of its brightness (brightness 15-50 against 70-80); red, its hue 38250 : 450 :
+-- 200. Entity lights in the viewmodel's slots: on the shot's own frame, for that game time (F9 stretches them), never
+-- in the volumetric fog. Falloff: KCD2's lights fall off with the square of the distance from their bulb (light.bulb m)
+-- and then fade linearly to nothing over the last 20 % of their radius: a radius that ends where the light still shows
+-- draws a ring ("i can see the cutoff which shouldnt happen in real life", the user 2026-10-14; the particle light it
+-- replaces ended at 1.5 m on the Glock, sized with its flash). So the radius is LIGHT_RADIUS, far past where the light
+-- fades below sight (intensity 20, bulb 0.3: 1/10000 of it by 30 m), and only the square law shapes it.
+local LIGHT_RADIUS = 40
+local RON_LIGHTS = {
+	{ slot = 3, at = 0.25, atSmall = 0.10, time = 0.04, share = 1 },
+	{ slot = 4, at = 0.12, atSmall = 0.05, time = 0.035, share = 0.43 },
+}
+local RON_LIGHT_HUE = { 1.0, 0.0118, 0.0052 }
+function Deagle:FlashMeshLight(vm, lp, ld, large)
 	local L = self.cfg.flashMesh.light
-	local i = L.intensity
-	local ok = pcall(vm.LoadLight, vm, FLASH_LIGHT_SLOT, {
-		style = 0, deferred_light = 1, radius = L.radius,
-		diffuse_color = { x = i, y = i * 0.72, z = i * 0.38 }, specular_color = { x = i, y = i * 0.72, z = i * 0.38 },
-		hdrdyn = 0, lifetime = 0, realtime = 1, dot3 = 1, cast_shadow = 0,
-		corona_scale = 0, corona_dist_size_factor = 1, corona_dist_intensity_factor = 1 })
-	if ok then
-		pcall(vm.SetSlotPos, vm, FLASH_LIGHT_SLOT, lp)
-		self.flashLightUntil = (self.vmFrame or 0) + L.frames
+	local now = System.GetCurrTime()
+	self.flashLights = self.flashLights or {}
+	for _, l in ipairs(RON_LIGHTS) do
+		local i = L.intensity * l.share
+		local col = { x = i * RON_LIGHT_HUE[1], y = i * RON_LIGHT_HUE[2], z = i * RON_LIGHT_HUE[3] }
+		local ok = pcall(vm.LoadLight, vm, l.slot, {
+			style = 0, deferred_light = 1, radius = LIGHT_RADIUS, diffuse_color = col, specular_color = col,
+			hdrdyn = 0, lifetime = 0, realtime = 1, dot3 = 1, cast_shadow = 0, attenuation_bulbsize = L.bulb,
+			volumetric_fog = false, volumetric_multiplier_wh = 0,
+			corona_scale = 0, corona_dist_size_factor = 1, corona_dist_intensity_factor = 1 })
+		if ok then
+			pcall(vm.SetSlotPos, vm, l.slot, vadd(lp, vscale(ld, large and l.at or l.atSmall)))
+			self.flashLights[l.slot] = now + l.time
+		end
+	end
+end
+-- every viewmodel frame: a flash light whose game time is up goes
+function Deagle:FlashLightTick()
+	if not self.flashLights then return end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	local now = System.GetCurrTime()
+	for slot, t in pairs(self.flashLights) do
+		if now >= t or not vm then
+			if vm then pcall(vm.FreeSlot, vm, slot) end
+			self.flashLights[slot] = nil
+		end
 	end
 end
 
@@ -2098,7 +2128,7 @@ function Deagle:VmEntity()
 		log("viewmodel fallback chr " .. tostring(ok2) .. " " .. tostring(slot2) .. " skin " .. tostring(ok3))
 	end
 	pcall(vm.SetViewDistRatio, vm, 255)
-	self.vmId, self.vmRoundsShown, self.flashCardMtl = vm.id, nil, {}
+	self.vmId, self.vmRoundsShown, self.flashCardMtl, self.flashLights = vm.id, nil, {}, nil
 	self:FlashMeshSetup(vm)
 	vm.OnUpdate = function() Deagle:VmPlace() end    -- per-frame follow (entity update); VmTick timer as well
 	pcall(vm.Activate, vm, 1)
@@ -2289,11 +2319,7 @@ function Deagle:VmTick(token)
 	self:CueTick()
 	self:EnvTick()
 	self:CaseTick()
-	if self.flashLightUntil and self.vmFrame >= self.flashLightUntil then
-		local vm = self.vmId and System.GetEntity(self.vmId)
-		if vm then pcall(vm.FreeSlot, vm, FLASH_LIGHT_SLOT) end
-		self.flashLightUntil = nil
-	end
+	self:FlashLightTick()
 	if self.MotionTick then self:MotionTick() end
 	self:HoldGameMapsOff()
 	if (self.zoom ~= nil) ~= (self.vmZoomHidden == true) then     -- the gun out of view while the debug zoom is on
@@ -2801,7 +2827,7 @@ function Deagle:OnGameplayStarted()
 	self.fc, self.fcAim = nil, nil                          -- the plugin turns the free camera off at the hello
 	-- a load can set the game clock back, and times kept from before it then lie ahead: the gun's kicks grew without
 	-- bound and every shot left along NaN, hitting nothing for minutes (in game 2026-10-14, a save loaded in a house)
-	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn = nil, nil, nil, nil
+	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights = nil, nil, nil, nil, nil
 	s.heat, s.accFire, s.accT, s.burstReady = 0, 0, nil, nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
