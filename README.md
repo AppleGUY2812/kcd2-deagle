@@ -46,7 +46,7 @@ Video checks: drag an OBS clip onto `Desktop\Make Scrubbable.bat`, then step wit
 ## Where things are
 | Path | What |
 |---|---|
-| `src/` | mod content, packed into `data/deagle.pak` (script `Scripts/Deagle/deagle_main.lua`, particles, viewmodel, clips) |
+| `src/` | mod content, packed into `data/deagle.pak` (scripts `Scripts/Deagle/deagle_main.lua` and `ballistics.lua` (rounds, ricochets, wallbangs, armour), particles, viewmodel, clips) |
 | `native/` | the C++ plugin (MinHook) and its build/install scripts |
 | `tools/` | the conversion pipeline (Blender, rc, audits) |
 | `tests/` | mock-engine tests |

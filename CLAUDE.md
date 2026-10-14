@@ -14,6 +14,15 @@ Read `README.md` (layout, build, test), `TODO.md` (status) and `MODLOG.md` (engi
   notes page (https://app.notion.com/p/3f8955aa69318189a51ed4fce80d504d). Status marks: ✅ user-confirmed in game,
   🟡 built / waiting for the user's test, ⚪ not started. Tick a box only after the user confirms it; add new items
   for new work.
+- Keep the wiki current, always: whenever a command, key or setting is added or changed, update the commands wiki
+  artifact (https://claude.ai/artifact/2pJ2zJeNNAfxa5MD9VyitH; source `docs/DEBUG.md`) in the same session.
+
+## Who edits what (two Claude sessions can run at once)
+- `src/Scripts/Deagle/ballistics.lua` + `guns/penetration.lua`: rounds in flight, ricochets, corners, wallbangs,
+  armour (the "ricochet" session). It uses `deagle_main.lua`'s helpers through `Deagle.U`: keep that table in sync.
+- `src/Scripts/Deagle/deagle_main.lua`: everything else (viewmodel, sounds, effects, holes, NPC reactions, tracers).
+- Commit only your own hunks (never `git commit -a`), keep `bash tests/run_all.sh` passing after every edit (a hot
+  reload loads both sessions' work), and tell the other session before touching its file.
 
 ## Handy
 - `tools/live.sh reload` / `tools/live.sh snippet.lua`: talk to the running game over the dev console (rcon). While
