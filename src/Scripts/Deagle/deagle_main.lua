@@ -1030,8 +1030,10 @@ RON_SURFACE.mat_bells = "bell"                                                  
 -- ring lifted from the recording (tools/sound/plate_rings.py, plate_sounds.py: files and vol), as loud next to RoN's MK V
 -- shot as in the clip (the user's pick, pack 20 "B"). Played by the plugin like RoN's events (Falloff, travel time);
 -- a plugin without "file:" sounds (deagle_native_caps) keeps RoN's Steel, ron.
+-- Every surface that played RoN's Steel plays it: doors, plate and mail too (the user: "armor as a type of steel target
+-- plate we have for hickock's sample").
 local PLATE = { files = { "steel/plate_01.wav", "steel/plate_02.wav", "steel/plate_03.wav" }, vol = 3.37, ron = 44 }
-RON_SURFACE.mat_metal, RON_SURFACE.mat_super_cool_sparkly_type = PLATE, PLATE
+for n, v in pairs(RON_SURFACE) do if v == 44 then RON_SURFACE[n] = PLATE end end
 for n, sf in pairs(SURFACES) do sf.ron = RON_SURFACE[n] end
 Deagle.surfaces = SURFACES
 
@@ -1206,7 +1208,7 @@ function Deagle:HitReact(e, hit, dir, dmg, stam)
 end
 
 -- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (direction). what = a RoN Surface
--- index (Bullet Impact Surfaces) or a RON_HIT key.
+-- index (Bullet Impact Surfaces), a RON_HIT or ARMOR_HIT key, or one of our recordings ({ files, vol, ron }).
 -- These events don't fade with FMOD's own 3D distance: RoN's game code sets PropagateDistance (m along the sound's path)
 -- and the event's volume follows it (impacts measured: -3 dB at 5 m, -22 dB at 10 m, silent from 20 m; ricochets carry
 -- to ~45 m). KCD2 has no portal volumes, so the path is the straight line. The plugin works it out from wherever the
@@ -1216,16 +1218,18 @@ local SOUND_SPEED = 343
 local RON_IMPACT = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces"
 local RON_HIT = {
 	ricochet = "event:/Surfaces/Impacts/Bullet Impacts/Ricochets",
-	armor_helmet = "event:/Surfaces/Impacts/Armor Impacts/3P/3P Armor Head",
-	armor_body = "event:/Surfaces/Impacts/Armor Impacts/3P/3P Armor Body",
-	armor_helmet_block = "event:/Surfaces/Impacts/Armor Impacts/Blocks/3P Armor Head Block",
-	armor_body_block = "event:/Surfaces/Impacts/Armor Impacts/Blocks/3P Armor Body Block",
 	bell = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Tower Bell",
 }
+-- Worn armour (ballistics ArmorHit; _block: stopped or turned it). Our armour stops rounds real armour doesn't, the way
+-- a steel target plate does, so it rings like the plate; a round through it makes no ring you'd hear over the gunshot
+-- (the user, 2026-10-14: "armor as a type of steel target plate", "car doors it just goes through so no noticeable
+-- sound"), only the flesh hit after it.
+local ARMOR_HIT = { armor_helmet_block = PLATE, armor_body_block = PLATE, armor_helmet = false, armor_body = false }
 Deagle.ronHitEvents = { RON_IMPACT }
 for _, ev in pairs(RON_HIT) do Deagle.ronHitEvents[#Deagle.ronHitEvents + 1] = ev end
 function Deagle:HitSound(what, pos, scale, vol)
 	local c = self.cfg
+	if ARMOR_HIT[what] ~= nil then what = ARMOR_HIT[what] end
 	if self.native and what then
 		local ev, params
 		-- Falloff: the plugin's distance law from the listener (the free camera too), instead of RoN's PropagateDistance

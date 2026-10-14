@@ -113,6 +113,16 @@ check("the plugin can play files: the plate takes load at once", #M.native == nL
 Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
 check("then steel plays a plate take with the distance law: " .. M.native[#M.native],
 	M.native[#M.native]:find("^%[DN%] ron3 6%.740 1%.00 2%.00 3%.00 file:steel/plate_0%d%.wav|Falloff=3$") ~= nil, nil)
+local notPlate = {}
+for _, n in ipairs({ "mat_door_metal", "mat_plate", "mat_chainmail", "mat_fabric_chainmail_plate", "mat_leather_chainmail" }) do
+	if Deagle.surfaces[n].ron ~= Deagle.surfaces.mat_metal.ron then notPlate[#notPlate + 1] = n end
+end
+check("every metal that played RoN's Steel plays the plate: not " .. table.concat(notPlate, " "), #notPlate == 0, #notPlate)
+Deagle:HitSound("armor_body_block", hit, 1)
+check("armour that stops a round rings like the plate: " .. M.native[#M.native], M.native[#M.native]:find("file:steel/plate_0%d%.wav|") ~= nil, nil)
+n0 = #M.native
+Deagle:HitSound("armor_helmet", hit, 1)
+check("a round through armour: no ring (the flesh hit follows)", #M.native == n0, M.native[#M.native])
 Deagle.nativeCaps = nil
 -- the empty click and aiming play the gun's RoN events
 n0 = #M.native
