@@ -43,8 +43,9 @@ if [[ "${1:-}" == "--install" && -f "$here/native/dist/deagle_native.asi" ]]; th
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(wslpath -w "$here/native/install.ps1")" -Dist "$(wslpath -w "$here/native/dist")" || exit 1
 fi
 if [[ "${1:-}" == "--dev" ]]; then
-  # hot reload: copy the script to the dev path, then run deagle_dev_reload in the game console
-  powershell.exe -NoProfile -Command "New-Item -ItemType Directory -Force 'E:\Tools\deagle-dev' | Out-Null; Copy-Item '$(wslpath -w "$here/src/Scripts/Deagle/deagle_main.lua")' 'E:\Tools\deagle-dev\deagle_main.lua' -Force"
+  # hot reload: copy the script to the dev path, then run deagle_dev_reload in the game console. The whole Scripts tree
+  # is mirrored next to it: a dev reload loads ballistics.lua and guns/*.lua from there too (Deagle:LoadModule)
+  powershell.exe -NoProfile -Command "New-Item -ItemType Directory -Force 'E:\Tools\deagle-dev' | Out-Null; Copy-Item '$(wslpath -w "$here/src/Scripts/Deagle/deagle_main.lua")' 'E:\Tools\deagle-dev\deagle_main.lua' -Force; Remove-Item -Recurse -Force 'E:\Tools\deagle-dev\Scripts' -ErrorAction SilentlyContinue; Copy-Item -Recurse '$(wslpath -w "$here/src/Scripts")' 'E:\Tools\deagle-dev\Scripts'"
   echo "dev script updated"
   exit 0
 fi
