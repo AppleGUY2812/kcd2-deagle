@@ -255,7 +255,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		first and shot and shot.muzzle and dist(first.a, shot.muzzle) < 8, first)
 	local used = {}
 	for _, f in ipairs(M.fxLog or {}) do if f.n:find("^deagle_tracers%.trail") then used[f.n] = true end end
-	for i = 1, #M.native do local fx = M.native[i]:match("^%[DN%] fxs (%S+) ") if fx then used[fx] = true end end
+	for i = 1, #M.native do local fx = M.native[i]:match("^%[DN%] fxs (deagle_tracers%.%S+) ") if fx then used[fx] = true end end
 	local names, allIn = {}, true
 	for fx in pairs(used) do names[#names + 1] = fx; allIn = allIn and tracerLib:find('Name="' .. fx:match("%.(.+)$") .. '"', 1, true) ~= nil end
 	check(string.format("%s: pieces %s (one frame's glow at 60 fps) are in deagle_tracers.xml, dash %.1f m = tools/gen_tracers.py", id,

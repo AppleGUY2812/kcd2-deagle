@@ -109,6 +109,11 @@ Deagle.cfg = {
 	bloodArmorFx = "deagle_blood.armor_entry",  -- through padding / mail / plate: a cloth tuft and less blood
 	bloodExitFx = "deagle_blood.exit",        -- out the back, along the round
 	armorFx = "deagle_impacts.metal",   -- a round on plate / mail sparks like any metal (KCD2's plate hit effect doesn't exist)
+	-- how impact / blood effects are spawned. "plugin": the plugin spawns them and sets their place again for their first
+	-- frames (like the tracer pieces), so they're drawn at once; a Lua-spawned emitter isn't drawn for ~0.3 s (MODLOG,
+	-- tracer lab), which hid Ready or Not's sparks and flash (0.05-0.3 s). The plugin holds each effect 2 s. "lua":
+	-- Particle.SpawnEffect (the old way; also the fallback without the plugin)
+	impactSpawn = "plugin",
 	headFx = "deagle_blood.head",             -- burst out of the back of a head
 	holeSize = 0.035,         -- m, a 9 mm's bullet hole (Ready or Not's pistol holes: 3-4 cm); x the impact scale
 	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)
@@ -433,9 +438,17 @@ function Deagle:PlayTrigger(name)
 	end)
 end
 
+local PLUGIN_FX = { deagle_impacts = true, deagle_blood = true }
 function Deagle:SpawnFx(name, pos, normal, scale)
 	if not name then return end
 	if name == self.cfg.muzzleFx then scale = self.cfg.muzzleFxScale end
+	local lib = string.match(name, "^([%w_]+)%.")
+	if self.cfg.impactSpawn == "plugin" and self.native and PLUGIN_FX[lib] and pos and normal then
+		-- fxs <effect> <scale> <box length m along the normal> <pos> <dir>: drawn from its first frame
+		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", name, scale or 1.0, 0.3,
+			pos.x, pos.y, pos.z, normal.x, normal.y, normal.z))
+		return
+	end
 	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
 end
 
@@ -3053,7 +3066,14 @@ function Deagle:FxReload(lib)
 	lib = (lib and lib ~= "") and lib or "deagle_impacts"
 	if not self.native then log("$4fxreload needs the plugin") return end
 	local since = System.GetCurrTime() - (self.state.lastShot or -100)
-	if since < 3 then log(string.format("fxreload: wait %.1f s more (effects of the last shot may still be alive)", 3 - since)) return end
+	if since < 3 then   -- effects of the last shot may still be alive: try again once they're gone (game time: paused waits)
+		log(string.format("fxreload: in %.1f s (effects of the last shot may still be alive)", 3 - since))
+		if not self.fxReloadQueued then
+			self.fxReloadQueued = true
+			Script.SetTimer(math.floor((3 - since) * 1000) + 100, function() self.fxReloadQueued = false; self:FxReload(lib) end)
+		end
+		return
+	end
 	self:Native("fxreload " .. self.devRoot .. "Libs/Particles/" .. lib .. ".xml " .. lib)
 end
 System.AddCCommand("deagle_fxreload", "Deagle:FxReload(Deagle.Arg([[%1]]))", "deagle_fxreload [library]: re-read Libs/Particles/<library>.xml (default deagle_impacts) from the dev folder into the running game")

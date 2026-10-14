@@ -149,6 +149,11 @@ _G.System = {
 	LogAlways = function(s)
 		s = tostring(s)
 		if s:sub(1, 4) == "[DN]" then table.insert(M.native, s); M.nativeT = M.nativeT or {}; M.nativeT[#M.native] = M.t            -- what the plugin would receive
+			-- an impact / blood effect the plugin spawns (fxs, cfg.impactSpawn "plugin") counts as a spawned effect
+			local fx, sc, _, px, py, pz, dx, dy, dz = s:match("^%[DN%] fxs (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)$")
+			if fx and not fx:find("^deagle_tracers%.") then
+				_G.Particle.SpawnEffect(fx, { x = tonumber(px), y = tonumber(py), z = tonumber(pz) }, { x = tonumber(dx), y = tonumber(dy), z = tonumber(dz) }, tonumber(sc))
+			end
 		else table.insert(M.logs, s); if s:find("%$4") then table.insert(M.errors, s) end end
 	end,
 	Log = function(s) end, Warning = function(s) table.insert(M.errors, "WARN " .. tostring(s)) end,
