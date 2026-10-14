@@ -587,7 +587,7 @@ function Deagle:FlashMeshSetup(vm)
 	for v = 1, L.variants do
 		for st = 1, L.stages do
 			local i = (v - 1) * L.stages + st
-			local name = "vm_flash_" .. i
+			local name = (L.look == "ron" and "vm_flash_ron_" or "vm_flash_") .. i   -- a look switch never reuses a name it just destroyed
 			local cgf = L.stages > 1 and (L.set .. "_" .. v .. "_" .. st) or (L.set .. "_" .. v)
 			pcall(vm.CreateBoneAttachment, vm, 0, self.gun.bones.muzzle, name, false)
 			pcall(vm.SetAttachmentCGF, vm, 0, name, dir .. cgf .. ".cgf")

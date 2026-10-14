@@ -171,16 +171,16 @@ if phys then
 	local n = R.variants * R.stages
 	local function ronShown()
 		local out = {}
-		for i = 1, n do if M.hidden["vm_flash_" .. i] == false then out[#out + 1] = i end end
+		for i = 1, n do if M.hidden["vm_flash_ron_" .. i] == false then out[#out + 1] = i end end
 		return out
 	end
 	local rset = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and R.large or R.small
 	local hiddenAll, placedAll = #ronShown() == 0, 0
 	for i = 1, n do
-		local p = M.attachPos and M.attachPos["vm_flash_" .. i]
+		local p = M.attachPos and M.attachPos["vm_flash_ron_" .. i]
 		if p and p.x == 0 and p.y == 0 and p.z == 0 then placedAll = placedAll + 1 end
 	end
-	mesh.ron = { cards = n, hidden = hiddenAll, placed = placedAll, last = M.attachCgf and M.attachCgf["vm_flash_" .. n],
+	mesh.ron = { cards = n, hidden = hiddenAll, placed = placedAll, last = M.attachCgf and M.attachCgf["vm_flash_ron_" .. n],
 		want = "objects/manmade/weapons/deagle/vm/" .. rset .. "_" .. R.variants .. "_" .. R.stages .. ".cgf", look = Deagle.flashMesh.look.look }
 	local function ronShot(fps)
 		Deagle.state.lastShot = -100
