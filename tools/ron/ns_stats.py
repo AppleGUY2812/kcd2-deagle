@@ -48,9 +48,18 @@ def stats(d, bursts=64):
         b = sysd.get('bursts', {}).get(em.rsplit('_', 1)[0], {}) or {}
         cnt = max(b.get('max') or 1, 1)
         frames = E.simulate(3.0, bursts, count=cnt)
-        f0 = frames[0]
-        if not f0['n']: continue
-        r = {'renderer': {k: sysd['emitters'][em].get('renderer', {}).get(k) for k in ('Material', 'Alignment', 'FacingMode', 'SubImageSize', 'bSubImageBlend', 'SortOrderHint')},
+        r = measure(frames, b, sysd['emitters'][em].get('renderer', {}))
+        if r: res[em] = r
+    return sysd, res
+
+
+def measure(frames, b, rend):
+    """frames of one emitter (niagara_gpu / cascade_sim layout) -> KCD2-terms summary"""
+    cnt = max(b.get('max') or 1, 1)
+    if True:
+        f0 = next((f for f in frames if f['n']), frames[0])
+        if not f0['n']: return None
+        r = {'renderer': {k: rend.get(k) for k in ('Material', 'Alignment', 'FacingMode', 'SubImageSize', 'bSubImageBlend', 'SortOrderHint')},
              'count': [max(b.get('min') or 1, 1), cnt]}
         r['lifetime'] = rng(f0['Lifetime'][:, 0], 0, 100)
         age = f0['Age'][:, :1]
@@ -94,8 +103,7 @@ def stats(d, bursts=64):
                 r['rotation_rate_hint'] = 'compare with frame 6'
         r['speed_over_age'] = over_age([{**fr, 'Speed': np.linalg.norm(fr['Velocity'], axis=1)[:, None]} for fr in frames if fr['n']], 'Speed')
         r['alive_ms'] = [(round(fr['t'] * 1000), fr['n']) for fr in frames[::6] if fr['n']][:15]
-        res[em] = r
-    return sysd, res
+        return r
 
 
 if __name__ == '__main__':
