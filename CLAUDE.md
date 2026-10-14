@@ -11,10 +11,9 @@ Read `README.md` (layout, build, test), `TODO.md` (status) and `MODLOG.md` (engi
 - Ripped assets (CS:S / Call of Duty / Insurgency / MW19 / TACZ): private use only, never publish.
 - Keep the user's Notion checklist current, always: after any change that moves an item (built, installed, user-confirmed),
   update "kcd ii gun checklist" (https://app.notion.com/p/c1db163ef3524a5cbbfd4389e48bca0f) and the "KCD II Deagle mod"
-  notes (https://app.notion.com/p/3f8955aa69318189a51ed4fce80d504d). Those notes are a short hub (Needs you, one child
-  page per test area with a gray status line, who does what) plus the area pages and a Log page: read the hub and only
-  your own area pages; anything the user must do goes into the hub's "Needs you" and gets a "👉 NEW" tag on the area
-  page; finished news goes to the Log. Never drop a `<page>` line from the hub (it deletes that child page). Status marks: ✅ user-confirmed in game,
+  notes (https://app.notion.com/p/3f8955aa69318189a51ed4fce80d504d). Those notes are one page (the user's choice): "Needs you"
+  at the top (every action for the user), then one section per test area (0-6, owner square 🟥 / 🟦), then a collapsed
+  "Log" toggle for history. Anything the user must do goes into "Needs you" and gets a "👉 NEW" tag in its section. Status marks: ✅ user-confirmed in game,
   🟡 built / waiting for the user's test, ⚪ not started. Tick a box only after the user confirms it; add new items
   for new work.
 - Keep the wiki current, always: whenever a command, key or setting is added or changed, update the commands wiki
