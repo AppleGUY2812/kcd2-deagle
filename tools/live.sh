@@ -6,7 +6,9 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 rcon="$(wslpath -w "$here/tools/rcon.ps1")"
 send() { powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$rcon" "$1" >/dev/null < /dev/null; }
 # A dev reload puts every setting back as shipped; a normal load has the plugin replay the user's kept ones
-# (deagle_settings.txt next to it), so a reload replays them too (the user lost theirs mid-test, 2026-10-14)
+# (deagle_settings.txt next to it), so a reload replays them too (the user lost theirs mid-test, 2026-10-14).
+# DevReload replays them itself since cbbfe20: drop replay() once a pak with it is installed (the old one's Set
+# doesn't fill Deagle.kept after a save load)
 settings="/mnt/e/SteamLibrary/steamapps/common/KingdomComeDeliverance2/Bin/Win64MasterMasterSteamPGO/deagle_settings.txt"
 replay() {   # one console line: the console runs ;-separated commands one by one
   [ -f "$settings" ] || return 0
