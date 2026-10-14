@@ -509,3 +509,9 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   emitter isn't drawn for ~0.3 s (tracer lab, 2026-10-12): everything living under ~0.3 s (the sparks, the flash) was
   invisible, only dust and bits showed. Impacts and blood now go through the plugin's `fxs` (cfg.impactSpawn). Its hold
   is 2 s of real time: in F9 slow motion long parts are cut early (to fix in the plugin: hold by game time).
+- **Correction (same night): matching that physics is wrong.** The user's Hickok45 clip (Sunday Shoot-a-Round #351,
+  8:50; real outdoor recording, camera at the shooter): steel dings 0.4-1.3 s after the shot (roughly 80-250 m) peak
+  8-15 dB under the bang and 7-13 dB over the range's echo at that moment: clearly heard. Our game at ~160 m puts the
+  hit 30 dB under the bang, under RoN's echo. Recordings (and hearing) squash the bang (the clip's shot overloads
+  the mic: a flat-topped pulse, then a slow recovery), so the sound-pressure ratio at the ear isn't what anyone hears.
+  Match recordings, not the pressure ratio.

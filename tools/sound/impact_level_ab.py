@@ -125,7 +125,7 @@ def main():
             else:
                 rel = hit_vs_shot_db(gun, d, mode)
                 vol = 10 ** ((rel + cal[gun] + 20 * np.log10(GUNS[gun][6]) - cal["hit"]) / 20)
-                label = "real life: " + PLATES[mode][0]
+                label = "physics on paper, WRONG (a real recording disagrees): " + PLATES[mode][0]
             name = f"{GUNS[gun][0].lower()}_{d}m_{mode}.wav"
             segs = []
             for _ in range(3):   # shot, the hit after the sound's travel time, then the shot's tail
