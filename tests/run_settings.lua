@@ -81,6 +81,19 @@ local turned = Deagle.fc.camY - y0
 M.console("deagle_freecam_state", "0")
 check(string.format("freecam look: learned %.4f rad per mouse unit (Henry 0.004), 10 units turn the camera %.3f rad",
 	k or -1, turned), k and math.abs(k - 0.004) < 0.0005 and math.abs(turned - 0.04) < 0.005, k)
+
+-- a misspelt name is refused (it used to become a new setting nothing reads, and was kept): nothing set, nothing
+-- kept, and the close names suggested
+local nT, logs0 = #M.native, #M.logs
+M.console("deagle_set", "shotSounds 0")
+M.console("deagle_set", "physics.camPerFlp 0.3")
+local hint1, hint2
+for i = logs0 + 1, #M.logs do
+	hint1 = hint1 or M.logs[i]:match("no setting shotSounds.-(shotSound)")
+	hint2 = hint2 or M.logs[i]:match("no setting physics%.camPerFlp.-(physics%.camPerFlip)")
+end
+check(string.format("misspelt settings refused with a hint (%s, %s), nothing kept", tostring(hint1), tostring(hint2)),
+	Deagle.cfg.shotSounds == nil and Deagle.cfg.physics.camPerFlp == nil and #sent(nT) == 0 and hint1 and hint2, #sent(nT))
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("settings: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

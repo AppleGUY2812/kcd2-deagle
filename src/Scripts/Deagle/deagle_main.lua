@@ -3157,6 +3157,32 @@ function Deagle:Set(line)
 	local t, k = self.cfg, key
 	for part, rest in string.gmatch(key, "([^.]+)%.(.+)") do t, k = t[part], rest end   -- one level of nesting
 	if type(t) ~= "table" then log("no setting " .. key) return end
+	if t[k] == nil and value ~= "nil" then
+		-- a misspelt name would become a new setting nothing reads, and be kept: refuse it and name the close ones
+		local prefix, lk, near = string.sub(key, 1, #key - #k), string.lower(k), {}
+		local function edits(a, b)   -- letters to change, add or drop to turn a into b
+			local row = {}
+			for j = 0, #b do row[j] = j end
+			for i = 1, #a do
+				local diag, cur = row[0], i
+				row[0] = i
+				for j = 1, #b do
+					local up = row[j]
+					cur = math.min(up + 1, row[j - 1] + 1, diag + (a:byte(i) == b:byte(j) and 0 or 1))
+					diag, row[j] = up, cur
+				end
+			end
+			return row[#b]
+		end
+		for name in pairs(t) do
+			local ln = string.lower(tostring(name))
+			if ln:find(lk, 1, true) or lk:find(ln, 1, true) or edits(lk, ln) <= 2 then near[#near + 1] = prefix .. name end
+		end
+		table.sort(near)
+		local msg = "no setting " .. key .. (#near > 0 and (" (did you mean " .. table.concat(near, ", ") .. "?)") or " (deagle_cfg lists them)")
+		log(msg); self:Notify(msg)
+		return
+	end
 	-- the value takes the setting's own type: on / off settings read 1 / 0 / true / false / on / off, lists read
 	-- numbers apart by commas or spaces (flashGrow 0.7,1,1.1), numbers read numbers
 	local cur, low = t[k], string.lower(value)
