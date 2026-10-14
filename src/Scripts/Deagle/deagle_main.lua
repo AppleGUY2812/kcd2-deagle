@@ -198,7 +198,11 @@ Deagle.cfg = {
 	-- casing bounce sounds (Deagle:CaseTick): bounces under minSpeed m/s are silent (RoN's ShellNormalizeMin 0.5), at
 	-- most max per casing, followed for life s; volume x RoN's own level
 	caseBounce = { minSpeed = 0.5, drop = 0.4, max = 3, life = 4, volume = 1.0 },
-	ejectImpulse = 0.035,     -- casing (20 g) out at ~1.75 m/s, up and to the right
+	-- casing throw (Deagle:EjectCase): speed m/s, up = degrees above the gun's right, back = degrees rearward, spin
+	-- rad/s end over end. Lands 1.7-2.7 m away standing (real pistols: 1-3 m). Was 1.75 m/s at ~52 deg up: 0.8 m, and a
+	-- slow-motion hang at the top. KCD2's physics caps a rigid body's spin at 20 rad/s (measured live): the plugin lifts
+	-- a casing's cap to spinCap for its flight (casespin), back to 20 at its first bounce
+	eject = { speed = { 2.8, 4.2 }, up = { 20, 40 }, back = { 5, 25 }, spin = { 100, 200 }, spinCap = 300 },
 }
 
 -- The viewmodel: its own character placed on the camera (its camera bone tag_view is the model origin, +Y forward),
@@ -1772,22 +1776,29 @@ function Deagle:CaseEntity()
 	return e
 end
 
+local function inRange(r) return r[1] + math.random() * (r[2] - r[1]) end
 function Deagle:EjectCase()
 	local port = self:VmBone(self.gun.bones.brass)
 	if not port then return end
 	local c = self.cfg
 	try("eject case", function()
 		local _, f, r, u = camBasis()
+		local E = c.eject
 		local case = self:CaseEntity()
 		case:SetWorldPos(port)
-		local jr, ju, jf = 0.7 + math.random() * 0.4, 0.9 + math.random() * 0.5, -0.3 + math.random() * 0.4
-		local dir = vnorm(vadd(vscale(r, jr), vadd(vscale(u, ju), vscale(f, jf))))
-		local spinAt = vadd(port, { x = (math.random() - 0.5) * 0.02, y = (math.random() - 0.5) * 0.02, z = (math.random() - 0.5) * 0.02 })
-		case:AddImpulse(-1, spinAt, dir, c.ejectImpulse * (0.8 + math.random() * 0.45), 1)
-		if self.gun.ron and self.gun.ron.shell then
-			self.casesFlying = self.casesFlying or {}
-			self.casesFlying[case.id] = { t = System.GetCurrTime(), bounces = 0, ev = self.gun.ron.shell }
-		end
+		case:SetDirectionVector(f)   -- its long axis (the model's Y) down the bore, as it leaves the chamber
+		local up, back = math.rad(inRange(E.up)), math.rad(inRange(E.back))
+		local out = vadd(vscale(r, math.cos(back)), vscale(f, -math.sin(back)))
+		local v = vscale(vadd(vscale(out, math.cos(up)), vscale(u, math.sin(up))), inRange(E.speed))
+		local okP, pv = pcall(function() return self:Player():GetVelocity() end)
+		if okP and type(pv) == "table" then v = vadd(v, pv) end   -- the brass keeps the shooter's own motion
+		-- end over end: the ejector stops the case head while the extractor pulls the rim, so the mouth swings out to
+		-- the right (spin about -up), with some wobble
+		local w = vadd(vscale(u, -inRange(E.spin)), vadd(vscale(r, (math.random() - 0.5) * 40), vscale(f, (math.random() - 0.5) * 40)))
+		if self.native then self:Native(string.format("casespin %s %.0f", entityHex(case.id), E.spinCap)) end
+		case:SetVelocityEx(v, w)
+		self.casesFlying = self.casesFlying or {}
+		self.casesFlying[case.id] = { t = System.GetCurrTime(), bounces = 0, ev = self.gun.ron and self.gun.ron.shell }
 	end)
 	self:SpawnFx(c.portFx, port, System.GetViewCameraUpDir(), 1.0)
 end
@@ -1814,13 +1825,14 @@ function Deagle:CaseTick()
 				local lost = wasSpeed > c.minSpeed and speed < wasSpeed * (1 - c.drop)
 				if (landed or lost) and wasSpeed >= c.minSpeed then
 					f.bounces = f.bounces + 1
+					if f.bounces == 1 and self.native then self:Native(string.format("casespin %s 20", entityHex(id))) end   -- the physics' own cap on the ground
 					local pos = e:GetWorldPos()
 					local hits = {}
 					local okR, n = pcall(Physics.RayWorldIntersection, vadd(pos, { x = 0, y = 0, z = 0.05 }), { x = 0, y = 0, z = -0.3 }, 1,
 						ent_static + ent_terrain, id, nil, hits)
 					local sf = okR and n and n > 0 and hits[1] and RON_SURFACE[surfaceName(hits[1])]
 					if sf == "bell" then sf = 44 end   -- a casing on a bell: steel
-					if sf and self.native then
+					if sf and self.native and f.ev then
 						self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|Surface=%d", c.volume, pos.x, pos.y, pos.z, f.ev, sf))
 					end
 				end

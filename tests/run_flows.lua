@@ -68,6 +68,21 @@ step("casings come from a pool", function()   -- 20 shots, at most 12 casings ev
 	for k, e in pairs(M.entities()) do if type(k) ~= "string" and e.name and e.name:find("^deagle_case_") then n = n + 1 end end
 	print("   casings in the world after 20 more shots:", n)
 	if n > 12 then error(n .. " casings: the pool isn't reused") end
+	-- thrown at 1-3 m pistol distances: 2.8-4.2 m/s, out to the gun's right and up, spinning end over end
+	local ve = M.velEx
+	if not ve or not ve.name:find("^deagle_case_") then error("casing not thrown with SetVelocityEx") end
+	local function dot(a, b) return a.x * b.x + a.y * b.y + a.z * b.z end
+	local f = ve.cam   -- the camera when it was thrown (the mock camera swings a lot with recoil)
+	local r = { x = f.y, y = -f.x, z = 0 }
+	local rl = math.sqrt(r.x ^ 2 + r.y ^ 2); r.x, r.y = r.x / rl, r.y / rl
+	local u = { x = r.y * f.z, y = -r.x * f.z, z = r.x * f.y - r.y * f.x }   -- r x f
+	local sp, side, up = math.sqrt(dot(ve.v, ve.v)), dot(ve.v, r), dot(ve.v, u)
+	local spin = math.sqrt(dot(ve.w, ve.w))
+	print(string.format("   last casing: %.2f m/s, %.2f to the gun's right, %.2f up, spin %.0f rad/s", sp, side, up, spin))
+	if sp < 2.8 or sp > 4.25 or side < 0.5 * sp or up <= 0 or spin < 100 then error("casing throw out of range") end
+	local capped = false   -- the physics' 20 rad/s spin cap lifted by the plugin before the throw
+	for _, l in ipairs(M.native) do if l:find("^%[DN%] casespin %x+ 300$") then capped = true end end
+	if not capped then error("casing spin cap not lifted (casespin)") end
 	Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
 end)
 step("empty idle", function() M.advance(1.0) end)

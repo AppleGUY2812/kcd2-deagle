@@ -470,6 +470,23 @@ static uintptr_t SafeGetActor(uintptr_t as, uint32_t id) {
 static uintptr_t SafeGetEntity(uintptr_t es, uint32_t id) {
 	__try { auto get = (GetEntityFn)VFn(es, 0x70); return get ? get(es, id) : 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
+// A rigid body's spin cap: CRigidEntity m_maxw (+0x24C), 20 rad/s by default, so a thrown casing barely turned. Only
+// IPhysicalEntity::SetParams(pe_simulation_params.maxRotVel) changes it; the Lua binding never fills that field.
+// WHGame 1.5.6: IEntity +0x278 GetPhysics; IPhysicalEntity +0x20 SetParams(pe_params*, int threadSafe);
+// pe_simulation_params = type 10, 0x4C bytes, maxRotVel at +0x30, everything else marked unused (floats 0xFFBFFFFF,
+// ints 0x80000000, a Vec3 by its x). The set-velocity action clamps w to the cap, so Lua sets it before the throw.
+static bool SafeSetMaxSpin(uintptr_t entity, float maxw) {
+	__try {
+		auto getPhys = (uintptr_t(__fastcall*)(uintptr_t))VFn(entity, 0x278);
+		uintptr_t pe = getPhys ? getPhys(entity) : 0;
+		if (!pe) return false;
+		const uint32_t UF = 0xFFBFFFFF, UI = 0x80000000;
+		uint32_t p[19] = { 10, UI, UF, UF, UF, UF, 0, 0, UF, UF, 0, 0, 0, UF, UF, UI, UI, UF, UI };
+		memcpy(&p[12], &maxw, 4);
+		auto setParams = (int(__fastcall*)(uintptr_t, void*, int))VFn(pe, 0x20);
+		return setParams && setParams(pe, p, 0) != 0;   // threadSafe 0, as the Lua binding passes
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 static bool SafeWorldTM(uintptr_t entity, float* tm12) {
 	__try {
 		auto get = (GetWorldTMFn)VFn(entity, 0x100); const float* m = get ? get(entity) : nullptr;
@@ -806,6 +823,14 @@ static void Command(const char* line) {
 		if (sscanf_s(rest, "%47s %f", key, (unsigned)sizeof(key), &v) >= 1 && !MotionParam(key, v)) Log("mparams: unknown key %s", key);
 	}
 	else if (!strcmp(cmd, "hitreact")) HitReact(rest);
+	else if (!strcmp(cmd, "casespin")) {   // casespin <entity id hex> <rad/s>: a casing's spin cap (SafeSetMaxSpin)
+		static int logged = 0;
+		char id[32] = {}; float w = 0; unsigned long long v = 0; uintptr_t es = 0, e = 0;
+		if (sscanf_s(rest, "%31s %f", id, (unsigned)sizeof(id), &w) != 2 || !Finite(&w, 1) || w <= 0) Log("casespin: bad command: %s", rest);
+		else if (sscanf_s(strncmp(id, "0x", 2) ? id : id + 2, "%llx", &v) != 1 || !g_env || !ReadPtr(g_env + 0xA0, es) || !es
+			|| !(e = SafeGetEntity(es, (uint32_t)v)) || !SafeSetMaxSpin(e, w)) Log("casespin %s: no physical entity", id);
+		else if (logged++ < 3) Log("casespin %s: cap %.0f rad/s", id, w);
+	}
 	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
 }
 

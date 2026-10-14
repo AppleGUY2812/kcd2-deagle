@@ -423,3 +423,20 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   after the reload. The game console splits commands on `;`.
 - Re-sending saved settings with `while read ... powershell.exe` stops after one line: powershell eats the loop's
   stdin. Give it `< /dev/null`.
+
+## 2026-10-13: casings (spin cap, throw)
+- A rigid body's spin is capped at 20 rad/s in flight: `SetVelocityEx(v, {150,0,0})` read back w = 20.000 (live). It's
+  CRigidEntity m_maxw (+0x24C, ctor writes 20.0f); the set-velocity action clamps w to it right away. On a contact
+  step w spiked to 260+ rad/s, so the cap only bites in free flight. Free-flight damping measured ~0.1 /s.
+- Lua can't change it: SetPhysicParams(PHYSICPARAM_SIMULATION = 5) parses max_time_step, sleep_speed / min_energy,
+  damping, freefall_damping, gravity, freefall_gravity, mass, density, max_logged_collisions, never maxRotVel.
+  WHGame 1.5.6 (read from the binary): IEntity +0x278 GetPhysics; IPhysicalEntity +0x20 SetParams(p, threadSafe),
+  +0x28 GetParams, +0x30 GetStatus, +0x38 Action; pe_simulation_params type 10, 0x4C bytes, maxRotVel +0x30
+  (iSimClass +4, maxTimeStep +8, minEnergy +0xC, damping +0x10, gravity +0x14, dampingFreefall +0x20,
+  gravityFreefall +0x24, mass +0x34, density +0x38, maxLoggedCollisions +0x3C), unused = 0xFFBFFFFF / 0x80000000.
+  The plugin's `casespin <id> <rad/s>` sets it (not yet seen in game).
+- The old throw (AddImpulse 0.035 on 20 g: 1.77 m/s, ~52 deg up) landed 0.88 m out, measured live: that was the
+  user's "0.8 m and hangs at the top". Now SetVelocityEx: 2.8-4.2 m/s, 20-40 deg up, 5-25 deg back, plus the
+  shooter's velocity; first ground contact 2.79 m out in game (ground 0.4 m lower there). The casing model's long
+  axis is its local Y.
+- `Entity:GetAttachmentBone(slot, name)` returns the bone name, nil for no such attachment.

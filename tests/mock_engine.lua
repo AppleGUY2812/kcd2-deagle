@@ -89,6 +89,7 @@ local function newEntity(name, props)
 	function e:GetBoneDir(b) return vec(0, 1, 0) end
 	function e:GetBoneLocal(b, t) return vec(t.x, t.y, t.z) end   -- a world direction in the bone's axes (bone = world axes here)
 	function e:AddImpulse() return true end
+	function e:SetVelocityEx(v, w) M.velEx = { v = v, w = w, name = self.name, cam = System.GetViewCameraDir() } end   -- last velocity + spin set (casings), camera then
 	-- particle effects in entity slots. Like KCD2 (checked in game 2026-10-12): CryEngine's table form
 	-- (slot, effect, { Scale, bPrime, ... }) returns the slot; plain arguments create nothing and return nil
 	e.nslots = 1
