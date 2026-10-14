@@ -64,9 +64,9 @@ Deagle.cfg = {
 	-- a save load one kept burning where the gun had been (in game 2026-10-12, the "fireball")
 	flashMode = "gun",
 	-- flashMode "mesh": flash cards on the gun's muzzle bone (tools/flash_mesh.py; docs/flash_mesh_plan.md), shown by
-	-- hiding / unhiding them, which the renderer reads when it draws the gun: no particle delay. Variants a then b for
-	-- time s of game time (Ready or Not 0.035-0.04 s: 2 frames at 60 fps, 1 under 40 fps, ~10x longer in F9 slow
-	-- motion), a random roll each; mtl = their strength (deagle_vm_flash,
+	-- hiding / unhiding them, which the renderer reads when it draws the gun: no particle delay. One random variant and
+	-- roll per shot for time s of game time (Ready or Not 0.035-0.04 s: 2 frames at 60 fps, 1 under 40 fps, ~10x longer
+	-- in F9 slow motion; a second variant halfway read as the flash switching shape: user 2026-10-14); mtl = their strength (deagle_vm_flash,
 	-- _dim, _hot); set = the cards by blast (large for big blasts, cfg.physics.largeFlashBlast). Light: the per-shot
 	-- particle light (a frame late) or an entity light on the gun (light.mode "entity", to test)
 	flashMesh = { time = 0.035, roll = true, mtl = "deagle_vm_flash", large = "deagle_vm_flash", small = "deagle_vm_flash_s",
@@ -629,15 +629,13 @@ function Deagle:FlashMeshShot()
 	if m.mtl ~= self.cfg.flashMesh.mtl then self:FlashMeshMaterial(self.vmId and System.GetEntity(self.vmId)) end
 	for i in pairs(m.shown) do self:FlashMeshShow(i, false) end
 	local a = math.random(FLASH_CARDS)
-	local b = (a % FLASH_CARDS) + math.random(FLASH_CARDS - 1)
-	b = (b - 1) % FLASH_CARDS + 1
-	m.seq, m.frame, m.t0, m.cur = { a, b }, System.GetFrameID(), System.GetCurrTime(), a
+	m.seq, m.frame, m.t0, m.cur = { a }, System.GetFrameID(), System.GetCurrTime(), a
 	self:FlashMeshShow(a, true)
 	return true
 end
 -- every viewmodel frame after the shot's own: the flash lasts flashMesh.time of game time, so F9 slow motion stretches
 -- it (it blinked by in 1-2 frames there: user 2026-10-14). A frame shows it while the frame's middle is still inside
--- that time (60 fps: 2 frames, under 40 fps: 1); variant b takes over from the second frame once half of it has gone.
+-- that time (60 fps: 2 frames, under 40 fps: 1).
 -- The shot's own frame is told by its engine frame id, not the viewmodel tick: a shot comes before its frame's tick,
 -- which counted as the next frame and hid variant a before it was ever drawn (traced in game 2026-10-14)
 function Deagle:FlashMeshTick()
@@ -646,7 +644,7 @@ function Deagle:FlashMeshTick()
 	if not m or not m.seq or System.GetFrameID() == m.frame then return end
 	local T, half = self.cfg.flashMesh.time, (self.frameDt or 0.016) / 2
 	local e = System.GetCurrTime() - m.t0 + half
-	local want = e < T and (e >= T / 2 and m.seq[2] or m.seq[1]) or nil
+	local want = e < T and m.seq[1] or nil
 	if want ~= m.cur then
 		if m.cur then self:FlashMeshShow(m.cur, false) end
 		if want then self:FlashMeshShow(want, true) end

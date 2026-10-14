@@ -53,22 +53,29 @@ def effect(name, life, radius, intensity, live, em=1.0, sz=1.0):
     out += ['\t\t</Childs>', '\t</Particles>']
     return "\n".join(out)
 
+# The mesh flash's light (and the live flash's): warm like Ready or Not's flash, not white (its recorded body
+# (254, 205, 145) and rim (238, 138, 97)), and LIGHT_AHEAD m in front of the muzzle: on the muzzle, a few cm from the
+# slide and gloves, inverse-square burnt them to flat white and lit a night forest ~5x (user's night clip, 2026-10-14:
+# "very hard"; Ready or Not's light is weak, +2-8 % next to the gun, docs/muzzle_flash_research.md section 7)
+LIGHT_COLOR = "(x=1,y=0.7,z=0.45)"
+LIGHT_AHEAD = 0.5
+
 def light(name, radius, intensity):
-    # the live flash's light: one dot-sized particle carrying the light, spawned per shot (a particle light's radius
-    # doesn't follow the emitter's size, so the live emitter can't hide its light)
+    # one dot-sized particle carrying the light, spawned per shot (a particle light's radius doesn't follow the
+    # emitter's size, so the live emitter can't hide its light); the light's colour is the particle's
     return "\n".join([f'\t<Particles Name="{name}">',
         f'\t\t<Params Count="1" ParticleLifeTime="0.06" BlendType="Additive" Texture="{TEX}deagle_flash_ring_diff.tif" '
-        f'TextureTiling="TilesX=2,TilesY=2,VariantCount=4" Alpha="1,ParticleAge=(v=1;t=0.85,v=1;t=1)" Color="{HOT}" '
-        f'EmissiveLighting="1" LightSource="Radius={radius},Intensity={intensity}" MoveRelativeEmitter="true" Size="0.001" '
-        f'AirResistance="WindScale=0" />', '\t</Particles>'])
+        f'TextureTiling="TilesX=2,TilesY=2,VariantCount=4" Alpha="1,ParticleAge=(v=1;t=0.85,v=1;t=1)" Color="{LIGHT_COLOR}" '
+        f'EmissiveLighting="1" LightSource="Radius={radius},Intensity={intensity}" PositionOffset="y={LIGHT_AHEAD}" '
+        f'MoveRelativeEmitter="true" Size="0.001" AirResistance="WindScale=0" />', '\t</Particles>'])
 
 blocks = [
     effect("muzzle", 0.08, 7, 0.6, False),
     effect("muzzle_large", 0.08, 21, 1.25, False),
     effect("muzzle_live", 0.04, 7, 0.6, True),
     effect("muzzle_large_live", 0.04, 21, 1.25, True),
-    light("muzzle_light", 7, 0.6),
-    light("muzzle_large_light", 21, 1.25),
+    light("muzzle_light", 5, 0.15),          # Glock-size blasts
+    light("muzzle_large_light", 10, 0.3),    # the Deagle
 ]
 # look variants to compare live against Ready or Not (deagle_set muzzleFx deagle.muzzle_b4 + muzzleFxLarge
 # deagle.muzzle_large_b4): brighter (emissive x), bigger (size x), stronger light (x3 on the bigger ones)

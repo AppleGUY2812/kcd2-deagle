@@ -260,11 +260,11 @@ if mesh then
 		mesh.setup and mesh.cgf == "objects/manmade/weapons/deagle/vm/" .. mesh.set .. "_3.cgf" and mesh.roll0 ~= nil and mesh.placed == 4, mesh.cgf)
 	check(string.format("mesh flash at 60 fps: card %s on the shot's frame, %s the next, %s after; %d rolled; no particle flash",
 		table.concat(mesh.f0, ","), table.concat(mesh.f1, ","), table.concat(mesh.f2, ","), mesh.rolled),
-		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] ~= mesh.f0[1] and #mesh.f2 == 0 and mesh.rolled == 2 and not mesh.particleFlash, mesh.rolled)
+		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] == mesh.f0[1] and #mesh.f2 == 0 and mesh.rolled == 1 and not mesh.particleFlash, mesh.rolled)
 	check(string.format("mesh flash under 40 fps: card %s, then %s", table.concat(mesh.s0, ","), table.concat(mesh.s1, ",")),
 		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
-	check(string.format("mesh flash in F9 slow motion: %d frames at 60 fps (0.035 s of game time = 21), %d variants", mesh.slow, mesh.slowCards),
-		mesh.slow >= 19 and mesh.slow <= 23 and mesh.slowCards == 2, mesh.slow)
+	check(string.format("mesh flash in F9 slow motion: %d frames at 60 fps (0.035 s of game time = 21), %d variant (one shape, no switch)", mesh.slow, mesh.slowCards),
+		mesh.slow >= 19 and mesh.slow <= 23 and mesh.slowCards == 1, mesh.slow)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
