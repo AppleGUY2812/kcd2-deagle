@@ -19,7 +19,7 @@ Read `README.md` (layout, build, test), `TODO.md` (status) and `MODLOG.md` (engi
 - Keep the wiki current, always: whenever a command, key or setting is added or changed, update the commands wiki
   artifact (https://claude.ai/artifact/2pJ2zJeNNAfxa5MD9VyitH; source `docs/DEBUG.md`) in the same session.
 
-## Who edits what (three Claude sessions can run at once)
+## Who edits what (four Claude sessions can run at once)
 - 🟥 `src/Scripts/Deagle/ballistics.lua` + `guns/penetration.lua`: rounds in flight, ricochets, corners, wallbangs,
   armour (the "ricochet" session). It uses `deagle_main.lua`'s helpers through `Deagle.U`: keep that table in sync.
 - 🟩 Sound (the "sound" session): in `deagle_main.lua` only the sound functions (`vmSoundCues`, `ShotGain`,
@@ -28,8 +28,10 @@ Read `README.md` (layout, build, test), `TODO.md` (status) and `MODLOG.md` (engi
   `native/src/ron.cpp` and the sounds section of `native/src/main.cpp`; `tools/sound/`, `tools/ron/FmodRender`,
   `tools/ron/FmodCoexist`, `tools/ron/fsb*.py`, `tools/ron/fmodbank.py`, `tools/impact_sounds.py`; the sound docs
   (`docs/ron_fmod_events.md`, `mk5_sound_spec.md`, `sound_echo_plan.md`).
-- 🟦 `src/Scripts/Deagle/deagle_main.lua`: everything else (viewmodel, effects, holes, NPC reactions and hearing,
-  tracers), plus the effects tools (`tools/ron/mk_*fx*.py`, the fx converter) and the rest of `native/`.
+- 🟦 Impact effects (the "effects" session): `deagle_impacts.xml` and its textures, the effects tools
+  (`tools/ron/mk_*fx*.py`, the fx converter), and in `deagle_main.lua` `SpawnFx` and the `fx` fields of `SURFACES`.
+- 🟪 `src/Scripts/Deagle/deagle_main.lua`: everything else (muzzle flash first, bullet holes, shells, recoil,
+  viewmodel, handling, NPC reactions and hearing, tracers, test wall) and the rest of `native/`.
 - Commit only your own hunks (never `git commit -a`, check `git diff --cached --stat` first), keep
   `bash tests/run_all.sh` passing after every edit (a hot reload loads every session's work), and tell the owner before
   touching their file or functions.
