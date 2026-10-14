@@ -4,6 +4,8 @@
 //   FmodRender list   <bankdir> <filter>
 //   FmodRender render <bankdir> <out.wav> <event path> <seconds> [name=value ...] [+ <seconds> name=value ...]
 // "+" starts another shot in the same file after the previous one's seconds, with its own parameter values.
+// In a shot's own arguments, "ev:<event path>" plays that event instead (e.g. a gunshot, then an impact the sound's
+// travel time later) and "vol:<x>" sets its instance volume (EventInstance::setVolume, like the plugin's play volume).
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -230,7 +232,9 @@ static class P
                 if (!string.IsNullOrEmpty(mg)) { F.FMOD_System_GetMasterChannelGroup(core, out IntPtr mcg);
                     F.FMOD_ChannelGroup_SetVolume(mcg, float.Parse(mg, System.Globalization.CultureInfo.InvariantCulture)); Console.WriteLine("final fader " + mg); }
                 F.Ok(F.FMOD_Studio_System_GetEvent(sys, F.Z(evPath), out IntPtr desc), "event " + evPath);
-                var shots = new List<(double secs, List<(string, float)> ps)>(); var cur = (secs: double.Parse(a[4]), ps: new List<(string, float)>());
+                var shots = new List<(double secs, List<(string, float)> ps, IntPtr desc, float vol)>();
+                var cur = (secs: double.Parse(a[4]), ps: new List<(string, float)>(), desc: desc, vol: 1f);
+                var descs = new List<IntPtr> { desc };
                 var snaps = new List<string>();
                 for (int i = 5; i < a.Length; i++)
                 {
@@ -239,7 +243,10 @@ static class P
                     if (a[i].StartsWith("global:")) { var gv = a[i].Substring(7).Split('=');
                         F.FMOD_Studio_System_SetParameterByName(sys, F.Z(gv[0]), float.Parse(gv[1], System.Globalization.CultureInfo.InvariantCulture), 1);
                         Console.WriteLine($"global {gv[0]}={gv[1]}"); continue; }
-                    if (a[i] == "+") { shots.Add(cur); cur = (double.Parse(a[++i]), new List<(string, float)>()); continue; }
+                    if (a[i] == "+") { shots.Add(cur); cur = (double.Parse(a[++i]), new List<(string, float)>(), desc, 1f); continue; }
+                    if (a[i].StartsWith("ev:")) { F.Ok(F.FMOD_Studio_System_GetEvent(sys, F.Z(a[i].Substring(3)), out cur.desc), a[i]);
+                        if (!descs.Contains(cur.desc)) descs.Add(cur.desc); continue; }
+                    if (a[i].StartsWith("vol:")) { cur.vol = float.Parse(a[i].Substring(4), System.Globalization.CultureInfo.InvariantCulture); continue; }
                     var kv = a[i].Split('='); cur.ps.Add((kv[0], float.Parse(kv[1], System.Globalization.CultureInfo.InvariantCulture)));
                 }
                 shots.Add(cur);
@@ -253,12 +260,15 @@ static class P
                 }
                 for (int k = 0; k < 200; k++) Tick();   // let snapshots fade in (~4 s of mix time, silent)
                 var lsw = System.Diagnostics.Stopwatch.StartNew();
-                F.Ok(F.FMOD_Studio_EventDescription_LoadSampleData(desc), "load samples");
-                for (int k = 0; k < 2000; k++)          // wait for the event's audio to load (NRT: each update is instant)
+                foreach (var d in descs)
                 {
-                    Tick(); F.FMOD_Studio_EventDescription_GetSampleLoadingState(desc, out int st);
-                    if (st == 3) break; if (st == 4) throw new Exception("sample data failed to load");
-                    System.Threading.Thread.Sleep(2);
+                    F.Ok(F.FMOD_Studio_EventDescription_LoadSampleData(d), "load samples");
+                    for (int k = 0; k < 2000; k++)      // wait for the event's audio to load (NRT: each update is instant)
+                    {
+                        Tick(); F.FMOD_Studio_EventDescription_GetSampleLoadingState(d, out int st);
+                        if (st == 3) break; if (st == 4) throw new Exception("sample data failed to load");
+                        System.Threading.Thread.Sleep(2);
+                    }
                 }
                 Console.WriteLine($"event audio loaded in {lsw.ElapsedMilliseconds} ms, process memory {System.Diagnostics.Process.GetCurrentProcess().WorkingSet64 / 1048576} MB");
                 bool dumped = false;
@@ -272,9 +282,10 @@ static class P
                     F.FMOD_Channel_Stop(och);
                     for (int k = 0; k < 40; k++) Tick();
                 }
-                foreach (var (secs, ps) in shots)
+                foreach (var (secs, ps, sdesc, svol) in shots)
                 {
-                    F.Ok(F.FMOD_Studio_EventDescription_CreateInstance(desc, out IntPtr inst), "instance");
+                    F.Ok(F.FMOD_Studio_EventDescription_CreateInstance(sdesc, out IntPtr inst), "instance");
+                    if (svol != 1f) { F.FMOD_Studio_EventInstance_SetVolume(inst, svol); Console.WriteLine($"  volume {svol}"); }
                     foreach (var (n, v) in ps)
                     {
                         int r = F.FMOD_Studio_EventInstance_SetParameterByName(inst, F.Z(n), v, 1);
@@ -302,7 +313,7 @@ static class P
                 Console.WriteLine("wrote " + a[2]);
                 return 0;
             }
-            Console.WriteLine("usage: list <bankdir> <filter> | render <bankdir> <out.wav> <event> <secs> [p=v..] [+ <secs> p=v..]"); return 2;
+            Console.WriteLine("usage: list <bankdir> <filter> | render <bankdir> <out.wav> <event> <secs> [p=v..] [ev:<event>] [vol:<x>] [+ <secs> p=v..]"); return 2;
         }
         catch (Exception e) { Console.WriteLine("ERROR " + e.Message); return 1; }
     }

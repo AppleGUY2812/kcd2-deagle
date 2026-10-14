@@ -471,3 +471,14 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - A save load re-runs the installed pak's scripts: every hot-reloaded change is gone until the next dev reload, and the
   first `tools/live.sh reload` after a load runs the pak's old DevReload, which doesn't set devLoading, so guns/*.lua and
   ballistics.lua come from the pak. Reload twice after a load (or check a value) before trusting the live state.
+
+## 2026-10-13 (night): how loud a bullet on steel is next to the gunshot (Claude 3, sound)
+- Ready or Not's own mix (rendered, final fader 0.5): its steel hit (Surface 44) at the listener carries 1.8 dB more
+  A-weighted energy than the MK V bang (first 150 ms); with `impactVolume 2` the mod's hit is +5 dB over the shot at
+  4 m, -3 at 10 m, -11 at 25 m. RoN's steel takes ring ~0.2 s (30 dB down).
+- Real life: shot at the shooter's ear (Meinke et al. 2014, NIOSH, Table 4: .44 Magnum 132.3 dB SEL_A, .357 Magnum
+  133.1); no published measurement of a bullet hitting steel exists, so physics (`tools/sound/impact_level_ab.py`): the
+  splash hands the plate m v in ~bullet length / v ("Ballistic Impacts with Bullet Splash", PMC10254373, 2023: .308 on hard steel, impulse = m v, 36-49 us),
+  energy into bending waves = J^2 / pulse x point mobility, a free plate radiates most of it. Deagle on a hanging 10 mm
+  plate vs its own shot: 4 m -18 dB, 10 m -27, 25 m -35, 50 m -42 (bolted plate ~6 dB less; Glock ~3 dB less vs its own
+  shot, its hit ~10 dB under the Deagle's). A hanging plate rings T60 ~0.8 s at 3 kHz. Uncertainty about +-6 dB.

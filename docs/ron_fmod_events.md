@@ -13,6 +13,9 @@ FmodRender.exe list   <bankdir> grizzly
 FmodRender.exe render <bankdir> out.wav "event:/Weapons/Grizzly/1P Grizzly Fire" 4 IsOutside=1 snapshot:/Reverb_OUT_Forest01 [+ 4 IsOutside=1 ...]
 ```
 Env `DUMP_ALL=1` (from WSL: `WSLENV=DUMP_ALL`) prints, for every shot, which recordings play and at what volume/pitch.
+In a `+` shot's own arguments, `ev:<event path>` plays another event and `vol:<x>` sets its instance volume, so one
+file can hold a gunshot and the impact its travel time later, mixed through the same buses and limiters
+(`tools/sound/impact_level_ab.py`).
 
 **Check against the real game:** 8 shots rendered at the user's video spacing vs `Deagle Progress\test records\
 2026-10-12 11-53-12.mp4` (gas station, outdoors): 3 bands x 5 windows (0-800 ms), **0.7 dB average miss, 2.7 dB worst**
