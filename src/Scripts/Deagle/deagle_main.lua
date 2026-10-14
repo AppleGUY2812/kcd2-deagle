@@ -2491,7 +2491,7 @@ function Deagle:VmPlay(key, loop, speed, blend)
 	self.vmAnim = { key = key, name = name, loop = loop, ends = now + stop, full = now + len,
 		ready = now + math.min(plain and self:ClipTime(key, "ready") or stop, stop) }
 	if not loop then
-		self:PlayCues(key)
+		self:PlayCues(key, blend, speed)
 		if HOLDS_AIM[key] and key ~= "reload" and stop > c.adsLead then   -- reload: at its end (mag swap)
 			Script.SetTimer(math.floor((stop - c.adsLead) * 1000), function()
 				if Deagle.vmAnimToken == tok and Deagle.vmShown and Deagle.state.aimHeld then Deagle:UpdateAim(c.adsLead) end
@@ -2552,7 +2552,9 @@ function Deagle:RonCues(key)
 	end
 	return out
 end
-function Deagle:PlayCues(key)
+-- blend: s the clip takes to blend in (VmPlay), while the layer may still report the clip it blends out of; speed: its
+-- playback rate
+function Deagle:PlayCues(key, blend, speed)
 	local g = self.gun
 	local cues = (self:RonSounds() and g.ronCues and self:RonCues(key)) or g.cues[key] or ((key == "shoot" or key == "shootEmpty") and SHOT_CUE) or nil
 	if not cues then return end
@@ -2565,7 +2567,8 @@ function Deagle:PlayCues(key)
 		if at <= 0.001 then self:CueFire(key, c[2]) else list[#list + 1] = { at = at, file = c[2] } end
 	end
 	table.sort(list, function(x, y) return x.at < y.at end)
-	self.cuesPending = #list > 0 and { key = key, name = a[1], tok = self.vmAnimToken, list = list } or nil
+	self.cuesPending = #list > 0 and { key = key, name = a[1], tok = self.vmAnimToken, list = list,
+		from = System.GetCurrTime(), blend = blend or 0, speed = speed or 1, span = span } or nil
 end
 function Deagle:CueFire(key, file)
 	local v = self.cfg.vm.soundVol
@@ -2597,10 +2600,17 @@ function Deagle:CueTick()
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if not vm then return end
 	local layer = self.cfg.vm.layer
-	local okN, cur = pcall(vm.GetCurAnimation, vm, 0, layer)
-	if not okN or cur ~= p.name then return end                  -- not ours on the layer yet (blending in)
-	local okT, t = pcall(vm.GetAnimationTime, vm, 0, layer)
-	if not okT or type(t) ~= "number" then return end
+	-- the layer may report the clip it blends out of until the blend is over: meanwhile the playhead from game time
+	-- (game seconds cover the blend: the clip's clock runs at least as fast, ~1.5x in slow motion). (KCD2's
+	-- GetCurAnimation would say which clip it is, but returns nil even while one plays: measured 2026-10-13; waiting
+	-- for it silenced every clip cue.)
+	local since, t = System.GetCurrTime() - p.from, nil
+	if since < p.blend then t = since * p.speed / p.span
+	else
+		local okT, tt = pcall(vm.GetAnimationTime, vm, 0, layer)
+		if not okT or type(tt) ~= "number" then return end
+		t = tt
+	end
 	while p.list[1] and p.list[1].at <= t + 1e-4 do
 		self:CueFire(p.key, table.remove(p.list, 1).file)
 	end

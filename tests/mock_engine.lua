@@ -56,15 +56,16 @@ local function newEntity(name, props)
 	e.layerPlay = {}
 	function e:StartAnimation(slot, name, layer, blend, speed, loop)
 		if self.layers[layer] == name then return false end
+		local prev = self.layers[layer] and { name = self.layers[layer], play = self.layerPlay[layer] }
 		self.layers[layer] = name
-		self.layerPlay[layer] = { t = M.t, speed = speed or 1, loop = loop }
+		self.layerPlay[layer] = { t = M.t, speed = speed or 1, loop = loop, blend = blend or 0, prev = prev }
 		table.insert(M.anims, { t = M.t, name = name, layer = layer, loop = loop, blend = blend }) return true
 	end
 	function e:StopAnimation(slot, layer) self.layers[layer] = nil end
-	function e:GetCurAnimation(slot, layer) return self.layers[layer] end
-	-- 0..1 through the clip, like KCD2: its length from the mod's own clip table (frames at the clip's fps)
-	function e:GetAnimationTime(slot, layer)
-		local name, play = self.layers[layer], self.layerPlay[layer]
+	function e:GetCurAnimation(slot, layer) return nil end   -- KCD2: nil even while a clip plays (measured 2026-10-13)
+	-- 0..1 through the clip, like KCD2: its length from the mod's own clip table (frames at the clip's fps). While a
+	-- clip blends in, the layer still reports the clip it blends out of (worst case)
+	local function clipTime(name, play)
 		if not name or not play or not Deagle then return 0 end
 		local frames, fps
 		for _, a in pairs(Deagle.cfg.vm.anims) do
@@ -74,6 +75,11 @@ local function newEntity(name, props)
 		if not frames then return 0 end
 		local t = (M.t - play.t) * play.speed / (math.max(1, frames - 1) / fps)
 		return play.loop and t % 1 or math.min(1, t)
+	end
+	function e:GetAnimationTime(slot, layer)
+		local play = self.layerPlay[layer]
+		if play and play.prev and M.t - play.t < play.blend then return clipTime(play.prev.name, play.prev.play) end
+		return clipTime(self.layers[layer], play)
 	end
 	e.flags = 0
 	function e:GetFlags() return self.flags end
