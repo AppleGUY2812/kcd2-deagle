@@ -2875,7 +2875,8 @@ function Deagle:EnvTick()
 	local c = self.cfg.env
 	if not (self.gun and self.gun.ron) then return end
 	local now = System.GetCurrTime()
-	if c.on and (not self.envT or now - self.envT >= c.period) then
+	-- now < envT: a save loaded while the game ran set the clock back (322 s once, Claude 4 2026-10-14): check at once
+	if c.on and (not self.envT or now < self.envT or now - self.envT >= c.period) then
 		self.envT = now
 		local cls, info = self:EnvClassify(self:EnvSample())
 		self.envInfo = info
