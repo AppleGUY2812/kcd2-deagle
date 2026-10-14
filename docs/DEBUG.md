@@ -49,7 +49,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | Setting | Default | What it changes |
 |---|---|---|
 | `flashMode` | `gun` | `gun` = a flash spawned per shot on the muzzle (shows a frame or two late); `world` = left where it was fired; `live` = experimental, don't use: its hide doesn't work and after a save load it kept burning in the air (the "fireball") |
-| `flashMode` `mesh` | (testing) | flash cards on the gun itself, shown on the exact frame you fire, a different shape on frame 2, random roll |
+| `flashMode` `mesh` | (testing) | flash cards on the gun itself, shown on the exact frame you fire, a different shape on frame 2, random roll (drawn since 2026-10-14: they used to sit in the camera) |
 | `flashMesh.mtl` | `deagle_vm_flash` | mesh flash brightness: `deagle_vm_flash_dim` / `deagle_vm_flash` / `deagle_vm_flash_hot` |
 | `flashMesh.light.mode` | `particle` | the mesh flash's light: `particle` (a frame late) or `entity` (a light on the gun, testing) |
 | `muzzleFx` / `muzzleFxLarge` | `deagle.muzzle` | particle flash look: try `deagle.muzzle_b4`, `_b4s15`, `_b10s2` (and `deagle.muzzle_large_b4`... for the Deagle) |
@@ -134,7 +134,7 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 - `deagle_log_actions` logs every key action the mod receives; `deagle_native_test` pings the plugin with a shot sound.
 
 ## Developer only
-`deagle_dev_reload` (re-run the script from the dev folder), `deagle_lua <code>` (run Lua), `deagle_vm_respawn`
+`deagle_dev_reload` (re-run the script from the dev folder; your kept settings are set again, as at a load), `deagle_lua <code>` (run Lua), `deagle_vm_respawn`
 (rebuild the viewmodel), `deagle_input` (reload key bindings), `deagle_fxreload [library]` (the plugin re-reads
 `Libs/Particles/<library>.xml`, default `deagle_impacts`, from the dev folder into the running game: impact effects tuned
 without a restart; within 3 s of a shot it waits, in game time, and then reloads). Claude uses these through the dev console link
