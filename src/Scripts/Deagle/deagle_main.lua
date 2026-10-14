@@ -3041,6 +3041,17 @@ System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('
 System.AddCCommand("deagle_ron_state", "Deagle:RonState([[%1]])", "internal: Ready or Not's sound engine started in the plugin (1) or failed (0)")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
 System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")
+-- deagle_fxreload: the plugin re-reads the dev copy of the impacts library (build.sh --dev mirrors src/Libs/Particles) into
+-- the live effects, so impact effects can be tuned without restarting the game. The engine swaps an effect's params
+-- without a lock: never while impact emitters may still be alive (3 s after the last shot)
+function Deagle:FxReload(lib)
+	lib = (lib and lib ~= "") and lib or "deagle_impacts"
+	if not self.native then log("$4fxreload needs the plugin") return end
+	local since = System.GetCurrTime() - (self.state.lastShot or -100)
+	if since < 3 then log(string.format("fxreload: wait %.1f s more (effects of the last shot may still be alive)", 3 - since)) return end
+	self:Native("fxreload " .. self.devRoot .. "Libs/Particles/" .. lib .. ".xml " .. lib)
+end
+System.AddCCommand("deagle_fxreload", "Deagle:FxReload(Deagle.Arg([[%1]]))", "deagle_fxreload [library]: re-read Libs/Particles/<library>.xml (default deagle_impacts) from the dev folder into the running game")
 System.AddCCommand("deagle_lua", "Deagle:DevLua([==[%line]==])", "deagle_lua <code>: run Lua (dev)")
 
 Deagle:HookActions()

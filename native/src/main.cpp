@@ -487,6 +487,73 @@ static bool SafeSetMaxSpin(uintptr_t entity, float maxw) {
 		return setParams && setParams(pe, p, 0) != 0;   // threadSafe 0, as the Lua binding passes
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// Live particle library reload (fxreload): the engine never re-reads a loaded library nor replaces an existing effect
+// (LoadLibrary returns early, LoadEffect returns the old one), so each <Particles> node of the file is serialized into
+// its existing effect. WHGame 1.5.6: ISystem (gEnv+0xC0) +0x410 LoadXmlFromBuffer(XmlNodeRef* ret, buf, len, false,
+// true); IXmlNode +0x18 AddRef, +0x20 Release, +0x40 isTag, +0x108 getAttr, +0x160 getChildCount, +0x168
+// getChild(XmlNodeRef* ret, i); IParticleManager (gEnv+0x68) +0x38 LoadEffect(name, XmlNodeRef& node, loadRes, src);
+// IParticleEffect +0xB8 LoadResources, +0xC8 Serialize(XmlNodeRef by value = pointer to an AddRef'd temporary it
+// releases, loading, children). Serialize rebuilds params in place with no lock: only while no emitter of the library
+// is alive (Lua waits 3 s after a shot). Children are matched by Name; removed ones stay (Enabled="0" detaches one).
+using XmlFn = void(__fastcall*)(uintptr_t node);
+static int SafeFxReload(uintptr_t sys, uintptr_t pm, const char* buf, size_t len, const char* lib) {
+	__try {
+		auto loadBuf = (void*(__fastcall*)(uintptr_t, void**, const char*, size_t, bool, bool))VFn(sys, 0x410);
+		void* root = nullptr;
+		if (!loadBuf) return -2;
+		loadBuf(sys, &root, buf, len, false, true);
+		if (!root) return -1;
+		uintptr_t r = (uintptr_t)root;
+		auto childCount = (int(__fastcall*)(uintptr_t))VFn(r, 0x160);
+		auto getChild = (void*(__fastcall*)(uintptr_t, void**, int))VFn(r, 0x168);
+		auto isTag = (bool(__fastcall*)(uintptr_t, const char*))VFn(r, 0x40);
+		auto getAttr = (const char*(__fastcall*)(uintptr_t, const char*))VFn(r, 0x108);
+		auto addRef = (XmlFn)VFn(r, 0x18), release = (XmlFn)VFn(r, 0x20);
+		auto loadEffect = (uintptr_t(__fastcall*)(uintptr_t, const char*, void**, bool, const char*))VFn(pm, 0x38);
+		int done = 0, n = childCount(r);
+		for (int i = 0; i < n; i++) {
+			void* c = nullptr;
+			getChild(r, &c, i);
+			if (!c) continue;
+			uintptr_t cn = (uintptr_t)c;
+			const char* name = isTag(cn, "Particles") ? getAttr(cn, "Name") : nullptr;
+			if (name && *name) {
+				char full[256];
+				snprintf(full, sizeof(full), "%s.%s", lib, name);
+				uintptr_t eff = loadEffect(pm, full, &c, false, nullptr);
+				if (eff) {
+					addRef(cn);
+					void* tmp = c;
+					((void(__fastcall*)(uintptr_t, void**, bool, bool))VFn(eff, 0xC8))(eff, &tmp, true, true);
+					((bool(__fastcall*)(uintptr_t))VFn(eff, 0xB8))(eff);
+					done++;
+				}
+			}
+			release(cn);
+		}
+		release(r);
+		return done;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return -3; }
+}
+static void FxReload(const char* rest) {
+	std::string all = rest ? rest : "";
+	size_t sp = all.find_last_of(' ');
+	if (sp == std::string::npos) { Log("fxreload: usage fxreload <xml path> <library>"); return; }
+	std::string path = all.substr(0, sp), lib = all.substr(sp + 1);
+	HANDLE f = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+	if (f == INVALID_HANDLE_VALUE) { Log("fxreload: can't open %s", path.c_str()); return; }
+	DWORD size = GetFileSize(f, nullptr), got = 0;
+	std::string buf(size, '\0');
+	BOOL ok = size && ReadFile(f, &buf[0], size, &got, nullptr);
+	CloseHandle(f);
+	uintptr_t sys = 0, pm = 0;
+	if (!ok || got != size || !g_env || !ReadPtr(g_env + 0xC0, sys) || !sys || !ReadPtr(g_env + 0x68, pm) || !pm) {
+		Log("fxreload: read %s failed or no engine", path.c_str()); return;
+	}
+	int n = SafeFxReload(sys, pm, buf.c_str(), buf.size(), lib.c_str());
+	if (n >= 0) Log("fxreload %s: %d effects re-read from %s", lib.c_str(), n, path.c_str());
+	else Log("fxreload %s: failed (%s)", lib.c_str(), n == -1 ? "XML didn't parse: see kcd.log" : n == -3 ? "crashed (caught)" : "no XML loader");
+}
 static bool SafeWorldTM(uintptr_t entity, float* tm12) {
 	__try {
 		auto get = (GetWorldTMFn)VFn(entity, 0x100); const float* m = get ? get(entity) : nullptr;
@@ -823,6 +890,7 @@ static void Command(const char* line) {
 		if (sscanf_s(rest, "%47s %f", key, (unsigned)sizeof(key), &v) >= 1 && !MotionParam(key, v)) Log("mparams: unknown key %s", key);
 	}
 	else if (!strcmp(cmd, "hitreact")) HitReact(rest);
+	else if (!strcmp(cmd, "fxreload")) FxReload(rest);   // fxreload <xml path> <library>: live particle library reload
 	else if (!strcmp(cmd, "casespin")) {   // casespin <entity id hex> <rad/s>: a casing's spin cap (SafeSetMaxSpin)
 		static int logged = 0;
 		char id[32] = {}; float w = 0; unsigned long long v = 0; uintptr_t es = 0, e = 0;

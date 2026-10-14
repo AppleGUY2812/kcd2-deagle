@@ -44,8 +44,9 @@ if [[ "${1:-}" == "--install" && -f "$here/native/dist/deagle_native.asi" ]]; th
 fi
 if [[ "${1:-}" == "--dev" ]]; then
   # hot reload: copy the script to the dev path, then run deagle_dev_reload in the game console. The whole Scripts tree
-  # is mirrored next to it: a dev reload loads ballistics.lua and guns/*.lua from there too (Deagle:LoadModule)
-  powershell.exe -NoProfile -Command "New-Item -ItemType Directory -Force 'E:\Tools\deagle-dev' | Out-Null; Copy-Item '$(wslpath -w "$here/src/Scripts/Deagle/deagle_main.lua")' 'E:\Tools\deagle-dev\deagle_main.lua' -Force; Remove-Item -Recurse -Force 'E:\Tools\deagle-dev\Scripts' -ErrorAction SilentlyContinue; Copy-Item -Recurse '$(wslpath -w "$here/src/Scripts")' 'E:\Tools\deagle-dev\Scripts'"
+  # is mirrored next to it: a dev reload loads ballistics.lua and guns/*.lua from there too (Deagle:LoadModule); so are
+  # the particle libraries, for deagle_fxreload
+  powershell.exe -NoProfile -Command "New-Item -ItemType Directory -Force 'E:\Tools\deagle-dev' | Out-Null; Copy-Item '$(wslpath -w "$here/src/Scripts/Deagle/deagle_main.lua")' 'E:\Tools\deagle-dev\deagle_main.lua' -Force; Remove-Item -Recurse -Force 'E:\Tools\deagle-dev\Scripts' -ErrorAction SilentlyContinue; Copy-Item -Recurse '$(wslpath -w "$here/src/Scripts")' 'E:\Tools\deagle-dev\Scripts'; Remove-Item -Recurse -Force 'E:\Tools\deagle-dev\Libs' -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force 'E:\Tools\deagle-dev\Libs' | Out-Null; Copy-Item -Recurse '$(wslpath -w "$here/src/Libs/Particles")' 'E:\Tools\deagle-dev\Libs\Particles'"
   echo "dev script updated"
   exit 0
 fi

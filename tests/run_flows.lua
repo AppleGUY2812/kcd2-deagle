@@ -55,6 +55,18 @@ step("flash left in the world", function()   -- flashMode world: spawned where i
 	if flashes() - w0 ~= 1 then error("world flash not spawned") end
 	Deagle.cfg.flashMode = "gun"; Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
 end)
+step("live effect reload (deagle_fxreload)", function()   -- re-reads the dev copy of the impacts library, never right after a shot
+	M.advance(3.5)
+	local n0 = #M.native
+	M.console("deagle_fxreload")
+	local l = M.native[#M.native]
+	if #M.native ~= n0 + 1 or not l:find("^%[DN%] fxreload E:/Tools/deagle%-dev/Libs/Particles/deagle_impacts%.xml deagle_impacts$") then error("no fxreload: " .. tostring(l)) end
+	Deagle.state.ammo = 3; Deagle:OnAction("deagle_fire", "press"); M.advance(0.5)
+	n0 = #M.native
+	M.console("deagle_fxreload")
+	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] fxreload") then error("fxreload right after a shot (live emitters)") end end
+	M.advance(3.5)
+end)
 step("slow motion (F9)", function()
 	Deagle:OnAction("deagle_slowmo", "press"); local on = M.cvars and M.cvars.t_Scale
 	Deagle:OnAction("deagle_slowmo", "press"); local off = M.cvars and M.cvars.t_Scale
