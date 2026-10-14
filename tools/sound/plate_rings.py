@@ -29,6 +29,7 @@ SIDE, GATE = 80.0, 6.0     # Hz to the bands a tone is compared with; dB it must
 # it nothing rises at the strike, it's the gun's echo), CLANK_HOLD s from the strike, faded out over CLANK_FADE s.
 # Measured on hit 01 against 7 shots with no plate: 2-16 kHz stands 4-8 dB over the gun's echo for ~0.3 s, then level
 CLANK_HOLD, CLANK_FADE, SHIMMER_HZ = .1, .15, 1500.0
+CLANK_FULL = 0.0          # s of the clank kept full-band (its body below SHIMMER_HZ: 300-1500 Hz rises 3-5 dB at the strike)
 
 def tones(x, sr, shot, onset):
     """Frequencies (Hz) of the plate's tones: narrow peaks that stand >= 10 dB over their neighbours at the same pitch
@@ -106,6 +107,10 @@ def ring(x, sr, shot, onset, freqs):
     w[st + h1: st + h1 + f1] = .5 + .5 * np.cos(np.linspace(0, np.pi, f1))
     y[: st - r1] = 0; y[st - r1: st] *= np.linspace(0, 1, r1)  # the ring starts at the strike
     clank = sosfiltfilt(butter(4, SHIMMER_HZ, "high", fs=sr, output="sos"), seg - y) * w
+    if CLANK_FULL > 0:                                       # the first CLANK_FULL s full-band, faded over 3 ms
+        wf = np.zeros(len(seg)); n1, f3 = int(CLANK_FULL * sr), int(.003 * sr)
+        wf[st - r1: st] = w[st - r1: st]; wf[st: st + n1] = 1; wf[st + n1: st + n1 + f3] = np.linspace(1, 0, f3)
+        clank = clank * (1 - wf) + (seg - y) * wf
     out = st - 2 * r1
     plate = (y + clank)[out:]
     tail = int(.3 * sr); plate[-tail:] *= np.linspace(1, 0, tail) ** 2
