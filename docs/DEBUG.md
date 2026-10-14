@@ -91,8 +91,8 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `armor.splashAngle` | `20` | a round plate stops flattens and its fragments spray along the plate this many degrees off its face (no bounce back) |
 | `armor.bruise` | `0.1` | share of the wound a round stopped by armour still does (blunt trauma) |
 | `wallbang.budget` | `0.1` | metres of wood a 9 mm gets through (others by energy; the Deagle ~0.19) |
-| `ricochetKeep` | `0.35` | energy a ricochet keeps off plaster, glass and ground (no study found). Measured ones are fixed: steel, stone, tile 75 %, wood 40 %, water 10 % |
-| `ricochet.critScale` | `1` | every world material's critical angle (stone 12, wood 11-16, glass 16, steel 6, sheet steel 15, water 7, forest floor / grass 5 deg off the surface) x this: higher = more ricochets |
+| `ricochetKeep` | `0.35` | energy a ricochet keeps off plaster, glass and ground (no study found). Measured ones are fixed: steel 75 %, stone, brick and tile 60 %, wood 40 %, water 10 % |
+| `ricochet.critScale` | `1` | every world material's critical angle (steel and sheet steel 15, stone 12, wood 11-16, glass 16, roads / packed ground 14, water 7, forest floor / grass 5 deg off the surface) x this: higher = more ricochets |
 | `ricochet.width` | `1` | how soft the cut-off is: at the critical angle half skip, 3 deg flatter ~95 %, 3 deg steeper ~5 % |
 | `ricochet.volume` | `2` | ricochet whine loudness x impactVolume, for a round at full speed; a slower round is quieter (amplitude ~ the square root of its energy: a spent one at 54 m/s 18 dB less). Off hard surfaces only (steel, stone, brick, tile); water, ground, wood, plaster and glass skips make only their own hit sound |
 | `ricochet.fxScale` | `1.5` | ricochet sparks size |
