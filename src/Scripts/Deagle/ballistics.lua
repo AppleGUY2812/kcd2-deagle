@@ -171,7 +171,7 @@ local THIN = { glass = true, cloth = true, straw = true }   -- panes / sheets: o
 
 -- A round hitting the world (BALLISTICS.md phase 3). A hit flatter than the material's critical angle skips off
 -- (RicochetChance, guns/penetration.lua: measured angles): ricochet whine, and sparks off hard surfaces. Otherwise the
--- surface's mark, then through it if the round can be: its punch has to reach the surface's armour level, and it gets
+-- surface's mark (stopped by steel, the round breaks up and sprays fragments along it), then through it if the round can be: its punch has to reach the surface's armour level, and it gets
 -- through cfg.wallbang.budget x energy ratio / density metres of it (half that tumbling). A ray back from that deep
 -- finds the far side; if the thing is thinner, the round comes out there (debris out the back, a bigger exit hole)
 -- with the energy it didn't spend. Out through a face that isn't the far side (a corner, an edge) it's bent off away
@@ -206,17 +206,22 @@ function Deagle:Impact(hit, dir, phys, r)
 	end
 	self:Mark(s, hit, dir, scale)
 	if self.state.logActions then log(string.format("impact %s -> %s x%.2f hole %s", name, s.fx, scale, tostring(s.hole))) end
-	if not (r and pen and pen.penetrable) or s.fx == "water" then return false end
+	-- stopped by steel: the round breaks up on it and its fragments spray along the face (Splash, as on plate armour)
+	local function stops()
+		if pen and pen.hard and s.fx == "metal" then self:Splash(hit.pos, hit.normal, dir, scale) end
+		return false
+	end
+	if not (r and pen and pen.penetrable) or s.fx == "water" then return stops() end
 	local ratio = self:EnergyRatio(phys, energy)
-	if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then return false end   -- 9 mm level 2, .50 AE 3
+	if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then return stops() end   -- 9 mm level 2, .50 AE 3
 	local depth = c.wallbang.budget * ratio / pen.density * (r.tumble and c.tumble.pen or 1)
 	local reach, back, p = depth + 0.01, {}, self:Player()
 	local ok, n = pcall(Physics.RayWorldIntersection, vadd(hit.pos, vscale(dir, reach)), vscale(dir, -reach), 1, ent_all, p and p.id, nil, back)
 	local far = ok and n and n > 0 and back[1]
 	local thick = far and far.entity == hit.entity and reach - far.dist or nil
 	if THIN[s.fx] then thick = math.max(thick or 0, 0.005)
-	elseif not thick or thick < 0.002 then return false end     -- the far side is out of reach (or it's the near side)
-	if thick >= depth then return false end
+	elseif not thick or thick < 0.002 then return stops() end     -- the far side is out of reach (or it's the near side)
+	if thick >= depth then return stops() end
 	local exitPos = vadd(hit.pos, vscale(dir, thick))
 	local exitNormal = far and vdot(far.normal, dir) > 0 and far.normal or dir
 	if EXIT_FX[s.fx] then self:SpawnFx("deagle_impacts." .. s.fx .. "_exit", exitPos, dir, scale) end

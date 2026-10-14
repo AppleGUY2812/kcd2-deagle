@@ -98,6 +98,7 @@ local function check(label, ok, detail)
 end
 local function reset() world.slabs, world.npcs, world.ground, world.boxes, landed, M.decals, M.fxNames = {}, {}, nil, {}, {}, {}, {} end
 M.surfaceNames[6] = "mat_water"
+M.surfaceNames[7] = "mat_metal"
 -- math.random() returns v while f runs (ricochet rolls made certain); math.random(a, b) and seeding work as before
 local function withRandom(v, f)
 	local old = math.random
@@ -213,6 +214,20 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	check(string.format("%s: skims water and climbs ~10 deg whatever the angle in (3 in: %.1f, 6 in: %.1f), stone keeps it low (%.1f m up)",
 		id, climb3, climb6, zStone), climb3 > 5 and climb3 < 10 and climb6 > 5 and climb6 < 10 and zStone > 0 and zStone < 6, climb6)
 	check(string.format("%s: off water it keeps under 10 %% of its energy by the wall (%.1f %%)", id, kept * 100), kept > 0 and kept < 0.1, kept)
+
+	-- steel hit at 45 deg (far above its ~6 deg critical angle): no bounce, the round stops and breaks up, its fragments
+	-- spraying along the face splashAngle deg off it (the user's iron door, in game 2026-10-14: hits at 45-75 deg)
+	reset()
+	world.ground = { z = 31.0, surface = 7 }
+	world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
+	M.fxLog = {}
+	withRandom(0.5, function() fire(math.rad(-45)) end)
+	local spray
+	for _, f in ipairs(M.fxLog) do if f.n == Deagle.cfg.armorRicochetFx then spray = f end end
+	local sprayUp = spray and math.deg(math.asin(spray.dir.z)) or -1
+	check(string.format("%s: steel at 45 deg: no bounce (%d hits), fragments spray along it %.0f deg off the face, onward (%s)", id,
+		#landed, sprayUp, spray and string.format("%.2f", spray.dir.y) or "none"),
+		#landed == 1 and spray ~= nil and math.abs(sprayUp - Deagle.cfg.armor.splashAngle) < 0.5 and spray.dir.y > 0.9, #landed)
 
 	-- a tumbling round drags like a tumbling fragment: Cd from its shape (Moxnes 2017's fit to McCleskey's fragments:
 	-- sphere 0.42, cube 0.64), on a quarter of its surface; point-first it's AIR_CD on its front
