@@ -34,6 +34,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_tracers 0` / `1` | glowing tracer on every round off / on |
 | `deagle_reset` | every setting back as shipped, the kept ones forgotten |
 | `deagle_shotsound 0` / `1` | gunshot sound off / on (kept). Impacts, ricochets and casings still play: use it to hear impacts on their own |
+| `deagle_gunfx 0` / `1` | everything at the gun off / on (kept): muzzle flash, smoke, muzzle light, casings, tracers and the gunshot. Only the impacts show and sound (effect, hole, impact sound, ricochets), to watch them on their own. Setting: `gunFx` |
 | `deagle_sounds ron` / `original` | Ready or Not's sound engine (default), or the gun mods' own shot and animation sounds (kept) |
 | `deagle_env` | where the mod thinks you are (room type + material) and the ray numbers behind it |
 | `deagle_testwall` | a row of real KCD2 objects 4 m ahead, one per surface: stone, plaster, pots, wood door, crate, wicker, metal door, anvil, glass (standing up, facing you), sack, straw target, hay, vegetables, leather (listed left to right on screen). `deagle_testwall clear` removes them; never saved |

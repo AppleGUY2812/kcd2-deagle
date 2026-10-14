@@ -423,6 +423,36 @@ do
 	for _, m in ipairs(masks) do if bit.band(m, 0x200) ~= 0 then seen = true end end
 	check(string.format("flight rays include water surfaces (%d rays, ent_water in the mask: %s)", #masks, tostring(seen)), seen, #masks)
 end
+-- deagle_gunfx 0: no flash, smoke, muzzle light, casing, tracer or gunshot, so the impacts can be watched on their own;
+-- the impact itself (effect, hole, sound) is unchanged
+do
+	local function shot()
+		reset()
+		world.slabs = { { y0 = 220, y1 = 221, surface = 1 } }
+		M.decals = {}
+		local n0, e0 = #M.native, M.spawnedCount or 0
+		fire()
+		local gun, fx = {}, {}
+		for name, k in pairs(M.fxNames) do
+			if name:find("^deagle%.muzzle") or name:find("^deagle%.port") or name:find("^deagle_tracers") then gun[#gun + 1] = name end
+			if name:find("^deagle_impacts%.") then fx[#fx + 1] = name end
+		end
+		for i = n0 + 1, #M.native do
+			local l = M.native[i]
+			if l:find("^%[DN%] flashfx") or l:find("^%[DN%] fxs deagle_tracers") or l:find("Fire|") or l:find("casespin") then gun[#gun + 1] = l:sub(1, 40) end
+		end
+		return gun, fx, #M.decals
+	end
+	Deagle:UseGun("deagle"); Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+	local gunOn, fxOn, holesOn = shot()
+	M.console("deagle_gunfx", "0")
+	local gunOff, fxOff, holesOff = shot()
+	M.console("deagle_gunfx", "1")
+	Deagle:OnAction("deagle_toggle", "press"); M.advance(2.0)
+	check(string.format("deagle_gunfx 0: gun effects (flash, smoke, casing, tracer, shot) %d -> %d (%s); impact effects %d -> %d, holes %d -> %d",
+		#gunOn, #gunOff, table.concat(gunOff, " "), #fxOn, #fxOff, holesOn, holesOff),
+		#gunOn > 0 and #gunOff == 0 and #fxOff == #fxOn and #fxOff > 0 and holesOff == holesOn, #gunOff)
+end
 -- every surface a round can hit has penetration data (only pass-through helpers may lack it)
 local missing = {}
 for name, s in pairs(Deagle.surfaces) do

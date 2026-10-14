@@ -94,6 +94,8 @@ Deagle.cfg = {
 	-- Impacts and casings are Ready or Not's either way. deagle_sounds ron|original
 	sounds = "ron",
 	shotSound = true,         -- the gunshot itself (deagle_shotsound 0: silent shots, to hear impacts on their own)
+	gunFx = true,             -- everything at the gun: flash, smoke, muzzle light, casings, tracers and the gunshot
+	                          -- (deagle_gunfx 0: only the impacts, to watch them on their own)
 	env = { on = true, period = 0.25, fade = 0.4, upLen = 30, upCone = 15, roof = 12, roofHits = 3, ringLen = 40, ringNear = 20,
 		ringInside = 12, small = 3.5, hall = 7, corrNarrow = 2.5, corrWide = 6, share = 0.5, vegShare = 0.25, trunks = 6 },
 	debugPathsMax = 600,      -- line pieces kept (oldest go first; the game's debug-line buffer is limited: at 3000 the newest
@@ -1615,15 +1617,15 @@ function Deagle:Shoot(force)
 	end
 	s.heat = s.heat + c.heatPerShot
 
-	self:PlayTrigger(c.shotTrigger)
+	if c.gunFx then self:PlayTrigger(c.shotTrigger) end
 	self:ShotHeard(self:ShotPhysics())
-	self:MuzzleFlash(System.GetViewCameraDir())
+	if c.gunFx then self:MuzzleFlash(System.GetViewCameraDir()) end
 	self:Recoil()
-	self:EjectCase()
+	if c.gunFx then self:EjectCase() end
 
 	local phys = self:ShotPhysics()
 	if phys then                    -- a round that flies (speed, drop, drag) and its tracer
-		self:LaunchRound(pos, dir, phys, self:Tracer(pos, dir, phys))
+		self:LaunchRound(pos, dir, phys, c.gunFx and self:Tracer(pos, dir, phys) or nil)
 	else                            -- a gun without cartridge data: an instant ray with its CS2 numbers
 		local hits = {}
 		local ok, n = pcall(Physics.RayWorldIntersection, pos, vscale(dir, c.range), 1, ent_all, p.id, nil, hits)
@@ -2316,7 +2318,7 @@ function Deagle:CueFire(key, file)
 		return
 	end
 	if file == "shot" then
-		if not self.cfg.shotSound then return end
+		if not (self.cfg.shotSound and self.cfg.gunFx) then return end
 		local ron = self:RonSounds()
 		if ron and ron.fire then
 			if self.native then
@@ -3023,6 +3025,7 @@ System.AddCCommand("deagle_ads", "Deagle:SetOnOff('vm.ads', [[%1]])", "deagle_ad
 System.AddCCommand("deagle_testnpc", "Deagle:TestNpc([[%line]])", "deagle_testnpc: the NPC you aim at takes no damage from your rounds | deagle_testnpc clear")
 System.AddCCommand("deagle_testwall", "Deagle:TestWall([[%line]])", "deagle_testwall: a row of KCD2 objects, one per surface (stone, plaster, pots, wood, wicker, metal, glass, sack, straw, hay, food, leather), 4 m ahead | clear")
 System.AddCCommand("deagle_shotsound", "Deagle:SetOnOff('shotSound', [[%1]])", "deagle_shotsound 0|1: gunshot sound off / on (impacts still play)")
+System.AddCCommand("deagle_gunfx", "Deagle:SetOnOff('gunFx', [[%1]])", "deagle_gunfx 0|1: everything at the gun off / on (flash, smoke, light, casings, tracers, gunshot): only the impacts show")
 System.AddCCommand("deagle_sounds", "Deagle:Set('sounds ' .. (Deagle.Arg([[%1]]):find('orig') and 'original' or 'ron'))", "deagle_sounds ron|original: Ready or Not's sound engine, or the gun mods' own shot and animation sounds")
 System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")
 System.AddCCommand("deagle_hud", "Deagle:SetOnOff('hud.enabled', [[%1]])", "deagle_hud 1|0: ammo HUD on/off")
