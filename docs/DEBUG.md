@@ -36,7 +36,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_shotsound 0` / `1` | gunshot sound off / on (kept). Impacts, ricochets and casings still play: use it to hear impacts on their own |
 | `deagle_sounds ron` / `original` | Ready or Not's sound engine (default), or the gun mods' own shot and animation sounds (kept) |
 | `deagle_env` | where the mod thinks you are (room type + material) and the ray numbers behind it |
-| `deagle_testwall` | a row of real KCD2 objects 4 m ahead, one per surface: stone, plaster, pots, wood door, crate, wicker, metal door, anvil, glass, sack, straw target, hay, vegetables, leather (listed left to right on screen). `deagle_testwall clear` removes them; never saved |
+| `deagle_testwall` | a row of real KCD2 objects 4 m ahead, one per surface: stone, plaster, pots, wood door, crate, wicker, metal door, anvil, glass (standing up, facing you), sack, straw target, hay, vegetables, leather (listed left to right on screen). `deagle_testwall clear` removes them; never saved |
 | `deagle_testnpc` | aim at an NPC (within 60 m) and type it: your rounds don't hurt that NPC (no crime), and each hit shows the body part, whether armour stopped it, and the damage it would have done. `deagle_testnpc clear` ends it. (Spawning test NPCs froze the game, so it marks real ones instead) |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
 | `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
@@ -101,6 +101,12 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
 | `gore.ragdollOnKill` | `true` | a killing round drops the body at once instead of after KCD2's death animation |
 | `gore.killPush` | `1` | how hard a kill shoves the body (x the round's real momentum x punch) |
+| `eject.speed` | `2.8,4.2` | casing throw speed in m/s (a random pick between the two); standing they land 1.7-2.7 m to the right, plus your own movement |
+| `eject.up` | `20,40` | degrees above the gun's right side a casing leaves at (higher = taller arc, closer landing) |
+| `eject.back` | `5,25` | degrees a casing goes back toward you |
+| `eject.spin` | `100,200` | end-over-end spin in rad/s (needs the plugin's `casespin`: the game caps spin at 20 rad/s without it) |
+| `eject.spinCap` | `300` | spin cap the plugin sets for a casing's flight, back to the game's 20 at its first bounce |
+| `caseBounce.volume` | `1` | shell clinks x Ready or Not's own level |
 
 Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `deagle_set flashMode world`,
 `deagle_set muzzleFxScale 0.5`.
