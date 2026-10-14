@@ -54,6 +54,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `flashMesh.light.mode` | `particle` | the mesh flash's light: `particle` (a frame late) or `entity` (a light on the gun, testing) |
 | `muzzleFx` / `muzzleFxLarge` | `deagle.muzzle` | particle flash look: try `deagle.muzzle_b4`, `_b4s15`, `_b10s2` (and `deagle.muzzle_large_b4`... for the Deagle) |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
+| `impactSpawn` | `plugin` | how bullet-hit and blood effects are spawned: `plugin` = drawn from their first frame (held 2 s); `lua` = the old way (KCD2 doesn't draw them for ~0.3 s, so short sparks and flashes never show) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
 | `cancelKeepsRounds` | `false` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
@@ -136,5 +137,5 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 `deagle_dev_reload` (re-run the script from the dev folder), `deagle_lua <code>` (run Lua), `deagle_vm_respawn`
 (rebuild the viewmodel), `deagle_input` (reload key bindings), `deagle_fxreload [library]` (the plugin re-reads
 `Libs/Particles/<library>.xml`, default `deagle_impacts`, from the dev folder into the running game: impact effects tuned
-without a restart; refused within 3 s of a shot). Claude uses these through the dev console link
+without a restart; within 3 s of a shot it waits, in game time, and then reloads). Claude uses these through the dev console link
 (`tools/live.sh`); they're not needed for play.

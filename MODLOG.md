@@ -482,3 +482,30 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   energy into bending waves = J^2 / pulse x point mobility, a free plate radiates most of it. Deagle on a hanging 10 mm
   plate vs its own shot: 4 m -18 dB, 10 m -27, 25 m -35, 50 m -42 (bolted plate ~6 dB less; Glock ~3 dB less vs its own
   shot, its hit ~10 dB under the Deagle's). A hanging plate rings T60 ~0.8 s at 3 kHz. Uncertainty about +-6 dB.
+
+## 2026-10-14: Ready or Not's real impacts are Niagara GPU effects; decoded by running their shaders (Claude 2)
+- RoN's in-game bullet impacts (ImpactEffects_Pistol etc.) are Niagara systems (`NS_*`) for every surface but water
+  (`P_BulletImpact_Water`, Cascade). The Cascade `P_*` impacts are older, unused versions: the metal port of 2026-10-13
+  copied the wrong effect.
+- Niagara's particle scripts are GPU compute shaders; their numbers (counts aside) are literals in the shader. Each
+  `GPUComputeScript` export holds its shader map hash; the shader is in `ShaderArchive-ReadyOrNot_Chunk0-PCD3D_SM5`
+  (pakchunk0; FSerializedShaderArchive v2, Oodle Kraken, libooz works) as one cs_5_0 DXBC. Disassembled with Windows
+  d3dcompiler_47 (`D3DDisassemble`, flag 0x80 for exact hex literals). Layout: particle floats in a buffer (component k
+  of particle i at i + k x ComponentBufferSize, attributes in alphabetical order = the SpawnScript's `Attributes`),
+  ints in another, curve LUTs in a third (`ShaderLUT` of each data interface back to back); CB0 = spawn info
+  (offsets [base+1..2], params [base+3..]), counts [base+11], dt [base+12].z, the system's rotation rows [base+25..27],
+  owner position [base+34] (previous frame [base+42]); data-interface params after [base+49]; user colours in two small
+  CBs (current / previous). base = 0, except emitters with distance-field collision (base 30, two 3D textures first).
+- Spawn bursts are in the system update script (CPU VectorVM, legacy bytecode): constant operands are byte offsets into
+  [parameter store][ScriptLiterals]; `enter_stat_scope` operands are constants holding the StatScopes index. A burst =
+  `min + int(rand x (max-min+1))`, x SpawnCountScale, at least 1.
+- Gravity in the shaders is world -Z; spawn directions go through the system rotation; the hit normal is the effect's
+  local +Z (debris and the spark burst leave along it).
+- Pistol on steel (`NS_Bullet_Impact_Metal_Big_Shotgun`): flash 1 (0.1-0.2 s, 16-63 cm, HDR 13909 nits), main sparks
+  2-5 (2.2-7.75 m/s in every direction, 0.05-0.3 s, 2-21 cm streaks ~ speed, 1.1 g, up to 60000 nits), core sparks 3-5
+  (drag 9.2/s), one 28-145 cm spark-burst flipbook (drag 21/s, faint), 2-4 dark chips (2.25-8 m/s, 0.5-1.5 s, 0.81 g).
+  No dust, no light. Tools: `tools/ron/niagara_gpu.py`, `sm5emu.py`, `ns_stats.py`, `fxrender.py` (docs/ron/niagara_gpu.md).
+- Why RoN's sparks never showed in KCD2: impacts were spawned with Lua `Particle.SpawnEffect`, and a new Lua-spawned
+  emitter isn't drawn for ~0.3 s (tracer lab, 2026-10-12): everything living under ~0.3 s (the sparks, the flash) was
+  invisible, only dust and bits showed. Impacts and blood now go through the plugin's `fxs` (cfg.impactSpawn). Its hold
+  is 2 s of real time: in F9 slow motion long parts are cut early (to fix in the plugin: hold by game time).
