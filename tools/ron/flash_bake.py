@@ -167,7 +167,7 @@ json.dump({'sets': sets, 'materials': [m[0] for m in mats], 'stages': STAGES, 'v
 from PIL import Image
 for m, (t, _, _) in SHEETS.items():
     Image.open(f'{PNG}/{t}.png').convert('RGBA').save(f'{OUT}/tif/{TEX[m]}_diff.tif', compression='tiff_lzw')
-for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0)):
+for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_x30', 30.0)):   # brightness steps, to match Ready or Not's on-screen colour live
     subs = []
     for mtl, tex, hue, level in mats:
         r, gg, b = HUES[hue]

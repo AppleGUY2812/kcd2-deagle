@@ -1,6 +1,8 @@
 # Ready or Not's muzzle flash as flash cards (the "ron" flash look): builds one CGF per set, variant and stage from the
 # quads tools/ron/flash_bake.py baked (cards.json), in the muzzle bone's axes (+Y down the barrel), with the KCD2 toolkit
-# + rc, like tools/flash_mesh.py. Sub-material ids follow the order of cards.json "materials" (= the .mtl's).
+# + rc, like tools/flash_mesh.py. Sub-material ids follow the order of cards.json "materials" (= the .mtl's), and every
+# model carries all of them in that order: a model listing only the ones it uses (ids up to 25 against 4 names) drew on
+# an entity but was silently refused as a bone attachment (in game 2026-10-14: the old cards stayed on).
 # blender -b --factory-startup -P flash_mesh_ron.py -- <cards.json> <out_dir> <rc.exe> [preview.png]
 import bpy, sys, json, addon_utils, mathutils
 
@@ -28,19 +30,18 @@ for setname, variants in D["sets"].items():
             name = f"{setname}_{v}_{s}"
             me = bpy.data.meshes.new(name)
             verts, faces, uvs, slots = [], [], [], []
-            used = sorted({q["mtl"] for q in quads}, key=D["materials"].index)
             for q in quads:
                 i = len(verts)
                 verts += [tuple(p) for p in q["p"]]
                 faces.append((i, i + 1, i + 2, i + 3))
-                uvs.append(q["uv"]); slots.append(used.index(q["mtl"]))
+                uvs.append(q["uv"]); slots.append(D["materials"].index(q["mtl"]))
             me.from_pydata(verts, [], faces)
             uv = me.uv_layers.new(name="UVMap")
             for poly, quv, sl in zip(me.polygons, uvs, slots):
                 for li, co in zip(poly.loop_indices, quv):
                     uv.data[li].uv = co
                 poly.material_index = sl
-            for mname in used:
+            for mname in D["materials"]:
                 me.materials.append(mats[mname])
             ob = bpy.data.objects.new(name, me); bpy.context.scene.collection.objects.link(ob)
             nodes.append(ob)

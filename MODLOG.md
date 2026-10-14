@@ -580,3 +580,11 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   PropagateDistance fade is off). Measured against the MK V shot (100 ms max): a fresh ricochet at 3 m +4 dB, 25 m -5,
   100 m -17. Air absorption (ISO 9613-1, 15 C 70 %) per 100 m: 1 kHz -0.4 dB, 4 kHz -2.7, 8 kHz -9.5; the ricochet's
   spectral centroid falls from 3.2 to 1.5 kHz at 100 m. `tools/sound/impact_distance_ab.py` (pack 18).
+- First in-game try of `deagle_flash ron`: no Ready or Not card drew from the gun, while the same model on a BasicEntity
+  did (a bright red fireball). Each model's material list held only its own 4 names while its faces used ids up to 25
+  (the .mtl's order). `GetAttachmentCGF` still named the new model, but nothing changed on screen: a recorded swap
+  kept showing the old card. Every model now carries all 25 materials in the .mtl's order (tools/flash_mesh_ron.py).
+  Not checked in game yet. KCD2 doesn't load loose models: a path outside the paks gives
+  `%ENGINE%/EngineAssets/Objects/Default.cgf`.
+- On the entity the Ready or Not fireball came out red with a white core: by Claude 2's nits -> intensity mapping its
+  green (1.2 % of red) stays dark in KCD2. Brightness steps `_x10` / `_x30` added to match its on-screen colour live.
