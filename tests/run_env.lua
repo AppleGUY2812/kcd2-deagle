@@ -104,8 +104,11 @@ check("see-through hulls (tree branch boxes, fences) let rounds through, like KC
 check("every hit surface has an audible RoN Surface: missing " .. table.concat(missing, " "), #missing == 0, #missing)
 -- the empty click and aiming play the gun's RoN events
 n0 = #M.native
-Deagle:RonHere(Deagle.gun.ron.dry)
+Deagle.state.ammo = 0; Deagle:Shoot(true)
 check("dry fire: " .. M.native[#M.native], M.native[#M.native]:find("^%[DN%] ron [%d%.]+ event:/Weapons/FN57/FN57 Dry Fire|$") ~= nil, M.native[#M.native])
+-- RoN mixes its dry clicks 37-44 dB under the shot (measured): raised to cfg.vm.dryDb of its mix (FN57 -40 dB -> -22: x7.9)
+local dryVol = tonumber(M.native[#M.native]:match("^%[DN%] ron ([%d%.]+) "))
+check(string.format("dry fire raised to be heard: x%.2f", dryVol or 0), dryVol and math.abs(dryVol - 10 ^ ((-22 + 40) / 20)) < 0.05, dryVol)
 -- every Ready or Not handling cue can start early enough for its click to land on its moment, and every event has a click time
 local late, unknown = {}, {}
 for id, g in pairs(Deagle.guns) do
@@ -113,11 +116,28 @@ for id, g in pairs(Deagle.guns) do
 		for _, c in ipairs(list) do
 			local click = Deagle.ronClick[c[2]]
 			if not click then unknown[#unknown + 1] = c[2]
-			elseif not c.start and c[1] < click / 1000 - 0.005 then late[#late + 1] = string.format("%s %s %s %.0f ms", id, key, c[2], click - 1000 * c[1]) end
+			else
+				local r = g.rate and (g.rate[key] or g.rate.default) or 1   -- clip seconds play faster than real ones
+				local need = (c.start and 0 or click / 1000) + (Deagle.cfg.vm.cueLead or 0)
+				-- a sound at the clip's first frame fires at once
+				if c[1] > 0 and c[1] / r < need - 0.005 then late[#late + 1] = string.format("%s %s %s %.0f ms", id, key, c[2], 1000 * (need - c[1] / r)) end
+			end
 		end
 	end
 end
 check("RoN handling clicks all land on time: " .. table.concat(late, "; "), #late == 0, #late)
+-- the lead is real time: on a clip played at Rate it's that many real seconds early (it was taken as clip seconds: 20 %
+-- short on the Deagle's 30/24), plus the engine's output latency (cfg.vm.cueLead); the mag-in lands on the seat (frame 37)
+do
+	local saved, ev, cue = Deagle.gun, "event:/Weapons/Grizzly/Grizzly MagIn", nil
+	Deagle.gun = Deagle.guns.deagle
+	for _, c in ipairs(Deagle:RonCues("reload") or {}) do if c[2] == "ron:" .. ev then cue = c[1] end end
+	local r = Deagle:Rate("reload")
+	local want = 37 / 24 / r - Deagle.ronClick[ev] / 1000 - (Deagle.cfg.vm.cueLead or 0)
+	check(string.format("Deagle mag-in starts %.3f s into the reload (want %.3f: seat less its click and the output latency)", (cue or 0) / r, want),
+		cue and math.abs(cue / r - want) < 0.002 and (Deagle.cfg.vm.cueLead or 0) > 0, cue)
+	Deagle.gun = saved
+end
 check("every RoN handling event has a measured click: " .. table.concat(unknown, "; "), #unknown == 0, #unknown)
 -- an impact: RoN's event, its distance left to the plugin (from the listener, the free camera too) as PropagateDistance=@
 n0 = #M.native

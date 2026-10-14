@@ -236,6 +236,10 @@ Deagle.cfg.vm = {
 	fpMaxDist = 0.35,         -- camera within this of the Head bone = first person (dialogue / cutscene cameras aren't)
 	gearDist = 0.35,          -- worn items within this of the hips / spine are hidden with the body
 	soundVol = { shot = 1.0, foley = 0.75, ron = 1.0 },   -- ron: Ready or Not handling events, x its own level
+	-- s a Ready or Not handling sound starts early on top of its click time: the engine's output latency (its 256 x 4
+	-- mix buffer + the device, ~25-40 ms, and the wait for the next camera step); deagle_set vm.cueLead
+	cueLead = 0.045,
+	dryDb = -22,              -- dB the empty click plays at in Ready or Not's mix (its shot: -3); RoN's own: -40 to -47
 	motion = 1.0,             -- plugin bob / turn sway / sprint pose / landing strength (deagle_motion)
 	arms = Deagle.cfg and Deagle.cfg.vm and Deagle.cfg.vm.arms or "mw",   -- "mw" or "medieval" (deagle_arms)
 }
@@ -1538,9 +1542,16 @@ function Deagle:RonSounds()
 	return self.cfg.sounds == "ron" and self.gun and self.gun.ron or nil
 end
 
--- a Ready or Not event at the player (handling, dry fire, aim): 3D events sit on the listener
-function Deagle:RonHere(ev)
-	if self.native and ev then self:Native(string.format("ron %.3f %s|", self.cfg.vm.soundVol.ron, ev)) end
+-- a Ready or Not event at the player (handling, dry fire, aim): 3D events sit on the listener; gain x its volume
+function Deagle:RonHere(ev, gain)
+	if self.native and ev then self:Native(string.format("ron %.3f %s|", self.cfg.vm.soundVol.ron * (gain or 1), ev)) end
+end
+-- RoN mixes its dry-fire clicks 37-44 dB under the shot, too quiet to hear in KCD2 (the user, 2026-10-13): each one's
+-- measured level (short-term, rendered alone in RoN's engine) is raised to cfg.vm.dryDb
+local DRY_DB = { ["event:/Weapons/FN57/FN57 Dry Fire"] = -40.0, ["event:/Weapons/G19/G19 Dryfire Old"] = -46.7 }
+function Deagle:DryGain(ev)
+	local own = DRY_DB[ev]
+	return own and 10 ^ ((self.cfg.vm.dryDb - own) / 20) or 1
 end
 
 -- one shot: ray, effects, ammo. Returns true when a round was fired.
@@ -1558,7 +1569,7 @@ function Deagle:Shoot(force)
 	if not force and now - s.lastShot < c.interval - 0.005 then return false end
 	if s.ammo <= 0 then
 		local ron = self:RonSounds()
-		if ron and ron.dry then self:RonHere(ron.dry) else self:PlayTrigger(c.dryTrigger) end
+		if ron and ron.dry then self:RonHere(ron.dry, self:DryGain(ron.dry)) else self:PlayTrigger(c.dryTrigger) end
 		self:ShowAmmo()
 		return false
 	end
@@ -2248,9 +2259,10 @@ end
 function Deagle:RonCues(key)
 	local rc = self.gun.ronCues and self.gun.ronCues[key]
 	if not rc then return nil end
-	local out = {}
+	local out, r, latency = {}, self:Rate(key), self.cfg.vm.cueLead or 0
 	for _, c in ipairs(rc) do
-		local lead = c.start and 0 or (self.ronClick[c[2]] or 0) / 1000
+		-- real seconds early (its click, then the output latency) in clip seconds: the clip runs Rate times faster
+		local lead = ((c.start and 0 or (self.ronClick[c[2]] or 0) / 1000) + latency) * r
 		out[#out + 1] = { math.max(0, c[1] - lead), (c.feet and "ronfeet:" or "ron:") .. c[2] }
 	end
 	return out
@@ -2314,7 +2326,9 @@ function Deagle:CueTick()
 		if not okT or type(tt) ~= "number" then return end
 		t = tt
 	end
-	while p.list[1] and p.list[1].at <= t + 1e-4 do
+	-- a cue due before the next frame goes now: waiting for the frame after it made every sound up to a frame late
+	local ahead = (self.frameDt or 1 / 60) * p.speed / p.span
+	while p.list[1] and p.list[1].at <= t + ahead + 1e-4 do
 		self:CueFire(p.key, table.remove(p.list, 1).file)
 	end
 	if not p.list[1] then self.cuesPending = nil end

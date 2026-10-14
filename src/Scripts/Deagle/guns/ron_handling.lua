@@ -37,14 +37,18 @@ local G, S = "event:/Weapons/Grizzly/Grizzly ", "event:/Weapons/Shared/"
 local DROP = S .. "Mag Drops/Pistol Mag Drop"
 local MAG_FALL = 0.45   -- s from a mag leaving the gun to it hitting the ground (about 1 m: sqrt(2 x 1 / 9.81))
 local deagle = {
-	-- tac reload: release (0.667), mag out (0.708), mag in (1.475)
-	reload = { { 0.667, G .. "ReloadStart" }, { 0.708, G .. "MagOut" }, { 1.475, G .. "MagIn" } },
-	-- empty reload: starts with the gun (RoN's Start part), mag out (0.208) and drops, mag in (1.240), slide home (1.934)
-	reloadEmpty = { { 0, G .. "Reload Empty Start", start = true }, { 0.208, G .. "Reload Empty MagOut" },
-		{ 0.208 + MAG_FALL, DROP, feet = true }, { 1.240, G .. "Reload Empty MagIn" }, { 1.934, G .. "Reload Empty Slide Release" } },
-	-- inspect: mag out (0.208), back in (2.917), slide home (4.542)
-	inspect = { { 0.208, G .. "Reload Empty MagOut" }, { 2.917, G .. "MagIn" }, { 4.542, G .. "Reload Empty Slide Release" } },
-	inspectEmpty = { { 0.208, G .. "Reload Empty MagOut" }, { 2.917, G .. "MagIn" } },
+	-- The moments are the clips' own frames (24 fps timeline), measured from the tracks (j_mag1 / j_mag2 / j_slide in the
+	-- gun's space, 2026-10-13): mag out = between its last seated frame and the first moving one, mag in = the seated
+	-- frame, slide = home. The old times were the MWII sound cues, moved early by those files' lead-ins (up to 7 frames).
+	-- tac reload: release (0.667), mag out (frames 17-18: 0.729), mag in (frame 37: 1.542)
+	reload = { { 0.667, G .. "ReloadStart" }, { 0.729, G .. "MagOut" }, { 1.542, G .. "MagIn" } },
+	-- empty reload: starts with the gun (RoN's Start part), mag out (frames 5-6: 0.229) and drops, mag in (frame 31:
+	-- 1.292), slide home (frame 48: 2.000)
+	reloadEmpty = { { 0, G .. "Reload Empty Start", start = true }, { 0.229, G .. "Reload Empty MagOut" },
+		{ 0.229 + MAG_FALL, DROP, feet = true }, { 1.292, G .. "Reload Empty MagIn" }, { 2.000, G .. "Reload Empty Slide Release" } },
+	-- inspect: mag out (frames 7-8: 0.312), back in (frame 77: 3.208), slide home after the press check (frame 112: 4.667)
+	inspect = { { 0.312, G .. "Reload Empty MagOut" }, { 3.208, G .. "MagIn" }, { 4.667, G .. "Reload Empty Slide Release" } },
+	inspectEmpty = { { 0.312, G .. "Reload Empty MagOut" }, { 3.208, G .. "MagIn" } },
 	-- draw / holster: RoN's own start times on its 0.833 s actions
 	draw = { { 0.188, S .. "Draw/Draw Pistol V2", start = true } },
 	drawEmpty = { { 0.188, S .. "Draw/Draw Pistol V2", start = true } },
