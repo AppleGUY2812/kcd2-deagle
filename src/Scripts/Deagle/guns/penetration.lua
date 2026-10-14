@@ -33,7 +33,10 @@ Deagle.penetrationAmmo = {
 -- Ricochet: crit = the material's critical angle (deg between the path and the surface): hit flatter and the round
 -- skips off, steeper and it digs in or breaks up; at crit itself half the rounds skip (Haag & Haag, Shooting Incident
 -- Reconstruction, the definition the studies below use). Measured with pistol / rifle FMJ:
---   steel plate 5 (9 mm, CZ 75: review table, ResearchGate 393603576); wallboard, car-body steel, wood, glass 5-9
+--   steel plate: a 9 mm FMJ still skips whole off 1/2" A36 plate at 15, a JHP breaks up from 14, both from 25 (Diaczuk,
+--   CUNY PhD thesis 2014, "... 9 mm Parabellum Bullet Ricochet from Common Substrates", Table 19), .45 ACP off 1/8"
+--   steel 30-35 (Jauhari, J Crim Law Criminol 1969); one review table gives 5 (CZ 75, ResearchGate 393603576): 15
+--   used; sand: a 9 mm skips at 13, 3-4 of 10 at 14, none at 15 (Diaczuk 2014, Tables 7-9); wallboard, car-body steel, wood, glass 5-9
 --   (9 mm / 5.56 / 7.62 together, AAFS 2018 B99); 1 mm sheet steel: 9 mm FMJ 15.9 (pistol, 250 m/s) and 15 (SMG,
 --   375 m/s), 5.56 breaks up from 5 (Nishshanka et al., Science & Justice 2023); float glass 15.8 for 9 mm FMJ (.32 Auto 21, .45 Auto 17.6: JFS 2016,
 --   PubMed 27644019); water ~7 (AK, same), 6.5 (9 mm, Uzi: Gold & Schecter, JFS 1992) and ~8 (AAFS 2012 A102); concrete 10.8-11.1, cement 13.2
@@ -41,8 +44,9 @@ Deagle.penetrationAmmo = {
 --   MDF, melamine 14-18 (9 mm, JFS 2025); whitewood: skips at 9-12, never from 13 (9 mm, CUNY thesis); harder, denser
 --   wood skips at steeper angles (same). 0 = never skips (soft: cloth, straw, leaves, flesh). The bullet matters too
 --   (on glass .32 Auto 21, 9 mm 15.8, .45 Auto 17.6; on wood .32 above 9 mm), not simply by size: not modelled, one
---   angle per material. No study of soil found: packed ground (road, gravel, field) and soft ground (forest floor,
---   grass, mud: GUESS skips only flatter, and less steeply) are guesses.
+--   angle per material. No handgun study of soil found: packed ground (road, gravel, field) and soft ground (forest
+--   floor, grass, mud: GUESS skips only flatter, and less steeply) are guesses (the only soil data: cal .50 AP off sod /
+--   soil, critical ~8, 7 -> 10.3 out: Hitchcock, BRL Report 629, 1947).
 -- hard = unyielding (steel, stone, tile): a skipping round leaves flatter than it came (cfg.ricochetLift); the others
 -- yield and leave steeper (lift: the round ploughs a little ramp; soil and sand GUESS). Water: see below the table.
 -- family = effect family in deagle_impacts.xml; ron = RoN surface the values come from; armour = RoN ArmourLevel;
@@ -59,7 +63,7 @@ end
 
 Deagle.penetration = {
 	-- families (RoN source surface)                                           crit hard  spall lift
-	metal      = P("metal",   "RON_Steel",          8.0,  4, true,  6,   true,  0.2),        -- solid steel: stops both; plate 5, car steel 5-9
+	metal      = P("metal",   "RON_Steel",          8.0,  4, true,  15,  true,  0.2),        -- solid steel: stops both; 1/2" plate 14-25
 	metal_thin = P("metal",   "RON_Galvanized",     2.0,  3, true,  15,  true,  0.7, 1),     -- sheet / plate armour: .50 AE through; 1 mm sheet 15-16 (9 mm)
 	stone      = P("stone",   "RON_ConcreteStrong", 5.5,  3, true,  12,  true,  0.3),        -- masonry, castle stone; concrete 11-13
 	stone_soft = P("stone",   "RON_ConcreteSoft",   4.25, 2, true,  12,  true,  0.0),        -- concrete 11-13
@@ -69,9 +73,9 @@ Deagle.penetration = {
 	drywall    = P("plaster", "RON_Drywall",        0.6,  0, true,  7,   false, 0.0),        -- wallboard 5-9
 	wood       = P("wood",    "RON_Plywood",        1.0,  0, true,  16,  false, 0.0),        -- plywood 14-18; density = default (GUESS 1)
 	wood_soft  = P("wood",    "RON_Pine",           1.0,  0, true,  11,  false, 0.0),        -- whitewood 9-12; density = default (GUESS 1)
-	soil       = P("soil",    "RON_Dirt",           1.0,  0, false, 10,  false, 0.0, 1.5),   -- packed ground, not penetrable; crit and lift GUESS (no study found)
+	soil       = P("soil",    "RON_Dirt",           1.0,  0, false, 14,  false, 0.0, 0.78),   -- packed ground, not penetrable: as sand (below)
 	soil_soft  = P("soil",    "RON_Dirt",           1.0,  0, false, 5,   false, 0.0, 1.5),   -- forest floor, grass, mud; GUESS
-	sand       = P("sand",    "RON_Sand",           1.0,  0, false, 10,  false, 0.0, 1.5),   -- crit GUESS (no study found), lift GUESS
+	sand       = P("sand",    "RON_Sand",           1.0,  0, false, 14,  false, 0.0, 0.78),  -- 9 mm 13-14; leaves at 2.8 + 0.78x (below)
 	foliage    = P("soil",    "RON_Leaves",         0.7,  0, true,  0,   false, 0.0),
 	cloth      = P("cloth",   "RON_Fabric_Thin",    0.5,  0, true,  0,   false, 0.0),
 	sack       = P("cloth",   "RON_Fabric_Stuffing", 1.0, 0, true,  0,   false, 0.0),        -- density = default (GUESS 1)
@@ -79,7 +83,7 @@ Deagle.penetration = {
 	glass      = P("glass",   "RON_Glass_Plate",    0.6,  0, true,  16,  false, 0.0),        -- float glass 15.8 (9 mm)
 	water      = P("water",   "RON_Water",          1.0,  0, true,  7,   false, 0.0),        -- water 6.5-8; density = default (GUESS 1)
 	flesh      = P("flesh",   "RON_Flesh",          3.0,  0, true,  0,   false, 0.0),        -- 9 mm: 3.3 cm, .50 AE: 10 cm
-	chainmail  = P("metal",   "RON_Tin",            1.0,  0, true,  6,   true,  0.0),        -- GUESS: rings stop little; crit GUESS as steel plate
+	chainmail  = P("metal",   "RON_Tin",            1.0,  0, true,  6,   true,  0.0),        -- GUESS: rings stop little; crit GUESS (no study of mail)
 }
 -- Off water a round leaves at ~10 deg whatever it came in at (9 mm FMJ: 2.5 -> 9.5, 5 -> 12, 8.5 -> 9.5; .45 ACP
 -- 2.5 -> 8: American Handgunner, "The Art Of The Ricochet") with ~10 % of its energy (pointed and round-nosed bullets
@@ -89,11 +93,30 @@ Deagle.penetration.water.exit, Deagle.penetration.water.keep = 10, 0.1
 -- Off sheet steel a 9 mm leaves at ~6 deg whatever it came in at (5-15 in: 4.8-7.6 out, mean 6), never steeper than it
 -- came (Science & Justice 2023, above): lift 1 (in the table) up to exitMax.
 Deagle.penetration.metal_thin.exitMax = 6
--- Energy kept on a skip (keep; others cfg.ricochetKeep, a GUESS): pistol bullets off steel and concrete up to 30 deg
--- stay whole and keep ~75 % (J Forensic Sci Soc 1994, "Distribution of energy among fragments of ricocheting pistol
--- bullets"; brick and tile as concrete). Off soft pine a .32 lost 26 % of its speed and a .45 51 % (Rathman 1987):
--- energy 0.55 and 0.24, ~0.4 between them.
-for _, k in ipairs({ "metal", "metal_thin", "chainmail", "stone", "stone_soft", "brick", "ceramic" }) do Deagle.penetration[k].keep = 0.75 end
+-- Off concrete, marble and 1/2" steel plate a 9 mm leaves at about half its angle (5 -> 2.7-3.1, 10 -> 4.1-5.1,
+-- 15 -> 6.0-6.9 deg; least squares 0.46: Diaczuk 2014, Tables 19, 21, 23); brick as concrete. Off glazed tile at
+-- ~1.4 deg whatever it came in at (5-15 in: 0.1-2.6 out, Nishshanka et al., JFS 2023, Tables 2-3). Off glass at 3/4 of
+-- it (laminated windshield 5 -> 3, 10 -> 8: Diaczuk & Goldfrank, AAFS 2017 B39; off float glass always flatter than it
+-- came: JFS 2016). Off cement board steeper, 1.2x (7 -> 8.3-9.6, 10 -> 11.1-12.7: Daly, John Jay MS thesis 2021), the
+-- nearest measured board, for plaster and drywall. Off sand at 2.8 + 0.78x (4 -> 6.0-6.5, 7 -> 7.9-8.0,
+-- 13 -> 12.0-13.1, 14 -> 14.3: Diaczuk 2014, Tables 7-9).
+for _, k in ipairs({ "metal", "stone", "stone_soft", "brick" }) do Deagle.penetration[k].lift = 0.46 end
+Deagle.penetration.ceramic.exit = 1.4
+Deagle.penetration.glass.lift = 0.75
+Deagle.penetration.plaster.lift, Deagle.penetration.drywall.lift = 1.2, 1.2
+Deagle.penetration.sand.exitAdd = 2.8
+-- Packed ground (road, gravel, field, soil) as sand, the nearest measured ground (GUESS that it carries over; no
+-- handgun study of soil found). Soft ground (forest floor, grass, mud) stays a guess.
+Deagle.penetration.soil.exitAdd = 2.8
+-- Energy kept on a skip (keep; others cfg.ricochetKeep, a GUESS): pistol bullets off sheet steel up to 30 deg stay
+-- whole and keep ~75 % (Houlden, J Forensic Sci Soc 1994, "Distribution of energy among fragments of ricocheting pistol
+-- bullets"; a .22 LR off a steel plate kept 0.85 of its speed, 72 %: Kolomiitsev et al., Theory and Practice of
+-- Forensic Science 2022, medians of 10-12 shots under 30 deg). Off concrete and brick the .22 LR kept 0.78-0.79 of its
+-- speed, ~60 % of its energy (same); off concrete it falls with the angle, ~30 % at 45 deg (Houlden). Tile as the
+-- concrete under it (GUESS). Off soft pine a .32 lost 26 % of its speed and a .45 51 % (Rathman 1987): energy 0.55 and
+-- 0.24, ~0.4 between them.
+for _, k in ipairs({ "metal", "metal_thin", "chainmail" }) do Deagle.penetration[k].keep = 0.75 end
+for _, k in ipairs({ "stone", "stone_soft", "brick", "ceramic" }) do Deagle.penetration[k].keep = 0.6 end
 Deagle.penetration.wood.keep, Deagle.penetration.wood_soft.keep = 0.4, 0.4
 -- worn armour layers (guns/armor.lua) by layer: their ricochet data
 Deagle.armorRicochet = { plate = Deagle.penetration.metal_thin, mail = Deagle.penetration.chainmail }

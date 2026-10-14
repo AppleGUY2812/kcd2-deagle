@@ -100,6 +100,8 @@ local function reset() world.slabs, world.npcs, world.ground, world.boxes, lande
 M.surfaceNames[6] = "mat_water"
 M.surfaceNames[7] = "mat_metal"
 M.surfaceNames[8] = "mat_door_metal"
+M.surfaceNames[9] = "mat_road"
+M.surfaceNames[10] = "mat_ceramics"
 -- math.random() returns v while f runs (ricochet rolls made certain); math.random(a, b) and seeding work as before
 local function withRandom(v, f)
 	local old = math.random
@@ -226,7 +228,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	check(string.format("%s: off water it keeps under 10 %% of its energy by the wall (%.1f %%)", id, kept * 100), kept > 0 and kept < 0.1, kept)
 
 	-- sheet steel (1 mm, 9 mm FMJ: Science & Justice 2023): skips below ~15 deg and leaves at ~6 deg whatever the angle,
-	-- never steeper than it came; off steel and concrete a round keeps ~75 % of its energy (J Forensic Sci Soc 1994)
+	-- never steeper than it came; off steel a round keeps ~75 % of its energy (J Forensic Sci Soc 1994)
 	local c10, c4 = skim(8, 10), skim(8, 4)
 	check(string.format("%s: sheet steel at 10 deg skips and climbs under 6 deg (%.1f); at 4 deg under 4 (%.1f)", id, c10, c4),
 		c10 > 3 and c10 < 6 and c4 > 1 and c4 < 4, c10)
@@ -235,7 +237,20 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	check(string.format("%s: off steel it keeps ~75 %% of its energy (%.0f %% at the wall %.0f m on, the air took x%.2f)", id,
 		keptSteel * 100, flown, air), math.abs(keptSteel / air - 0.75) < 0.05, keptSteel / air)
 
-	-- steel hit at 45 deg (far above its ~6 deg critical angle): no bounce, the round stops and breaks up, its fragments
+	-- measured departures (Diaczuk 2014 CUNY thesis, 9 mm): off 1/2" steel plate and concrete / marble at ~0.46 x the
+	-- angle, a 12 deg hit on solid steel skips whole (critical ~15, it was 6); off glazed tile at ~1.4 deg whatever the
+	-- angle (JFS 2023); off packed ground as off sand, 2.8 + 0.78 x (4 -> 6) and still at 12 (critical 14)
+	local s12, c12 = skim(7, 12), skim(1, 10)
+	local t10, t4 = skim(10, 10), skim(10, 4)
+	local g4, g12 = skim(9, 4), skim(9, 12)
+	local _, _, keptStone, flownS = skim(1, 3)
+	local airS = math.exp(-2 * flownS / Deagle:TumbleDragLength(Deagle:ShotPhysics(Deagle.gun)))
+	check(string.format("%s: steel at 12 deg skips, climbs %.1f (5.5 off it); stone at 10 climbs %.1f (4.6 off it); tile 10 / 4 in: %.1f / %.1f; ground 4 / 12 in: %.1f / %.1f; stone keeps %.0f %%",
+		id, s12, c12, t10, t4, g4, g12, keptStone / airS * 100),
+		s12 > 3 and s12 < 5.6 and c12 > 2.5 and c12 < 4.7 and t10 > -0.5 and t10 < 1.5 and t4 > -0.5 and t4 < 1.5
+		and g4 > 4 and g4 < 6.2 and g12 > 9 and g12 < 12.3 and math.abs(keptStone / airS - 0.6) < 0.05, s12)
+
+	-- steel hit at 45 deg (far above its ~15 deg critical angle): no bounce, the round stops and breaks up, its fragments
 	-- spraying along the face splashAngle deg off it (the user's iron door, in game 2026-10-14: hits at 45-75 deg)
 	reset()
 	world.ground = { z = 31.0, surface = 7 }
