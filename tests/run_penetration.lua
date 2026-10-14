@@ -48,6 +48,27 @@ Physics.RayWorldIntersection = function(pos, dir, _, _, skip1, skip2, hits)
 		end
 	end
 	if world.ground and dir.z ~= 0 then try((world.ground.z - pos.z) / dir.z, { normal = vec(0, 0, 1), surface = world.ground.surface }) end
+	-- boxes { min, max, surface }: a ray from outside hits the face it enters (outward normal); from inside, the face it
+	-- leaves by (worst case, like the slabs)
+	for _, b in ipairs(world.boxes or {}) do
+		local tn, tf, nn, nf, inside = -math.huge, math.huge, nil, nil, true
+		for _, ax in ipairs({ "x", "y", "z" }) do
+			local d, p0 = dir[ax], pos[ax]
+			if d == 0 then
+				if p0 < b.min[ax] or p0 > b.max[ax] then inside = false end
+			else
+				local t1, t2 = (b.min[ax] - p0) / d, (b.max[ax] - p0) / d
+				local n1, n2 = vec(0, 0, 0), vec(0, 0, 0)
+				n1[ax], n2[ax] = -1, 1
+				if t1 > t2 then t1, t2, n1, n2 = t2, t1, n2, n1 end
+				if t1 > tn then tn, nn = t1, n1 end
+				if t2 < tf then tf, nf = t2, n2 end
+			end
+		end
+		if inside and tn <= tf then
+			if tn >= 0 then try(tn, { normal = nn, surface = b.surface }) else try(tf, { normal = nf, surface = b.surface }) end
+		end
+	end
 	for _, n in ipairs(world.npcs) do
 		if n.id ~= skip2 and dir.y ~= 0 then
 			local t = (n.y - pos.y) / dir.y
@@ -75,7 +96,16 @@ local function check(label, ok, detail)
 	if not ok then fails = fails + 1 end
 	print((ok and "PASS " or "FAIL ") .. label .. (ok and "" or ("  " .. tostring(detail))))
 end
-local function reset() world.slabs, world.npcs, world.ground, landed, M.decals, M.fxNames = {}, {}, nil, {}, {}, {} end
+local function reset() world.slabs, world.npcs, world.ground, world.boxes, landed, M.decals, M.fxNames = {}, {}, nil, {}, {}, {}, {} end
+M.surfaceNames[6] = "mat_water"
+-- math.random() returns v while f runs (ricochet rolls made certain); math.random(a, b) and seeding work as before
+local function withRandom(v, f)
+	local old = math.random
+	math.random = function(...) if select("#", ...) > 0 then return old(...) end return v end
+	local ok, err = pcall(f)
+	math.random = old
+	if not ok then error(err, 0) end
+end
 local function fire(pitch)
 	Deagle.state.ammo, Deagle.state.lastShot = Deagle.gun.magSize, -100
 	Deagle.cfg.spreadHip, Deagle.cfg.spreadAim, Deagle.cfg.heatPerShot, Deagle.state.heat = 0, 0, 0, 0
@@ -138,10 +168,67 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	fire(math.rad(-45))
 	check(string.format("%s: into the ground at 45 deg: stays (%d hits)", id, #landed), #landed == 1 and not M.fxNames["deagle_impacts.ricochet_stone"], #landed)
 
+	-- stone's critical angle is 12 deg: at 8 deg it skips (98 %), at 20 deg it doesn't (0.03 %); the old Ready or Not
+	-- rule skipped 15 % of 20 deg hits and only 37 % of 8 deg ones
+	for _, a in ipairs({ { 8, true }, { 20, false } }) do
+		reset()
+		world.ground = { z = 31.0, surface = 1 }
+		world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
+		local n0 = #M.native
+		withRandom(0.5, function() fire(math.rad(-a[1])) end)
+		local whine
+		for i = n0 + 1, #M.native do
+			whine = whine or M.native[i]:match("^%[DN%] ron3 ([%d%.]+) [^|]*Ricochets")
+		end
+		check(string.format("%s: stone ground at %d deg: %s (%d hits, whine at x%s)", id, a[1], a[2] and "skips off" or "stays", #landed, tostring(whine)),
+			(#landed == 2) == a[2] and (whine ~= nil) == a[2]
+			and (not a[2] or math.abs(tonumber(whine) - Deagle.cfg.impactVolume * Deagle.cfg.ricochet.volume) < 1e-3), #landed)
+	end
+
+	-- wood skips too below its critical angle (plywood 14-18 deg); Ready or Not's wood never did
+	reset()
+	world.ground = { z = 31.0, surface = 3 }
+	world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
+	withRandom(0.5, function() fire(math.rad(-8)) end)
+	check(string.format("%s: wooden floor at 8 deg: skips off (%d hits)", id, #landed), #landed == 2, #landed)
+
+	-- water yields: a skipping round leaves steeper than it came (2.5 deg in, ~9.5 out); stone sends it off flatter
+	local function skimHeight(surface)
+		reset()
+		world.ground = { z = 31.0, surface = surface }
+		world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
+		withRandom(0.5, function() fire(math.rad(-3)) end)
+		return #landed == 2 and landed[2].hit.pos.z or -1
+	end
+	local zWater, zStone = skimHeight(6), skimHeight(1)
+	check(string.format("%s: skims water at 3 deg and climbs (%.1f m up at the wall), stone keeps it low (%.1f m)", id, zWater - 31, zStone - 31),
+		zWater > 31 + 12 and zStone > 31 and zStone < 31 + 6, zWater)
+
+	-- a rock corner: 20 deg down onto a block's top, 2 cm from its back edge (no ricochet: 20 > 12 deg). The .50 AE cuts
+	-- the corner and comes out bent away from the rock (up), not straight on; the 9 mm can't get into stone at all
+	reset()
+	world.boxes = { { min = vec(90, 201, 25), max = vec(110, 202.08, 31.0), surface = 1 } }
+	world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
+	withRandom(0.5, function() fire(math.rad(-20)) end)
+	local straightZ = 31.0 - (300 - 202.06) * math.tan(math.rad(20))
+	local zBehind = #landed == 2 and landed[2].hit.pos.z or nil
+	check(string.format("%s: clips a rock corner at 20 deg: %s", id, big and string.format("bent up off it (wall hit at %.1f m, straight on would be %.1f m)",
+		zBehind or -99, straightZ) or string.format("stops (%d hits)", #landed)),
+		big and zBehind and zBehind > straightZ + 8 or (not big and #landed == 1), zBehind)
+
+	-- a plank's faces are parallel: through it dead straight (only the drop over 40 m, a few cm)
+	reset()
+	world.slabs = { { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 240, y1 = 241, surface = 1 } }
+	fire()
+	check(string.format("%s: through a plank square-on: straight on (%.3f m sideways, %.3f m drop)", id,
+		#landed == 2 and math.abs(landed[2].hit.pos.x - 100) or -1, #landed == 2 and 31.75 - landed[2].hit.pos.z or -1),
+		#landed == 2 and math.abs(landed[2].hit.pos.z - 31.75) < 0.15 and math.abs(landed[2].hit.pos.x - 100) < 0.01, #landed)
+
 	-- worn cuirass (condition 0.5) on a torso: the 9 mm gets through only up close; the .50 AE also at 30 m
 	for _, dist in ipairs({ 5, 30 }) do
 		reset()
 		local guard = newNpc(200 + dist, { { guid = cuirass.guid, health = 0.5 } })
+		world.slabs = { { y0 = 190, y1 = 191, surface = 1 } }   -- a wall behind the shooter: a round bounced back hits it
 		local l0 = #M.logs
 		fire()
 		local through = true
@@ -151,6 +238,10 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		check(string.format("%s: worn cuirass at %d m: %s (%.1f HP, %.0f stamina), sparks %s, ricochet fx %s", id, dist,
 			through and "through" or "stopped: a bruise", guard.damage, guard.stamina, tostring(sparks), tostring(M.fxNames["deagle_impacts.ricochet_metal"])),
 			through == want and sparks and guard.stamina > 0 and (through or (guard.damage > 0 and (M.fxNames["deagle_impacts.ricochet_metal"] or 0) == 1)), guard.damage)
+		if not through then
+			check(string.format("%s: cuirass at %d m stops it square-on: it flattens and sprays along the plate, nothing comes back (%d hits)", id, dist, #landed),
+				#landed == 1, #landed)
+		end
 		local bled = (M.fxNames["deagle_blood.armor_entry"] or 0) + (M.fxNames["deagle_blood.entry"] or 0)
 		check(string.format("%s: cuirass at %d m: %s", id, dist, through and "blood through the armour (cloth tuft entry)" or "no blood"),
 			through and (M.fxNames["deagle_blood.armor_entry"] or 0) == 1 or (not through and bled == 0), bled)
@@ -290,7 +381,32 @@ check("a new cuirass stops a 9 mm even at the muzzle", (select(2, Deagle:Through
 layers[1].health = 0.5
 check("a worn one lets it through at the muzzle, square-on", Deagle:ThroughArmor(layers, phys9, e0, 1) > 0, nil)
 check("but not 20 deg off square-on", (select(2, Deagle:ThroughArmor(layers, phys9, e0, math.cos(math.rad(20))))) ~= nil, nil)
-check("past 70 deg plate always turns it (glance)", select(4, Deagle:ThroughArmor(layers, Deagle:ShotPhysics(Deagle.guns.deagle), Deagle:ShotPhysics(Deagle.guns.deagle).energy, math.cos(math.rad(75)))) == true, nil)
+check("a tumbling round (after a ricochet / corner) has less punch: the worn one stops it square-on",
+	(select(2, Deagle:ThroughArmor(layers, phys9, e0, 1, true))) ~= nil, nil)
+local physD = Deagle:ShotPhysics(Deagle.guns.deagle)
+withRandom(0.5, function()
+	check("plate turns a hit 3 deg off its face (critical angle 7)",
+		select(4, Deagle:ThroughArmor(layers, physD, physD.energy, math.sin(math.rad(3)))) == true, nil)
+	check("but not one 20 deg off it (the old rule always turned those)",
+		select(4, Deagle:ThroughArmor(layers, physD, physD.energy, math.sin(math.rad(20)))) ~= true, nil)
+end)
+-- the chance to skip off: half at the critical angle, nearly all 3 deg flatter, almost none 3 deg steeper, none for
+-- materials that never skip
+local rc = function(crit, a) return Deagle:RicochetChance(crit, a) end
+check(string.format("ricochet chance around a 12 deg critical angle: 9 deg %.2f, 12 deg %.2f, 15 deg %.2f; never-skip %.2f",
+	rc(12, 9), rc(12, 12), rc(12, 15), rc(0, 1)),
+	rc(12, 9) > 0.9 and math.abs(rc(12, 12) - 0.5) < 1e-9 and rc(12, 15) < 0.1 and rc(0, 1) == 0, nil)
+-- a tumbling round gets less far into things: 15 cm of timber stops a tumbling .50 AE that a straight one goes through
+local function timber(tumble)
+	reset()
+	world.slabs = { { y0 = 220, y1 = 220.15, surface = 3 } }
+	local r = { pos = vec(100, 220, 31.75), vel = vec(0, physD.velocity, 0), dist = 20, tumble = tumble }
+	local hit = { pos = vec(100, 220, 31.75), normal = vec(0, -1, 0), surface = 3, dist = 20, energy = physD.energy }
+	local through
+	withRandom(0.5, function() through = Deagle:Impact(hit, vec(0, 1, 0), physD, r) end)
+	return through
+end
+check("15 cm of timber: a straight .50 AE goes through, a tumbling one stops", timber(false) == true and timber(true) == false, nil)
 -- every surface a round can hit has penetration data (only pass-through helpers may lack it)
 local missing = {}
 for name, s in pairs(Deagle.surfaces) do

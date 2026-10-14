@@ -112,13 +112,28 @@ Deagle.cfg = {
 	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)
 	wallbang = { budget = 0.10 },  -- m of density-1 material (plywood) a 9 mm at the muzzle gets through (Ready or Not's
 	                          -- 9 mm guns: 10 cm); others by energy ratio; densities in guns/penetration.lua
-	ricochetKeep = 0.35,      -- energy a round keeps when it skids off stone / metal (GUESS)
-	ricochetLift = 0.4,       -- how much of its angle to the surface it leaves with (ricochets leave flatter)
+	ricochetKeep = 0.35,      -- energy a round keeps when it skips off a surface (GUESS)
+	ricochetLift = 0.4,       -- off hard surfaces (steel, stone): the share of its angle to the surface it leaves with
+	                          -- (unyielding ones send it off flatter); softer ones have their own (guns/penetration.lua)
 	ricochetScatter = 4,      -- deg of random turn on a ricochet
+	-- the chance a round skips off: 1 / (1 + e^((angle - crit x critScale) / width)): half at the material's critical
+	-- angle (guns/penetration.lua), ~95 % 3 deg flatter, ~5 % 3 deg steeper (width GUESS: whitewood went from always
+	-- at 12 deg to never at 13). critScale: every world material's angle x this (game feel; 1 = the measured ones).
+	-- volume: the ricochet whine x impactVolume; fxScale: its sparks x the impact's size
+	ricochet = { width = 1, critScale = 1, volume = 2, fxScale = 1.5 },
+	-- a round cutting through a corner or an edge (in through one face, out through one that isn't the far side): the
+	-- material is on one side of it only, so it's pushed off away from the material and starts tumbling. Bent up to
+	-- maxDeg x how lopsided the two faces are x (0.5 + half the share of its reach it spent), + scatter deg; the corner
+	-- throws chipScale x the normal debris. GUESS (no study of corner clips found)
+	deflect = { maxDeg = 12, scatter = 3, chipScale = 1.6 },
+	tumble = { pen = 0.5 },   -- a tumbling round (after a ricochet or a corner) meets things side-on: this much of its
+	                          -- punch / reach (GUESS); its wounds aren't smaller
 	-- armour (Deagle:ThroughArmor): punch = a 9 mm at the muzzle, square-on, in KCD2 stab defense. Set so the Glock
 	-- (110) gets through a typical worn cuirass (median plate stab 135 x 0.8 = 108) only within ~5 m and square-on, a
-	-- weaker worn one (132: 106) within ~12 m, a new one never; the Deagle (~200) through most plate at any range
-	armor = { punch = 104, conditionFloor = 0.6, glanceAngle = 70, bruise = 0.1, ricochetKeep = 0.3, scatter = 30 },
+	-- weaker worn one (132: 106) within ~12 m, a new one never; the Deagle (~200) through most plate at any range.
+	-- critScale: plate / mail critical angles x this (game feel, apart from the world's); a round plate stops sprays
+	-- its fragments along the plate, splashAngle deg off its face
+	armor = { punch = 104, conditionFloor = 0.6, critScale = 1, bruise = 0.1, ricochetKeep = 0.3, scatter = 30, splashAngle = 20 },
 	armorRicochetFx = "deagle_impacts.ricochet_metal",
 	impactVolume = 1.0,       -- bullet impact / ricochet / armour sounds: x Ready or Not's own level
 	-- KCD2's AI hearing (XGenAIModule.ProduceSound*): shot = the gun_fired multiplier for a 9 mm (louder guns more;
@@ -1102,17 +1117,21 @@ end
 -- is cfg.armor.punch for a 9 mm at the muzzle, times its energy ratio, times cos of the angle off square-on (a plate
 -- hit at an angle is thicker along the path). Each layer takes its KCD2 stab defense out of it, scaled by its
 -- condition (a worn piece keeps conditionFloor + the rest x condition); a layer with more defense than the punch left
--- stops the round. Past glanceAngle off square-on, plate and mail always turn it. So a 9 mm gets through a worn
--- cuirass only up close and square-on, a .50 AE through most plate. Returns the energy that reaches the body (0 when
--- stopped), the layer that stopped it and whether a hard layer (plate / mail) was hit.
-function Deagle:ThroughArmor(layers, phys, energy, cosI)
+-- stops the round. Plate and mail can turn it first: a hit flatter than their critical angle (guns/penetration.lua
+-- armorRicochet x cfg.armor.critScale) skips off (RicochetChance). A tumbling round has cfg.tumble.pen of its punch.
+-- So a 9 mm gets through a worn cuirass only up close and square-on, a .50 AE through most plate. Returns the energy
+-- that reaches the body (0 when stopped), the layer that stopped it, whether a hard layer (plate / mail) was hit and
+-- whether the round skipped off it.
+function Deagle:ThroughArmor(layers, phys, energy, cosI, tumble)
 	local m = self.cfg.armor
-	local punch0 = m.punch * self:EnergyRatio(phys, energy) * math.max(cosI, 0.05)
+	local punch0 = m.punch * self:EnergyRatio(phys, energy) * math.max(cosI, 0.05) * (tumble and self.cfg.tumble.pen or 1)
+	local graze = math.deg(math.asin(math.min(1, cosI)))   -- between the round's path and the armour's face
 	local punch, hard = punch0, false
 	for _, l in ipairs(layers) do
 		local isHard = l.a.layer == "plate" or l.a.layer == "mail"
 		hard = hard or isHard
-		if isHard and cosI < math.cos(math.rad(m.glanceAngle)) then return 0, l, true, true end
+		local ric = isHard and self.armorRicochet and self.armorRicochet[l.a.layer]
+		if ric and math.random() < self:RicochetChance(ric.crit, graze, m.critScale) then return 0, l, true, true end
 		local def = l.a.stab * (m.conditionFloor + (1 - m.conditionFloor) * l.health)
 		if punch < def then return 0, l, hard end
 		punch = punch - def
@@ -1120,17 +1139,46 @@ function Deagle:ThroughArmor(layers, phys, energy, cosI)
 	return energy * punch / punch0, nil, hard
 end
 
--- A round turned off a surface or armour: mirrored, leaving flatter than it came in (lift), scattered, slower; it flies
--- on and can hit something else. Its own tracer from there.
-function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip)
+-- The chance a round skips off a material whose critical angle is crit deg, hit graze deg off its face: half at crit,
+-- nearly always when flatter, almost never when steeper (cfg.ricochet); crit 0 = never
+function Deagle:RicochetChance(crit, graze, critScale)
+	local c = self.cfg.ricochet
+	if not crit or crit <= 0 then return 0 end
+	return 1 / (1 + math.exp((graze - crit * (critScale or c.critScale)) / c.width))
+end
+
+-- A round turned off a surface or armour: mirrored, leaving at lift x its angle to the surface (hard surfaces
+-- cfg.ricochetLift: flatter than it came in), scattered, slower and tumbling; it flies on and can hit something else.
+-- Its tracer starts again from here.
+function Deagle:Deflect(r, pos, normal, dir, keep, scatter, skip, lift)
 	local c = self.cfg
 	local out = vsub(dir, vscale(normal, 2 * vdot(dir, normal)))
-	out = vnorm(vsub(out, vscale(normal, vdot(out, normal) * (1 - c.ricochetLift))))
+	out = vnorm(vsub(out, vscale(normal, vdot(out, normal) * (1 - (lift or c.ricochetLift)))))
 	out = coneDir(out, scatter)
-	if vdot(out, normal) < 0.05 then out = vnorm(vadd(out, vscale(normal, 0.08))) end   -- never back into the surface
+	local up = vdot(out, normal)
+	if up < 0.01 then out = vnorm(vadd(out, vscale(normal, 0.01 - up))) end   -- never back into the surface (>= 0.6 deg off it)
 	local speed = vlen(r.vel) * math.sqrt(keep)
 	r.pos, r.vel, r.skip = vadd(pos, vscale(normal, 0.01)), vscale(out, speed), skip
+	r.tumble, r.turnPos, r.turnDist = true, r.pos, r.dist
 	if c.tracers and c.tracer.mode == "flying" then self:SpawnFx(self:TracerFx(speed), r.pos, out, 1.0) end
+	return out
+end
+
+-- A round plate stops doesn't bounce back: it flattens and breaks up, and the fragments spray out along the plate, most
+-- of them cfg.armor.splashAngle deg off its face, on the way the round was going (FBI steel-target tests: police1.com
+-- "Training with steel targets"); a square-on hit sprays them any way round.
+function Deagle:Splash(pos, normal, dir, scale)
+	local c = self.cfg
+	local along = vsub(dir, vscale(normal, vdot(dir, normal)))
+	if vlen(along) < 0.2 then   -- square-on: a random way along the plate
+		local t = math.abs(normal.z) < 0.9 and { x = 0, y = 0, z = 1 } or { x = 1, y = 0, z = 0 }
+		local u = vnorm(vsub(t, vscale(normal, vdot(t, normal))))
+		local a = math.random() * 2 * math.pi
+		along = vadd(vscale(u, math.cos(a)), vscale(vcross(normal, u), math.sin(a)))
+	end
+	local s = math.rad(c.armor.splashAngle)
+	local out = vnorm(vadd(vscale(vnorm(along), math.cos(s)), vscale(normal, math.sin(s))))
+	self:SpawnFx(c.armorRicochetFx, pos, out, scale)
 	return out
 end
 
@@ -1153,14 +1201,14 @@ local RON_HIT = {
 }
 Deagle.ronHitEvents = { RON_IMPACT }
 for _, ev in pairs(RON_HIT) do Deagle.ronHitEvents[#Deagle.ronHitEvents + 1] = ev end
-function Deagle:HitSound(what, pos, scale)
+function Deagle:HitSound(what, pos, scale, vol)
 	local c = self.cfg
 	if self.native and what then
 		local ev, params
 		local prop = "Occlusion=0 PropagateDistance=@"
 		if type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d %s", what, prop)
 		else ev, params = RON_HIT[what], prop end
-		if ev then self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume, pos.x, pos.y, pos.z, ev, params)) end
+		if ev then self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume * (vol or 1), pos.x, pos.y, pos.z, ev, params)) end
 	end
 	if c.hearing.on then try("AI hears the hit", XGenAIModule.ProduceSound, enum_sound.bullet_hit, pos, c.hearing.hit * (scale or 1)) end
 end
@@ -1266,12 +1314,13 @@ end
 local EXIT_FX = { stone = true, plaster = true, wood = true, metal = true, glass = true, cloth = true }   -- <family>_exit
 local THIN = { glass = true, cloth = true, straw = true }   -- panes / sheets: often built with no thickness
 
--- A round hitting the world (BALLISTICS.md phase 3). A glancing hit on a surface that can turn rounds may skid off
--- (chance grows as the angle flattens, guns/penetration.lua from Ready or Not). Otherwise the surface's mark, then
--- through it if the round can be: its punch has to reach the surface's armour level, and it gets through
--- cfg.wallbang.budget x energy ratio / density metres of it. A ray back from that deep finds the far side; if the
--- thing is thinner, the round comes out there (debris out the back, a bigger exit hole) with the energy it didn't
--- spend. True when the round flies on.
+-- A round hitting the world (BALLISTICS.md phase 3). A hit flatter than the material's critical angle skips off
+-- (RicochetChance, guns/penetration.lua: measured angles): ricochet whine, and sparks off hard surfaces. Otherwise the
+-- surface's mark, then through it if the round can be: its punch has to reach the surface's armour level, and it gets
+-- through cfg.wallbang.budget x energy ratio / density metres of it (half that tumbling). A ray back from that deep
+-- finds the far side; if the thing is thinner, the round comes out there (debris out the back, a bigger exit hole)
+-- with the energy it didn't spend. Out through a face that isn't the far side (a corner, an edge) it's bent off away
+-- from the material and tumbles (cfg.deflect). True when the round flies on.
 function Deagle:Impact(hit, dir, phys, r)
 	local c = self.cfg
 	local name = surfaceName(hit)
@@ -1288,23 +1337,23 @@ function Deagle:Impact(hit, dir, phys, r)
 	local scale = self:ImpactScale(phys, hit.dist, energy)
 	local pen = self.penetration and self.penetration[name]
 	local cosI = math.max(0, -vdot(dir, hit.normal))
-	if r and pen and pen.ricochetChance > 0 then
-		local graze = math.deg(math.asin(math.min(1, cosI)))     -- between the shot and the surface
-		if graze < pen.ricochetMaxAngle and math.random() < math.min(1, pen.ricochetChance * pen.ricochetMaxAngle / math.max(graze, 1)) then
-			self:Mark(s, hit, dir, scale * 0.6)
-			local out = self:Deflect(r, hit.pos, hit.normal, dir, c.ricochetKeep, c.ricochetScatter)
-			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale)
-			self:HitSound("ricochet", hit.pos, scale)
-			if self.state.logActions then log(string.format("ricochet %s at %.0f deg", name, graze)) end
-			return true
+	local graze = math.deg(math.asin(math.min(1, cosI)))     -- between the shot and the surface
+	if r and pen and math.random() < self:RicochetChance(pen.crit, graze) then
+		self:Mark(s, hit, dir, scale * 0.6)
+		local out = self:Deflect(r, hit.pos, hit.normal, dir, c.ricochetKeep, c.ricochetScatter, nil, pen.lift or (not pen.hard and 1 or nil))
+		if pen.hard then
+			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale * c.ricochet.fxScale)
 		end
+		self:HitSound("ricochet", hit.pos, scale, c.ricochet.volume)
+		if self.state.logActions then log(string.format("ricochet %s at %.0f deg (critical %.0f)", name, graze, pen.crit)) end
+		return true
 	end
 	self:Mark(s, hit, dir, scale)
 	if self.state.logActions then log(string.format("impact %s -> %s x%.2f hole %s", name, s.fx, scale, tostring(s.hole))) end
 	if not (r and pen and pen.penetrable) or s.fx == "water" then return false end
 	local ratio = self:EnergyRatio(phys, energy)
 	if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then return false end   -- 9 mm level 2, .50 AE 3
-	local depth = c.wallbang.budget * ratio / pen.density
+	local depth = c.wallbang.budget * ratio / pen.density * (r.tumble and c.tumble.pen or 1)
 	local reach, back, p = depth + 0.01, {}, self:Player()
 	local ok, n = pcall(Physics.RayWorldIntersection, vadd(hit.pos, vscale(dir, reach)), vscale(dir, -reach), 1, ent_all, p and p.id, nil, back)
 	local far = ok and n and n > 0 and back[1]
@@ -1320,8 +1369,24 @@ function Deagle:Impact(hit, dir, phys, r)
 		self:Mark({ hole = s.hole }, { pos = exitPos, normal = exitNormal, entity = hit.entity }, dir, scale, c.holeExitSize)
 	end
 	local left = energy * (1 - thick / depth)
-	r.pos, r.vel, r.dist = vadd(exitPos, vscale(dir, 0.002)), vscale(dir, math.sqrt(2 * left / phys.bullet)), r.dist + thick
-	if c.tracers and c.tracer.mode == "flying" then self:SpawnFx(self:TracerFx(vlen(r.vel)), r.pos, dir, 1.0) end
+	-- in and out through faces that aren't each other's far side (a corner, an edge): the two outward normals add up
+	-- to where the material isn't, so that's the way it's pushed (a plank's faces cancel: straight through)
+	local out = dir
+	if far and vdot(far.normal, dir) > 0 then
+		local side = vadd(hit.normal, exitNormal)
+		side = vsub(side, vscale(dir, vdot(side, dir)))
+		local lop = vlen(side)
+		if lop > 0.1 then
+			local b = math.rad(c.deflect.maxDeg * math.min(1, lop) * (0.5 + 0.5 * thick / depth))
+			out = coneDir(vnorm(vadd(vscale(dir, math.cos(b)), vscale(vnorm(side), math.sin(b)))), c.deflect.scatter)
+			r.tumble = true
+			self:SpawnFx("deagle_impacts." .. s.fx, exitPos, exitNormal, scale * c.deflect.chipScale)   -- the corner breaks off
+			if self.state.logActions then log(string.format("deflect %s: corner %.1f cm, bent %.0f deg", name, thick * 100, math.deg(b))) end
+		end
+	end
+	r.pos, r.vel, r.dist = vadd(exitPos, vscale(out, 0.002)), vscale(out, math.sqrt(2 * left / phys.bullet)), r.dist + thick
+	if out ~= dir then r.turnPos, r.turnDist = r.pos, r.dist end
+	if c.tracers and c.tracer.mode == "flying" then self:SpawnFx(self:TracerFx(vlen(r.vel)), r.pos, out, 1.0) end
 	if self.state.logActions then log(string.format("through %s %.1f cm (could %.1f), %.0f J left", name, thick * 100, depth * 100, left)) end
 	return true
 end
@@ -1388,7 +1453,7 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 				local left
 				local layers = self:ArmorOn(e, part)
 				for _, l in ipairs(layers) do padded = padded or l.a.layer == "padding" or l.a.layer == "mail" or l.a.layer == "plate" end
-				left, stopped, hard, glance = self:ThroughArmor(layers, phys, energy, cosI)
+				left, stopped, hard, glance = self:ThroughArmor(layers, phys, energy, cosI, r and r.tumble)
 				scale = self:ImpactScale(phys, hit.dist, energy)
 				local bare, shove = self:Wound(phys, hit.dist, energy)
 				stam = shove                                  -- the shove lands whatever stops the round
@@ -1413,10 +1478,13 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 					self:HitSound((part == "head" and "armor_helmet" or "armor_body") .. (stopped and "_block" or ""), hit.pos, scale)
 				end
 				if not stopped then self:HitSound(RON_SURFACE.mat_flesh, hit.pos, scale) end
-				if stopped and hard and r then         -- turned by plate / mail: off it goes, sparks along its new way
+				if glance and r then                   -- skipped off plate / mail: off it goes, sparks along its new way
 					local out = self:Deflect(r, hit.pos, hit.normal or vscale(dir, -1), dir, c.armor.ricochetKeep, c.armor.scatter, e.id)
-					self:SpawnFx(c.armorRicochetFx, hit.pos, out, self:ImpactScale(phys, hit.dist, energy))
+					self:SpawnFx(c.armorRicochetFx, hit.pos, out, scale * c.ricochet.fxScale)
+					self:HitSound("ricochet", hit.pos, scale, c.ricochet.volume)
 					goesOn = true
+				elseif stopped and (stopped.a.layer == "plate" or stopped.a.layer == "mail") then
+					self:Splash(hit.pos, hit.normal or vscale(dir, -1), dir, scale)   -- flattened on it: no bounce back
 				end
 			else                -- a gun without cartridge data: its CS2 numbers
 				dmg = c.damage * (part == "head" and c.headshotMult or 1) * c.rangeMod ^ ((hit.dist or 0) / 12.7)
@@ -1652,13 +1720,17 @@ end
 function Deagle:TracerBullet(r, from)
 	local trail, c = r.trail, self.cfg.tracer
 	if not trail or not self.cfg.tracers or r.dist < c.start then return end
+	-- turned off a surface (Deflect, a corner): this frame's streak starts at the turn, not back on the old line, never
+	-- reaches back past it, and the muzzle offset is over
+	local turned = r.turnDist
+	if r.turnPos then from, r.turnPos = r.turnPos, nil end
 	local move = vsub(r.pos, from)
 	local ml = vlen(move)
 	local u = ml > 1e-4 and vscale(move, 1 / ml) or vnorm(r.vel)
-	local l = math.min(c.length, r.dist - c.start)
+	local l = math.min(c.length, r.dist - c.start, turned and r.dist - turned or math.huge)
 	if l < 0.05 then return end
-	local p1 = self:TrailPoint(trail, r.pos, r.dist)
-	local p0 = self:TrailPoint(trail, vsub(r.pos, vscale(u, l)), r.dist - l)
+	local p1 = turned and r.pos or self:TrailPoint(trail, r.pos, r.dist)
+	local p0 = turned and vsub(r.pos, vscale(u, l)) or self:TrailPoint(trail, vsub(r.pos, vscale(u, l)), r.dist - l)
 	local dir = vnorm(vsub(p1, p0))
 	local fx = c.fx
 	if fx == "auto" then   -- glows about a frame: never shorter than the frame, or it's never drawn

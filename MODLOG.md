@@ -404,3 +404,22 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - Hay sheaves, hay stands and straw targets are mat_thatch. mat_organic_stuff is used for food, fish and mushrooms.
 - mat_wood_soft is only on small items: lute, twigs, whip, and the like.
 - Every stairs-stone object also has a mat_slope proxy, which is pierceable.
+
+## 2026-10-13: ricochets, rock hulls, corner clips
+- Big rocks hit as a handful of flat faces: 209 rays over one boulder (by the coppiced beech) hit only 6 distinct
+  normals (`Physics.RayWorldIntersection`; drawn as lines in game, `Desktop\Deagle Progress\rock_hull.png`). The
+  angle a round meets a rock at comes from that hull, not the rounded rock on screen: shots that looked like skims
+  measured 22-36 deg. `p_draw_helpers` exists (0) but draws nothing in the shipped game, `s_g` included.
+- Ready or Not's rule (30 deg for every surface, 10-30 %) did skip 6 of 31 rock shots; the user couldn't tell them
+  apart. Replaced by measured critical angles per material (guns/penetration.lua `crit`, sources there): pistol
+  bullets skip only below ~5-9 deg on steel, wallboard, glass, water; 11-13 on concrete; 15-17 on tile; 14-18 on
+  plywood. Above it a hard surface breaks the round up; a stopped round on plate now sprays fragments along it
+  (FBI: most at ~20 deg off the plate) instead of bouncing back at the shooter.
+- A Deagle shot skimming a rock's edge at 4 deg went straight through a 2 cm sliver of the hull (the wallbang
+  check ignored the angle). Now a round out through a face that isn't the far side is bent away from the material
+  and tumbles (cfg.deflect, guess: no study of corner clips found).
+- Dev reload (`tools/live.sh reload`) reruns deagle_main.lua only; guns/*.lua come from the installed pak. To try a
+  changed guns file live: copy it to E:\Tools\deagle-dev and `deagle_lua dofile([[E:/Tools/deagle-dev/<file>]])`
+  after the reload. The game console splits commands on `;`.
+- Re-sending saved settings with `while read ... powershell.exe` stops after one line: powershell eats the loop's
+  stdin. Give it `< /dev/null`.

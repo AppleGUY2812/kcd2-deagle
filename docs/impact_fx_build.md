@@ -90,8 +90,8 @@ Texture list: `imp_dust` (thinSmoke 8x4), `imp_dustjet` (dustImpact 16x2), `imp_
 
 ## 5. Wallbangs, exits and ricochets
 ### Data: `src/Scripts/Deagle/guns/penetration.lua`
-`Deagle.penetration[<family or mat_* surface>] = { family, ron, density, armour, penetrable, maxDepth = { mm9, ae50 }, ricochetChance, ricochetMaxAngle, spall }`,
-plus `Deagle.penetrationAmmo["9x19" / "50ae"]` and `Deagle.ricochetMaxAngle = 30`. The file only fills tables. It has
+`Deagle.penetration[<family or mat_* surface>] = { family, ron, density, armour, penetrable, crit, hard, lift, maxDepth = { mm9, ae50 }, spall }`,
+plus `Deagle.penetrationAmmo["9x19" / "50ae"]` and `Deagle.armorRicochet` (plate / mail). The file only fills tables. It has
 to be loaded next to `calibers.lua` (not done here: `deagle_main.lua` is off limits for me).
 
 What the values mean (RoN's combining code is native and was **not read**; this is the inferred model):
@@ -101,7 +101,7 @@ What the values mean (RoN's combining code is native and was **not read**; this 
 - **How far?** `maxDepth = budget / density` (m). The budget is RoN's per-weapon `PenetrationDistance`: 9 mm guns
   ~10 cm (MP5, M92). For the .50 AE I **guessed** 30 cm, since RoN has no .50 AE gun (.45 = 8, .357 Python = 55). Examples:
 
-| surface (RoN) | density | armour | 9 mm | .50 AE | ricochet (9 mm, < 30 deg) | spall |
+| surface (RoN) | density | armour | 9 mm | .50 AE | RoN ricochet (9 mm, < 30 deg; not used) | spall |
 |---|---|---|---|---|---|---|
 | drywall | 0.6 | 0 | 17 cm | 50 cm | no | 0 |
 | plaster | 0.8 | 0 | 12.5 cm | 37.5 cm | 0.1 | 0 |
@@ -116,9 +116,17 @@ What the values mean (RoN's combining code is native and was **not read**; this 
 
 - **What's left after a wallbang:** RoN's speed / damage loss per surface is C++. **Guess:** keep
   `1 - depth / maxDepth` of the energy.
-- **Ricochet:** only if the surface can ricochet and the shot hits within `ricochetMaxAngle` (30 deg, Projectile_Base
-  RequiredAngleToDeflect) of the surface. Chance = ammo RicochetChance (9 mm FMJ 0.1; RoN gives the .50 AE 0) x the
-  surface multiplier (sheet metal 1.25).
+- **Ricochet (2026-10-13: measured critical angles, not RoN's rule):** RoN's 30 deg at 10-30 % for every surface is
+  replaced by each material's critical angle from forensic tests (`crit` in penetration.lua, sources there): steel 6,
+  sheet / plate 7, stone 12, tile 16, plaster 7, plywood 16, pine 11, glass 7, water 7, soil / sand 10 (guess); cloth,
+  straw, leaves, flesh never. Chance = 1 / (1 + e^((angle - crit) / cfg.ricochet.width)): half at crit. Off hard
+  surfaces it leaves flatter (cfg.ricochetLift 0.4), off yielding ones steeper (`lift`: water 3.8, soil 2). Ricochets
+  tumble (cfg.tumble.pen: half the reach into the next thing).
+- **Corner / edge (deflection):** a round that gets out through a face that isn't the far side (entry and exit
+  normals don't cancel) is bent away from the material by up to cfg.deflect.maxDeg, tumbles, and the corner throws
+  a bigger chip burst. A plank's parallel faces: straight through.
+- **Armour:** plate / mail turn a hit flatter than their critical angle (x cfg.armor.critScale); a round they stop
+  doesn't bounce back: its fragments spray along the plate cfg.armor.splashAngle off its face (Deagle:Splash).
 - **Spall:** a stopped round on an armoured surface throws fragments with probability `spall` (RoN SpallingChance),
   with ammo SpallingDamage 10-15 within 0.6 m.
 
