@@ -521,6 +521,15 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   So the "7-15 dB under the bang" reference is withdrawn. The user's clip (Sunday Shoot-a-Round #351, 0:08 in the
   video, sCV1pilQxxU: a pistol at steel in a thin forest; events 0.44 s after 5 shots, ~1 s after the first) is not
   settled by measurement alone. Look at frames before trusting any sound measurement from a video.
+- **Water (Claude 2, later that night).** RoN's P_BulletImpact_Water switches off 4 of its 7 emitters (Required
+  bEnabled = false: ring, 2nd DropletMicro, DustFine mist, RoundDistortion drops); our water drew all 7. Rebuilt from
+  the 3 on (caustic sheets, droplets, dust puff), textures baked from the decoded pixel shaders (tools/ron/mk_water2_tex.py).
+  Caustic sheets are square: Cascade's default PSA_Square draws Size X by X. **KCD2 Facing="CameraX" +
+  OrientToVelocity="true" stretches Aspect ACROSS the velocity**, not along it (in game: streaks lay sideways over
+  rising droplets), so for a streak Size = half its length along the flight and Aspect < 1 = width / length.
+- **F9 slow motion and fxs**: the plugin held fxs pieces 2 s of wall time (x0.1 cut them at 0.2 s game time); now 2 s
+  of game time (wall dt x the speed command, 2962b97). Script.SetTimer runs on game time too (3 spawns 1 s apart showed
+  one in a 3.6 s recording at x0.1). Check the log for "slow motion x0.1" before reading a recording's timing.
 
 ## 2026-10-14: why the mesh flash never drew (Claude 4)
 - Runtime bone attachments (`CreateBoneAttachment`) sat at the viewmodel's model origin, which is the camera, so
