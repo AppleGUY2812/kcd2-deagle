@@ -72,7 +72,9 @@ for i = 1, #modes do
 end
 -- burst during an inspect: the burst cuts it (it used to stack recoil on the inspect, firing from a sideways gun)
 local burstCut
-if g.anims.shootBurst then
+local hasBurst = false
+for _, m in ipairs(Deagle:FireModes()) do if m == "burst" then hasBurst = true end end
+if g.anims.shootBurst and hasBurst then
 	while Deagle:FireMode() ~= "burst" do act("deagle_firemode"); M.advance(0.1) end
 	Deagle.state.ammo = g.magSize; M.advance(1.0)
 	act("deagle_inspect"); M.advance(1.0)
@@ -189,6 +191,8 @@ for _, r in ipairs(modeResults) do
 		check("burst plays its burst clip once: " .. r.started, n == 1, r.started)
 	end
 end
+-- the profile's own modes win over CS2's (the real Glock 17 is semi-auto only; CS2's Glock-18 has a burst: the user, 2026-10-13)
+if g.id == "glock_17" then check("Glock 17: semi only, like the real gun (" .. table.concat(Deagle:FireModes(), ", ") .. ")", #Deagle:FireModes() == 1 and Deagle:FireModes()[1] == "semi", nil) end
 if burstCut then check("a burst cuts an inspect: " .. burstCut, burstCut:find("shoot_alt/0.30", 1, true) ~= nil, burstCut) end
 local w = g.cs2 and Deagle.cs2 and Deagle.cs2[g.cs2]
 if w then
