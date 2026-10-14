@@ -77,7 +77,7 @@ Deagle.cfg = {
 	-- shot's own frame (Deagle:FlashMeshLight; intensity = the main one's, bulb = its attenuation bulb m), "particle" =
 	-- the old per-shot particle light (a frame late, sized with the flash, lit the night fog)
 	flashMesh = { look = "ours", time = 0.035, roll = true, mtl = "deagle_vm_flash", large = "deagle_vm_flash", small = "deagle_vm_flash_s",
-		light = { mode = "ron", intensity = 6, bulb = 0.3 } },
+		light = { mode = "ron", intensity = 0.5, bulb = 0.3, refBlast = 2.08 } },
 	-- flashMesh.look "ron" (deagle_flash ron): Ready or Not's pistol flash, its textures and its Cascade system run and baked
 	-- onto cards (tools/ron/flash_bake.py): WeaponFlash_Pistol_V3 of the Grizzly MK V .50 AE for big blasts, the G19's V2
 	-- for small ones. variants x stages cards; a shot picks a variant and shows the stage its game time is in (sparks
@@ -714,13 +714,20 @@ local RON_LIGHTS = {
 	{ slot = 3, at = 0.25, atSmall = 0.10, time = 0.04, share = 1 },
 	{ slot = 4, at = 0.12, atSmall = 0.05, time = 0.035, share = 0.43 },
 }
-local RON_LIGHT_HUE = { 1.0, 0.0118, 0.0052 }
+-- The colour is what the light adds on screen in Ready or Not, not its raw hue: its emitter colour (38250 : 450 : 200)
+-- is red, and Ready or Not's tonemapper turns it red-orange on what it lights; KCD2's kept it red, the whole yard red
+-- (the user's screenshot, 2026-10-14). Measured on the user's Ready or Not clip (frames 229 -> 231, linear light,
+-- surfaces away from the fireball): added light 1 : 0.25-0.29 : 0.09-0.21.
+local RON_LIGHT_HUE = { 1.0, 0.27, 0.15 }
 function Deagle:FlashMeshLight(vm, lp, ld, large)
 	local L = self.cfg.flashMesh.light
 	local now = System.GetCurrTime()
+	local phys = self:ShotPhysics()
+	-- set on the Deagle; a smaller cartridge's flash lights by its blast (the muzzle gas: Glock 0.48 of the Deagle)
+	local blast = phys and phys.blast / L.refBlast or 1
 	self.flashLights = self.flashLights or {}
 	for _, l in ipairs(RON_LIGHTS) do
-		local i = L.intensity * l.share
+		local i = L.intensity * blast * l.share
 		local col = { x = i * RON_LIGHT_HUE[1], y = i * RON_LIGHT_HUE[2], z = i * RON_LIGHT_HUE[3] }
 		local ok = pcall(vm.LoadLight, vm, l.slot, {
 			style = 0, deferred_light = 1, radius = LIGHT_RADIUS, diffuse_color = col, specular_color = col,

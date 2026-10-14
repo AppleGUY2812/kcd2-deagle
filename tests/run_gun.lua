@@ -312,12 +312,15 @@ if mesh then
 		table.concat(mesh.f0, ","), table.concat(mesh.f1, ","), table.concat(mesh.f2, ",")),
 		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] == mesh.f0[1] and #mesh.f2 == 0 and not mesh.particleFlash, #mesh.f2)
 	local l3, l4 = mesh.lights[3], mesh.lights[4]
-	local function red(l) local c = l and l.props.diffuse_color return c and c.x > 0 and c.y < 0.02 * c.x and c.z < 0.01 * c.x end
-	check(string.format("flash light: Ready or Not's two lights on the shot (radius %s / %s m: no visible edge, red %s, fog %s), gone after 0.04 s (%d left)",
+	-- the colour Ready or Not's light adds on screen (red-orange), at the cartridge's blast (Glock 0.48 of the Deagle)
+	local function red(l) local c = l and l.props.diffuse_color return c and c.x > 0 and c.y > 0.2 * c.x and c.y < 0.35 * c.x and c.z < c.y end
+	local wantI = Deagle.cfg.flashMesh.light.intensity * phys.blast / Deagle.cfg.flashMesh.light.refBlast
+	check(string.format("flash light: Ready or Not's two lights on the shot (radius %s / %s m: no visible edge, red-orange at the blast %s, fog %s), gone after 0.04 s (%d left)",
 		tostring(l3 and l3.props.radius), tostring(l4 and l4.props.radius), tostring(red(l3) and red(l4)),
 		tostring(l3 and l3.props.volumetric_fog), mesh.lightsLeft),
 		l3 and l4 and l3.props.radius >= 30 and l4.props.radius >= 30 and red(l3) and red(l4) and l3.props.volumetric_fog == false
-		and l4.props.diffuse_color.x < l3.props.diffuse_color.x and l3.pos ~= nil and mesh.lightsLeft == 0, mesh.lightsLeft)
+		and l4.props.diffuse_color.x < l3.props.diffuse_color.x and math.abs(l3.props.diffuse_color.x - wantI) < 1e-6 and l3.pos ~= nil
+		and mesh.lightsLeft == 0, mesh.lightsLeft)
 	check(string.format("mesh flash under 40 fps: card %s, then %s", table.concat(mesh.s0, ","), table.concat(mesh.s1, ",")),
 		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
 	check(string.format("mesh flash in F9 slow motion: %d frames at 60 fps (0.035 s of game time = 21), %d variant (one shape, no switch)", mesh.slow, mesh.slowCards),

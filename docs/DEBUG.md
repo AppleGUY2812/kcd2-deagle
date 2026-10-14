@@ -58,8 +58,8 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `flashRon.time` | `0.095` | how long the Ready or Not flash runs, game time: its fireball 0.035-0.04 s, its sparks to 0.095 s |
 | `flashMesh.time` | `0.035` | how long the mesh flash lasts, in seconds of game time (Ready or Not 0.035-0.04): 2 frames at 60 fps, 1 under 40 fps, about 10x longer in F9 slow motion |
 | `flashMesh.mtl` | `deagle_vm_flash` | mesh flash brightness: `deagle_vm_flash_dim` / `deagle_vm_flash` / `deagle_vm_flash_hot` |
-| `flashMesh.light.mode` | `ron` | the mesh flash's light: `ron` = Ready or Not's two flash lights (red, from the shot's own frame for 0.04 s, falling off like real light with no visible edge, not lighting the fog); `particle` = the old one (a frame late, a hard edge, lit the fog) |
-| `flashMesh.light.intensity` | `6` | brightness of the `ron` flash light (its second light is 0.43 of it) |
+| `flashMesh.light.mode` | `ron` | the mesh flash's light: `ron` = Ready or Not's two flash lights (red-orange as Ready or Not shows them on screen, from the shot's own frame for 0.04 s, falling off like real light with no visible edge, not lighting the fog); `particle` = the old one (a frame late, a hard edge, lit the fog) |
+| `flashMesh.light.intensity` | `0.5` | brightness of the `ron` flash light on the Deagle; smaller cartridges get less by their muzzle blast (the Glock 0.48 of it); its second light is 0.43 of it |
 | `flashMesh.light.bulb` | `0.3` | size in m of the `ron` flash light's source: bigger = softer near the gun |
 | `muzzleFx` / `muzzleFxLarge` | `deagle.muzzle` | particle flash look: try `deagle.muzzle_b4`, `_b4s15`, `_b10s2` (and `deagle.muzzle_large_b4`... for the Deagle) |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |

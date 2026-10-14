@@ -697,4 +697,11 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   the same for both guns. `LoadLight` keys found in WHGame.dll next to `attenuation_bulbsize`: `volumetric_fog`,
   `volumetric_fog_only`, `volumetric_multiplier_wh`, `fade_in_radius`, `this_area_only`, `indoor_only`. Brightness
   (`flashMesh.light.intensity` 6) still to be matched to Ready or Not's clip in game.
+- In game with the raw hue (1, 0.0118, 0.0052) x 6 the whole yard went deep red (the user's Glock screenshot: "too bright
+  for a glock, also its red"). Ready or Not's tonemapper turns its red light red-orange on what it lights; measured on
+  the user's Ready or Not clip (frames 229 -> 231, linear light, surfaces away from the fireball): added light 1 :
+  0.25-0.29 : 0.09-0.21, the ground a few m off x1.4, the hands next to the muzzle x4-7. Now hue (1, 0.27, 0.15), the
+  brightness set on the Deagle (0.5) and scaled by the cartridge's blast (Glock 0.48). Held live at 0.15 / 0.5 / 1.5 on
+  the Glock (no shot): 0.15 hardly shows, 0.5 a warm wash on the near ground, 1.5 brighter (the user turned between the
+  shots, so no exact factors).
 
