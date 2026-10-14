@@ -6,6 +6,10 @@
 // "+" starts another shot in the same file after the previous one's seconds, with its own parameter values.
 // In a shot's own arguments, "ev:<event path>" plays that event instead (e.g. a gunshot, then an impact the sound's
 // travel time later) and "vol:<x>" sets its instance volume (EventInstance::setVolume, like the plugin's play volume).
+// "file:<windows path>" plays one of our WAVs instead, like the plugin's "file:" sounds (3D in front, no roll-off), into
+// the master or "bus:<bus path>". Before the shots: "send:<bus path>=<level>" adds a send from that bus into the room
+// reverb (Reverb_Global, where the gun and the hits send); "send:files=<level>" gives our WAVs a group with that send.
+// DUMP_MASTER=1 dumps the whole mixer (bus paths, DSP types) while the first shot plays.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -86,6 +90,17 @@ static class F
     [DllImport(C)] public static extern int FMOD_DSP_GetParameterBool(IntPtr dsp, int i, out int v, byte[] s, int len);
     [DllImport(C)] public static extern int FMOD_DSP_GetBypass(IntPtr dsp, out int b);
     [DllImport(C)] public static extern int FMOD_DSP_GetWetDryMix(IntPtr dsp, out float pre, out float post, out float dry);
+    [DllImport(C)] public static extern int FMOD_DSP_GetType(IntPtr dsp, out int type);
+    [DllImport(C)] public static extern int FMOD_DSP_SetParameterInt(IntPtr dsp, int i, int v);
+    [DllImport(C)] public static extern int FMOD_DSP_SetParameterFloat(IntPtr dsp, int i, float v);
+    [DllImport(C)] public static extern int FMOD_ChannelGroup_AddDSP(IntPtr cg, int index, IntPtr dsp);
+    [DllImport(C)] public static extern int FMOD_System_CreateChannelGroup(IntPtr core, byte[] name, out IntPtr cg);
+    [DllImport(C)] public static extern int FMOD_System_CreateSound(IntPtr core, byte[] name, uint mode, IntPtr exinfo, out IntPtr snd);
+    [DllImport(C)] public static extern int FMOD_System_PlaySound(IntPtr core, IntPtr snd, IntPtr group, int paused, out IntPtr ch);
+    [DllImport(C)] public static extern int FMOD_Channel_SetVolume(IntPtr ch, float v);
+    [DllImport(C)] public static extern int FMOD_Channel_SetPaused(IntPtr ch, int paused);
+    [DllImport(C)] public static extern int FMOD_Channel_Set3DAttributes(IntPtr ch, float[] pos, float[] vel);
+    [DllImport(C)] public static extern int FMOD_Channel_Set3DMinMaxDistance(IntPtr ch, float mn, float mx);
 
     [StructLayout(LayoutKind.Explicit, Size = 56)]
     public struct PDesc
@@ -132,6 +147,37 @@ static class P
         F.FMOD_Studio_System_FlushCommands(sys);
     }
 
+    // every bus's channel group -> its path (the mixer dump names them), after LockBuses and a few updates
+    static readonly Dictionary<IntPtr, string> busOf = new Dictionary<IntPtr, string>();
+    const string ROOM_REVERB = "bus:/Headphones/Reverbs/2D/Reverb_Global";
+    const int DSP_SEND = 21;          // FMOD_DSP_TYPE_SEND in 2.03 (the dump: RoN's 'FMOD Send' DSPs report 21, 'FMOD Return' 22)
+    static IntPtr filesGroup = IntPtr.Zero;   // send:files=<level>: our WAVs go through a group of their own with that send
+    static readonly Dictionary<string, IntPtr> busCg = new Dictionary<string, IntPtr>();
+    static void LockBuses()
+    {
+        F.FMOD_Studio_System_GetBankCount(sys, out int nb); var banks = new IntPtr[Math.Max(nb, 1)]; F.FMOD_Studio_System_GetBankList(sys, banks, banks.Length, out nb);
+        var all = new List<IntPtr>();
+        for (int b = 0; b < nb; b++)
+        {
+            F.FMOD_Studio_Bank_GetBusCount(banks[b], out int n); if (n <= 0) continue;
+            var arr = new IntPtr[n]; F.FMOD_Studio_Bank_GetBusList(banks[b], arr, n, out n);
+            for (int i = 0; i < n; i++) { F.FMOD_Studio_Bus_LockChannelGroup(arr[i]); all.Add(arr[i]); }
+        }
+        for (int k = 0; k < 4; k++) Tick();
+        foreach (var bus in all)
+        {
+            var p = new byte[256]; F.FMOD_Studio_Bus_GetPath(bus, p, p.Length, out _);
+            if (F.FMOD_Studio_Bus_GetChannelGroup(bus, out IntPtr cg) == 0 && cg != IntPtr.Zero) { busOf[cg] = F.Str(p); busCg[F.Str(p)] = cg; }
+        }
+    }
+    // the first DSP of a type in a group (FMOD_DSP_TYPE: SEND / RETURN numbers as this FMOD reports them, see the dump)
+    static IntPtr FindDsp(IntPtr cg, string name)
+    {
+        F.FMOD_ChannelGroup_GetNumDSPs(cg, out int nd);
+        for (int i = 0; i < nd; i++) { F.FMOD_ChannelGroup_GetDSP(cg, i, out IntPtr dsp); var nb = new byte[32]; F.FMOD_DSP_GetInfo(dsp, nb, out _, out _, out _, out _); if (F.Str(nb) == name) return dsp; }
+        return IntPtr.Zero;
+    }
+
     static string DescPath(IntPtr d) { var b = new byte[512]; F.FMOD_Studio_EventDescription_GetPath(d, b, b.Length, out _); return F.Str(b); }
 
     static void DumpParams(IntPtr d)
@@ -150,8 +196,8 @@ static class P
     static void DumpDsp(IntPtr dsp, string indent)
     {
         var nb = new byte[32]; F.FMOD_DSP_GetInfo(dsp, nb, out _, out _, out _, out _); F.FMOD_DSP_GetBypass(dsp, out int byp);
-        F.FMOD_DSP_GetWetDryMix(dsp, out float pre, out float post, out float dry);
-        var sb = new StringBuilder($"{indent}dsp '{F.Str(nb)}'{(byp != 0 ? " BYPASSED" : "")} wet {post:0.###} dry {dry:0.###}:");
+        F.FMOD_DSP_GetWetDryMix(dsp, out float pre, out float post, out float dry); F.FMOD_DSP_GetType(dsp, out int dtype);
+        var sb = new StringBuilder($"{indent}dsp '{F.Str(nb)}' type {dtype}{(byp != 0 ? " BYPASSED" : "")} wet {post:0.###} dry {dry:0.###}:");
         F.FMOD_DSP_GetNumParameters(dsp, out int np);
         for (int i = 0; i < np; i++)
         {
@@ -171,7 +217,7 @@ static class P
     {
         var nb = new byte[128]; F.FMOD_ChannelGroup_GetName(cg, nb, nb.Length); F.FMOD_ChannelGroup_GetVolume(cg, out float vol);
         F.FMOD_ChannelGroup_GetNumChannels(cg, out int nch);
-        Console.WriteLine($"{indent}group '{F.Str(nb)}' volume {vol:0.###} ({20 * Math.Log10(Math.Max(vol, 1e-9)):0.#} dB) channels {nch}");
+        Console.WriteLine($"{indent}group '{F.Str(nb)}'{(busOf.TryGetValue(cg, out var bp) ? " = " + bp : "")} volume {vol:0.###} ({20 * Math.Log10(Math.Max(vol, 1e-9)):0.#} dB) channels {nch}");
         F.FMOD_ChannelGroup_GetNumDSPs(cg, out int nd);
         for (int i = 0; i < nd; i++) { F.FMOD_ChannelGroup_GetDSP(cg, i, out IntPtr dsp); DumpDsp(dsp, indent + "  "); }
         for (int c = 0; c < nch; c++)
@@ -232,8 +278,9 @@ static class P
                 if (!string.IsNullOrEmpty(mg)) { F.FMOD_System_GetMasterChannelGroup(core, out IntPtr mcg);
                     F.FMOD_ChannelGroup_SetVolume(mcg, float.Parse(mg, System.Globalization.CultureInfo.InvariantCulture)); Console.WriteLine("final fader " + mg); }
                 F.Ok(F.FMOD_Studio_System_GetEvent(sys, F.Z(evPath), out IntPtr desc), "event " + evPath);
-                var shots = new List<(double secs, List<(string, float)> ps, IntPtr desc, float vol)>();
-                var cur = (secs: double.Parse(a[4]), ps: new List<(string, float)>(), desc: desc, vol: 1f);
+                var shots = new List<(double secs, List<(string, float)> ps, IntPtr desc, float vol, string file, string bus)>();
+                var cur = (secs: double.Parse(a[4]), ps: new List<(string, float)>(), desc: desc, vol: 1f, file: (string)null, bus: (string)null);
+                var sends = new List<(string bus, float level)>();
                 var descs = new List<IntPtr> { desc };
                 var snaps = new List<string>();
                 for (int i = 5; i < a.Length; i++)
@@ -243,7 +290,11 @@ static class P
                     if (a[i].StartsWith("global:")) { var gv = a[i].Substring(7).Split('=');
                         F.FMOD_Studio_System_SetParameterByName(sys, F.Z(gv[0]), float.Parse(gv[1], System.Globalization.CultureInfo.InvariantCulture), 1);
                         Console.WriteLine($"global {gv[0]}={gv[1]}"); continue; }
-                    if (a[i] == "+") { shots.Add(cur); cur = (double.Parse(a[++i]), new List<(string, float)>(), desc, 1f); continue; }
+                    if (a[i] == "+") { shots.Add(cur); cur = (double.Parse(a[++i]), new List<(string, float)>(), desc, 1f, null, null); continue; }
+                    if (a[i].StartsWith("file:")) { cur.file = a[i].Substring(5); continue; }   // a WAV of ours instead of an event (the plugin's "file:")
+                    if (a[i].StartsWith("bus:")) { cur.bus = a[i]; continue; }                // ... played into this bus (default: the master)
+                    if (a[i].StartsWith("send:")) { var sv2 = a[i].Substring(5).Split('=');   // send:<bus path>=<level>: an extra send from that bus
+                        sends.Add((sv2[0], float.Parse(sv2[1], System.Globalization.CultureInfo.InvariantCulture))); continue; }  // into the shared room reverb
                     if (a[i].StartsWith("ev:")) { F.Ok(F.FMOD_Studio_System_GetEvent(sys, F.Z(a[i].Substring(3)), out cur.desc), a[i]);
                         if (!descs.Contains(cur.desc)) descs.Add(cur.desc); continue; }
                     if (a[i].StartsWith("vol:")) { cur.vol = float.Parse(a[i].Substring(4), System.Globalization.CultureInfo.InvariantCulture); continue; }
@@ -259,6 +310,21 @@ static class P
                     F.Ok(F.FMOD_Studio_EventInstance_Start(si), sp); Console.WriteLine("snapshot on: " + sp + (string.IsNullOrEmpty(sv) ? "" : " volume " + sv));
                 }
                 for (int k = 0; k < 200; k++) Tick();   // let snapshots fade in (~4 s of mix time, silent)
+                LockBuses();
+                foreach (var (sb, lv) in sends)
+                {   // into the room reverb's return (Reverb_Global: the one the gun and the hits send to)
+                    IntPtr ret = IntPtr.Zero; string rp = null;
+                    rp = ROOM_REVERB; ret = busCg.ContainsKey(rp) ? FindDsp(busCg[rp], "FMOD Return") : IntPtr.Zero;
+                    if (ret == IntPtr.Zero) throw new Exception("no reverb return bus");
+                    F.FMOD_DSP_GetParameterInt(ret, 0, out int rid, null, 0);
+                    IntPtr grp;
+                    if (sb == "files") { F.Ok(F.FMOD_System_CreateChannelGroup(core, F.Z("deagle files"), out grp), "files group"); filesGroup = grp; }
+                    else grp = busCg[sb];
+                    F.Ok(F.FMOD_System_CreateDSPByType(core, DSP_SEND, out IntPtr snd), "send dsp");
+                    F.Ok(F.FMOD_DSP_SetParameterInt(snd, 0, rid), "send return id"); F.Ok(F.FMOD_DSP_SetParameterFloat(snd, 1, lv), "send level");
+                    F.Ok(F.FMOD_ChannelGroup_AddDSP(grp, 0, snd), "add send");   // 0 = head: post-fader, like RoN's own
+                    Console.WriteLine($"extra send {sb} -> {rp} (return {rid}) level {lv}");
+                }
                 var lsw = System.Diagnostics.Stopwatch.StartNew();
                 foreach (var d in descs)
                 {
@@ -282,8 +348,21 @@ static class P
                     F.FMOD_Channel_Stop(och);
                     for (int k = 0; k < 40; k++) Tick();
                 }
-                foreach (var (secs, ps, sdesc, svol) in shots)
+                foreach (var (secs, ps, sdesc, svol, sfile, sbus) in shots)
                 {
+                    if (sfile != null)
+                    {   // like the plugin's PlayFile: 3D, FMOD's roll-off off (min distance 10 km), in front of the listener
+                        F.Ok(F.FMOD_System_CreateSound(core, F.Z(sfile), 0x1 | 0x10 | 0x100, IntPtr.Zero, out IntPtr fs), sfile);
+                        IntPtr grp = sbus != null ? busCg[sbus.Substring(4)] : filesGroup;   // default: the master (or send:files=)
+                        F.Ok(F.FMOD_System_PlaySound(core, fs, grp, 1, out IntPtr fch), "play " + sfile);
+                        F.FMOD_Channel_Set3DAttributes(fch, new float[] { 0, 0, 1 }, new float[] { 0, 0, 0 }); F.FMOD_Channel_Set3DMinMaxDistance(fch, 10000f, 20000f);
+                        F.FMOD_Channel_SetVolume(fch, svol);
+                        Console.WriteLine($"shot starts at block {blocks} = sample {blocks * BlockLen} (file {sfile} into {sbus ?? "master"}, volume {svol})");
+                        F.FMOD_Channel_SetPaused(fch, 0);
+                        int fsteps = (int)Math.Ceiling(secs / block);
+                        for (int s = 0; s < fsteps; s++) Tick();
+                        continue;
+                    }
                     F.Ok(F.FMOD_Studio_EventDescription_CreateInstance(sdesc, out IntPtr inst), "instance");
                     if (svol != 1f) { F.FMOD_Studio_EventInstance_SetVolume(inst, svol); Console.WriteLine($"  volume {svol}"); }
                     foreach (var (n, v) in ps)
