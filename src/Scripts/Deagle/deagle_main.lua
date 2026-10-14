@@ -698,11 +698,27 @@ function Deagle:CycleZoom()
 	self:SetZoom(list[self.zoomStep])
 end
 
+-- the game's speed now: cfg.slowmo while slow motion is on, kept to 0.01-1 (the plugin's clock and sounds stop at 0.01)
+function Deagle:GameSpeed()
+	if not self.slowOn then return 1 end
+	return math.max(0.01, math.min(1, tonumber(self.cfg.slowmo) or 0.1))
+end
+
 function Deagle:SlowMo(on)
 	self.slowOn = on and true or false
-	pcall(System.SetCVar, "t_Scale", on and self.cfg.slowmo or 1)
-	self:Native(string.format("speed %.3f", on and self.cfg.slowmo or 1))   -- our sounds slow down with the game's
-	log("slow motion " .. (on and ("x" .. tostring(self.cfg.slowmo)) or "off"))
+	pcall(System.SetCVar, "t_Scale", self:GameSpeed())
+	self:Native(string.format("speed %.3f", self:GameSpeed()))   -- our sounds slow down with the game's
+	log("slow motion " .. (on and ("x" .. tostring(self:GameSpeed())) or "off"))
+end
+
+-- deagle_slowmo [speed|off]: no value toggles it like F9; a speed is kept (F9 uses it from then on) and turns it on
+function Deagle:SlowMoCmd(arg)
+	if arg == "" then return self:SlowMo(not self.slowOn) end
+	if arg == "off" or arg == "0" then return self:SlowMo(false) end
+	local v = tonumber(arg)
+	if not v or v <= 0 or v > 1 then log("usage: deagle_slowmo [speed 0.01-1 | off]") return end
+	self:Set("slowmo " .. v)   -- applies it live when slow motion is on (AFTER_SET)
+	if not self.slowOn then self:SlowMo(true) end
 end
 
 -- What one shot does, from the gun's cartridge and build (SI units; docs/handling-physics-design.md):
@@ -2518,7 +2534,7 @@ function Deagle:NativeSyncVm()
 	self:Native(string.format("motion %.2f", c.motion))
 	self:Native("flashgrow " .. table.concat(self.cfg.flashGrow, " "))
 	self:Native(string.format("flashseed %.3f", self.cfg.flashSeed))
-	self:Native(string.format("speed %.3f", self.slowOn and self.cfg.slowmo or 1))
+	self:Native(string.format("speed %.3f", self:GameSpeed()))
 end
 
 function Deagle:Snd(file, vol)
@@ -2912,7 +2928,7 @@ end
 -- What a setting changes besides itself (the plugin holds some; others are applied when they change)
 local AFTER_SET = {
 	flashGrow = function(self) self:NativeSyncVm() end,
-	slowmo = function(self) self:NativeSyncVm() end,
+	slowmo = function(self) if self.slowOn then self:SlowMo(true) else self:NativeSyncVm() end end,
 	flashSeed = function(self) self:NativeSyncVm() end,
 	["vm.motion"] = function(self) self:NativeSyncVm() end,
 	["vm.arms"] = function(self) self.vmArmsApplied = nil; self:VmApplyArms() end,
@@ -3070,6 +3086,7 @@ System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_p
 System.AddCCommand("deagle_freecam", "Deagle:Native('freecam ' .. Deagle.Arg([[%line]]))", "deagle_freecam [on|off|status|speed <m/s>|fast <x>|max <m>|keys wasd|nav|arrows|key <vk>]: free camera (time runs, Henry still aims and shoots, and doesn't walk). \\ toggles; WASD fly, Space up, Left Ctrl down, Shift faster")
 System.AddCCommand("deagle_env", "Deagle.envT = nil Deagle:EnvTick() Deagle:EnvPrint()", "deagle_env: the place the gunshot sounds like (Ready or Not's room and material weights) and the ray numbers")
 System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "internal: the plugin's free camera came on (1) or went off (0)")
+System.AddCCommand("deagle_slowmo", "Deagle:SlowMoCmd(Deagle.Arg([[%1]]))", "deagle_slowmo [speed|off]: slow motion at that game speed (0.01-1, kept: F9 uses it too); no value = on / off like F9")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")

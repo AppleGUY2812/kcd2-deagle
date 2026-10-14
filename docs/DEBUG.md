@@ -14,7 +14,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | R | reload (a shot before the new mag clicks cancels it, see "Reloads") |
 | Y | inspect |
 | B | fire mode (semi / burst / auto, on guns that have them) |
-| F9 | slow motion on / off (0.1x, works holstered) |
+| F9 | slow motion on / off (0.1x, works holstered). Slower: `deagle_slowmo 0.02` (F9 keeps that speed) |
 | F2 (or mouse button 4) | debug zoom: x4, x10, off (works holstered; you can shoot; the gun is hidden while zoomed). `deagle_zoom 6` for any zoom. (KCD2 uses F10) |
 
 ## Everyday commands
@@ -40,6 +40,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_testwall` | a row of real KCD2 objects 4 m ahead, one per surface: stone, plaster, pots, wood door, crate, wicker, metal door, anvil, glass (standing up, facing you), sack, straw target, hay, vegetables, leather (listed left to right on screen). `deagle_testwall clear` removes them; never saved |
 | `deagle_testnpc` | aim at an NPC (within 60 m) and type it: your rounds don't hurt that NPC (no crime), and each hit shows the body part, whether armour stopped it, and the damage it would have done. `deagle_testnpc clear` ends it. (Spawning test NPCs froze the game, so it marks real ones instead) |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
+| `deagle_slowmo <speed>` | slow motion at that speed, 0.01 (slowest) to 1, e.g. `0.02` for the flash; F9 uses it from then on (kept). `deagle_slowmo off` = normal; no value = on / off like F9 |
 | `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
 | `\` or `deagle_freecam` | free camera: time keeps running. **WASD** fly, **Space** up, **Left Ctrl** down, **Shift** 5x faster; Henry doesn't walk. The **mouse turns the camera** and Henry's aim stays put; **hold right mouse** to aim Henry instead (the camera stays). A red line shows where a shot goes; left click fires. **Scroll** = faster / slower (or `deagle_freecam speed 10`). Turns itself off on a save load. (testing) |
 
@@ -56,7 +57,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `muzzleFx` / `muzzleFxLarge` | `deagle.muzzle` | particle flash look: try `deagle.muzzle_b4`, `_b4s15`, `_b10s2` (and `deagle.muzzle_large_b4`... for the Deagle) |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
 | `impactSpawn` | `plugin` | how bullet-hit and blood effects are spawned: `plugin` = drawn from their first frame (held 2 s); `lua` = the old way (KCD2 doesn't draw them for ~0.3 s, so short sparks and flashes never show) |
-| `slowmo` | `0.1` | game speed while F9 slow motion is on |
+| `slowmo` | `0.1` | game speed while F9 slow motion is on (0.01-1; changes at once if it's on) |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
 | `cancelKeepsRounds` | `false` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
 | `recoil` | `1` | **master kick**: scales every recoil effect together (camera kick, sideways, gun model flip and push). `1.5` = 50 % harder for every gun |
@@ -125,7 +126,7 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 - A round in the chamber stays: reloading with rounds left gives 7+1 (Deagle) / 17+1 (Glock).
 
 ## Checking effects
-- F9 slow motion, then shoot: flash, smoke, casings, light at 1/10 speed.
+- F9 slow motion, then shoot: flash, smoke, casings, light at 1/10 speed. For the flash go slower: `deagle_slowmo 0.02` (1/50) or `0.01` (1/100).
 - `deagle_fx <effect>` spawns a particle effect 3 m ahead (e.g. `deagle_fx deagle.muzzle`).
 - Recording: OBS into `Desktop\Deagle Progress\test records`; Claude reads the clips frame by frame.
 

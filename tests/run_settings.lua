@@ -94,6 +94,27 @@ for i = logs0 + 1, #M.logs do
 end
 check(string.format("misspelt settings refused with a hint (%s, %s), nothing kept", tostring(hint1), tostring(hint2)),
 	Deagle.cfg.shotSounds == nil and Deagle.cfg.physics.camPerFlp == nil and #sent(nT) == 0 and hint1 and hint2, #sent(nT))
+-- slow motion: deagle_slowmo <speed> keeps the speed (F9 uses it) and turns it on; deagle_set slowmo changes it live;
+-- the plugin's clock and sounds stop at 0.01, so the game does too
+local function speedSent()   -- the last game speed the plugin got
+	for i = #M.native, 1, -1 do local v = M.native[i]:match("^%[DN%] speed (%S+)$") if v then return tonumber(v) end end
+end
+local nS = #M.native
+M.console("deagle_slowmo", "0.02")
+local on1, keep1 = M.cvars.t_Scale, sent(nS)[1]
+M.console("deagle_set", "slowmo 0.005")
+local on2, snd2 = M.cvars.t_Scale, speedSent()
+M.console("deagle_slowmo", "")
+local off3 = M.cvars.t_Scale
+Deagle:OnAction("deagle_slowmo", "press", 1)
+local f9 = M.cvars.t_Scale
+M.console("deagle_slowmo", "off")
+check(string.format("slow motion: deagle_slowmo 0.02 -> x%s, kept %s; set 0.005 live -> x%s (sounds %s); toggle off x%s; F9 x%s; off x%s",
+	tostring(on1), tostring(keep1), tostring(on2), tostring(snd2), tostring(off3), tostring(f9), tostring(M.cvars.t_Scale)),
+	on1 == 0.02 and keep1 == "slowmo 0.02" and on2 == 0.01 and snd2 == 0.01 and off3 == 1 and f9 == 0.01
+	and M.cvars.t_Scale == 1 and not Deagle.slowOn, on2)
+M.console("deagle_reset")
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("settings: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
