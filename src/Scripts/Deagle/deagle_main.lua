@@ -311,7 +311,7 @@ do
 	for key, seq in pairs(CUE_SEQ) do cues[key] = Deagle.vmSoundCues[seq] end
 	for i = 1, 8 do origShots[i] = "decho_orig/decho-" .. i .. ".wav" end   -- the MWII Deagle's own shots (deagle_sounds original)
 	Deagle:RegisterGun("deagle", { title = "Desert Eagle", magSize = Deagle.cfg.magSize, cdf = Deagle.cfg.vm.cdf, anims = Deagle.cfg.vm.anims,
-		cues = cues, shotSounds = origShots, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire", dry = "event:/Weapons/FN57/FN57 Dry Fire",   -- SoundData_Grizzly
+		cues = cues, shotSounds = origShots, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire", fire3p = "event:/Weapons/Grizzly/3P Grizzly Fire", dry = "event:/Weapons/FN57/FN57 Dry Fire",   -- SoundData_Grizzly
 			adsIn = "event:/Weapons/Shared/ADS/ADS Pistol Start", adsOut = "event:/Weapons/Shared/ADS/ADS Pistol Stop", shell = "event:/Weapons/Shared/9mmShell" },
 		bones = { muzzle = "tag_flash", brass = "tag_brass" }, rounds = 6, mags = true,
 		swapTail = { reload = 0.6 }, newMagAt = 0.69, armsLooks = true, cs2 = "weapon_deagle",
@@ -1547,9 +1547,23 @@ function Deagle:RonSounds()
 	return self.cfg.sounds == "ron" and self.gun and self.gun.ron or nil
 end
 
--- a Ready or Not event at the player (handling, dry fire, aim): 3D events sit on the listener; gain x its volume
+-- where Henry's gun is heard from while the free camera is the listener (his head)
+function Deagle:GunSoundPos()
+	local p = self:Player()
+	local ok, h = pcall(p.GetBonePos, p, "Head")
+	if ok and type(h) == "table" then return h end
+	local w = p:GetWorldPos()
+	return { x = w.x, y = w.y, z = w.z + 1.6 }
+end
+-- a Ready or Not event at the player (handling, dry fire, aim): 3D events sit on the listener; gain x its volume. With
+-- the free camera on, the listener is the camera: then it plays at Henry (it sat on the camera: the user, 2026-10-13)
 function Deagle:RonHere(ev, gain)
-	if self.native and ev then self:Native(string.format("ron %.3f %s|", self.cfg.vm.soundVol.ron * (gain or 1), ev)) end
+	if not (self.native and ev) then return end
+	local vol = self.cfg.vm.soundVol.ron * (gain or 1)
+	if self.fc then
+		local at = self:GunSoundPos()
+		self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|", vol, at.x, at.y, at.z, ev))
+	else self:Native(string.format("ron %.3f %s|", vol, ev)) end
 end
 -- RoN mixes its dry-fire clicks 37-44 dB under the shot, too quiet to hear in KCD2 (the user, 2026-10-13): each one's
 -- measured level (short-term, rendered alone in RoN's engine) is raised to cfg.vm.dryDb
@@ -2305,7 +2319,13 @@ function Deagle:CueFire(key, file)
 		if not self.cfg.shotSound then return end
 		local ron = self:RonSounds()
 		if ron and ron.fire then
-			if self.native then self:Native(string.format("ron %.3f %s|IsOutside=%d", v.shot * self:ShotGain(nil, 1), ron.fire, self:EnvOutside() and 1 or 0)) end
+			if self.native then
+				local vol, out = v.shot * self:ShotGain(nil, 1), self:EnvOutside() and 1 or 0
+				if self.fc and ron.fire3p then   -- heard from the free camera: RoN's 3D third-person shot at Henry, fading with distance
+					local at = self:GunSoundPos()
+					self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|IsOutside=%d Occlusion=0 PropagateDistance=@ Falloff=3", vol, at.x, at.y, at.z, ron.fire3p, out))
+				else self:Native(string.format("ron %.3f %s|IsOutside=%d", vol, ron.fire, out)) end
+			end
 			return
 		end
 		local f = self:ShotFile()

@@ -34,7 +34,7 @@ Deagle:RegisterGun("glock_17", {
 		reloadEmpty = { { 0.000, "guns/glock_17/p24_pi_golf17_reload_empty_raise.wav" }, { 0.267, "guns/glock_17/p24_pi_golf17_reload_empty_mag_release_up.wav" }, { 0.300, "guns/glock_17/p24_pi_golf17_reload_empty_mag_out.wav" }, { 0.567, "guns/glock_17/p24_pi_golf17_reload_empty_grab.wav" }, { 0.667, "guns/glock_17/p24_pi_golf17_reload_empty_mag_hit.wav" }, { 0.685, "guns/glock_17/p24_pi_golf17_reload_empty_mag_in.wav" }, { 1.067, "guns/glock_17/p24_pi_golf17_reload_empty_turn_grab.wav" }, { 1.200, "guns/glock_17/p24_pi_golf17_reload_empty_slide_charge.wav" }, { 1.333, "guns/glock_17/p24_pi_golf17_inspect_slide_release.wav" }, { 1.367, "guns/glock_17/p24_pi_golf17_reload_empty_end.wav" } },
 	},
 	shotSounds = { "guns/glock_17/X12-1.wav", "guns/glock_17/X12-2.wav", "guns/glock_17/X12-3.wav" },
-	ron = { fire = "event:/Weapons/G19 New/1P G19 Fire", dry = "event:/Weapons/G19/G19 Dryfire Old", adsIn = "event:/Weapons/Shared/ADS/ADS Pistol Start", adsOut = "event:/Weapons/Shared/ADS/ADS Pistol Stop", shell = "event:/Weapons/Shared/9mmShell" },   -- Ready or Not's events (its engine plays them)
+	ron = { fire = "event:/Weapons/G19 New/1P G19 Fire", fire3p = "event:/Weapons/G19 New/3P G19 Fire", dry = "event:/Weapons/G19/G19 Dryfire Old", adsIn = "event:/Weapons/Shared/ADS/ADS Pistol Start", adsOut = "event:/Weapons/Shared/ADS/ADS Pistol Stop", shell = "event:/Weapons/Shared/9mmShell" },   -- Ready or Not's events (its engine plays them)
 	bones = { muzzle = "tag_flash", brass = "tag_brass" },
 	rounds = 2,   -- rounds modelled in the magazine (attachments vm_round_1..)
 	mags = true,   -- magazines are their own attachments (vm_mag1, vm_mag2)

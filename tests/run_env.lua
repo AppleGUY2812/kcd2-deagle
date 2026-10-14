@@ -149,6 +149,20 @@ check("impact: " .. tostring(imp), #M.native == n0 + 1 and imp:find("^%[DN%] ron
 -- impacts out by 12 m; the plugin handles the marker
 local cpp = io.open("native/src/ron.cpp"):read("*a")
 check("the plugin applies Falloff=", cpp:find('ps.find("Falloff=")', 1, true) ~= nil, nil)
+-- free camera on: the listener is the camera, so the gun's sounds play where Henry is (they sat on the camera): the shot
+-- as RoN's 3D third-person event fading with distance, handling / dry fire as 3D events at him
+Deagle.fc = { camP = 0, camY = 0, token = {} }
+n0 = #M.native
+Deagle:CueFire("shoot", "shot")
+local fcShot = M.native[#M.native]
+check("free camera: the shot is the 3P event at Henry (" .. tostring(fcShot) .. ")",
+	fcShot:find("^%[DN%] ron3 [%d%.]+ [%-%d%.]+ [%-%d%.]+ [%-%d%.]+ event:/Weapons/Grizzly/3P Grizzly Fire|IsOutside=%d Occlusion=0 PropagateDistance=@ Falloff=3$") ~= nil, fcShot)
+Deagle:RonHere(Deagle.gun.ron.dry, 2)
+local fcDry = M.native[#M.native]
+check("free camera: the dry click is at Henry (" .. tostring(fcDry) .. ")", fcDry:find("^%[DN%] ron3 2%.000 [%-%d%.]+ [%-%d%.]+ [%-%d%.]+ event:/Weapons/FN57/FN57 Dry Fire|$") ~= nil, fcDry)
+Deagle.fc = nil
+Deagle:CueFire("shoot", "shot")
+check("free camera off: the 1P shot again", M.native[#M.native]:find("^%[DN%] ron [%d%.]+ event:/Weapons/Grizzly/1P Grizzly Fire|IsOutside=%d$") ~= nil, M.native[#M.native])
 -- deagle_sounds original: the gun mod's own shot and animation sounds, no RoN events from the gun
 M.console("deagle_sounds", "original")
 n0 = #M.native
