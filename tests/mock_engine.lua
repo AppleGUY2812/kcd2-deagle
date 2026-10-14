@@ -204,6 +204,7 @@ _G.System = {
 	RemoveEntity = function(id) local e = entities[id] or entities[tostring(id)]; if e then entities[e.id] = nil; entities[tostring(e.id)] = nil end end,
 	GetEntitiesInSphere = function() return {} end,
 	GetSurfaceTypeNameById = function(id) return M.surfaceNames[id] end,
+	GetSurfaceTypeIdByName = function(name) for id, n in pairs(M.surfaceNames) do if n == name then return id end end end,
 	GetCVar = function(n) return 2 end, SetCVar = function(n, v) M.cvars = M.cvars or {}; M.cvars[n] = v end,
 	DrawText = function(...) M.drawn_text = M.drawn_text + 1 end,
 	DrawLine = function(a, b, r, g, bl, al) M.lines = (M.lines or 0) + 1 end,
@@ -225,7 +226,18 @@ _G.ActionMapManager = { LoadFromXML = function() return true end, EnableActionMa
 _G.UIAction = { RegisterEventSystemListener = function() end }
 _G.Sound = {}
 _G.AudioUtils = { LookupTriggerID = function() return 1 end, ExecuteAudioTrigger = function() M.gameShot = (M.gameShot or 0) + 1 end }
-_G.CryAction = {}
+-- CryAction.GetWaterInfo(pos): the water area pos is in, like KCD2 (probed 2026-10-14): level, normal, flow. An area's
+-- box reaches above its surface (the Trosky tannery pit gave its 16.88 level at 17.5 too), and where there's no lake the
+-- level sea's -1e6 comes back. M.waters = { { level, x0, x1, y0, y1 } }
+M.waters = {}
+_G.CryAction = { GetWaterInfo = function(pos)
+	for _, w in ipairs(M.waters) do
+		if pos.x >= w.x0 and pos.x <= w.x1 and pos.y >= w.y0 and pos.y <= w.y1 and pos.z <= w.level + 2 then
+			return w.level, { x = 0, y = 0, z = 1 }, { x = 0, y = 0, z = 0 }
+		end
+	end
+	return -1e6, { x = 0, y = 0, z = 1 }, { x = 0, y = 0, z = 0 }
+end }
 -- KCD2's AI hearing (XGenAIModule.ProduceSound*): every call recorded
 M.aiSounds = {}
 _G.enum_sound = { gun_fired = 14, bullet_hit = 16 }

@@ -277,9 +277,11 @@ end
 -- fired, like before; farther away it arrives late and low (a .50 AE at 100 m: ~0.24 s and ~27 cm under the line).
 -- ---------------------------------------------------------------------------
 local GRAVITY = 9.81             -- m/s^2
--- what a round's flight rays hit: ent_all plus water surfaces (CryEngine's ent_water; KCD2 has no global for it and
--- its ent_all, 287, leaves water out: a round went through a lake's surface and splashed on the bed, up to 5 m down)
-local FLIGHT_MASK = ent_all % 0x400 >= 0x200 and ent_all or ent_all + 0x200   -- 0x200 = ent_water
+-- what a round's flight rays hit: ent_all (KCD2's 287, no water). Never ent_water (0x200): KCD2 hands some water back
+-- with no object (a tannery pit in Trosky, 2026-10-14: the ray's first hit had no collider), and its script
+-- Physics.RayWorldIntersection reads every hit's object: the game crashed (BugSplat dump: a null read in
+-- RayWorldIntersection(Script)). Water surfaces come from Deagle:WaterCrossing instead
+local FLIGHT_MASK = ent_all
 local ROUND_STEP = 0.02          -- s: a longer frame is cut into steps this long, so the arc stays smooth
 local ROUND_LIFE = 6             -- s: a round that hit nothing is dropped after this, or past cfg.range (a Deagle round
                                  -- takes ~5 s to fly 1000 m)
@@ -300,48 +302,70 @@ function Deagle:TumbleDragLength(phys)
 	return 2 * phys.bullet / (AIR_RHO * self:TumbleCd((front * len) ^ (2 / 3) / area) * area)
 end
 
+-- the first solid thing along a step (from, by move), past invisible blockers and foliage: the hit (dist from the
+-- step's start), nil when nothing, false when the ray failed
+function Deagle:FlightHit(from0, move, skip)
+	local hits, p = {}, self:Player()
+	local ok, n = pcall(Physics.RayWorldIntersection, from0, move, 1, FLIGHT_MASK, p and p.id, skip, hits)
+	local through = 0
+	while true do
+		if not ok then log("$4raycast failed: " .. tostring(n)) return false end
+		local hit = n and n > 0 and hits[1]
+		if not hit then return nil end
+		local s = not hit.entity and SURFACES[surfaceName(hit)]
+		if not (s and s.fx == "pass" and through < 8) then return hit end
+		-- an invisible blocker or foliage: on through it, from just past the hit, for the rest of this step
+		through = through + 1
+		local dir, done = vnorm(move), hit.dist + 0.001     -- hit.dist counts from this step's start
+		if done >= vlen(move) then return nil end
+		hits = {}
+		ok, n = pcall(Physics.RayWorldIntersection, vadd(from0, vscale(dir, done)), vscale(dir, vlen(move) - done), 1,
+			FLIGHT_MASK, p and p.id, skip, hits)
+		if ok and n and n > 0 and hits[1] then hits[1].dist = hits[1].dist + done end
+	end
+end
+
+-- The water surface a step crosses between from and to (where it ends, or the solid thing it hit), as a hit, or nil.
+-- CryAction.GetWaterInfo(pos) gives the level, normal and flow of the physics water area pos is in (lakes, rivers, the
+-- sea; nothing when pos is dry: its code in KCD2 reads up to 8 areas round pos and returns the first water one, it
+-- touches no hit object). Water surfaces are flat, so when to lies under a level that from was above, the round met
+-- that surface where its line crosses the level. A round that hits a lake's bed in this step crossed the lake's surface
+-- on the way down to it: the surface is what it meets
+function Deagle:WaterCrossing(from, to)
+	local ok, level, normal = pcall(CryAction.GetWaterInfo, to)
+	if not ok or type(level) ~= "number" or to.z >= level or from.z < level - 0.01 then return nil end
+	local d = vsub(to, from)
+	local t = math.max(0, (from.z - level) / (from.z - to.z))
+	if self.waterSurface == nil then
+		local okId, id = pcall(System.GetSurfaceTypeIdByName, "mat_water")
+		self.waterSurface = okId and id or false
+	end
+	return { pos = vadd(from, vscale(d, t)), dist = t * vlen(d), surface = self.waterSurface or nil,
+		normal = type(normal) == "table" and normal or { x = 0, y = 0, z = 1 } }
+end
+
 -- one step of h seconds: true when the round is done (it hit something, or flew out of range / time)
 function Deagle:MoveRound(r, h)
 	local speed = vlen(r.vel)
 	local v1 = vscale(r.vel, 1 / (1 + speed * h / (r.tumble and self:TumbleDragLength(r.phys) or r.phys.dragLength)))
 	v1.z = v1.z - GRAVITY * h
 	local move = vscale(vadd(r.vel, v1), 0.5 * h)
-	local hits = {}
-	local p = self:Player()
-	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, move, 1, FLIGHT_MASK, p and p.id, r.skip, hits)
-	if not ok then
-		log("$4raycast failed: " .. tostring(n))
-		return true
-	end
-	local from, left, through = r.pos, move, 0
-	while n and n > 0 and hits[1] do
-		local hit = hits[1]
-		local s = not hit.entity and SURFACES[surfaceName(hit)]
-		if s and s.fx == "pass" and through < 8 then
-			-- an invisible blocker or foliage: on through it, from just past the hit, for the rest of this step
-			through = through + 1
-			local dir, done = vnorm(move), hit.dist + 0.001     -- hit.dist counts from this step's start
-			if done >= vlen(move) then break end
-			from, left = vadd(r.pos, vscale(dir, done)), vscale(dir, vlen(move) - done)
-			hits = {}
-			ok, n = pcall(Physics.RayWorldIntersection, from, left, 1, FLIGHT_MASK, p and p.id, r.skip, hits)
-			if not ok then log("$4raycast failed: " .. tostring(n)); return true end
-			if n and n > 0 and hits[1] then hits[1].dist = hits[1].dist + done end
-		else
-			local frac = hit.dist / vlen(move)   -- share of this step flown before the hit
-			hit.dist = r.dist + hit.dist        -- the ray's distance is from this step's start: the path flown so far
-			local speed = vlen(r.vel)
-			hit.energy = 0.5 * r.phys.bullet * speed * speed
-			self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
-			self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
-			r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
-			if not self:ApplyHit(hit, vnorm(move), r.phys, r) then r.landed = true; return true end
-			if vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(hit.pos, r.pos, PATH_IN) end   -- through a wall / body
-			-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
-			r.hops = (r.hops or 0) + 1
-			if r.hops > 8 or vlen(r.vel) < 30 then return true end
-			return self:MoveRound(r, h * (1 - frac))
-		end
+	local hit = self:FlightHit(r.pos, move, r.skip)
+	if hit == false then return true end
+	hit = self:WaterCrossing(r.pos, hit and hit.pos or vadd(r.pos, move)) or hit
+	if hit then
+		local frac = hit.dist / vlen(move)   -- share of this step flown before the hit
+		hit.dist = r.dist + hit.dist        -- the ray's distance is from this step's start: the path flown so far
+		hit.energy = 0.5 * r.phys.bullet * speed * speed
+		self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
+		self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
+		r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
+		if not self:ApplyHit(hit, vnorm(move), r.phys, r) then r.landed = true; return true end
+		if vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(hit.pos, r.pos, PATH_IN) end   -- through a wall / body
+		-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
+		r.hops = (r.hops or 0) + 1
+		if r.hops > 8 or vlen(r.vel) < 30 then return true end
+		return self:MoveRound(r, h * (1 - frac))
 	end
 	self:PathAdd(r.pos, vadd(r.pos, move), (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
 	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)

@@ -39,7 +39,9 @@ local function newNpc(y, outfit)
 	world.npcs[#world.npcs + 1] = n
 	return n
 end
-Physics.RayWorldIntersection = function(pos, dir, _, _, skip1, skip2, hits)
+Physics.RayWorldIntersection = function(pos, dir, _, mask, skip1, skip2, hits)
+	-- KCD2 crashed on a ray that asked for water (the Trosky tannery pit, 2026-10-14): none may
+	if mask and bit.band(mask, 0x200) ~= 0 then error("a ray asked for ent_water (crashed KCD2 in a tannery pit)") end
 	local best
 	local function try(t, hit) if t >= 0 and t <= 1 and (not best or t < best.t) then hit.t = t; best = hit end end
 	for _, sl in ipairs(world.slabs) do
@@ -97,7 +99,7 @@ local function check(label, ok, detail)
 	if not ok then fails = fails + 1 end
 	print((ok and "PASS " or "FAIL ") .. label .. (ok and "" or ("  " .. tostring(detail))))
 end
-local function reset() world.slabs, world.npcs, world.ground, world.boxes, landed, M.decals, M.fxNames = {}, {}, nil, {}, {}, {}, {} end
+local function reset() world.slabs, world.npcs, world.ground, world.boxes, landed, M.decals, M.fxNames, M.waters = {}, {}, nil, {}, {}, {}, {}, {} end
 M.surfaceNames[6] = "mat_water"
 M.surfaceNames[7] = "mat_metal"
 M.surfaceNames[8] = "mat_door_metal"
@@ -206,6 +208,10 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	local function skim(surface, deg)
 		reset()
 		world.ground = { z = 31.0, surface = surface }
+		if surface == 6 then   -- water: a lake whose surface is at 31 m over a stone bed 5 m down
+			world.ground = { z = 26.0, surface = 1 }
+			M.waters = { { level = 31.0, x0 = -1e4, x1 = 1e4, y0 = -1e4, y1 = 1e4 } }
+		end
 		world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
 		withRandom(0.5, function() fire(math.rad(-deg)) end)
 		if #landed ~= 2 then return -1, -1, 1 end
@@ -485,21 +491,41 @@ local function timber(tumble)
 	return through
 end
 check("15 cm of timber: a straight .50 AE goes through, a tumbling one stops", timber(false) == true and timber(true) == false, nil)
--- a round's flight rays see water surfaces (CryEngine's ent_water, 0x200, isn't in ent_all: without it a round went
--- through a lake's surface and splashed on the bed, up to 5 m down; measured live 2026-10-13)
+-- water surfaces: a round meets a lake's surface, not its bed (ent_all leaves water out: a round once went through and
+-- splashed on the bed, up to 5 m down, 2026-10-13), and no ray asks for water (ent_water, 0x200): KCD2 handed a tannery
+-- pit's water back with no object and crashed reading it (2026-10-14). The surface comes from CryAction.GetWaterInfo
 do
 	local rwi, masks = Physics.RayWorldIntersection, {}
 	Physics.RayWorldIntersection = function(pos, dir, maxHits, mask, ...)
 		masks[#masks + 1] = mask
 		return rwi(pos, dir, maxHits, mask, ...)
 	end
-	reset()
-	world.slabs = { { y0 = 240, y1 = 241, surface = 1 } }
-	fire()
+	local function lake(pitch, x0)   -- a lake with its surface at 30 m over a stone bed 5 m down, from x0 on
+		reset()
+		world.ground = { z = 25.0, surface = 1 }
+		M.waters = { { level = 30.0, x0 = x0 or -1e4, x1 = 1e4, y0 = -1e4, y1 = 1e4 } }
+		withRandom(0.99, function() fire(math.rad(pitch)) end)   -- 0.99: no skip, it goes in
+		return landed[1]
+	end
+	local down = lake(-30)
 	Physics.RayWorldIntersection = rwi
-	local seen = false
-	for _, m in ipairs(masks) do if bit.band(m, 0x200) ~= 0 then seen = true end end
-	check(string.format("flight rays include water surfaces (%d rays, ent_water in the mask: %s)", #masks, tostring(seen)), seen, #masks)
+	local water = false
+	for _, m in ipairs(masks) do if bit.band(m, 0x200) ~= 0 then water = true end end
+	check(string.format("a round meets a lake's surface (%s at %.2f m), not its bed 5 m down; %d flight rays, none asks for water",
+		down and down.surface or "nothing", down and down.hit.pos.z or 0, #masks),
+		down and down.surface == "mat_water" and math.abs(down.hit.pos.z - 30) < 1e-3 and down.hit.normal.z == 1 and not water, water)
+	-- KCD2's water areas reach above their surface, and dry ground gives the level sea at -1e6: neither is a surface
+	reset()
+	world.slabs = { { y0 = 230, y1 = 231, surface = 3 } }
+	M.waters = { { level = 31.0, x0 = -1e4, x1 = 1e4, y0 = 200, y1 = 1e4 } }   -- the round flies 0.75 m over it
+	fire()
+	local over = landed[1]
+	reset()
+	world.slabs = { { y0 = 230, y1 = 231, surface = 3 } }
+	fire()
+	local dry = landed[1]
+	check(string.format("over water and over dry land a round flies on to the wall (%s, %s)", over and over.surface or "nothing",
+		dry and dry.surface or "nothing"), over and over.surface == "mat_wood" and dry and dry.surface == "mat_wood", over and over.surface)
 end
 -- deagle_gunfx 0: no flash, smoke, muzzle light, casing, tracer or gunshot, so the impacts can be watched on their own;
 -- the impact itself (effect, hole, sound) is unchanged
