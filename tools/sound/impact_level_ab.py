@@ -2,10 +2,10 @@
 """How loud a bullet hitting steel is next to the gunshot: the mod now vs matched to real recordings, as a listening
 pack with the recording itself on the page.
 
-Real recordings (Hickok45, camera at the shooter, outdoors; MODLOG 2026-10-14): steel dings 0.4-1.3 s after the shot
-(roughly 80-250 m) peak 7-15 dB under the bang (5 ms peak level; median -7.5 dB over 25 dings in "Desert Eagle 50 AE",
--9 in the user's Sunday Shoot-a-Round #351 clip) and stand out of the range's echo. Ears and microphones squash the
-bang, so this, not the sound pressure ratio at the ear, is what a hit should sound like next to the shot.
+ON HOLD (2026-10-14): the reference may be wrong. The "dings" measured in Hickok45's videos (7-15 dB under the bang,
+0.4-1.3 s after the shot) are probably his brass casings landing, not the plate: in "Desert Eagle 50 AE" the 5.5 kHz
+ring comes 0.9-1.0 s after every shot whether he shoots the far steel field or a jug on a stump up close (frames
+checked). The user's clip (Sunday Shoot-a-Round #351, 0:08 in the video: pistol at steel in the trees) is unresolved.
 Close up no clean recording was found (the ding lands inside the bang); there the hit peaks like the bang, which is
 also Ready or Not's own mix at point blank (5 ms peaks: MK V bang -10.2 dBFS, steel hit -11.3).
 Matched law: hit volume = NEAR_VOL within NEAR_M, then x (NEAR_M / d) ^ FADE: -8 dB vs the bang at 175 m.
@@ -19,9 +19,6 @@ EXE = "/mnt/e/Tools/deagle-work/ron/fmodrender/bin/FmodRender.exe"
 BANKS = r"C:\Program Files (x86)\Steam\steamapps\common\Ready Or Not\ReadyOrNot\Content\FMOD\Desktop"
 DESK = "/mnt/c/Users/<user>/Desktop/Deagle Progress/15 Metal hit loudness"
 CLIP = "/mnt/c/Users/<user>/Downloads/Sunday Shoot-a-Round # 351_8_50.mp3"
-# Hickok45 "Desert Eagle 50 AE" (youtu.be/nb7tWcohYSY, audio fetched with yt-dlp): 734.5-744.5 s = 3 shots that all
-# ring the same far plate (a 5.5 kHz tone 0.92-0.96 s later, like 25 shots in the video; misses leave no tone)
-DE = "/mnt/e/Tools/deagle-work/sound/hickok/nb7tWcohYSY.wav"
 RM = "event:/Levels/Reverbs/ReverbMaster"
 IMP = "event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces"
 SHOT = "event:/Weapons/Grizzly/1P Grizzly Fire"
@@ -59,12 +56,9 @@ def main():
     for f in os.listdir(out):
         if f.endswith(".wav"): os.remove(os.path.join(out, f))
     rows = []   # (section, label, file)
-    if os.path.exists(DE):
-        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "734.5", "-t", "10", "-i", DE, out + "/hickok45_deagle_3_hits.wav"], check=True)
-        rows.append(("Real recordings", "Hickok45, Desert Eagle .50 AE: 3 shots, every one hits a steel plate far out. The DING comes about 1 s after each shot", "hickok45_deagle_3_hits.wav"))
     if os.path.exists(clip):   # its first shot rings a plate about 1 s later (the second one is less clear)
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-ss", "1.15", "-t", "2.4", "-i", clip, out + "/hickok45_your_clip.wav"], check=True)
-        rows.append(("Real recordings", "Hickok45, your clip: one shot, the DING about 1 s later", "hickok45_your_clip.wav"))
+        rows.append(("Real recordings", "Hickok45, your clip (is the ding about 1 s after the shot the plate, or his brass landing?)", "hickok45_your_clip.wav"))
     name = "metal_hit_alone.wav"
     trimmed(out, name, render(out_win + "\\" + name, [(1.5, [IMP] + HIT + [f"vol:{NOW_VOL}"])] + [(1.5, ["ev:" + IMP] + HIT + [f"vol:{NOW_VOL}"])] * 2))
     rows.append(("Each sound alone", "the metal hit alone (what to listen for)", name))
@@ -92,7 +86,7 @@ def main():
 body{{font:15px system-ui;margin:16px;background:#111;color:#eee;max-width:900px}} table{{border-collapse:collapse;width:100%}}
 td,th{{border-bottom:1px solid #333;padding:6px 8px;text-align:left}} th{{padding-top:18px;color:#9cf}}
 tr.now td{{background:#2b1d1d}} tr.match td{{background:#1d2b1d}} audio{{height:30px}}</style></head><body>
-<h1>Metal hit: how loud next to the gunshot</h1>
+<h1>Metal hit: how loud next to the gunshot</h1>\n<p style='background:#4a3a10;padding:8px'><b>On hold:</b> the green rows are matched to Hickok "dings" that are probably his brass casings landing, not the plate. Don't pick yet.</p>
 <p>Set your volume once on the first file and don't touch it. Red = the mod now. Green = matched to real recordings
 (Hickok45: steel far away dings about 8 dB under the bang). Every file: 3 shots, each followed by the metal hit after
 the bullet's flight and the sound's way back. Ready or Not's engine made every game file.</p>

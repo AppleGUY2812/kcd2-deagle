@@ -515,3 +515,9 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   hit 30 dB under the bang, under RoN's echo. Recordings (and hearing) squash the bang (the clip's shot overloads
   the mic: a flat-topped pulse, then a slow recovery), so the sound-pressure ratio at the ear isn't what anyone hears.
   Match recordings, not the pressure ratio.
+- **Correction 2 (same night): those Hickok "dings" are probably brass, not steel.** In "Desert Eagle 50 AE"
+  (youtu.be/nb7tWcohYSY) the 5.5 kHz ring comes 0.9-1.0 s after every shot whether he shoots the far steel field
+  (734 s) or a jug / can on a stump up close (1106 s, 1421 s): same delay, same pitch = his .50 AE casings landing.
+  So the "7-15 dB under the bang" reference is withdrawn. The user's clip (Sunday Shoot-a-Round #351, 0:08 in the
+  video, sCV1pilQxxU: a pistol at steel in a thin forest; events 0.44 s after 5 shots, ~1 s after the first) is not
+  settled by measurement alone. Look at frames before trusting any sound measurement from a video.
