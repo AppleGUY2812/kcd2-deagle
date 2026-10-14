@@ -38,8 +38,7 @@ Read `README.md` (layout, build, test), `TODO.md` (status) and `MODLOG.md` (engi
 
 ## Handy
 - `tools/live.sh reload` / `tools/live.sh snippet.lua`: talk to the running game over the dev console (rcon). A reload
-  resets every setting to the shipped defaults; `live.sh reload` replays the user's kept ones (deagle_settings.txt)
-  right after, so reload through it, never with a bare `deagle_dev_reload`. While
+  sets the user's kept settings (deagle_settings.txt) again by itself, like a normal load. While
   the game window isn't focused the game is paused: timers and animation don't advance.
 - Game log: `E:\SteamLibrary\steamapps\common\KingdomComeDeliverance2\kcd.log`; plugin log next to the exe.
 - Video from the user: extract frames with ffmpeg and look at them (contact sheets with timestamps).
