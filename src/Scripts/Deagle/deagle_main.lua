@@ -449,9 +449,26 @@ function Deagle:PlayTrigger(name)
 end
 
 local PLUGIN_FX = { deagle_impacts = true, deagle_blood = true }
+-- per-hit variety (user 2026-10-14: the sparks "look the same" every hit): the effect's axis tilts up to `tilt` deg at a
+-- random heading, and `jets` extra `jet` emitters point along the surface at random headings, up to `lift` deg off it
+local FX_VARY = {
+	["deagle_impacts.metal_v2"] = { tilt = 20, jet = "deagle_impacts.metal_v2_jet", jets = { 1, 3 }, lift = 20 },
+}
 function Deagle:SpawnFx(name, pos, normal, scale)
 	if not name then return end
 	if name == self.cfg.muzzleFx then scale = self.cfg.muzzleFxScale end
+	local vary = FX_VARY[name]
+	if vary and pos and normal then
+		local a = math.abs(normal.z) < 0.9 and { x = 0, y = 0, z = 1 } or { x = 1, y = 0, z = 0 }
+		local u = vnorm(vcross(normal, a))
+		local v = vcross(normal, u)
+		for _ = 1, math.random(vary.jets[1], vary.jets[2]) do
+			local h, e = math.random() * 2 * math.pi, math.rad(math.random() * vary.lift)
+			local along = vadd(vscale(u, math.cos(h)), vscale(v, math.sin(h)))
+			self:SpawnFx(vary.jet, pos, vadd(vscale(along, math.cos(e)), vscale(normal, math.sin(e))), scale)
+		end
+		normal = coneDir(normal, vary.tilt)
+	end
 	local lib = string.match(name, "^([%w_]+)%.")
 	if self.cfg.impactSpawn == "plugin" and self.native and PLUGIN_FX[lib] and pos and normal then
 		-- fxs <effect> <scale> <box length m along the normal> <pos> <dir>: drawn from its first frame
