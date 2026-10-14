@@ -141,8 +141,8 @@ player.soul = {}
 player.this = { id = player.id }
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }
-_G.ent_all = 0xFFFF
-_G.ent_static, _G.ent_terrain = 1, 2
+_G.ent_all = 287   -- KCD2's value (measured): static | sleeping | rigid | living | independent | terrain, no water
+_G.ent_static, _G.ent_terrain = 1, 0x100
 _G.ENTITY_FLAG_CASTSHADOW = 2
 _G.ENTITY_FLAG_NO_SAVE = 32768
 _G.System = {

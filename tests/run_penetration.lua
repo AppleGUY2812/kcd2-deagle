@@ -407,6 +407,22 @@ local function timber(tumble)
 	return through
 end
 check("15 cm of timber: a straight .50 AE goes through, a tumbling one stops", timber(false) == true and timber(true) == false, nil)
+-- a round's flight rays see water surfaces (CryEngine's ent_water, 0x200, isn't in ent_all: without it a round went
+-- through a lake's surface and splashed on the bed, up to 5 m down; measured live 2026-10-13)
+do
+	local rwi, masks = Physics.RayWorldIntersection, {}
+	Physics.RayWorldIntersection = function(pos, dir, maxHits, mask, ...)
+		masks[#masks + 1] = mask
+		return rwi(pos, dir, maxHits, mask, ...)
+	end
+	reset()
+	world.slabs = { { y0 = 240, y1 = 241, surface = 1 } }
+	fire()
+	Physics.RayWorldIntersection = rwi
+	local seen = false
+	for _, m in ipairs(masks) do if bit.band(m, 0x200) ~= 0 then seen = true end end
+	check(string.format("flight rays include water surfaces (%d rays, ent_water in the mask: %s)", #masks, tostring(seen)), seen, #masks)
+end
 -- every surface a round can hit has penetration data (only pass-through helpers may lack it)
 local missing = {}
 for name, s in pairs(Deagle.surfaces) do

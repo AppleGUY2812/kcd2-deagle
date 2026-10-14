@@ -248,6 +248,9 @@ end
 -- fired, like before; farther away it arrives late and low (a .50 AE at 100 m: ~0.24 s and ~27 cm under the line).
 -- ---------------------------------------------------------------------------
 local GRAVITY = 9.81             -- m/s^2
+-- what a round's flight rays hit: ent_all plus water surfaces (CryEngine's ent_water; KCD2 has no global for it and
+-- its ent_all, 287, leaves water out: a round went through a lake's surface and splashed on the bed, up to 5 m down)
+local FLIGHT_MASK = ent_all % 0x400 >= 0x200 and ent_all or ent_all + 0x200   -- 0x200 = ent_water
 local ROUND_STEP = 0.02          -- s: a longer frame is cut into steps this long, so the arc stays smooth
 local ROUND_LIFE = 6             -- s: a round that hit nothing is dropped after this, or past cfg.range (a Deagle round
                                  -- takes ~5 s to fly 1000 m)
@@ -260,7 +263,7 @@ function Deagle:MoveRound(r, h)
 	local move = vscale(vadd(r.vel, v1), 0.5 * h)
 	local hits = {}
 	local p = self:Player()
-	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, move, 1, ent_all, p and p.id, r.skip, hits)
+	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, move, 1, FLIGHT_MASK, p and p.id, r.skip, hits)
 	if not ok then
 		log("$4raycast failed: " .. tostring(n))
 		return true
@@ -276,7 +279,7 @@ function Deagle:MoveRound(r, h)
 			if done >= vlen(move) then break end
 			from, left = vadd(r.pos, vscale(dir, done)), vscale(dir, vlen(move) - done)
 			hits = {}
-			ok, n = pcall(Physics.RayWorldIntersection, from, left, 1, ent_all, p and p.id, r.skip, hits)
+			ok, n = pcall(Physics.RayWorldIntersection, from, left, 1, FLIGHT_MASK, p and p.id, r.skip, hits)
 			if not ok then log("$4raycast failed: " .. tostring(n)); return true end
 			if n and n > 0 and hits[1] then hits[1].dist = hits[1].dist + done end
 		else
