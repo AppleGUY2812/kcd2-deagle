@@ -116,7 +116,9 @@ local function aiShot(mode)
 	Deagle:ApplyHit({ entity = e, pos = vec(100, 205, 31.35), normal = vec(0, -1, 0), partid = 1, dist = 5 }, vec(0, 1, 0), Deagle:ShotPhysics())
 	local flags
 	for i = n0 + 1, #M.native do flags = M.native[i]:match("^%[DN%] hitreact .* (%x+)$") or flags end
-	return by, flags, M.aiMessages[1], e
+	local react
+	for _, m in ipairs(M.aiMessages) do if m.kind == "hitReaction" then react = react or m end end
+	return by, flags, react, e
 end
 local by, flags, msg = aiShot("missile")
 check(string.format("hitAI missile: a hitReaction message to the NPC (type %s, attacker %s, strength %s), damage names %s, flinch flags %s",
@@ -127,6 +129,24 @@ by, flags, msg = aiShot("direct")
 check(string.format("hitAI direct: no message (%s), damage names the player (%s), flinch flags %s", tostring(msg ~= nil), tostring(by), tostring(flags)),
 	msg == nil and by == pl.id and flags == "3f", flags)
 Deagle.cfg.hitAI = "missile"
+
+-- a living NPC says its "got hit" bark (KCD2's own, by metarole), once per PAIN_GAP; not a test dummy
+local function barks()
+	local n = 0
+	for _, m in ipairs(M.aiMessages) do if m.kind == "dialog:monologRequest" and m.msg.metarole == "SKIRMISH_HITTARGET_TARGET" and m.id == "npcWUID" then n = n + 1 end end
+	return n
+end
+Deagle.painT = nil
+local _, _, _, npc = aiShot("missile")
+local first = barks()
+Deagle:ApplyHit({ entity = npc, pos = vec(100, 205, 31.35), normal = vec(0, -1, 0), partid = 1, dist = 5 }, vec(0, 1, 0), Deagle:ShotPhysics())
+check(string.format("pain voice: the hit NPC is asked for its got-hit bark (%d), not again 0 s later (%d)", first, barks()), first == 1 and barks() == 1, barks())
+Deagle.painT = nil
+Deagle.testNpcs = { [tostring(npc.id)] = true }
+M.aiMessages = {}
+Deagle:ApplyHit({ entity = npc, pos = vec(100, 205, 31.35), normal = vec(0, -1, 0), partid = 1, dist = 5 }, vec(0, 1, 0), Deagle:ShotPhysics())
+check("pain voice: a deagle_testnpc dummy says nothing", barks() == 0, barks())
+Deagle.testNpcs = nil
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))

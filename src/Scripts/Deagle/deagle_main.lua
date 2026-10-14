@@ -1238,6 +1238,28 @@ function Deagle:HitAI(e, dmg, stam)
 	end)
 end
 
+-- An NPC our round hits says what KCD2's NPCs say when a blow lands in a fight: its "got hit" bark, in its own voice
+-- (metarole SKIRMISH_HITTARGET_TARGET: soldiers' and bandits' SOLDIER_DOSTAL_ZASAH_V_COMBATU and a few named people's;
+-- rpg/role.xml), asked for the way KCD2's DialogUtils.RequestPlayerMonologByMetarole asks. KCD2 has no hit grunts:
+-- voices.xml's v_hit_passed / v_hit_stopped / v_attack triggers are empty. Townsfolk have no such line and stay quiet.
+-- (The user: "do the npcs make pain sounds", 2026-10-14.) Not the dead; one per NPC every PAIN_GAP s, so rapid fire
+-- doesn't cut each line off.
+local PAIN_GAP = 2.5
+function Deagle:PainVoice(e)
+	local hp = 1
+	pcall(function() hp = e.actor:GetHealth() end)
+	if not hp or hp <= 0 then return end
+	local now, key = System.GetCurrTime(), tostring(e.id)
+	self.painT = self.painT or {}
+	local last = self.painT[key]
+	if last and now >= last and now - last < PAIN_GAP then return end   -- now < last: a save load set the clock back
+	self.painT[key] = now
+	try("pain voice", function()
+		XGenAIModule.SendMessageToEntityData(e.this.id, "dialog:monologRequest",
+			table.MakeFromType("dialog:monologRequest", { metarole = "SKIRMISH_HITTARGET_TARGET" }))
+	end)
+end
+
 -- A hit's sound from where it happened: Ready or Not's own event, 3D in its engine (direction). what = a RoN Surface
 -- index (Bullet Impact Surfaces), a RON_HIT or ARMOR_HIT key, or one of our recordings ({ files, vol, ron }).
 -- These events don't fade with FMOD's own 3D distance: RoN's game code sets PropagateDistance (m along the sound's path)
@@ -1487,6 +1509,7 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			end
 			self:HitReact(e, hit, dir, dmg, stam)
 			if not dummy then self:HitAI(e, dmg, stam) end
+			if not dummy then self:PainVoice(e) end
 			local killed = false
 			pcall(function() killed = e.actor:GetHealth() <= 0 end)
 			if killed and phys then self:KillShove(e, hit, dir, phys, hit.energy) end
