@@ -102,6 +102,18 @@ table.sort(missing)
 check("see-through hulls (tree branch boxes, fences) let rounds through, like KCD2's arrows",
 	Deagle.surfaces.mat_railing_wood_seethrough.fx == "pass" and Deagle.surfaces.mat_metal_seethrough.fx == "pass" and Deagle.surfaces.mat_wood.fx == "wood", nil)
 check("every hit surface has an audible RoN Surface: missing " .. table.concat(missing, " "), #missing == 0, #missing)
+-- steel plays the real plate files once the plugin says it can ("deagle_native_caps files"), RoN's Steel before that
+local hit = { x = 1, y = 2, z = 3 }
+Deagle.nativeCaps = nil
+Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
+check("an older plugin: steel stays RoN's Steel: " .. M.native[#M.native], M.native[#M.native]:find("|Surface=44 ", 1, true) ~= nil, nil)
+local nLoad = #M.native
+Deagle:NativeCaps('"files"')
+check("the plugin can play files: the plate takes load at once", #M.native == nLoad + 3 and M.native[#M.native]:find("^%[DN%] ronload file:steel/plate_0%d%.wav$") ~= nil, M.native[#M.native])
+Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
+check("then steel plays a plate take with the distance law: " .. M.native[#M.native],
+	M.native[#M.native]:find("^%[DN%] ron3 6%.740 1%.00 2%.00 3%.00 file:steel/plate_0%d%.wav|Falloff=3$") ~= nil, nil)
+Deagle.nativeCaps = nil
 -- the empty click and aiming play the gun's RoN events
 n0 = #M.native
 Deagle.state.ammo = 0; Deagle:Shoot(true)

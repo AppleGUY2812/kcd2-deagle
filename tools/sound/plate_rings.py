@@ -29,7 +29,8 @@ SIDE, GATE = 80.0, 6.0     # Hz to the bands a tone is compared with; dB it must
 # it nothing rises at the strike, it's the gun's echo), CLANK_HOLD s from the strike, faded out over CLANK_FADE s.
 # Measured on hit 01 against 7 shots with no plate: 2-16 kHz stands 4-8 dB over the gun's echo for ~0.3 s, then level
 CLANK_HOLD, CLANK_FADE, SHIMMER_HZ = .1, .15, 1500.0
-CLANK_FULL = 0.0          # s of the clank kept full-band (its body below SHIMMER_HZ: 300-1500 Hz rises 3-5 dB at the strike)
+CLANK_FULL = 0.012        # s of the clank kept full-band (the user picked this, pack 20 "B"); its body
+# below SHIMMER_HZ: 300-1500 Hz rises 3-5 dB at the strike
 
 def tones(x, sr, shot, onset):
     """Frequencies (Hz) of the plate's tones: narrow peaks that stand >= 10 dB over their neighbours at the same pitch
@@ -91,7 +92,7 @@ def ring(x, sr, shot, onset, freqs):
         g = np.zeros(len(seg)); g[:end] = 1
         fo = int(.08 * sr); g[end: end + fo] = np.linspace(1, 0, len(g[end: end + fo]))
         y += b * g
-    # the strike itself: the sharpest rise of the level over 2 kHz within 30 ms of the finder's onset. The clank and
+    # the strike itself: the sharpest rise of the level over 2 kHz from 10 ms before the finder's onset to 30 ms after. The clank and
     # shimmer there are spread over every pitch like the gun's echo, but louder for a while: the original's non-tonal
     # part over SHIMMER_HZ is taken for CLANK_HOLD s from the strike, faded out over CLANK_FADE s
     hp = sosfiltfilt(butter(4, 2000, "high", fs=sr, output="sos"), seg)
@@ -99,7 +100,7 @@ def ring(x, sr, shot, onset, freqs):
     lvl = 10 * np.log10(np.convolve(hp * hp, np.ones(m) / m, "same") + 1e-20)
     s0 = lead + int(.01 * sr)
     back = int(.005 * sr)
-    cand = range(s0 - int(.03 * sr), s0 + int(.03 * sr))
+    cand = range(s0 - int(.01 * sr), s0 + int(.03 * sr))   # not earlier: the camera's gain coming back after the bang
     st = max(cand, key=lambda i: lvl[i] - lvl[i - back: i].min()) - m // 2
     w = np.zeros(len(seg))
     r1, h1, f1 = int(.001 * sr), int(CLANK_HOLD * sr), int(CLANK_FADE * sr)

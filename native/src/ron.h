@@ -12,6 +12,7 @@ void RonRelease();
 void RonUpdate(const float* cam);
 // play an event once. params "name=value name=value" (event parameters; a name the event doesn't have is set as a
 // global). at = world position for 3D events, nullptr = at the listener. Returns false if the event is unknown.
+// event "file:<path>" plays our own sound file (Mods\deagle\sounds\<path>) the same way (Falloff= applies).
 bool RonPlay(const char* event, const char* params, const float* at, float vol = 1.0f);
 // load an event's audio now (it loads in the background), so its first play has no delay
 bool RonLoad(const char* event);

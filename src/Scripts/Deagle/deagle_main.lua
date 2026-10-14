@@ -1022,6 +1022,13 @@ ronSurface(15, { "mat_fabric", "mat_fabric_items", "mat_sack" })                
 ronSurface(53, { "mat_leather" })                                                                                   -- Leather
 ronSurface(16, { "mat_flesh" })                                                                                     -- Flesh
 RON_SURFACE.mat_bells = "bell"                                                                                      -- Tower Bell event
+-- Steel: a real plate hit instead of RoN's Steel (the user: "we need to change the steel impact sound its sounds like
+-- ass"): plate A of Hickok45's Sunday Shoot-a-Round #351 (3 takes; ~22 m from his camera), its clank, early shimmer and
+-- ring lifted from the recording (tools/sound/plate_rings.py, plate_sounds.py: files and vol), as loud next to RoN's MK V
+-- shot as in the clip (the user's pick, pack 20 "B"). Played by the plugin like RoN's events (Falloff, travel time);
+-- a plugin without "file:" sounds (deagle_native_caps) keeps RoN's Steel, ron.
+local PLATE = { files = { "steel/plate_01.wav", "steel/plate_02.wav", "steel/plate_03.wav" }, vol = 3.37, ron = 44 }
+RON_SURFACE.mat_metal, RON_SURFACE.mat_super_cool_sparkly_type = PLATE, PLATE
 for n, sf in pairs(SURFACES) do sf.ron = RON_SURFACE[n] end
 Deagle.surfaces = SURFACES
 
@@ -1220,7 +1227,13 @@ function Deagle:HitSound(what, pos, scale, vol)
 		local ev, params
 		-- Falloff: the plugin's distance law from the listener (the free camera too), instead of RoN's PropagateDistance
 		local prop = "Occlusion=0 PropagateDistance=@ Falloff=" .. c.impactNear
-		if type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d %s", what, prop)
+		if type(what) == "table" then   -- our own recordings: { files, vol, ron = RoN's Surface for an older plugin }
+			if self.nativeCaps and self.nativeCaps.files then
+				ev, params, vol = "file:" .. what.files[math.random(1, #what.files)], "Falloff=" .. c.impactNear, what.vol * (vol or 1)
+			else what = what.ron end
+		end
+		if ev then
+		elseif type(what) == "number" then ev, params = RON_IMPACT, string.format("Surface=%d %s", what, prop)
 		else ev, params = RON_HIT[what], prop end
 		if ev then self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume * (vol or 1), pos.x, pos.y, pos.z, ev, params)) end
 	end
@@ -2864,6 +2877,20 @@ function Deagle:RonWarm()
 	end
 	for _, ev in ipairs(self.ronHitEvents) do self:Native("ronload " .. ev) end
 end
+-- what the plugin can do beyond the handshake ("files": play our own sound files, ron3 file:<path>); its files load now
+function Deagle:NativeCaps(caps)
+	self.nativeCaps = {}
+	for w in tostring(Deagle.Arg(caps) or ""):gmatch("%a+") do self.nativeCaps[w] = true end
+	if self.nativeCaps.files then
+		local seen = {}
+		for _, sf in pairs(SURFACES) do
+			if type(sf.ron) == "table" and not seen[sf.ron] then
+				seen[sf.ron] = true
+				for _, f in ipairs(sf.ron.files) do self:Native("ronload file:" .. f) end
+			end
+		end
+	end
+end
 function Deagle:RonState(ok)
 	self.ronOk = Deagle.Arg(ok) == "1"   -- the console hands %1 over in quotes ("1"): a raw compare always failed
 	if not self.ronOk then
@@ -3161,6 +3188,7 @@ System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.s
 System.AddCCommand("deagle_fx", "Deagle:FxTest(Deagle.Arg([[%1]]))", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
 System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end; Deagle:RonWarm()", "internal: native plugin handshake")
+System.AddCCommand("deagle_native_caps", "Deagle:NativeCaps([[%1]])", "internal: what the native plugin can do (files)")
 System.AddCCommand("deagle_ron_state", "Deagle:RonState([[%1]])", "internal: Ready or Not's sound engine started in the plugin (1) or failed (0)")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
 System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")

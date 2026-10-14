@@ -34,12 +34,21 @@ typedef int (__stdcall* C_Format)(void* core, int rate, int mode, int raw);
 typedef int (__stdcall* C_Buffer)(void* core, unsigned len, int num);
 typedef int (__stdcall* C_Master)(void* core, void** group);
 typedef int (__stdcall* C_GroupF)(void* group, float v);
+typedef int (__stdcall* C_CreateSound)(void* core, const char* name, unsigned mode, void* exinfo, void** snd);
+typedef int (__stdcall* C_PlaySound)(void* core, void* snd, void* group, int paused, void** chan);
+typedef int (__stdcall* C_Chan3D)(void* chan, const FV* pos, const FV* vel);
+typedef int (__stdcall* C_ChanMinMax)(void* chan, float mn, float mx);
+typedef int (__stdcall* C_ChanF)(void* chan, float v);
+typedef int (__stdcall* C_ChanI)(void* chan, int v);
+typedef int (__stdcall* C_Listener)(void* core, int idx, const FV* pos, const FV* vel, const FV* fwd, const FV* up);
 
 static struct {
 	S_Create create; S_Core core; S_Init init; S_LoadBank loadBank; S_Sys update, release, flush; S_GetEvent getEvent;
 	S_SysParam sysParam; S_Listener listener; S_Desc loadSamples; S_CreateInst createInst; S_InstParam instParam;
 	S_Inst3D inst3d; S_Inst start, instRelease; S_InstStop stop; S_Is3D is3d; S_InstVol instVol;
 	C_Output output; C_Format format; C_Buffer buffer; C_Master master; C_GroupF pitch, volume;
+	C_CreateSound createSound; C_PlaySound playSound; C_Chan3D chan3d; C_ChanMinMax chanMinMax; C_ChanF chanVol;
+	C_ChanI chanPaused; C_Listener coreListener;
 } st{};
 
 static std::mutex g_mu;            // Lua commands and the camera step can come from different threads
@@ -49,6 +58,8 @@ static float g_speed = 1.0f, g_vol = 1.0f;
 static F3D g_listener = { {0, 0, 0}, {0, 0, 0}, {0, 0, 1}, {0, 1, 0} };
 static std::unordered_map<std::string, void*> g_desc;     // event path -> description (sample data loaded on first use)
 static std::unordered_map<std::string, void*> g_held;     // snapshots / loops started by RonHold
+static std::unordered_map<std::string, void*> g_files;    // "file:<path>" -> FMOD sound (our own WAVs, kept loaded)
+static std::string g_soundDir;                              // <mod>\sounds\: where "file:" paths start
 static float g_ear[3] = {};                                 // the listener, CryEngine axes (the free camera when it's on)
 struct Pending { double due; std::string ev, params; float at[3]; float vol; };
 static std::vector<Pending> g_pending;                      // RonPlayAt sounds still on their way (speed of sound)
@@ -95,7 +106,11 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 		& Get(studio, st.instRelease, "FMOD_Studio_EventInstance_Release") & Get(studio, st.instVol, "FMOD_Studio_EventInstance_SetVolume")
 		& Get(core, st.output, "FMOD_System_SetOutput") & Get(core, st.format, "FMOD_System_SetSoftwareFormat")
 		& Get(core, st.buffer, "FMOD_System_SetDSPBufferSize") & Get(core, st.master, "FMOD_System_GetMasterChannelGroup")
-		& Get(core, st.pitch, "FMOD_ChannelGroup_SetPitch") & Get(core, st.volume, "FMOD_ChannelGroup_SetVolume");
+		& Get(core, st.pitch, "FMOD_ChannelGroup_SetPitch") & Get(core, st.volume, "FMOD_ChannelGroup_SetVolume")
+		& Get(core, st.createSound, "FMOD_System_CreateSound") & Get(core, st.playSound, "FMOD_System_PlaySound")
+		& Get(core, st.chan3d, "FMOD_Channel_Set3DAttributes") & Get(core, st.chanMinMax, "FMOD_Channel_Set3DMinMaxDistance")
+		& Get(core, st.chanVol, "FMOD_Channel_SetVolume") & Get(core, st.chanPaused, "FMOD_Channel_SetPaused")
+		& Get(core, st.coreListener, "FMOD_System_Set3DListenerAttributes");
 	if (!ok) return false;
 	void* sys = nullptr;
 	int r = st.create(&sys, 0x00020310);   // FMOD 2.03.10, the version Ready or Not ships
@@ -123,6 +138,7 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 	}
 	st.flush(sys);
 	g_sys = sys;
+	g_soundDir = dir + "..\\sounds\\";
 	ApplyMaster();
 	Log("ron: Ready or Not's FMOD 2.03.10 up, %zu banks in %lu ms%s", sizeof(kBanks) / sizeof(*kBanks), GetTickCount() - t0,
 		wavOut ? " (offline)" : "");
@@ -135,7 +151,7 @@ void RonRelease() {
 	std::lock_guard<std::mutex> lk(g_mu);
 	if (!g_sys) return;
 	st.release(g_sys);    // the wav writer finishes its file here
-	g_sys = nullptr; g_core = nullptr; g_desc.clear(); g_held.clear();
+	g_sys = nullptr; g_core = nullptr; g_desc.clear(); g_held.clear(); g_files.clear();   // sounds go with the system
 }
 
 void RonUpdate(const float* cam) {
@@ -147,6 +163,8 @@ void RonUpdate(const float* cam) {
 		g_listener.fwd = ToF(cam[1], cam[5], cam[9]);
 		g_listener.up = ToF(cam[2], cam[6], cam[10]);
 		int r = st.listener(g_sys, 0, &g_listener, nullptr);
+		FV still = { 0, 0, 0 };
+		st.coreListener(g_core, 0, &g_listener.pos, &still, &g_listener.fwd, &g_listener.up);
 		static int said = 0;
 		if (r && said++ < 3) Log("ron: listener rejected (%d): fwd %.3f %.3f %.3f up %.3f %.3f %.3f", r, g_listener.fwd.x, g_listener.fwd.y,
 			g_listener.fwd.z, g_listener.up.x, g_listener.up.y, g_listener.up.z);
@@ -174,6 +192,32 @@ static void* Desc(const char* path) {
 	return d;
 }
 
+// "file:<path>": one of our own sound files (Mods\deagle\sounds\<path>) instead of a Ready or Not event, e.g. a real
+// plate hit lifted from a recording. Loaded once and kept in memory, played on a core channel into RoN's master bus
+// (its limiter, the mod's volume, slow motion), 3D-panned from the listener; the distance law is the event's
+// (Falloff=), FMOD's own roll-off is off (min distance 10 km).
+static bool IsFile(const char* event) { return !strncmp(event, "file:", 5); }
+static void* FileSound(const char* event) {
+	auto it = g_files.find(event);
+	if (it != g_files.end()) return it->second;
+	void* snd = nullptr;
+	std::string path = g_soundDir + (event + 5);
+	int r = st.createSound(g_core, path.c_str(), 0x00000001 | 0x00000010 | 0x00000100, nullptr, &snd);   // LOOP_OFF|3D|CREATESAMPLE
+	if (r || !snd) { Log("ron: can't load %s (%d)", path.c_str(), r); snd = nullptr; }
+	g_files[event] = snd;
+	return snd;
+}
+static bool PlayFile(const char* event, const float* at, float vol) {
+	void* snd = FileSound(event);
+	void* ch = nullptr;
+	if (!snd || st.playSound(g_core, snd, nullptr, 1, &ch) || !ch) return false;   // paused: placed before it sounds
+	FV pos = at ? ToF(at[0], at[1], at[2]) : g_listener.pos, still = { 0, 0, 0 };
+	st.chan3d(ch, &pos, &still);
+	st.chanMinMax(ch, 10000.0f, 20000.0f);
+	st.chanVol(ch, vol);
+	return st.chanPaused(ch, 0) == 0;
+}
+
 bool RonPlay(const char* event, const char* params, const float* at, float vol) {
 	std::lock_guard<std::mutex> lk(g_mu);
 	return g_sys && PlayLocked(event, params, at, vol);
@@ -192,7 +236,7 @@ bool RonPlayAt(const char* event, const char* params, const float* at, float vol
 	if (delay < 0.01) return PlayLocked(event, params, at, vol);
 	Pending p{ Now() + delay, event, params ? params : "", { at[0], at[1], at[2] }, vol };
 	g_pending.push_back(std::move(p));
-	return Desc(event) != nullptr;
+	return IsFile(event) ? FileSound(event) != nullptr : Desc(event) != nullptr;   // loaded now, played on time
 }
 
 static bool PlayLocked(const char* event, const char* params, const float* at, float vol) {
@@ -218,6 +262,7 @@ static bool PlayLocked(const char* event, const char* params, const float* at, f
 		ps.replace(k + 18, 1, num);
 	}
 	params = ps.c_str();
+	if (IsFile(event)) return PlayFile(event, at, vol);
 	void* d = Desc(event);
 	if (!d) return false;
 	void* inst = nullptr;
@@ -247,7 +292,7 @@ static bool PlayLocked(const char* event, const char* params, const float* at, f
 
 bool RonLoad(const char* event) {
 	std::lock_guard<std::mutex> lk(g_mu);
-	return g_sys && Desc(event) != nullptr;
+	return g_sys && (IsFile(event) ? FileSound(event) : Desc(event)) != nullptr;
 }
 
 void RonGlobal(const char* name, float value) {

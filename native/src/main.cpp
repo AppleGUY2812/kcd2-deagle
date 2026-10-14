@@ -720,6 +720,7 @@ static void Command(const char* line) {
 		{
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
+			g_console.push_back("deagle_native_caps files");   // ron3 / ron play "file:<path>" sounds (ron.cpp)
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
