@@ -27,6 +27,14 @@ function Deagle:ImpactScale(phys, dist, energy)
 	return (eIn / (0.5 * ref.bullet * ref.velocity * ref.velocity)) ^ (1 / 3)
 end
 
+-- A hit's loudness next to the same round's at the muzzle: the sound takes a fixed share of the energy the round brings
+-- (constant acoustic efficiency), so its amplitude goes with the square root. Ready or Not mixes its ricochet for a round
+-- at full speed; one slowed to 129 m/s by a water skip (10 % of its energy) rings 10 dB quieter, a spent one at 54 m/s 18 dB.
+function Deagle:HitLoudness(phys, energy)
+	if not (phys and phys.energy and phys.energy > 0 and energy) then return 1 end
+	return math.min(1, math.sqrt(math.max(0, energy) / phys.energy))
+end
+
 -- What an NPC wears on one zone (head / torso / arm_* / leg_*), outer layer first: the items in its inventory that are
 -- armour or clothing (guns/armor.lua, generated from KCD2's tables) and cover that zone, with their condition (0..1).
 -- KCD2 gives Lua no "equipped" query; an NPC's inventory is its outfit (checked live: a guard's lists exactly the
@@ -155,7 +163,7 @@ function Deagle:ArmorHit(e, hit, dir, phys, r, part)
 		local out = self:Deflect(r, hit.pos, hit.normal or vscale(dir, -1), dir, ric.keep, c.armor.scatter, e.id, ric.lift, ric.exit,
 			ric.exitMax)
 		self:SpawnFx(c.armorRicochetFx, hit.pos, out, a.scale * c.ricochet.fxScale)
-		self:HitSound("ricochet", hit.pos, a.scale, c.ricochet.volume)
+		self:HitSound("ricochet", hit.pos, a.scale, c.ricochet.volume * self:HitLoudness(phys, energy))
 		a.goesOn = true
 	elseif a.stopped and (a.stopped.a.layer == "plate" or a.stopped.a.layer == "mail") then
 		self:Splash(hit.pos, hit.normal or vscale(dir, -1), dir, a.scale)   -- flattened on it: no bounce back
@@ -193,19 +201,26 @@ function Deagle:Impact(hit, dir, phys, r)
 	local pen = self.penetration and self.penetration[name]
 	local cosI = math.max(0, -vdot(dir, hit.normal))
 	local graze = math.deg(math.asin(math.min(1, cosI)))     -- between the shot and the surface
+	local tag = r and r.logId and ("shot " .. r.logId .. " ") or ""   -- traced shots (cfg.debugShotLog) log every hit
 	if r and pen and math.random() < self:RicochetChance(pen.crit, graze) then
 		self:Mark(s, hit, dir, scale * 0.6)
 		local out = self:Deflect(r, hit.pos, hit.normal, dir, pen.keep or c.ricochetKeep, c.ricochetScatter, nil,
 			pen.lift or (not pen.hard and 1 or nil), pen.exit, pen.exitMax)
+		-- sparks and Ready or Not's ricochet sound (a metallic spang and whine) off hard surfaces only: off water, ground,
+		-- wood, plaster and glass the surface's own hit sound (Mark) is all (user 2026-10-14, off water: "what is that twang")
 		if pen.hard then
 			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale * c.ricochet.fxScale)
+			self:HitSound("ricochet", hit.pos, scale, c.ricochet.volume * self:HitLoudness(phys, energy))
 		end
-		self:HitSound("ricochet", hit.pos, scale, c.ricochet.volume)
-		if self.state.logActions then log(string.format("ricochet %s at %.0f deg (critical %.0f)", name, graze, pen.crit)) end
+		if self.state.logActions or r.logId then
+			log(string.format("%sricochet %s at %.0f deg (critical %.0f), %.0f J", tag, name, graze, pen.crit, energy or -1))
+		end
 		return true
 	end
 	self:Mark(s, hit, dir, scale)
-	if self.state.logActions then log(string.format("impact %s -> %s x%.2f hole %s", name, s.fx, scale, tostring(s.hole))) end
+	if self.state.logActions or tag ~= "" then
+		log(string.format("%simpact %s at %.0f deg -> %s x%.2f hole %s", tag, name, graze, s.fx, scale, tostring(s.hole)))
+	end
 	-- stopped by steel: the round breaks up on it and its fragments spray along the face (Splash, as on plate armour)
 	local function stops()
 		if pen and pen.hard and s.fx == "metal" then self:Splash(hit.pos, hit.normal, dir, scale) end

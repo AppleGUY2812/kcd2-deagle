@@ -174,6 +174,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 
 	-- stone's critical angle is 12 deg: at 8 deg it skips (98 %), at 20 deg it doesn't (0.03 %); the old Ready or Not
 	-- rule skipped 15 % of 20 deg hits and only 37 % of 8 deg ones
+	local full = Deagle.cfg.impactVolume * Deagle.cfg.ricochet.volume   -- a round at full speed: Ready or Not's level
 	for _, a in ipairs({ { 8, true }, { 20, false } }) do
 		reset()
 		world.ground = { z = 31.0, surface = 1 }
@@ -186,7 +187,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		end
 		check(string.format("%s: stone ground at %d deg: %s (%d hits, whine at x%s)", id, a[1], a[2] and "skips off" or "stays", #landed, tostring(whine)),
 			(#landed == 2) == a[2] and (whine ~= nil) == a[2]
-			and (not a[2] or math.abs(tonumber(whine) - Deagle.cfg.impactVolume * Deagle.cfg.ricochet.volume) < 1e-3), #landed)
+			and (not a[2] or (tonumber(whine) <= full + 1e-3 and tonumber(whine) > 0.9 * full)), #landed)
 	end
 
 	-- wood skips too below its critical angle (plywood 14-18 deg); Ready or Not's wood never did
@@ -209,7 +210,15 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		return math.deg(math.atan((b.z - a.z) / math.sqrt((b.x - a.x) ^ 2 + (b.y - a.y) ^ 2))), b.z - 31,
 			landed[2].energy / landed[1].energy, math.sqrt((b.x - a.x) ^ 2 + (b.y - a.y) ^ 2 + (b.z - a.z) ^ 2)
 	end
+	local n0 = #M.native
 	local climb3, _, kept = skim(6, 3)
+	local spang, splash = false, false
+	for i = n0 + 1, #M.native do
+		spang = spang or M.native[i]:find("Ricochets", 1, true) ~= nil
+		splash = splash or M.native[i]:find("Surface=" .. tostring(Deagle.surfaces.mat_water.ron) .. " ", 1, true) ~= nil
+	end
+	check(string.format("%s: a skip off water splashes without the metal ricochet sound (splash %s, spang %s)", id,
+		tostring(splash), tostring(spang)), splash and not spang, spang)
 	local climb6 = skim(6, 6)
 	local _, zStone = skim(1, 3)
 	check(string.format("%s: skims water and climbs ~10 deg whatever the angle in (3 in: %.1f, 6 in: %.1f), stone keeps it low (%.1f m up)",
@@ -513,6 +522,11 @@ for name, s in pairs(Deagle.surfaces) do
 end
 table.sort(missing)
 check("every hittable surface has penetration data", #missing == 0, table.concat(missing, ", "))
+-- a ricochet's loudness follows the energy the round brings (amplitude ~ its square root): Ready or Not's level at full
+-- speed, 10 dB under it slowed to 129 m/s by a water skip, 18 dB under spent at 54 m/s (heard far off in the free camera)
+local function db(v) return 20 * math.log10(Deagle:HitLoudness(physD, 0.5 * physD.bullet * v * v)) end
+check(string.format("ricochet loudness: Deagle at 442 m/s %.1f dB, 129 m/s %.1f dB, 54 m/s %.1f dB", db(442), db(129), db(54)),
+	math.abs(db(442)) < 0.5 and math.abs(db(129) + 10.7) < 0.5 and math.abs(db(54) + 18.3) < 0.5, db(54))
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("penetration: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
