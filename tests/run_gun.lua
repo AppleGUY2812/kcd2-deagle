@@ -163,6 +163,49 @@ if phys then
 	local nc = 0
 	for _ in pairs(cards) do nc = nc + 1 end
 	mesh.slow, mesh.slowCards = seen, nc
+	-- the "ron" look (deagle_flash ron): Ready or Not's flash baked on variants x stages cards; a shot steps one
+	-- variant through its stages for flashRon.time of game time
+	M.console("deagle_flash", "ron")
+	M.advance(0.2, 60)
+	local R = Deagle.cfg.flashRon
+	local n = R.variants * R.stages
+	local function ronShown()
+		local out = {}
+		for i = 1, n do if M.hidden["vm_flash_" .. i] == false then out[#out + 1] = i end end
+		return out
+	end
+	local rset = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and R.large or R.small
+	local hiddenAll, placedAll = #ronShown() == 0, 0
+	for i = 1, n do
+		local p = M.attachPos and M.attachPos["vm_flash_" .. i]
+		if p and p.x == 0 and p.y == 0 and p.z == 0 then placedAll = placedAll + 1 end
+	end
+	mesh.ron = { cards = n, hidden = hiddenAll, placed = placedAll, last = M.attachCgf and M.attachCgf["vm_flash_" .. n],
+		want = "objects/manmade/weapons/deagle/vm/" .. rset .. "_" .. R.variants .. "_" .. R.stages .. ".cgf", look = Deagle.flashMesh.look.look }
+	local function ronShot(fps)
+		Deagle.state.lastShot = -100
+		Deagle:Shoot(true)
+		local frames, seq, variant, ok = 0, {}, nil, true
+		for _ = 1, 200 do
+			local sh = ronShown()
+			if #sh > 1 then ok = false end
+			if #sh == 1 then
+				frames = frames + 1; seq[#seq + 1] = sh[1]
+				local v = math.floor((sh[1] - 1) / R.stages)
+				variant = variant or v
+				if v ~= variant or (#seq > 1 and sh[1] < seq[#seq - 1]) then ok = false end
+			end
+			M.advance(1 / fps, fps)
+		end
+		return frames, ok, seq
+	end
+	M.advance(0.5, 60)
+	mesh.ron.f60, mesh.ron.ok60, mesh.ron.seq60 = ronShot(60)
+	M.advance(0.5, 600)
+	mesh.ron.fslow, mesh.ron.okslow = ronShot(600)
+	M.console("deagle_flash", "ours")
+	M.advance(0.2, 60)
+	mesh.ron.back = Deagle.flashMesh.look.look == "ours" and #Deagle.flashMesh.names == 4
 	Deagle.cfg.flashMode = "gun"
 	M.advance(0.5, 60)
 end
@@ -265,6 +308,12 @@ if mesh then
 		#mesh.s0 == 1 and #mesh.s1 == 0, #mesh.s1)
 	check(string.format("mesh flash in F9 slow motion: %d frames at 60 fps (0.035 s of game time = 21), %d variant (one shape, no switch)", mesh.slow, mesh.slowCards),
 		mesh.slow >= 19 and mesh.slow <= 23 and mesh.slowCards == 1, mesh.slow)
+	local r = mesh.ron
+	check(string.format("Ready or Not flash (deagle_flash ron): %d hidden cards, %d on the muzzle bone, last %s", r.cards, r.placed, tostring(r.last)),
+		r.look == "ron" and r.hidden and r.placed == r.cards and r.last == r.want, r.last)
+	check(string.format("Ready or Not flash at 60 fps: %d frames (0.095 s = 6), one variant stepping through its stages (%s); x0.1: %d frames (57)",
+		r.f60, table.concat(r.seq60, ","), r.fslow), r.f60 >= 5 and r.f60 <= 7 and r.ok60 and r.fslow >= 54 and r.fslow <= 60 and r.okslow, r.f60)
+	check("deagle_flash ours: back to our 4 cards", r.back, r.back)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),

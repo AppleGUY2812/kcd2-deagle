@@ -37,6 +37,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_gunfx 0` / `1` | everything at the gun off / on (kept): muzzle flash, smoke, muzzle light, casings, tracers and the gunshot. Only the impacts show and sound (effect, hole, impact sound, ricochets), to watch them on their own. Setting: `gunFx` |
 | `deagle_sounds ron` / `original` | Ready or Not's sound engine (default), or the gun mods' own shot and animation sounds (kept) |
 | `deagle_env` | where the mod thinks you are (room type + material) and the ray numbers behind it |
+| `deagle_flash ron` / `ours` | the muzzle flash on the gun's cards: Ready or Not's own (its textures and effect, baked by tools/ron/flash_bake.py) or ours; sets `flashMode mesh`; kept |
 | `deagle_testwall` | a row of real KCD2 objects 4 m ahead, one per surface: stone, plaster, pots, wood door, crate, wicker, metal door, anvil, glass (standing up, facing you), sack, straw target, hay, vegetables, leather (listed left to right on screen). `deagle_testwall clear` removes them; never saved |
 | `deagle_testnpc` | aim at an NPC (within 60 m) and type it: your rounds don't hurt that NPC (no crime), and each hit shows the body part, whether armour stopped it, and the damage it would have done. `deagle_testnpc clear` ends it. (Spawning test NPCs froze the game, so it marks real ones instead) |
 | `deagle_paths 1` / `0` / `clear` | draw every round's path, kept until cleared: yellow flight, red inside a wall / body, cyan after a ricochet / wallbang, crosses at hits (white world, red body) |
@@ -51,6 +52,9 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 |---|---|---|
 | `flashMode` | `gun` | `gun` = a flash spawned per shot on the muzzle (shows a frame or two late); `world` = left where it was fired; `live` = experimental, don't use: its hide doesn't work and after a save load it kept burning in the air (the "fireball") |
 | `flashMode` `mesh` | (testing) | flash cards on the gun itself, shown on the exact frame you fire, a different shape on frame 2, random roll (drawn since 2026-10-14: they used to sit in the camera) |
+| `flashMesh.look` | `ours` | the flash cards' look: `ours`, or `ron` = Ready or Not's own pistol flash (its textures and its effect, run and baked onto cards: the Grizzly MK V's for the Deagle, the G19's for the Glock); `deagle_flash ron` / `deagle_flash ours` |
+| `flashRon.mtl` | `deagle_vm_flash_ron` | Ready or Not flash brightness: `deagle_vm_flash_ron_dim` (x1/3) / `deagle_vm_flash_ron` / `deagle_vm_flash_ron_hot` (x3) |
+| `flashRon.time` | `0.095` | how long the Ready or Not flash runs, game time: its fireball 0.035-0.04 s, its sparks to 0.095 s |
 | `flashMesh.time` | `0.035` | how long the mesh flash lasts, in seconds of game time (Ready or Not 0.035-0.04): 2 frames at 60 fps, 1 under 40 fps, about 10x longer in F9 slow motion |
 | `flashMesh.mtl` | `deagle_vm_flash` | mesh flash brightness: `deagle_vm_flash_dim` / `deagle_vm_flash` / `deagle_vm_flash_hot` |
 | `flashMesh.light.mode` | `particle` | the mesh flash's light: `particle` (a frame late) or `entity` (a light on the gun, testing) |

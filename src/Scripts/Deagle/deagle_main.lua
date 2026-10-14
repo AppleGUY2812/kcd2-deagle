@@ -67,10 +67,17 @@ Deagle.cfg = {
 	-- hiding / unhiding them, which the renderer reads when it draws the gun: no particle delay. One random variant and
 	-- roll per shot for time s of game time (Ready or Not 0.035-0.04 s: 2 frames at 60 fps, 1 under 40 fps, ~10x longer
 	-- in F9 slow motion; a second variant halfway read as the flash switching shape: user 2026-10-14); mtl = their strength (deagle_vm_flash,
-	-- _dim, _hot); set = the cards by blast (large for big blasts, cfg.physics.largeFlashBlast). Light: the per-shot
-	-- particle light (a frame late) or an entity light on the gun (light.mode "entity", to test)
-	flashMesh = { time = 0.035, roll = true, mtl = "deagle_vm_flash", large = "deagle_vm_flash", small = "deagle_vm_flash_s",
+	-- _dim, _hot); set = the cards by blast (large for big blasts, cfg.physics.largeFlashBlast). look "ron": Ready or
+	-- Not's own flash instead (flashRon). Light: the per-shot particle light (a frame late) or an entity light on the gun
+	-- (light.mode "entity", to test)
+	flashMesh = { look = "ours", time = 0.035, roll = true, mtl = "deagle_vm_flash", large = "deagle_vm_flash", small = "deagle_vm_flash_s",
 		light = { mode = "particle", radius = 6, intensity = 3, frames = 2 } },
+	-- flashMesh.look "ron" (deagle_flash ron): Ready or Not's pistol flash, its textures and its Cascade system run and baked
+	-- onto cards (tools/ron/flash_bake.py): WeaponFlash_Pistol_V3 of the Grizzly MK V .50 AE for big blasts, the G19's V2
+	-- for small ones. variants x stages cards; a shot picks a variant and shows the stage its game time is in (sparks
+	-- outlive the 0.035-0.04 s pop: time 0.095 s). Rotations are baked, no roll. mtl: _dim / _hot (x1/3, x3)
+	flashRon = { time = 0.095, stages = 10, variants = 4, mtl = "deagle_vm_flash_ron", large = "deagle_vm_flash_ron",
+		small = "deagle_vm_flash_ron_s" },
 	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)
 	muzzleLight = "deagle.muzzle_light", muzzleLightLarge = "deagle.muzzle_large_light",   -- its light, per shot
 	flashLive = { 0.8, 1.0 },  -- the live flash's size on each frame it's seen (2 frames; 1 frame under 40 fps)
@@ -564,21 +571,40 @@ end
 -- gets its bone only at the character's next re-sort, and then sits at the model's origin (its offset from the bone
 -- becomes the bone's inverse bind pose, a roll set in the creation frame or not): on the viewmodel that is the camera,
 -- so no card was ever seen (in game 2026-10-14). FlashMeshPlace puts them on the muzzle once their bone is there.
-local FLASH_CARDS = 4
+-- the cards of the current look: ours (4 variants, one card each) or Ready or Not's (flashRon: variants x stages)
+function Deagle:FlashLook()
+	local c, r, phys = self.cfg.flashMesh, self.cfg.flashRon, self:ShotPhysics()
+	local large = phys and phys.blast >= self.cfg.physics.largeFlashBlast
+	if c.look == "ron" then
+		return { look = "ron", set = large and r.large or r.small, variants = r.variants, stages = r.stages, time = r.time, roll = false, mtl = r.mtl }
+	end
+	return { look = "ours", set = large and c.large or c.small, variants = 4, stages = 1, time = c.time, roll = c.roll, mtl = c.mtl }
+end
 function Deagle:FlashMeshSetup(vm)
-	local c, phys = self.cfg.flashMesh, self:ShotPhysics()
-	local set = (phys and phys.blast >= self.cfg.physics.largeFlashBlast) and c.large or c.small
+	local L = self:FlashLook()
 	local dir = "objects/manmade/weapons/deagle/vm/"
-	local m = { names = {}, shown = {}, set = set }
-	for i = 1, FLASH_CARDS do
-		local name = "vm_flash_" .. i
-		pcall(vm.CreateBoneAttachment, vm, 0, self.gun.bones.muzzle, name, false)
-		pcall(vm.SetAttachmentCGF, vm, 0, name, dir .. set .. "_" .. i .. ".cgf")
-		pcall(vm.HideAttachment, vm, 0, name, true, true)
-		m.names[i] = name
+	local m = { names = {}, shown = {}, set = L.set, look = L }
+	for v = 1, L.variants do
+		for st = 1, L.stages do
+			local i = (v - 1) * L.stages + st
+			local name = "vm_flash_" .. i
+			local cgf = L.stages > 1 and (L.set .. "_" .. v .. "_" .. st) or (L.set .. "_" .. v)
+			pcall(vm.CreateBoneAttachment, vm, 0, self.gun.bones.muzzle, name, false)
+			pcall(vm.SetAttachmentCGF, vm, 0, name, dir .. cgf .. ".cgf")
+			pcall(vm.HideAttachment, vm, 0, name, true, true)
+			m.names[i] = name
+		end
 	end
 	self.flashMesh = m
 	self:FlashMeshMaterial(vm)
+end
+-- another look (deagle_flash ron / ours): the old cards go, the new look's are made on the same viewmodel
+function Deagle:FlashMeshRebuild()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm then return end
+	for _, name in ipairs(self.flashMesh and self.flashMesh.names or {}) do pcall(vm.DestroyAttachment, vm, 0, name) end
+	self.flashMesh = nil
+	self:FlashMeshSetup(vm)
 end
 -- every viewmodel frame until done: once each card's bone is resolved, its offset from the muzzle is set to nothing
 function Deagle:FlashMeshPlace(vm)
@@ -599,14 +625,15 @@ end
 function Deagle:FlashMeshMaterial(vm)
 	local m = self.flashMesh
 	if not m then return end
+	local mtl = self:FlashLook().mtl
 	for _, name in ipairs(m.names) do
-		pcall(vm.ChangeAttachmentMaterial, vm, name, "objects/manmade/weapons/deagle/vm/" .. self.cfg.flashMesh.mtl)
+		pcall(vm.ChangeAttachmentMaterial, vm, name, "objects/manmade/weapons/deagle/vm/" .. mtl)
 	end
-	m.mtl = self.cfg.flashMesh.mtl
+	m.mtl = mtl
 end
 -- a card's roll around the barrel for its next shot, set while it's hidden (keeps its offset); none with roll off
 function Deagle:FlashMeshRoll(vm, i)
-	local roll = self.cfg.flashMesh.roll and math.random() * 2 * math.pi or 0
+	local roll = self.flashMesh.look.roll and math.random() * 2 * math.pi or 0
 	pcall(vm.SetAttachmentAngles, vm, 0, self.flashMesh.names[i], { x = 0, y = roll, z = 0 })
 end
 function Deagle:FlashMeshShow(i, on)
@@ -617,7 +644,13 @@ function Deagle:FlashMeshShow(i, on)
 	m.shown[i] = on or nil
 	if not on then self:FlashMeshRoll(vm, i) end
 end
--- at the shot: variant a now (seen in this frame); FlashMeshTick moves to b, then hides it
+-- the card for game time e after the shot (nil once the flash is over): its variant's stage that e is in
+local function flashCard(m, e)
+	local L = m.look
+	if e >= L.time then return nil end
+	return (m.variant - 1) * L.stages + math.min(L.stages, math.floor(e / L.time * L.stages) + 1)
+end
+-- at the shot: a random variant, its first card seen in this frame; FlashMeshTick moves through its stages, then hides it
 function Deagle:FlashMeshShot()
 	local m = self.flashMesh
 	if not m then return false end
@@ -626,14 +659,15 @@ function Deagle:FlashMeshShot()
 		m.saidUnplaced = true
 		return false
 	end
-	if m.mtl ~= self.cfg.flashMesh.mtl then self:FlashMeshMaterial(self.vmId and System.GetEntity(self.vmId)) end
+	if m.mtl ~= self:FlashLook().mtl then self:FlashMeshMaterial(self.vmId and System.GetEntity(self.vmId)) end
 	for i in pairs(m.shown) do self:FlashMeshShow(i, false) end
-	local a = math.random(FLASH_CARDS)
-	m.seq, m.frame, m.t0, m.cur = { a }, System.GetFrameID(), System.GetCurrTime(), a
-	self:FlashMeshShow(a, true)
+	m.variant = math.random(m.look.variants)
+	m.on, m.frame, m.t0 = true, System.GetFrameID(), System.GetCurrTime()
+	m.cur = flashCard(m, (self.frameDt or 0.016) / 2) or flashCard(m, 0)
+	self:FlashMeshShow(m.cur, true)
 	return true
 end
--- every viewmodel frame after the shot's own: the flash lasts flashMesh.time of game time, so F9 slow motion stretches
+-- every viewmodel frame after the shot's own: the flash lasts flashMesh.time (flashRon.time) of game time, so F9 slow motion stretches
 -- it (it blinked by in 1-2 frames there: user 2026-10-14). A frame shows it while the frame's middle is still inside
 -- that time (60 fps: 2 frames, under 40 fps: 1).
 -- The shot's own frame is told by its engine frame id, not the viewmodel tick: a shot comes before its frame's tick,
@@ -641,16 +675,14 @@ end
 function Deagle:FlashMeshTick()
 	local m = self.flashMesh
 	if m and not m.placed then self:FlashMeshPlace(self.vmId and System.GetEntity(self.vmId)) end
-	if not m or not m.seq or System.GetFrameID() == m.frame then return end
-	local T, half = self.cfg.flashMesh.time, (self.frameDt or 0.016) / 2
-	local e = System.GetCurrTime() - m.t0 + half
-	local want = e < T and m.seq[1] or nil
+	if not m or not m.on or System.GetFrameID() == m.frame then return end
+	local want = flashCard(m, System.GetCurrTime() - m.t0 + (self.frameDt or 0.016) / 2)
 	if want ~= m.cur then
 		if m.cur then self:FlashMeshShow(m.cur, false) end
 		if want then self:FlashMeshShow(want, true) end
 		m.cur = want
 	end
-	if not want then m.seq = nil end
+	if not want then m.on = nil end
 end
 -- an entity light on the gun for the frames of a shot (flashMesh.light.mode "entity"): drawn from the entity, not
 -- through the particle update
@@ -2936,6 +2968,7 @@ local AFTER_SET = {
 	["hud.enabled"] = function(self) self.hudOk = nil end,
 	tracers = function(self) self:Notify("tracers " .. (self.cfg.tracers and "on" or "off")) end,
 	debugPaths = function(self) if not self.cfg.debugPaths then self.paths = {} end end,
+	["flashMesh.look"] = function(self) self:FlashMeshRebuild() end,
 }
 
 -- deagle_set <key> <value>: change a setting; the plugin keeps it (deagle_settings.txt next to it) and sets it again
@@ -3013,6 +3046,14 @@ end
 -- deagle_tracers / deagle_ads / deagle_hud ...: on unless the argument has a 0 (no argument = on), kept like deagle_set
 function Deagle:SetOnOff(key, arg)
 	self:Set(key .. " " .. (Deagle.Arg(arg):find("0") and "0" or "1"))
+end
+
+-- deagle_flash ron|ours: the flash cards' look (flashMesh.look), on the cards (flashMode mesh)
+function Deagle:FlashLookCmd(arg)
+	local look = tostring(arg or ""):lower():find("ron") and "ron" or "ours"
+	if self.cfg.flashMode ~= "mesh" then self:Set("flashMode mesh") end
+	self:Set("flashMesh.look " .. look)
+	self:Notify("muzzle flash: " .. (look == "ron" and "Ready or Not's" or "ours"))
 end
 
 -- deagle_reset: every setting back as shipped, the kept ones forgotten
@@ -3100,6 +3141,7 @@ System.AddCCommand("deagle_ads", "Deagle:SetOnOff('vm.ads', [[%1]])", "deagle_ad
 System.AddCCommand("deagle_testnpc", "Deagle:TestNpc([[%line]])", "deagle_testnpc: the NPC you aim at takes no damage from your rounds | deagle_testnpc clear")
 System.AddCCommand("deagle_testwall", "Deagle:TestWall([[%line]])", "deagle_testwall: a row of KCD2 objects, one per surface (stone, plaster, pots, wood, wicker, metal, glass, sack, straw, hay, food, leather), 4 m ahead | clear")
 System.AddCCommand("deagle_shotsound", "Deagle:SetOnOff('shotSound', [[%1]])", "deagle_shotsound 0|1: gunshot sound off / on (impacts still play)")
+System.AddCCommand("deagle_flash", "Deagle:FlashLookCmd(Deagle.Arg([[%1]]))", "deagle_flash ron|ours: Ready or Not's own muzzle flash or ours, both on the gun's flash cards (sets flashMode mesh; kept)")
 System.AddCCommand("deagle_gunfx", "Deagle:SetOnOff('gunFx', [[%1]])", "deagle_gunfx 0|1: everything at the gun off / on (flash, smoke, light, casings, tracers, gunshot): only the impacts show")
 System.AddCCommand("deagle_sounds", "Deagle:Set('sounds ' .. (Deagle.Arg([[%1]]):find('orig') and 'original' or 'ron'))", "deagle_sounds ron|original: Ready or Not's sound engine, or the gun mods' own shot and animation sounds")
 System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")

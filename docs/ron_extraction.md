@@ -161,6 +161,12 @@ U=/mnt/e/Tools/deagle-work/ron/exporter/Mappings.usmap; D=~/kcd2-deagle/docs/ron
 9. **Muzzle flash** (15:49-15:54, commit e1150cc): `X 'WeaponFlash/(WeaponFlash_Pistol_V2|WeaponFlash_Rifle_V2|P_MuzzleFlash)\.(uasset|uexp)$'`,
    `python3 -I $R/cascade_dump.py ReadyOrNot/Content/ReadyOrNot/Assets/Particles/WeaponFlash/WeaponFlash_Pistol_V2`;
    `docs/muzzle_flash_research.md` was written from that output.
+10a. **Grizzly muzzle flash** (2026-10-14, Claude 4): `X 'Weapons/Grizzly/Blueprints/BP_Secondary_LARGrizzly\.(uasset|uexp)$'`
+   and `dump.py` it (MuzzleFlash = `WeaponFlash_Pistol_V3`); then `python3 -I $R/flash_collect.py
+   /mnt/e/Tools/deagle-work/ron_fx/_data/flash_collect.json` (V3 + V2, materials, PNG in `ron_fx/flash/`), from the repo
+   `python3 tools/ron/flash_bake.py .` (cards.json, TIFs, the 3 mtls), rc on `E:\Tools\deagle-work\flash_ron\tif\*.tif`
+   (preset AlbedoWithGenericAlpha, as tools/fx_textures.ps1) into `src/Textures/particles/deagle/ron_flash/`, and Blender
+   with `tools/flash_mesh_ron.py` (as flash_mesh.py) into `src/Objects/manmade/weapons/deagle/vm/`.
 10. **G19 export** (15:35-15:44): `python3 -I $R/anim_list.py ReadyOrNot/Content/Blueprints/Animation/Revised/AnimData/Mainline/BP_G19G5_M_AnimData g19_seqs.txt`
     (49 montages, 30 first-person, 30 sequences; 9f's mesh lookup: BasePlayer `CharacterMesh1P` = `Skinning_Arms_03`
     with `ANIMBP_Player_FP_Master`). The list `E:\Tools\deagle-work\ron\exporter\g19_list.txt` (40 paths) = the G19

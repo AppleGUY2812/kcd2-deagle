@@ -545,3 +545,20 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   (2) The shot comes before its frame's viewmodel tick, so counting ticks hid card a before it was drawn; the sequence
   now counts `System.GetFrameID()`. Measured: a card unhidden for exactly 1 engine frame is drawn in that frame (no
   draw latency). Recorded shot with 4 frames: fire on the muzzle from the shot frame through the recoil.
+
+## 2026-10-14: Ready or Not's own muzzle flash as a look (Claude 4)
+- The Grizzly (MK V .50 AE, DLC3 `BP_Secondary_LARGrizzly`) uses `WeaponFlash_Pistol_V3` (not V2), 13.6 cm ahead, 2.5 cm
+  up; smoke `P_WeaponSmoke_M2011_Muzzle` / `_Ejection`. V3 = V2's layers with a 4x4 fireball sheet
+  (`MI_MuzzleFlash_SMG`, 25-35 cm, 25 cm ahead) and its side flame. Read from the data: the fireball's burst is 0-1
+  particles (on about half the shots), the core's colour and flipbook frame are a uniform random re-rolled every
+  frame (it flickers), the sparks are a burst of 0-10 at 10 ms (500-5000 cm/s within 13.5 deg, drag 2.5-15/s,
+  stretched by speed). Textures: 4 sheets, opaque, made to be added on black.
+- KCD2 can't draw a 0.035-s particle on time, so the look is baked onto cards: `tools/ron/flash_collect.py` (system,
+  materials, textures) -> `tools/ron/flash_bake.py` (Claude 2's `cascade_sim.py` runs it, plus the cone / speed
+  stretch / event side flame / pivot it skips; 4 variants x 10 stages over 0.095 s; quads in the muzzle bone's axes;
+  one sub-material per texture, hue and power-of-two brightness, nits / 100 = Illum intensity) ->
+  `tools/flash_mesh_ron.py` (Blender + toolkit + rc: 80 CGFs). Preview: `tools/ron/flash_preview.py`
+  (Desktop\Deagle Progress\18 Flash light vs Ready or Not\ron flash baked preview.png).
+- Velocity-aligned sprites (the side flame, sparks) lie in the plane through the barrel that faces the eye; with our
+  eye 4 cm above the bore that's nearly edge-on (a streak leaning in from the muzzle), as Ready or Not would draw it
+  from there. PivotOffset read as -1 = the sprite's edge, the texture's top leading (not checked against a render).
