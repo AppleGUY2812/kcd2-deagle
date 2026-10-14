@@ -95,7 +95,10 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `tumble.pen` | `0.5` | how far a tumbling round (after a ricochet or a corner) still gets into walls / armour |
 | `holeExitSize` | `0.09` | exit hole size in m |
 | `accuracy.scale` | `1` | CS2 guns: 1 = CS2's own accuracy (standing / crouched / moving / jumping / shots in a row), 0.5 = twice as tight, 0 = no spread |
-| `impactVolume` | `1` | bullet impact / ricochet / armour sounds |
+| `impactVolume` | `2` | bullet impact / ricochet / armour sounds x Ready or Not's own level (it mixes them ~9 dB under the shot) |
+| `impactNear` | `3` | m within which impacts play at full level; beyond it -6 dB per doubling of the distance, like real sound (plugin; RoN's own fade silenced them by 12 m) |
+| `vm.cueLead` | `0.045` | s every Ready or Not handling sound (reload, inspect, draw) starts early for the sound engine's output delay: raise it if they still land late |
+| `vm.dryDb` | `-22` | empty click loudness in dB of Ready or Not's mix (the shot is -3; RoN's own click -40 / -47) |
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |
 | `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
