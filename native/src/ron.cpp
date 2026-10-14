@@ -41,6 +41,18 @@ typedef int (__stdcall* C_ChanMinMax)(void* chan, float mn, float mx);
 typedef int (__stdcall* C_ChanF)(void* chan, float v);
 typedef int (__stdcall* C_ChanI)(void* chan, int v);
 typedef int (__stdcall* C_Listener)(void* core, int idx, const FV* pos, const FV* vel, const FV* fwd, const FV* up);
+typedef int (__stdcall* S_GetBus)(void* sys, const char* path, void** bus);
+typedef int (__stdcall* S_BusCG)(void* bus, void** cg);
+typedef int (__stdcall* C_CreateGroup)(void* core, const char* name, void** cg);
+typedef int (__stdcall* C_CreateDSP)(void* core, int type, void** dsp);
+typedef int (__stdcall* C_GroupN)(void* cg, int* n);
+typedef int (__stdcall* C_GroupDSP)(void* cg, int i, void** dsp);
+typedef int (__stdcall* C_GroupAddDSP)(void* cg, int index, void* dsp);
+typedef int (__stdcall* C_DspType)(void* dsp, int* type);
+typedef int (__stdcall* C_DspGetI)(void* dsp, int idx, int* v, char* s, int len);
+typedef int (__stdcall* C_DspGetF)(void* dsp, int idx, float* v, char* s, int len);
+typedef int (__stdcall* C_DspSetI)(void* dsp, int idx, int v);
+typedef int (__stdcall* C_DspSetF)(void* dsp, int idx, float v);
 
 static struct {
 	S_Create create; S_Core core; S_Init init; S_LoadBank loadBank; S_Sys update, release, flush; S_GetEvent getEvent;
@@ -49,6 +61,9 @@ static struct {
 	C_Output output; C_Format format; C_Buffer buffer; C_Master master; C_GroupF pitch, volume;
 	C_CreateSound createSound; C_PlaySound playSound; C_Chan3D chan3d; C_ChanMinMax chanMinMax; C_ChanF chanVol;
 	C_ChanI chanPaused; C_Listener coreListener;
+	S_GetBus getBus; S_Inst busLock; S_BusCG busCG; C_CreateGroup createGroup; C_CreateDSP createDSP; C_GroupN groupNumDSPs;
+	C_GroupDSP groupDSP; C_GroupAddDSP groupAddDSP; C_DspType dspType; C_DspGetI dspGetI; C_DspGetF dspGetF; C_DspSetI dspSetI;
+	C_DspSetF dspSetF;
 } st{};
 
 static std::mutex g_mu;            // Lua commands and the camera step can come from different threads
@@ -63,6 +78,18 @@ static std::string g_soundDir;                              // <mod>\sounds\: wh
 static float g_ear[3] = {};                                 // the listener, CryEngine axes (the free camera when it's on)
 struct Pending { double due; std::string ev, params; float at[3]; float vol; };
 static std::vector<Pending> g_pending;                      // RonPlayAt sounds still on their way (speed of sound)
+// The room echo for our files. Ready or Not's hits play through bus:/Headphones/SFX/Special Destructables Duck, whose
+// send into the room reverb (Reverb_Global, where the gun sends too) the place's snapshot sets: 0.447 indoors, ~0.01
+// outdoors (mixer dump, tools/ron/FmodRender DUMP_MASTER, 2026-10-14). Our files play in a group of their own with a send
+// into the same reverb whose level follows that bus's every update (rooms, doorway blends), so the steel plate echoes
+// like RoN's own hits (pack 22). Set up once the buses have channel groups (a Studio update after the lock).
+static const char* kHitsBus = "bus:/Headphones/SFX/Special Destructables Duck";
+static const char* kRoomReverb = "bus:/Headphones/Reverbs/2D/Reverb_Global";
+static const int kDspSend = 21, kDspReturn = 22;               // FMOD_DSP_TYPE_SEND / RETURN in 2.03 (as its DSPs report)
+static void* g_hitsBus = nullptr; static void* g_roomBus = nullptr;
+static void* g_hitsSend = nullptr;                          // RoN's send on the hits bus: the level we copy
+static void* g_filesGroup = nullptr; static void* g_filesSend = nullptr;
+static int g_echoTries = 0;
 static double Now() {
 	static LARGE_INTEGER f{}; LARGE_INTEGER c;
 	if (!f.QuadPart) QueryPerformanceFrequency(&f);
@@ -70,6 +97,28 @@ static double Now() {
 	return (double)c.QuadPart / (double)f.QuadPart;
 }
 static bool PlayLocked(const char* event, const char* params, const float* at, float vol);
+static void* FindDSP(void* cg, int type) {
+	int n = 0;
+	st.groupNumDSPs(cg, &n);
+	for (int i = 0; i < n; i++) { void* d = nullptr; int t = -1; if (st.groupDSP(cg, i, &d) == 0 && d && st.dspType(d, &t) == 0 && t == type) return d; }
+	return nullptr;
+}
+static void FilesEcho() {
+	void* hits = nullptr; void* room = nullptr;
+	if (st.busCG(g_hitsBus, &hits) || !hits || st.busCG(g_roomBus, &room) || !room) return;   // not mixed yet: next update
+	void* ret = FindDSP(room, kDspReturn); g_hitsSend = FindDSP(hits, kDspSend);
+	int id = -1;
+	if (!ret || !g_hitsSend || st.dspGetI(ret, 0, &id, nullptr, 0) || id < 0) {
+		Log("ron: room echo for our files: no %s on the %s bus", ret ? "send" : "return", ret ? "hits" : "reverb"); g_hitsSend = nullptr; g_echoTries = 1000; return;
+	}
+	void* group = nullptr; void* send = nullptr;
+	if (st.createGroup(g_core, "deagle files", &group) || !group || st.createDSP(g_core, kDspSend, &send) || !send) { g_echoTries = 1000; return; }
+	st.dspSetI(send, 0, id);
+	float v = 0; st.dspGetF(g_hitsSend, 1, &v, nullptr, 0); st.dspSetF(send, 1, v);
+	st.groupAddDSP(group, 0, send);   // at the head: after the group's fader, like RoN's own sends
+	g_filesGroup = group; g_filesSend = send;
+	Log("ron: our files send into the room echo (return %d) like Ready or Not's hits (now %.3f)", id, v);
+}
 
 static const char* kBanks[] = { "Master.bank", "Master.strings.bank", "Weapons.bank", "Interactions.bank", "UI.bank", "SWAT.bank",
 	"Global Amb.bank" };
@@ -110,7 +159,14 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 		& Get(core, st.createSound, "FMOD_System_CreateSound") & Get(core, st.playSound, "FMOD_System_PlaySound")
 		& Get(core, st.chan3d, "FMOD_Channel_Set3DAttributes") & Get(core, st.chanMinMax, "FMOD_Channel_Set3DMinMaxDistance")
 		& Get(core, st.chanVol, "FMOD_Channel_SetVolume") & Get(core, st.chanPaused, "FMOD_Channel_SetPaused")
-		& Get(core, st.coreListener, "FMOD_System_Set3DListenerAttributes");
+		& Get(core, st.coreListener, "FMOD_System_Set3DListenerAttributes")
+		& Get(studio, st.getBus, "FMOD_Studio_System_GetBus") & Get(studio, st.busLock, "FMOD_Studio_Bus_LockChannelGroup")
+		& Get(studio, st.busCG, "FMOD_Studio_Bus_GetChannelGroup") & Get(core, st.createGroup, "FMOD_System_CreateChannelGroup")
+		& Get(core, st.createDSP, "FMOD_System_CreateDSPByType") & Get(core, st.groupNumDSPs, "FMOD_ChannelGroup_GetNumDSPs")
+		& Get(core, st.groupDSP, "FMOD_ChannelGroup_GetDSP") & Get(core, st.groupAddDSP, "FMOD_ChannelGroup_AddDSP")
+		& Get(core, st.dspType, "FMOD_DSP_GetType") & Get(core, st.dspGetI, "FMOD_DSP_GetParameterInt")
+		& Get(core, st.dspGetF, "FMOD_DSP_GetParameterFloat") & Get(core, st.dspSetI, "FMOD_DSP_SetParameterInt")
+		& Get(core, st.dspSetF, "FMOD_DSP_SetParameterFloat");
 	if (!ok) return false;
 	void* sys = nullptr;
 	int r = st.create(&sys, 0x00020310);   // FMOD 2.03.10, the version Ready or Not ships
@@ -137,6 +193,8 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 		if (r) { Log("ron: bank %s failed %d", b, r); st.release(sys); g_core = nullptr; return false; }
 	}
 	st.flush(sys);
+	if (st.getBus(sys, kHitsBus, &g_hitsBus) == 0 && st.getBus(sys, kRoomReverb, &g_roomBus) == 0) { st.busLock(g_hitsBus); st.busLock(g_roomBus); }
+	else { g_hitsBus = g_roomBus = nullptr; Log("ron: no %s / %s: our files get no room echo", kHitsBus, kRoomReverb); }
 	g_sys = sys;
 	g_soundDir = dir + "..\\sounds\\";
 	ApplyMaster();
@@ -152,6 +210,7 @@ void RonRelease() {
 	if (!g_sys) return;
 	st.release(g_sys);    // the wav writer finishes its file here
 	g_sys = nullptr; g_core = nullptr; g_desc.clear(); g_held.clear(); g_files.clear();   // sounds go with the system
+	g_hitsBus = g_roomBus = g_hitsSend = g_filesGroup = g_filesSend = nullptr; g_echoTries = 0;
 }
 
 void RonUpdate(const float* cam) {
@@ -179,6 +238,8 @@ void RonUpdate(const float* cam) {
 		for (auto& p : due) PlayLocked(p.ev.c_str(), p.params.c_str(), p.at, p.vol);
 	}
 	st.update(g_sys);
+	if (!g_filesGroup && g_hitsBus && g_echoTries < 50) { g_echoTries++; FilesEcho(); }
+	if (g_filesSend && g_hitsSend) { float v = 0; if (st.dspGetF(g_hitsSend, 1, &v, nullptr, 0) == 0) st.dspSetF(g_filesSend, 1, v); }
 }
 
 static void* Desc(const char* path) {
@@ -194,7 +255,7 @@ static void* Desc(const char* path) {
 
 // "file:<path>": one of our own sound files (Mods\deagle\sounds\<path>) instead of a Ready or Not event, e.g. a real
 // plate hit lifted from a recording. Loaded once and kept in memory, played on a core channel into RoN's master bus
-// (its limiter, the mod's volume, slow motion), 3D-panned from the listener; the distance law is the event's
+// (its limiter, the mod's volume, slow motion) through our files group (the room echo), 3D-panned from the listener; the distance law is the event's
 // (Falloff=), FMOD's own roll-off is off (min distance 10 km).
 static bool IsFile(const char* event) { return !strncmp(event, "file:", 5); }
 static void* FileSound(const char* event) {
@@ -210,7 +271,7 @@ static void* FileSound(const char* event) {
 static bool PlayFile(const char* event, const float* at, float vol) {
 	void* snd = FileSound(event);
 	void* ch = nullptr;
-	if (!snd || st.playSound(g_core, snd, nullptr, 1, &ch) || !ch) return false;   // paused: placed before it sounds
+	if (!snd || st.playSound(g_core, snd, g_filesGroup, 1, &ch) || !ch) return false;   // paused: placed before it sounds
 	FV pos = at ? ToF(at[0], at[1], at[2]) : g_listener.pos, still = { 0, 0, 0 };
 	st.chan3d(ch, &pos, &still);
 	st.chanMinMax(ch, 10000.0f, 20000.0f);
