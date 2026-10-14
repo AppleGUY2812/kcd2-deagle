@@ -58,6 +58,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
 | `impactSpawn` | `plugin` | how bullet-hit and blood effects are spawned: `plugin` = drawn from their first frame (held 2 s); `lua` = the old way (KCD2 doesn't draw them for ~0.3 s, so short sparks and flashes never show) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on (0.01-1; changes at once if it's on) |
+| `debugShotLog` | `false` | every shot is traced in kcd.log: Henry's eye and aim, the free camera, the round's place each frame, and each hit's surface, angle and outcome (ricochet / impact), so Claude can check what a shot did |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
 | `cancelKeepsRounds` | `false` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
 | `recoil` | `1` | **master kick**: scales every recoil effect together (camera kick, sideways, gun model flip and push). `1.5` = 50 % harder for every gun |
@@ -93,7 +94,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `ricochetKeep` | `0.35` | energy a ricochet keeps off plaster, glass and ground (no study found). Measured ones are fixed: steel, stone, tile 75 %, wood 40 %, water 10 % |
 | `ricochet.critScale` | `1` | every world material's critical angle (stone 12, wood 11-16, glass 16, steel 6, sheet steel 15, water 7, forest floor / grass 5 deg off the surface) x this: higher = more ricochets |
 | `ricochet.width` | `1` | how soft the cut-off is: at the critical angle half skip, 3 deg flatter ~95 %, 3 deg steeper ~5 % |
-| `ricochet.volume` | `2` | ricochet whine loudness x impactVolume |
+| `ricochet.volume` | `2` | ricochet whine loudness x impactVolume, for a round at full speed; a slower round is quieter (amplitude ~ the square root of its energy: a spent one at 54 m/s 18 dB less). Off hard surfaces only (steel, stone, brick, tile); water, ground, wood, plaster and glass skips make only their own hit sound |
 | `ricochet.fxScale` | `1.5` | ricochet sparks size |
 | `deflect.maxDeg` | `12` | most a round is bent when it cuts through a corner / edge (it tumbles afterwards) |
 | `tumble.pen` | `0.5` | how far a tumbling round (after a ricochet or a corner) still gets into walls / armour |
