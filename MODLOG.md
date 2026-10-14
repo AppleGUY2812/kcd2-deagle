@@ -637,3 +637,17 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - Toolkit traps: `bcry.add_cry_export_node` files a mesh of 4 vertices or fewer on an armature as `<armature>.chr` (its
   skeleton stand-in), whatever node type you ask for: the 22 one-quad cards went missing. The script makes the
   `<name>.skin` collections itself. rc's second pass (one rc per skin) runs on after Blender quits: wait for it.
+
+## 2026-10-14: the skins draw; Ready or Not's sheets were solid, so its cards drew dark squares (Claude 4)
+- In game (pak f934c3e1, the user's clip `mkv sound clips/2026-10-14 10-15-06.mkv`): the card skins draw their own
+  shapes. Ours differs every shot; one Ready or Not flash in F9 steps through its stages and is gone by ~40 ms.
+- Ready or Not's cards drew dark-red squares over the glow behind them. Its 5 flash sheets are solid (alpha 255
+  everywhere) and every flash material is additive (`M_Particle_Additive`, `BLEND_Additive`): black adds nothing there.
+  KCD2's Illum cards blend by alpha (`MtlFlags` 0x4 "additive" didn't make them add), so dark texels covered what was
+  behind. `tools/ron/flash_bake.py --textures`: alpha = the texel's brightest channel, colour / alpha, so by alpha a
+  texel adds what it added in Ready or Not (colour x alpha = the original within 0.5 of 8 bits); the grey sheets turn
+  white with the shape in alpha. Compiled in `flash_ron/tif` with rc `/preset=AlbedoWithGenericAlpha`, staged in
+  `src/Textures/particles/deagle/ron_flash/`. Not seen in game yet.
+- Still red: Ready or Not's hue is (1, 0.0118, 0.0052) x up to 327 nits/100; its tonemapper turns the core white and
+  the body orange, KCD2's keeps the body red. Brightness steps `_x10` / `_x30` to compare live.
+

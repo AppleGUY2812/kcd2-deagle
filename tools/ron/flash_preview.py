@@ -19,9 +19,10 @@ EYE = np.array([0.057, -0.407, -0.042])   # bone axes: +Y down the barrel, -Z up
 tex = {}
 
 
-def texture(name):
+def texture(name):   # what a texel adds: its colour x its alpha (flash_bake.write_textures keeps the shape in alpha)
     if name not in tex:
-        tex[name] = np.asarray(Image.open(f'{TEXDIR}/{name}_diff.tif').convert('RGB')).astype(np.float32) / 255.0
+        t = np.asarray(Image.open(f'{TEXDIR}/{name}_diff.tif').convert('RGBA')).astype(np.float32) / 255.0
+        tex[name] = t[..., :3] * t[..., 3:]
     return tex[name]
 
 

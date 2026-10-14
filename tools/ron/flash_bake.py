@@ -10,6 +10,7 @@ rotations, flipbook tiles, colours and fades are Ready or Not's. A card = one va
 stage the flash's game time is in.
 
     python3 tools/ron/flash_bake.py <repo> [gain]
+    python3 tools/ron/flash_bake.py <repo> --textures      only the textures (tif/*.tif)
     -> E:/Tools/deagle-work/flash_ron/cards.json (for tools/flash_mesh_ron.py), tif/*.tif (for tools/fx_textures.ps1),
        src/Objects/manmade/weapons/deagle/vm/deagle_vm_flash_ron{,_dim,_hot}.mtl
 
@@ -24,8 +25,9 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 import cascade_sim as cs
 
-REPO = sys.argv[1]
-GAIN = float(sys.argv[2]) if len(sys.argv) > 2 else 1.0
+ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
+REPO = ARGS[0]
+GAIN = float(ARGS[1]) if len(ARGS) > 1 else 1.0
 cs.FX = '/mnt/e/Tools/deagle-work/ron_fx/_data/flash_collect.json'
 PNG = '/mnt/e/Tools/deagle-work/ron_fx/flash'
 OUT = '/mnt/e/Tools/deagle-work/flash_ron'
@@ -41,6 +43,28 @@ SHEETS = {   # material -> texture, tiles across, down (Ready or Not's materials
 }
 TEX = {m: 'ron_flash_' + t.split('_-_')[0].lower() for m, (t, _, _) in SHEETS.items()}
 HUES = {'pop': (1.0, 0.0118, 0.0052), 'spark': (1.0, 0.118, 0.0052)}
+
+
+def write_textures():
+    """Ready or Not's flash materials are all additive (M_Particle_Additive, BLEND_Additive): a texel adds its colour,
+    black adds nothing, and its sheets are solid (alpha 255 everywhere). KCD2 draws the cards by alpha, so a solid sheet
+    painted its dark texels over the flash behind it (dark squares, in game 2026-10-14). Each sheet gets alpha = its
+    brightest channel and its colour divided by that: by alpha a texel then adds what Ready or Not's added (the sheets
+    behind it dimmed by 1 - alpha), and the grey sheets become white with their shape in alpha."""
+    from PIL import Image
+    os.makedirs(OUT + '/tif', exist_ok=True)
+    for m, (t, _, _) in SHEETS.items():
+        c = np.asarray(Image.open(f'{PNG}/{t}.png').convert('RGB')).astype(np.float64)
+        a = c.max(axis=2)
+        rgb = np.where(a[..., None] > 0, c * 255.0 / np.maximum(a, 1)[..., None], 255.0)
+        out = np.dstack([np.clip(np.rint(rgb), 0, 255), a]).astype(np.uint8)
+        Image.fromarray(out, 'RGBA').save(f'{OUT}/tif/{TEX[m]}_diff.tif', compression='tiff_lzw')
+
+
+if '--textures' in sys.argv:
+    write_textures()
+    print('textures', sorted(TEX.values()))
+    sys.exit(0)
 D = json.load(open(cs.FX))
 
 
@@ -164,9 +188,7 @@ sets = {name: bake(system, name) for name, system in SETS.items()}
 mats = sorted({(q['mtl'], q['tex'], q['hue'], q['level']) for c in sets.values() for v in c for s in v for q in s})
 json.dump({'sets': sets, 'materials': [m[0] for m in mats], 'stages': STAGES, 'variants': VARIANTS, 'time': T},
           open(OUT + '/cards.json', 'w'))
-from PIL import Image
-for m, (t, _, _) in SHEETS.items():
-    Image.open(f'{PNG}/{t}.png').convert('RGBA').save(f'{OUT}/tif/{TEX[m]}_diff.tif', compression='tiff_lzw')
+write_textures()
 for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_x30', 30.0)):   # brightness steps, to match Ready or Not's on-screen colour live
     subs = []
     for mtl, tex, hue, level in mats:
