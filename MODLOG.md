@@ -562,3 +562,21 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - Velocity-aligned sprites (the side flame, sparks) lie in the plane through the barrel that faces the eye; with our
   eye 4 cm above the bore that's nearly edge-on (a streak leaning in from the muzzle), as Ready or Not would draw it
   from there. PivotOffset read as -1 = the sprite's edge, the texture's top leading (not checked against a render).
+
+## 2026-10-14: a real steel plate's ring from Hickok45, hits far away (Claude 3, sound)
+- Sunday Shoot-a-Round #351, the 10 steel hits of pack 16: 3 plates, each with its own set of pitches that comes back on
+  every hit (plate A ~20 m: 1242, 1441, 2133, 3445 Hz ...; B ~9 m: 1980, 2965, 3340, 4090, 4676 ...; C ~100 m: 2320,
+  2766, 2977, 3398 ...), 16-48 steady pitches each, up to ~14 kHz. `tools/sound/plate_rings.py` keeps only those
+  pitches (band-pass, each until it sinks to 6 dB over the bands beside it); the gunshot, its echo, voice and music
+  spread over every pitch and stay out. Requiring a pitch in two windows (strike +0.02-0.2 and +0.15-0.45 s) is what
+  separates plate tones from flickers of the gun's echo (one window: 48+ "tones" per hit).
+- SAM Audio (Meta, web playground) can't clean these: removing the laugh and music from hit_01 flattened 16 of its 18
+  plate pitches from 10-26 dB over their neighbours to 1-6 dB; isolating "metal plate ding" lost the 5-11 kHz tones.
+  A decaying-tone fit (Theil-Sen, matrix pencil) failed: the pitches beat and the echo and voice overlap them.
+- Ready or Not's impact events get no echo outdoors: the steel hit rendered with ReverbMaster + ReverbFOREST=1 is the
+  same as dry (0.4-0.8 s after: -62 vs -63 dB). Their echo comes only with the guns (baked EXT/INT layers + the weapon
+  bus's reverb send).
+- Hits far away: the plugin's `Falloff` plays Ready or Not's point-blank impact at any distance, only quieter (RoN's own
+  PropagateDistance fade is off). Measured against the MK V shot (100 ms max): a fresh ricochet at 3 m +4 dB, 25 m -5,
+  100 m -17. Air absorption (ISO 9613-1, 15 C 70 %) per 100 m: 1 kHz -0.4 dB, 4 kHz -2.7, 8 kHz -9.5; the ricochet's
+  spectral centroid falls from 3.2 to 1.5 kHz at 100 m. `tools/sound/impact_distance_ab.py` (pack 18).

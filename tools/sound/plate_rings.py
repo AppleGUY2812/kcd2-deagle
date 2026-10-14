@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+"""A steel plate's ring lifted out of a range recording (Hickok45), to replace Ready or Not's steel hit.
+
+A struck plate rings at a set of steady pitches (its modes): they start together at the strike and fade over ~0.3-1.5 s.
+Each one is found as a narrow peak that holds its pitch right after the strike, and kept with a narrow zero-phase
+band-pass of the original until the last time it stands GATE dB over the bands beside it. The gunshot, its echo, his
+voice and the music spread over every pitch, so almost none of them gets through; steady background tones (there
+before the shot) are excluded. The plate's own echo is at its pitches and partly comes along.
+Hits on the same plate find the same pitches (Sunday Shoot-a-Round #351: 3 plates over 10 hits).
+Why not SAM Audio: its laugh + music removal on hit_01 flattened 16 of the plate's 18 pitches from 10-26 dB over their
+neighbours to 1-6 dB (it regenerates the audio). A fit of decaying tones failed too: the pitches beat and the echo
+and voice overlap them (no clean decay to fit).
+Writes ring_NN.wav (the plate) and left_out_NN.wav (the rest after the strike, same gain) for checking by ear.
+Private use only: the WAVs go to E:\\Tools\\deagle-work\\sound\\hickok\\rings, never into the repo.
+
+usage: plate_rings.py <recording.wav> <hits.json> [outdir] [only index]
+hits.json: [{"shot": s, "onset": s after the shot}, ...] (made by the plate finder, multi-tone rings after shots)"""
+import json, os, sys
+import numpy as np, soundfile as sf
+from scipy.signal import butter, sosfiltfilt, welch
+from scipy.ndimage import median_filter
+
+OUT = "/mnt/e/Tools/deagle-work/sound/hickok/rings"
+LO, HI = 700, 16000        # Hz searched for the plate's tones
+MAX_TONES = 48
+RING_LEN = 1.6             # s kept after the onset
+SIDE, GATE = 80.0, 6.0     # Hz to the bands a tone is compared with; dB it must stand over them
+
+def tones(x, sr, shot, onset):
+    """Frequencies (Hz) of the plate's tones: narrow peaks that stand >= 10 dB over their neighbours at the same pitch
+    in two windows (strike +0.02..0.2 s and +0.15..0.45 s: a plate's tone holds its pitch, a flicker of the gun's echo
+    doesn't) and >= 12 dB over the same band before the shot."""
+    n = 4096
+    def psd(a, b):
+        seg = x[int((shot + onset + a) * sr): int((shot + onset + b) * sr)]
+        f, P = welch(seg, sr, nperseg=n, noverlap=n * 3 // 4)
+        return f, 10 * np.log10(P + 1e-20)
+    pre = x[int((shot - .7) * sr): int((shot - .03) * sr)]
+    f, B = welch(pre, sr, nperseg=n, noverlap=n * 3 // 4); Bd = 10 * np.log10(B + 1e-20)
+    _, R1 = psd(.02, .2); _, R2 = psd(.15, .45)
+    p1, p2 = R1 - median_filter(R1, size=31), R2 - median_filter(R2, size=31)
+    near = lambda p: np.maximum.reduce([np.roll(p, k) for k in (-1, 0, 1)])   # same pitch within one bin (12 Hz)
+    ok = (f > LO) & (f < HI) & (p1 > 10) & (near(p2) > 10) & (R1 - Bd > 12)
+    peaks = [i for i in np.nonzero(ok)[0] if R1[i] == R1[max(0, i - 2): i + 3].max()]
+    peaks.sort(key=lambda i: -R1[i])
+    out = []
+    for i in peaks:
+        if all(abs(f[i] - g) > 25 for g in out): out.append(float(f[i]))
+        if len(out) == MAX_TONES: break
+    return sorted(out)
+
+def env(y, sr):
+    """Level of a narrow band over time, smoothed over 20 ms."""
+    w = int(.02 * sr)
+    return np.sqrt(np.convolve(y * y, np.ones(w) / w, "same")) + 1e-12
+
+def band(seg, sr, fq):
+    bw = max(18.0, fq * .004)
+    return sosfiltfilt(butter(3, [fq - bw, fq + bw], "bandpass", fs=sr, output="sos"), seg)
+
+def clear(fq, freqs, sign):
+    """The nearest pitch SIDE Hz or more to one side of fq with no plate tone within 40 Hz of it."""
+    d = SIDE
+    while any(abs(fq + sign * d - g) < 40 for g in freqs): d += 20
+    return fq + sign * d
+
+def ring(x, sr, shot, onset, freqs):
+    """The plate's tones from the strike on. Each one is kept only while it stands GATE dB over what sits next to it
+    (two bands SIDE Hz either side: the gun's echo, voice, music spread over every pitch), averaged over 150 ms,
+    until the last time it does, so none of that leaks in after the ring has faded into it. Also returns the gun / echo / voice part that was left out (to check by ear)."""
+    a = int((shot + onset - .01) * sr)
+    lead = int(.2 * sr)
+    seg = x[a - lead: a + int(RING_LEN * sr)]
+    y = np.zeros(len(seg))
+    for fq in freqs:
+        b = band(seg, sr, fq)
+        side = np.maximum(env(band(seg, sr, clear(fq, freqs, -1)), sr), env(band(seg, sr, clear(fq, freqs, 1)), sr))
+        w = int(.15 * sr)                                      # over 150 ms: a beat's dip doesn't end the tone
+        over = 20 * np.log10(np.sqrt(np.convolve(env(b, sr) ** 2, np.ones(w) / w, "same")) /
+                             np.sqrt(np.convolve(side ** 2, np.ones(w) / w, "same")))
+        on = np.nonzero(over[lead:] > GATE)[0]
+        if not len(on): continue
+        end = lead + on[-1]                                    # the last time it stood out: kept until then
+        g = np.zeros(len(seg)); g[:end] = 1
+        fo = int(.08 * sr); g[end: end + fo] = np.linspace(1, 0, len(g[end: end + fo]))
+        y += b * g
+    y, rest = y[lead:], (seg - 0)[lead:]
+    fade = int(.002 * sr); y[:fade] *= np.linspace(0, 1, fade)  # starts at the strike
+    tail = int(.3 * sr); y[-tail:] *= np.linspace(1, 0, tail) ** 2
+    return y, rest - y
+
+def main():
+    src, hits_json = sys.argv[1], sys.argv[2]
+    out = sys.argv[3] if len(sys.argv) > 3 else OUT
+    only = int(sys.argv[4]) if len(sys.argv) > 4 else None
+    os.makedirs(out, exist_ok=True)
+    sr = sf.info(src).samplerate
+    hits = json.load(open(hits_json))
+    meta = []
+    for i, h in enumerate(hits):
+        if only is not None and i != only: continue
+        x, _ = sf.read(src, start=int((h["shot"] - 1) * sr), stop=int((h["shot"] + h["onset"] + RING_LEN + .5) * sr))
+        x = x.mean(1) if x.ndim > 1 else x
+        h = dict(h, shot=1.0)                                   # times in this slice
+        fr = tones(x, sr, h["shot"], h["onset"])
+        if len(fr) < 3: print(f"hit {i + 1}: only {len(fr)} tones, skipped"); continue
+        y, rest = ring(x, sr, h["shot"], h["onset"], fr)
+        k = 0.89 / np.abs(y).max()
+        name = f"ring_{i + 1:02d}.wav"
+        sf.write(os.path.join(out, name), y * k, sr, subtype="PCM_16")
+        sf.write(os.path.join(out, f"left_out_{i + 1:02d}.wav"), np.clip(rest * k, -1, 1), sr, subtype="PCM_16")
+        meta.append(dict(file=name, shot=hits[i]["shot"], onset=h["onset"], tones=[round(v) for v in fr]))
+        print(f"{name}: {len(fr)} tones {[round(v) for v in fr]}")
+    json.dump(meta, open(os.path.join(out, "rings.json"), "w"), indent=1)
+
+if __name__ == "__main__":
+    main()
