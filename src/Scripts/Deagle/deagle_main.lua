@@ -449,15 +449,9 @@ function Deagle:PlayTrigger(name)
 end
 
 local PLUGIN_FX = { deagle_impacts = true, deagle_blood = true }
--- effects ported 1:1 from Ready or Not play at its size, not by the round's energy: its pistol impacts
--- (ImpactEffects_Pistol) set no ParticleScale (only its ricochets do, 0.33), so its .50 (Grizzly MK V) splashes like a
--- 9 mm (user 2026-10-14, the water x1.57: "is it supposed to be that big of a splash")
-local RON_SIZE = { ["deagle_impacts.water"] = true, ["deagle_impacts.metal"] = true }
-
 function Deagle:SpawnFx(name, pos, normal, scale)
 	if not name then return end
 	if name == self.cfg.muzzleFx then scale = self.cfg.muzzleFxScale end
-	if RON_SIZE[name] then scale = 1.0 end
 	local lib = string.match(name, "^([%w_]+)%.")
 	if self.cfg.impactSpawn == "plugin" and self.native and PLUGIN_FX[lib] and pos and normal then
 		-- fxs <effect> <scale> <box length m along the normal> <pos> <dir>: drawn from its first frame
