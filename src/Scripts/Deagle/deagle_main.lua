@@ -268,6 +268,8 @@ local function deepcopy(v)
 	return out
 end
 Deagle.cfgDefaults = deepcopy(Deagle.cfg)
+-- the kept ones as Set saw them (the load's replay goes through Set too): a dev reload sets them again (DevReload)
+Deagle.kept = Deagle.kept or {}
 
 Deagle.state = Deagle.state or {
 	ammo = 7,
@@ -557,7 +559,10 @@ end
 
 -- The mesh flash: 4 card variants as bone attachments on the muzzle (made here, so neither gun's model files change),
 -- hidden. SetAttachmentCGF always shows the attachment it loads (WHGame disassembly), so each is hidden right after,
--- in the same frame. Made again with every new viewmodel (a gun change, a respawn).
+-- in the same frame. Made again with every new viewmodel (a gun change, a respawn). A bone attachment made at run time
+-- gets its bone only at the character's next re-sort, and then sits at the model's origin (its offset from the bone
+-- becomes the bone's inverse bind pose, a roll set in the creation frame or not): on the viewmodel that is the camera,
+-- so no card was ever seen (in game 2026-10-14). FlashMeshPlace puts them on the muzzle once their bone is there.
 local FLASH_CARDS = 4
 function Deagle:FlashMeshSetup(vm)
 	local c, phys = self.cfg.flashMesh, self:ShotPhysics()
@@ -573,7 +578,22 @@ function Deagle:FlashMeshSetup(vm)
 	end
 	self.flashMesh = m
 	self:FlashMeshMaterial(vm)
-	for i = 1, FLASH_CARDS do self:FlashMeshRoll(vm, i) end
+end
+-- every viewmodel frame until done: once each card's bone is resolved, its offset from the muzzle is set to nothing
+function Deagle:FlashMeshPlace(vm)
+	local m = self.flashMesh
+	if not m or m.placed then return m ~= nil end
+	if not vm then return false end
+	for _, name in ipairs(m.names) do
+		local ok, bone = pcall(vm.GetAttachmentBone, vm, 0, name)
+		if not ok or bone ~= self.gun.bones.muzzle then return false end
+	end
+	for i, name in ipairs(m.names) do
+		pcall(vm.SetAttachmentPos, vm, 0, name, { x = 0, y = 0, z = 0 })
+		self:FlashMeshRoll(vm, i)
+	end
+	m.placed = true
+	return true
 end
 function Deagle:FlashMeshMaterial(vm)
 	local m = self.flashMesh
@@ -583,9 +603,10 @@ function Deagle:FlashMeshMaterial(vm)
 	end
 	m.mtl = self.cfg.flashMesh.mtl
 end
-function Deagle:FlashMeshRoll(vm, i)   -- a card's roll around the barrel for its next shot, set while it's hidden
-	if not self.cfg.flashMesh.roll then return end
-	pcall(vm.SetAttachmentAngles, vm, 0, self.flashMesh.names[i], { x = 0, y = math.random() * 2 * math.pi, z = 0 })
+-- a card's roll around the barrel for its next shot, set while it's hidden (keeps its offset); none with roll off
+function Deagle:FlashMeshRoll(vm, i)
+	local roll = self.cfg.flashMesh.roll and math.random() * 2 * math.pi or 0
+	pcall(vm.SetAttachmentAngles, vm, 0, self.flashMesh.names[i], { x = 0, y = roll, z = 0 })
 end
 function Deagle:FlashMeshShow(i, on)
 	local vm = self.vmId and System.GetEntity(self.vmId)
@@ -599,6 +620,11 @@ end
 function Deagle:FlashMeshShot()
 	local m = self.flashMesh
 	if not m then return false end
+	if not self:FlashMeshPlace(self.vmId and System.GetEntity(self.vmId)) then
+		if not m.saidUnplaced then log("$4mesh flash: the cards aren't on the muzzle bone (" .. tostring(self.gun.bones.muzzle) .. ") yet") end
+		m.saidUnplaced = true
+		return false
+	end
 	if m.mtl ~= self.cfg.flashMesh.mtl then self:FlashMeshMaterial(self.vmId and System.GetEntity(self.vmId)) end
 	for i in pairs(m.shown) do self:FlashMeshShow(i, false) end
 	local a = math.random(FLASH_CARDS)
@@ -612,6 +638,7 @@ end
 -- every viewmodel frame: frame k of the shot shows variant k, then none
 function Deagle:FlashMeshTick()
 	local m = self.flashMesh
+	if m and not m.placed then self:FlashMeshPlace(self.vmId and System.GetEntity(self.vmId)) end
 	if not m or not m.seq then return end
 	local k = (self.vmFrame or 0) - m.frame
 	if k < 1 then return end
@@ -2901,7 +2928,7 @@ function Deagle:Set(line)
 		return
 	end
 	if key == "gun" then
-		if self:UseGun(value) then self:Native("cfgsave gun " .. value) end
+		if self:UseGun(value) then self:Native("cfgsave gun " .. value); self.kept.gun = value end
 		return
 	end
 	local t, k = self.cfg, key
@@ -2961,6 +2988,7 @@ function Deagle:Set(line)
 	log("cfg." .. key .. " = " .. shown)
 	local kept = type(v) == "boolean" and (v and "1" or "0") or type(v) == "table" and table.concat(v, ",") or tostring(v)
 	self:Native("cfgsave " .. key .. " " .. kept)
+	self.kept[key] = kept
 end
 
 -- deagle_tracers / deagle_ads / deagle_hud ...: on unless the argument has a 0 (no argument = on), kept like deagle_set
@@ -2973,6 +3001,7 @@ function Deagle:ResetSettings()
 	for k in pairs(self.cfg) do if self.cfgDefaults[k] == nil then self.cfg[k] = nil end end
 	for k, v in pairs(self.cfgDefaults) do self.cfg[k] = deepcopy(v) end
 	self:Native("cfgreset")
+	self.kept = {}
 	if self.gun.id ~= "deagle" and self.guns.deagle then self:UseGun("deagle")   -- the gun as shipped too
 	else
 		local g = self.gun
@@ -3006,7 +3035,8 @@ function Deagle:Status()
 		tostring(self.inputLoaded), tostring(s.drawn), s.ammo, tostring(s.reloading)))
 end
 
--- dev: re-run this script from a loose file (tools/live.sh reload), run a Lua line
+-- dev: re-run this script from a loose file (tools/live.sh reload), run a Lua line. The re-run puts every setting back
+-- as shipped, so the player's kept ones are set again, as a load does (the gun first: it sets the gun's own values)
 Deagle.devPath = Deagle.devPath or "E:/Tools/deagle-dev/deagle_main.lua"
 function Deagle:DevReload()
 	local ok, err = pcall(function()
@@ -3017,6 +3047,13 @@ function Deagle:DevReload()
 	end)
 	self.devLoading = false
 	log(ok and ("dev reload ok: " .. self.devPath) or ("$4dev reload failed: " .. tostring(err)))
+	if not ok then return end
+	local keys = {}
+	for k in pairs(self.kept) do if k ~= "gun" then keys[#keys + 1] = k end end
+	table.sort(keys)
+	if self.kept.gun then table.insert(keys, 1, "gun") end
+	for _, k in ipairs(keys) do self:Set(k .. " " .. self.kept[k]) end
+	log("dev reload: " .. #keys .. " kept settings set again")
 end
 
 function Deagle:DevLua(line)

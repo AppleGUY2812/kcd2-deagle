@@ -521,3 +521,19 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   So the "7-15 dB under the bang" reference is withdrawn. The user's clip (Sunday Shoot-a-Round #351, 0:08 in the
   video, sCV1pilQxxU: a pistol at steel in a thin forest; events 0.44 s after 5 shots, ~1 s after the first) is not
   settled by measurement alone. Look at frames before trusting any sound measurement from a video.
+
+## 2026-10-14: why the mesh flash never drew (Claude 4)
+- Runtime bone attachments (`CreateBoneAttachment`) sat at the viewmodel's model origin, which is the camera, so
+  nothing on them was ever seen. A roll set with `SetAttachmentAngles` in the creation frame did **not** keep them on the
+  bone (that corrects the 2026-10-13 note). Measured live: the card alone on a BasicEntity glows fine (material and
+  mesh OK). The pistol model on `vm_flash_1` or on a fresh attachment never showed. The same card loaded in an entity
+  slot of the viewmodel at the muzzle drew. `SetAttachmentPos(0, name, {0,0,0})` + `SetAttachmentAngles`, once
+  `GetAttachmentBone` names the bone, put a card on the muzzle and it drew (screens: Desktop\Deagle Progress\17 Flash fix).
+  `FlashMeshPlace` does that every frame until the cards' bone has resolved.
+- The muzzle bone's axes in the viewmodel: +Y = forward (down the barrel), X and Z flipped (180 deg about the barrel).
+- Seen on the gun, the tongues (planes through the bore, side sheet) show as bright streaks. The front cards (face-on,
+  front sheet) weren't visible in a held frame: look and strength still to judge with real shots.
+- Decal check (same run): ours and KCD2's own `decal_wood_02` at 0.25 on a test-wall metal door (a BasicEntity),
+  with and without the entity id: none visible at 3.9 m at night. The terrain pair was off screen. Open.
+- `Deagle.kept` mirrors the plugin's kept settings (Set fills it, a load's replay goes through Set); `DevReload` sets
+  them again, so a dev reload no longer drops the player's settings.

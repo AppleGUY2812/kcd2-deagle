@@ -108,7 +108,17 @@ local function newEntity(name, props)
 	function e:SetDirectionVector(d) self.dir = vec(d.x, d.y, d.z) end
 	function e:SetSlotWorldTM(slot, pos, dir) M.slotMoves = (M.slotMoves or 0) + 1 end
 	function e:HideAttachment(slot, name, hide) M.hidden = M.hidden or {}; M.hidden[name] = hide end
-	function e:CreateBoneAttachment(slot, bone, name) M.boneAttach = (M.boneAttach or 0) + 1 end
+	function e:CreateBoneAttachment(slot, bone, name)
+		M.boneAttach = (M.boneAttach or 0) + 1
+		local ab = rawget(self, "attachBones") or {}; rawset(self, "attachBones", ab); ab[name] = { bone = bone, at = M.t }
+	end
+	-- like KCD2 (MODLOG 2026-10-13): a new bone attachment gets its bone at the character's next re-sort ("" until then)
+	function e:GetAttachmentBone(slot, name)
+		local a = rawget(self, "attachBones") and rawget(self, "attachBones")[name]
+		if not a then return nil end
+		return M.t > a.at and a.bone or ""
+	end
+	function e:SetAttachmentPos(slot, name, p) M.attachPos = M.attachPos or {}; M.attachPos[name] = p end
 	-- like KCD2 (WHGame disassembly, docs/flash_mesh_plan.md): loading a CGF onto an attachment always shows it
 	function e:SetAttachmentCGF(slot, name, cgf) M.hidden = M.hidden or {}; M.hidden[name] = false; M.attachCgf = M.attachCgf or {}; M.attachCgf[name] = cgf end
 	function e:SetAttachmentAngles(slot, name, a) M.attachAngles = M.attachAngles or {}; M.attachAngles[name] = a end

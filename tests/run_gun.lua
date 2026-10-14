@@ -128,6 +128,11 @@ if phys then
 	mesh = { setup = fm and #fm.names == 4 and #shown() == 0, cgf = M.attachCgf and M.attachCgf.vm_flash_3, set = set }
 	Deagle.cfg.flashMode = "mesh"
 	M.advance(0.5, 60)
+	mesh.placed = 0                                   -- on the muzzle itself once their bone resolved (not the model's origin)
+	for i = 1, 4 do
+		local p = M.attachPos and M.attachPos["vm_flash_" .. i]
+		if p and p.x == 0 and p.y == 0 and p.z == 0 then mesh.placed = mesh.placed + 1 end
+	end
 	local nf, roll0 = #M.native, M.attachAngles and M.attachAngles.vm_flash_1
 	M.attachAngles = {}
 	Deagle.state.ammo, Deagle.state.lastShot = g.magSize, -100
@@ -238,8 +243,8 @@ if recoil then
 	check("the spray pattern is the same every time (learnable)", a1 == a2 and Deagle:SprayRand(3, 2) ~= Deagle:SprayRand(4, 2), a1)
 end
 if mesh then
-	check(string.format("mesh flash: 4 hidden cards, %s", tostring(mesh.cgf)), mesh.setup and mesh.cgf == "objects/manmade/weapons/deagle/vm/" .. mesh.set .. "_3.cgf"
-		and mesh.roll0 ~= nil, mesh.cgf)
+	check(string.format("mesh flash: 4 hidden cards, %s, %d put on the muzzle bone", tostring(mesh.cgf), mesh.placed),
+		mesh.setup and mesh.cgf == "objects/manmade/weapons/deagle/vm/" .. mesh.set .. "_3.cgf" and mesh.roll0 ~= nil and mesh.placed == 4, mesh.cgf)
 	check(string.format("mesh flash at 60 fps: card %s on the shot's frame, %s the next, %s after; %d rolled; no particle flash",
 		table.concat(mesh.f0, ","), table.concat(mesh.f1, ","), table.concat(mesh.f2, ","), mesh.rolled),
 		#mesh.f0 == 1 and #mesh.f1 == 1 and mesh.f1[1] ~= mesh.f0[1] and #mesh.f2 == 0 and mesh.rolled == 2 and not mesh.particleFlash, mesh.rolled)
