@@ -1247,6 +1247,8 @@ end
 -- Each is a real game model whose physics proxy has that SurfaceType (found by parsing every .cgf's material chunk and
 -- its .mtl: IPL_Objects paks; scratch notes in MODLOG 2026-10-13). Static, never saved. deagle_testwall clear.
 -- KCD2 has no object with mat_bells (church bells are mat_metal) and none flat in mat_wood_soft / mat_stairs_stone.
+-- up = stand it up (90 deg about its X: the window pane is modelled lying flat, 1.0 x 1.44 m, to be set into a wall),
+-- lift = m off the ground
 local TEST_WALL = {
 	{ "stone", "objects/manmade/common_decorations/streets_deco/guard_stone_wall_a.cgf" },
 	{ "plaster", "objects/manmade/task_specific_props/food_processing/baking/oven_bread_a.cgf" },
@@ -1256,7 +1258,7 @@ local TEST_WALL = {
 	{ "wicker", "objects/manmade/common_furniture/baskets/basket_with_lid_a.cgf" },
 	{ "metal door", "objects/manmade/common_fixtures/doors/lvl4_door_b_static.cgf" },
 	{ "anvil", "objects/manmade/task_specific_props/metal_industry/smithing/anvil_small.cgf" },
-	{ "glass", "objects/intermediates/elements/window_glass_a.cgf" },
+	{ "glass", "objects/intermediates/elements/window_glass_a.cgf", up = true, lift = 0.9 },
 	{ "sack", "objects/manmade/common_furniture/sacks/sack_b.cgf" },
 	{ "straw target", "objects/manmade/task_specific_props/combat/archery/target_b.cgf" },
 	{ "hay", "objects/manmade/structures/industrial/hay/hay_sheaf_a.cgf" },
@@ -1274,12 +1276,12 @@ function Deagle:TestWall(args)
 	local gap, ids, names = 1.6, {}, {}
 	for i, w in ipairs(TEST_WALL) do
 		local side = (i - (#TEST_WALL + 1) / 2) * gap
-		local pos = { x = p.x + 4 * d.x + side * d.y, y = p.y + 4 * d.y - side * d.x, z = p.z }
+		local pos = { x = p.x + 4 * d.x + side * d.y, y = p.y + 4 * d.y - side * d.x, z = p.z + (w.lift or 0) }
 		local ok, e = pcall(System.SpawnEntity, { class = "BasicEntity", name = "deagle_testwall_" .. i, position = pos,
 			flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = w[2], Physics = { bPhysicalize = true, bRigidBody = false, Mass = 0, Density = -1 } } })
 		if ok and e then
 			pcall(e.SetFlags, e, ENTITY_FLAG_NO_SAVE, 0)
-			pcall(e.SetAngles, e, { x = 0, y = 0, z = yaw })
+			pcall(e.SetAngles, e, { x = w.up and math.pi / 2 or 0, y = 0, z = yaw })   -- x first, then the yaw
 			ids[#ids + 1] = e.id
 			names[#names + 1] = w[1]
 		else log("$4test wall: " .. w[1] .. " didn't spawn: " .. tostring(e)) end
