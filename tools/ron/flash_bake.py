@@ -43,6 +43,24 @@ SHEETS = {   # material -> texture, tiles across, down (Ready or Not's materials
 }
 TEX = {m: 'ron_flash_' + t.split('_-_')[0].lower() for m, (t, _, _) in SHEETS.items()}
 HUES = {'pop': (1.0, 0.0118, 0.0052), 'spark': (1.0, 0.118, 0.0052)}
+# Ready or Not's raw hues are near pure red; its tonemapper turns its very bright ones peach-white and orange on screen,
+# KCD2's kept them red with a white core and a red glow at every brightness (in game 2026-10-14, held cards x1-x30).
+# So each sub-material takes the colour Ready or Not shows: Unreal's filmic curve (the ACES fit, Narkowicz 2016,
+# per channel) at RON_EXPOSURE, which is fitted to the user's Ready or Not clip (frames 230-231: the fireball's body
+# 248, 166, 131 on screen, G/R 0.40 in linear light) over the fireball's own levels (82-328). Kept: each one's
+# brightness (KCD2's tonemapper whitens the hottest), only the hue moves: 328 -> 1 : 0.63 : 0.35, 164 -> 1 : 0.39 :
+# 0.15, 82 -> 1 : 0.18 : 0.06, 20 and under stay red.
+RON_EXPOSURE = 0.135
+
+
+def aces(x):
+    x = np.asarray(x, float)
+    return np.clip(x * (2.51 * x + 0.03) / (x * (2.43 * x + 0.59) + 0.14), 0, 1)
+
+
+def screen_hue(hue, inten):   # the colour a raw Ready or Not hue at this brightness shows on its screen, max channel 1
+    d = aces(RON_EXPOSURE * np.array(HUES[hue]) * inten)
+    return d / max(d.max(), 1e-9)
 
 
 def write_textures():
@@ -192,7 +210,7 @@ write_textures()
 for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_x30', 30.0)):   # brightness steps, to match Ready or Not's on-screen colour live
     subs = []
     for mtl, tex, hue, level in mats:
-        r, gg, b = HUES[hue]
+        r, gg, b = (round(float(c), 4) for c in screen_hue(hue, 2 ** level / 100.0))
         inten = 2 ** level / 100.0 * GAIN * g
         subs.append(f'    <Material Name="{mtl}" MtlFlags="524454" Shader="Illum" GenMask="20000000000000" StringGenMask="%SUBSURFACE_SCATTERING" '
                     f'SurfaceType="" MatTemplate="" Diffuse="0,0,0" Specular="0,0,0" Opacity="0.99" Emittance="{r},{gg},{b},{inten:.4g}" '

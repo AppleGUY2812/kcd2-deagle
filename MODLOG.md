@@ -705,3 +705,14 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   the Glock (no shot): 0.15 hardly shows, 0.5 a warm wash on the near ground, 1.5 brighter (the user turned between the
   shots, so no exact factors).
 
+## 2026-10-14: Ready or Not's flash cards in its on-screen colours (Claude 4)
+- Held live on the Glock (its own card ron_s_1_2, game in front, after the skins fix): `ChangeAttachmentMaterial` works on
+  skin cards (x1 / x3 / x10 / x30 visibly step up). But brighter only whitened the core: at every level the edges and the
+  bloom stayed red (G/R 0.43-0.54 on the bright rim). KCD2's tonemapper never shifts a near pure red toward orange.
+- Ready or Not on screen (the user's clip, frames 230-231): the fireball's body 248, 166, 131 (G/R 0.67-0.71, B/R
+  0.53-0.58), a white-yellow core, no red. `flash_bake.py` now writes each sub-material's colour as Ready or Not shows it:
+  Unreal's filmic curve (ACES fit, per channel) at exposure 0.135, fitted so the fireball's own levels (82-328) give G/R
+  0.40 in linear light. Hottest pop (328) 1 : 0.63 : 0.35, 164 1 : 0.39 : 0.15, 82 1 : 0.18 : 0.06, 20 and under stay red;
+  sparks 10.24 1 : 0.28 : 0. Brightness per sub-material unchanged. cards.json is byte-identical after the rebake (the
+  sparks' rng is seeded), so the skins stand.
+
