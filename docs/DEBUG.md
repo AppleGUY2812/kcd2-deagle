@@ -61,6 +61,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `muzzleFx` / `muzzleFxLarge` | `deagle.muzzle` | particle flash look: try `deagle.muzzle_b4`, `_b4s15`, `_b10s2` (and `deagle.muzzle_large_b4`... for the Deagle) |
 | `muzzleFxScale` | `1` | multiplier on the flash size the cartridge gives (0.5 = half) |
 | `impactSpawn` | `plugin` | how bullet-hit and blood effects are spawned: `plugin` = drawn from their first frame (held 2 s); `lua` = the old way (KCD2 doesn't draw them for ~0.3 s, so short sparks and flashes never show) |
+| `impactLook` | `ron` | water and metal hit looks: `ron` = Ready or Not's; `new` = the test looks (water: a fast jet whose spray splashes where it lands, KCD2's own water materials; metal: a fast flat spark fan that differs every hit) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on (0.01-1; changes at once if it's on) |
 | `debugShotLog` | `false` | every shot is traced in kcd.log: Henry's eye and aim, the free camera, the round's place each frame, and each hit's surface, angle and outcome (ricochet / impact), so Claude can check what a shot did |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
