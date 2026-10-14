@@ -348,14 +348,14 @@ function Deagle:MoveRound(r, h)
 end
 
 function Deagle:StepRound(r, dt)
-	local done, from = false, r.pos
+	local done, from, moved = false, r.pos, dt > 1e-6
 	while dt > 1e-6 do
 		local h = math.min(dt, ROUND_STEP)
 		dt = dt - h
 		if self:MoveRound(r, h) then done = true; break end
 	end
 	self:TracerBullet(r, from)
-	if r.logId then
+	if r.logId and moved then   -- a paused game (unfocused, menu) still ticks with dt 0: nothing moved, nothing logged
 		log(string.format("shot %d t=%.4f pos %.2f %.2f %.2f speed %.1f dist %.1f%s", r.logId, System.GetCurrTime(), r.pos.x, r.pos.y,
 			r.pos.z, vlen(r.vel), r.dist, done and (r.landed and " HIT" or " END") or ""))
 	end

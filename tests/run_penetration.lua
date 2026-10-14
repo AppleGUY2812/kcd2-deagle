@@ -542,6 +542,17 @@ check("every hittable surface has penetration data", #missing == 0, table.concat
 local function db(v) return 20 * math.log10(Deagle:HitLoudness(physD, 0.5 * physD.bullet * v * v)) end
 check(string.format("ricochet loudness: Deagle at 442 m/s %.1f dB, 129 m/s %.1f dB, 54 m/s %.1f dB", db(442), db(129), db(54)),
 	math.abs(db(442)) < 0.5 and math.abs(db(129) + 10.7) < 0.5 and math.abs(db(54) + 18.3) < 0.5, db(54))
+-- the shot log traces a round each frame it moves; a paused game (unfocused, a menu) ticks with dt 0 and logs nothing
+do
+	local r = { pos = vec(100, 0, 31.75), vel = vec(0, physD.velocity, 0), phys = physD, dist = 0, age = 0, logId = 9001 }
+	local l0 = #M.logs
+	for _ = 1, 5 do Deagle:StepRound(r, 0) end
+	local paused = #M.logs - l0
+	Deagle:StepRound(r, 1 / 60)
+	local ran = 0
+	for i = l0 + 1, #M.logs do if M.logs[i]:find("shot 9001 t=", 1, true) then ran = ran + 1 end end
+	check(string.format("shot log: 5 paused frames log %d lines, a moving frame 1", paused), paused == 0 and ran == 1, ran)
+end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("penetration: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
