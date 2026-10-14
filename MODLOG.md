@@ -727,3 +727,21 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - metal_v2 at 60 fps: fan + jets read as ~1 m streaks for 1-2 frames, gone by frame 3; four hits, four different
   sprays (Deagle Progress\ron_fx\metal_old_vs_new.png). Ready or Not's metal flash light (Radius 1.5) lights the wall
   orange for ~8 frames: that's the 1-frame flash the user liked.
+
+## 2026-10-14: reactions as for KCD2's own guns: hearing x1, near misses, XP, chickens credited (Claude 4)
+- The user: "make sure our reactions to the gun hits and stuff is the same [as KCD2's own guns] including hearing and
+  everything". Claude 1's read-only comparison against KCD2's hand cannons (item.xml class 13, ammo shot_ball) listed the
+  gaps; done now: `hearing.shot` 1 (its guns: FireSoundMultiplicator 1; rpg_sound.xml gun_fired intensity 2000,
+  noisiness 0.2), was a guessed 3.2; the user's saved settings had `hearing.on 0`.
+- Near misses: the engine sends `weapon:onPlayerArrowFlyingBy` {GUID, Position, Direction} (Tables.pak ai_types.xml) to
+  NPCs a player's arrow passes; npc switch.xml -> handleArrowFlyby -> handleStimulusShooter (player named if seen, else a
+  look / search toward him; gotDirectHit false). `Deagle:FlyBy` sends it for every flight step to living NPCs within
+  `nearMiss` 2.5 m of the round's path at chest height, once per NPC per round, never to one the round hit (the engine's
+  own distance unknown; 2.5 m = its arrow touchdown volume).
+- XP: rpg_param.xml SkillXPHit 1, SkillXPKill 18 -> `soul:AddSkillXP("marksmanship", 1 / 19)` per hit / killing hit
+  (marksmanship = bows, crossbows, guns, skill.xml id 19). StatXPKill 12 and HunterXPKill 20 not given yet (which stat /
+  skill they go to unconfirmed; no Lua AddStatXP found).
+- Chickens: `Boids.OnBoidHit` gets `shooterId` / `shooter` (AI/animal/animals.xml checks the killer for the crime).
+- Still open: morale `near_gunshot` -0.3 (no Lua setter found), the player counting as armed (MiscItem), per-part injury
+  buffs, small-game pulp. Armour wear is Claude 1's.
+

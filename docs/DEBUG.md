@@ -114,7 +114,8 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `vm.cueLead` | `0.045` | s every Ready or Not handling sound (reload, inspect, draw) starts early for the sound engine's output delay: raise it if they still land late |
 | `vm.dryDb` | `-22` | empty click loudness in dB of Ready or Not's mix (the shot is -3; RoN's own click -40 / -47) |
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
-| `hearing.shot` | `3.2` | how far a 9 mm shot is heard (multiplier; louder guns more) |
+| `hearing.shot` | `1` | how far a 9 mm shot is heard: KCD2's own guns use 1 (louder guns more) |
+| `nearMiss` | `2.5` | metres: a round flying this close past a living NPC gives it KCD2's near-miss reaction for an arrow (knows it's you if it saw you, else searches); 0 = off |
 | `physics.sizeExponent` | `0.5` | how much harder small bodies are hit (a hare dies to anything, a horse takes ~2.5x the hits) |
 | `physics.skullJPerMm2` | `0.4` | a round that reaches the head with this many J per mm² of its face (bone perforation, Sellier & Kneubuehl: 9 mm 26 J, .50 AE 51 J) kills; a helmet that stops it, or padding that drains it below that, leaves a wound |
 | `gore.ragdollOnKill` | `true` | a killing round drops the body at once instead of after KCD2's death animation |

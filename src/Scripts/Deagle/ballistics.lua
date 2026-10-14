@@ -395,6 +395,7 @@ function Deagle:StepRound(r, dt)
 		if self:MoveRound(r, h) then done = true; break end
 	end
 	self:TracerBullet(r, from)
+	self:FlyBy(r, from)   -- deagle_main.lua: NPCs it flew past hear the near miss
 	if r.logId and moved then   -- a paused game (unfocused, menu) still ticks with dt 0: nothing moved, nothing logged
 		log(string.format("shot %d t=%.4f pos %.2f %.2f %.2f speed %.1f dist %.1f%s", r.logId, System.GetCurrTime(), r.pos.x, r.pos.y,
 			r.pos.z, vlen(r.vel), r.dist, done and (r.landed and " HIT" or " END") or ""))

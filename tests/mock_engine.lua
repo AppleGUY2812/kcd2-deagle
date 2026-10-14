@@ -171,6 +171,9 @@ M.view = { pitch = 0, yaw = 0 }   -- the camera follows PlayerSetViewAngles (rec
 player.actor = { PlayerSetViewAngles = function(self, a) M.view.pitch, M.view.yaw = a.x or 0, a.z or 0 end,
 	SetViewShake = function() end, GetViewAngles = function() return vec(M.view.pitch, 0, M.view.yaw) end }
 player.soul = {}
+-- skill XP the player gets (soul:AddSkillXP), recorded per skill
+M.xp = {}
+function player.soul:AddSkillXP(skill, xp) M.xp[skill] = (M.xp[skill] or 0) + xp end
 player.this = { id = player.id }
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }

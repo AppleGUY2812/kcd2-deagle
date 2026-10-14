@@ -148,6 +148,36 @@ Deagle:ApplyHit({ entity = npc, pos = vec(100, 205, 31.35), normal = vec(0, -1, 
 check("pain voice: a deagle_testnpc dummy says nothing", barks() == 0, barks())
 Deagle.testNpcs = nil
 
+-- KCD2's own XP: marksmanship 1 a hit, 18 more for the kill (rpg_param.xml)
+M.xp = {}
+local victim = newNpc()
+Deagle:UseGun("glock_17")
+Deagle:ApplyHit({ entity = victim, pos = vec(100, 205, 31.35), normal = vec(0, -1, 0), partid = 1, dist = 5 }, vec(0, 1, 0), Deagle:ShotPhysics())
+local afterHit = M.xp.marksmanship or 0
+headShot(victim, "glock_17")
+check(string.format("marksmanship XP: %d for a hit, %d after the killing head shot", afterHit, M.xp.marksmanship or 0),
+	afterHit == 1 and (M.xp.marksmanship or 0) == 1 + 19, M.xp.marksmanship)
+-- the chicken's kill names the shooter (KCD2's animal-kill crime checks the killer)
+check("a chicken's hit names the shooter", boidHits[1] and boidHits[1].hit.shooterId == Deagle:Player().id, boidHits[1] and boidHits[1].hit.shooterId)
+-- near misses: a round flying past an NPC within 2.5 m of its chest sends KCD2's arrow fly-by message, once; not to one
+-- it hit, nor to one 4 m away
+local near, far, hitOne = newNpc(), newNpc(), newNpc()
+near.id, near.this = "near", { id = "nearWUID" }; far.id, far.this = "far", { id = "farWUID" }; hitOne.id, hitOne.this = "hit", { id = "hitWUID" }
+function near:GetWorldPos() return vec(101.5, 150, 30) end   -- chest 1.5 m right of a round along y at z 31.25
+function far:GetWorldPos() return vec(104, 150, 30) end
+function hitOne:GetWorldPos() return vec(100, 160, 30) end
+local getEnts = System.GetEntitiesInSphere
+System.GetEntitiesInSphere = function() return { near, far, hitOne, Deagle:Player() } end
+M.aiMessages = {}
+local round = { pos = vec(100, 140, 31.25), hitIds = { hit = true } }
+local from = vec(100, 140, 31.25); round.pos = vec(100, 146, 31.25); Deagle:FlyBy(round, from)
+from = round.pos; round.pos = vec(100, 156, 31.25); Deagle:FlyBy(round, from)
+from = round.pos; round.pos = vec(100, 166, 31.25); Deagle:FlyBy(round, from)
+System.GetEntitiesInSphere = getEnts
+local to = {}
+for _, m in ipairs(M.aiMessages) do if m.kind == "weapon:onPlayerArrowFlyingBy" then to[#to + 1] = m.id end end
+check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off, once)", table.concat(to, ",")), #to == 1 and to[1] == "nearWUID", #to)
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

@@ -167,7 +167,10 @@ Deagle.cfg = {
 	impactVolume = 2.0, impactNear = 3,
 	-- KCD2's AI hearing (XGenAIModule.ProduceSound*): shot = the gun_fired multiplier for a 9 mm (louder guns more;
 	-- GUESS ~80 m, calibrate live), hit = bullet_hit multiplier at an impact for a 9 mm
-	hearing = { on = true, shot = 3.2, hit = 1.0 },
+	-- shot 1: KCD2's own guns make their gun_fired at x1 (item.xml FireSoundMultiplicator 1; it was a guessed 3.2)
+	hearing = { on = true, shot = 1.0, hit = 1.0 },
+	-- a round flying within nearMiss m of a living NPC's chest: KCD2's near-miss message for an arrow (Deagle:FlyBy); 0 = off
+	nearMiss = 2.5,
 	exitEnergy = 20,          -- J: a round leaving the body with less stays in it (no exit wound)
 	-- a killing round: ragdoll at once and a shove by its momentum (x killPush) pushDelay ms later, at the part it hit
 	gore = { ragdollOnKill = true, killPush = 1.0, pushDelay = 60 },
@@ -1266,6 +1269,50 @@ end
 -- hit volume. Damage itself names no attacker (DealDamage's hits are type Fall, which the trees file as "unknown"). The
 -- game's own Lua messages a brain this way (Scripts/Entities/AI/Horse.lua OnStartle).
 local HIT_BULLET = 6   -- enum HitReactionType.Bullet (Tables.pak Libs/Tables/ai/ai_enums.xml)
+-- KCD2's own XP for a ranged hit and kill (Tables.pak rpg_param.xml: SkillXPHit 1, SkillXPKill 18), to marksmanship,
+-- the skill of its bows, crossbows and guns; the kill's on top of its hit
+local XP_HIT, XP_KILL = 1, 18
+function Deagle:ShotXP(killed)
+	local p = self:Player()
+	try("XP", function() p.soul:AddSkillXP("marksmanship", XP_HIT + (killed and XP_KILL or 0)) end)
+end
+
+-- A round passing a living NPC within cfg.nearMiss m of its chest: the message KCD2's engine sends for a player's arrow
+-- flying by (weapon:onPlayerArrowFlyingBy {GUID, Position, Direction}; Scripts.pak AI/npc/basic/switch/switch.xml ->
+-- handleArrowFlyby -> handleStimulusShooter): it names the player if it has seen him, else looks and searches toward
+-- him. Once per NPC per round, never to one the round hit. Called for every flight step (ballistics.lua StepRound).
+function Deagle:FlyBy(r, from)
+	local near = self.cfg.nearMiss
+	if not near or near <= 0 then return end
+	local seg = vsub(r.pos, from)
+	local len = vlen(seg)
+	if len < 1e-3 then return end
+	local ok, ents = pcall(System.GetEntitiesInSphere, vadd(from, vscale(seg, 0.5)), len / 2 + near)
+	if not ok or type(ents) ~= "table" then return end
+	local p = self:Player()
+	r.flybys = r.flybys or {}
+	for _, e in ipairs(ents) do
+		if e ~= p and e.soul and e.actor and e.this and not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id]) then
+			local dead = false
+			pcall(function() dead = e.actor:IsDead() end)
+			local okP, at = pcall(e.GetWorldPos, e)
+			if not dead and okP and at then
+				local chest = { x = at.x, y = at.y, z = at.z + 1.25 }
+				local t = math.max(0, math.min(1, vdot(vsub(chest, from), seg) / (len * len)))
+				local closest = vadd(from, vscale(seg, t))
+				if vlen(vsub(chest, closest)) <= near then
+					r.flybys[e.id] = true
+					local dirN = vscale(seg, 1 / len)
+					try("near miss", function()
+						local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id, Position = closest, Direction = dirN })
+						XGenAIModule.SendMessageToEntityData(e.this.id, "weapon:onPlayerArrowFlyingBy", msg)
+					end)
+				end
+			end
+		end
+	end
+end
+
 function Deagle:HitAI(e, dmg, stam)
 	if self.cfg.hitAI ~= "missile" then return end
 	local p = self:Player()
@@ -1478,7 +1525,8 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 		local scale = self:ImpactScale(phys, hit.dist, hit.energy)
 		if not e.bWasHit then
 			e.bWasHit = 1
-			try("boid hit", function() Boids.OnBoidHit(e.flock_entity, e, { pos = hit.pos, dir = dir, damage = phys and phys.momentum or 1 }) end)
+			try("boid hit", function() Boids.OnBoidHit(e.flock_entity, e, { pos = hit.pos, dir = dir, damage = phys and phys.momentum or 1,
+				shooterId = p.id, shooter = p }) end)   -- the shooter: KCD2's animal-kill crime checks the killer (AI/animal/animals.xml)
 		end
 		self:SpawnFx(c.bloodFx, hit.pos, hit.normal or vscale(dir, -1), scale)
 		self:SpawnFx(c.bloodExitFx, vadd(hit.pos, vscale(dir, 0.1)), dir, scale)
@@ -1546,10 +1594,12 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 			end
 			self:HitReact(e, hit, dir, dmg, stam)
 			if not dummy then self:HitAI(e, dmg, stam) end
+			if r then r.hitIds = r.hitIds or {}; r.hitIds[e.id] = true end
 			if not dummy then self:PainVoice(e) end
 			local killed = false
 			pcall(function() killed = e.actor:GetHealth() <= 0 end)
 			if killed and phys then self:KillShove(e, hit, dir, phys, hit.energy) end
+			if not dummy then self:ShotXP(killed) end
 			local exits = through and through > c.exitEnergy
 			if not stopped then self:Bleed(e, hit, dir, exits == true, scale, padded) end
 			if exits and r then                         -- through and through: on with what's left, past this body
