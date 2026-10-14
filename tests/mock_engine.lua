@@ -169,6 +169,7 @@ _G.System = {
 	Log = function(s) end, Warning = function(s) table.insert(M.errors, "WARN " .. tostring(s)) end,
 	AddCCommand = function(name, code, help) M.cmds[name] = code end,
 	GetCurrTime = function() return M.t end,
+	GetFrameID = function() return M.frameId or 0 end,
 	GetViewCameraPos = function() return vec(100, 200, 31.75) end,
 	GetViewCameraDir = function() local p, y = M.view.pitch, M.view.yaw return vec(-math.sin(y) * math.cos(p), math.cos(y) * math.cos(p), math.sin(p)) end,
 	GetViewCameraUpDir = function() return vec(0, 0, 1) end,
@@ -239,6 +240,7 @@ function M.advance(sec, fps)
 	local steps = math.floor(sec * fps + 0.5)
 	for _ = 1, steps do
 		M.t = M.t + 1 / fps
+		M.frameId = (M.frameId or 0) + 1
 		local due, keep = {}, {}
 		for _, tm in ipairs(M.timers) do if tm.at <= M.t then due[#due + 1] = tm else keep[#keep + 1] = tm end end
 		M.timers = keep

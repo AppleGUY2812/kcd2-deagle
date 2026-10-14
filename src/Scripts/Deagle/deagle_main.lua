@@ -630,17 +630,19 @@ function Deagle:FlashMeshShot()
 	local a = math.random(FLASH_CARDS)
 	local b = (a % FLASH_CARDS) + math.random(FLASH_CARDS - 1)
 	b = (b - 1) % FLASH_CARDS + 1
-	m.seq, m.frame = { a, b }, self.vmFrame or 0
+	m.seq, m.frame = { a, b }, System.GetFrameID()
 	m.frames = (self.frameDt or 0.016) > 1 / 40 and 1 or self.cfg.flashMesh.frames
 	self:FlashMeshShow(a, true)
 	return true
 end
--- every viewmodel frame: frame k of the shot shows variant k, then none
+-- every viewmodel frame: engine frame k after the shot's own shows variant k + 1, then none. Engine frames, not
+-- viewmodel ticks: a shot comes before its frame's tick, which counted as the next frame and hid variant a before it
+-- was ever drawn (traced in game 2026-10-14)
 function Deagle:FlashMeshTick()
 	local m = self.flashMesh
 	if m and not m.placed then self:FlashMeshPlace(self.vmId and System.GetEntity(self.vmId)) end
 	if not m or not m.seq then return end
-	local k = (self.vmFrame or 0) - m.frame
+	local k = System.GetFrameID() - m.frame
 	if k < 1 then return end
 	self:FlashMeshShow(m.seq[1], false)
 	if k < m.frames then self:FlashMeshShow(m.seq[math.min(k + 1, 2)], true)

@@ -537,3 +537,11 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   with and without the entity id: none visible at 3.9 m at night. The terrain pair was off screen. Open.
 - `Deagle.kept` mirrors the plugin's kept settings (Set fills it, a load's replay goes through Set); `DevReload` sets
   them again, so a dev reload no longer drops the player's settings.
+- Same night, "there is no flash" (user, daylight): two more causes. (1) Illum's forward pass adds the glow times the
+  pixel's alpha (Opacity x the sheet's alpha; Shaders.pak Illum.cfx `OUT.Color.a = GatherAlpha`), and at Opacity 0.03
+  that's ~0.5 HDR units: seen at night, invisible by day even "hot". Opacity 0.99 in all three flash mtls; shown live
+  first with `Entity:SetMaterialFloat(slot, sub, "opacity", v)` on a holder entity with the card model (the material is
+  shared by name, so the attachments changed too; `emissive_intensity`, `emissive_color`, `alpha` also work).
+  (2) The shot comes before its frame's viewmodel tick, so counting ticks hid card a before it was drawn; the sequence
+  now counts `System.GetFrameID()`. Measured: a card unhidden for exactly 1 engine frame is drawn in that frame (no
+  draw latency). Recorded shot with 4 frames: fire on the muzzle from the shot frame through the recoil.

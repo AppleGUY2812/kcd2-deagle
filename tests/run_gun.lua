@@ -137,6 +137,7 @@ if phys then
 	M.attachAngles = {}
 	Deagle.state.ammo, Deagle.state.lastShot = g.magSize, -100
 	Deagle:Shoot(true)
+	Deagle.vmFrame = Deagle.vmFrame + 1; Deagle:FlashMeshTick()   -- the shot's own frame's tick (a shot comes before it)
 	local f0 = shown()
 	M.advance(1 / 60, 60); local f1 = shown()
 	M.advance(1 / 60, 60); local f2 = shown()
