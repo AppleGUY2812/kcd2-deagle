@@ -328,6 +328,23 @@ world.wallY = nil
 check("tracer speeds round to the nearest 25 m/s and stay in 250..1000",
 	Deagle:TracerFx(442) == "deagle_tracers.v450" and Deagle:TracerFx(362) == "deagle_tracers.v350" and Deagle:TracerFx(100) == "deagle_tracers.v250" and Deagle:TracerFx(5000) == "deagle_tracers.v1000",
 	Deagle:TracerFx(442))
+-- a corpse: the round shoves it (its ragdoll part, by momentum) and it makes RoN's flesh sound (both missing: the user,
+-- 2026-10-13 "shooting a corpse doesn't knock back, no sound")
+local corpse = { soul = {}, actor = {}, human = {}, class = "NPC" }
+function corpse:GetName() return "corpse" end
+function corpse:GetWorldPos() return vec(100, 205, 30.1) end
+corpse.GetBonePos = M.skeleton
+function corpse.actor:IsDead() return true end
+function corpse.actor:GetHealth() return 0 end
+function corpse.actor:AddBlood() end
+function corpse:GetDirectionVector() return vec(0, -1, 0) end
+function corpse:AddImpulse(part, pos, dir, push) corpse.push = { part = part, push = push } end
+local n0 = #M.native
+Deagle:ApplyHit({ entity = corpse, pos = vec(100, 205, 30.2), normal = vec(0, -1, 0), partid = 7, dist = 5, surface = 1 }, vec(0, 1, 0), Deagle:ShotPhysics())
+local flesh = false
+for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] ron3 .*Surface=" .. tostring(Deagle.surfaces.mat_flesh.ron) .. " ") then flesh = true end end
+check(string.format("a corpse hit shoves the body (part %s, push %s) and sounds like flesh (%s)", tostring(corpse.push and corpse.push.part),
+	tostring(corpse.push and corpse.push.push), tostring(flesh)), corpse.push ~= nil and corpse.push.part == 7 and corpse.push.push > 0 and flesh, nil)
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("ballistics: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

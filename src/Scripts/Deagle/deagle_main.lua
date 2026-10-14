@@ -1258,7 +1258,9 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 	if e and e.actor then pcall(function() dead = e.actor:IsDead() end) end
 	if e and e ~= p and (dead or (e.class and string.find(string.lower(e.class), "dead"))) then
 		hit.bodyPart = bodyPartFor(e, hit.pos)
-		self:Bleed(e, hit, dir, true, self:ImpactScale(phys, hit.dist, hit.energy))
+		local scale = self:ImpactScale(phys, hit.dist, hit.energy)
+		self:Bleed(e, hit, dir, true, scale)
+		self:HitSound(SURFACES.mat_flesh.ron, hit.pos, scale)   -- a corpse was silent (the user, 2026-10-13)
 		log("corpse hit " .. tostring(e:GetName()))
 	elseif e and e.soul and e ~= p then
 		if c.hitMode == "hit" then
@@ -1327,7 +1329,9 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 	else
 		goesOn = self:Impact(hit, dir, phys, r)
 	end
-	if e and e.AddImpulse and (not e.soul or (e.IsDead and e:IsDead())) then
+	-- props and corpses are shoved (dead comes from the actor: an NPC entity has no IsDead of its own, so corpses never
+	-- moved); the living get KCD2's hit reaction instead
+	if e and e ~= p and e.AddImpulse and (not e.soul or dead) then
 		local push = phys and c.physics.punchPerMomentum * phys.momentum or c.impulse   -- the shove follows momentum
 		try("impulse", function() e:AddImpulse(hit.partid or -1, hit.pos, dir, push, 1) end)
 	end
