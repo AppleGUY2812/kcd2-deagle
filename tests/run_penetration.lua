@@ -569,6 +569,24 @@ check("every hittable surface has penetration data", #missing == 0, table.concat
 local function db(v) return 20 * math.log10(Deagle:HitLoudness(physD, 0.5 * physD.bullet * v * v)) end
 check(string.format("ricochet loudness: Deagle at 442 m/s %.1f dB, 129 m/s %.1f dB, 54 m/s %.1f dB", db(442), db(129), db(54)),
 	math.abs(db(442)) < 0.5 and math.abs(db(129) + 10.7) < 0.5 and math.abs(db(54) + 18.3) < 0.5, db(54))
+-- a traced shot (cfg.debugShotLog) says why a wall stopped it, or how much it went through
+do
+	reset()
+	Deagle.cfg.debugShotLog = true
+	world.slabs = { { y0 = 220, y1 = 220.4, surface = 3 }, { y0 = 260, y1 = 260.03, surface = 3 } }
+	local l0 = #M.logs
+	fire()
+	world.slabs = { { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 260, y1 = 261, surface = 1 } }
+	fire()
+	Deagle.cfg.debugShotLog = false
+	local stopped, through
+	for i = l0 + 1, #M.logs do
+		stopped = stopped or M.logs[i]:match("stopped in mat_wood: (no far side within its reach [%d%.]+ cm)")
+		through = through or M.logs[i]:match("through mat_wood (3%.0 cm %(could [%d%.]+%))")
+	end
+	check(string.format("shot log: 40 cm of wood: %s; a 3 cm plank: through %s", tostring(stopped), tostring(through)),
+		stopped ~= nil and through ~= nil, stopped)
+end
 -- the shot log traces a round each frame it moves; a paused game (unfocused, a menu) ticks with dt 0 and logs nothing
 do
 	local r = { pos = vec(100, 0, 31.75), vel = vec(0, physD.velocity, 0), phys = physD, dist = 0, age = 0, logId = 9001 }

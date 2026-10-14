@@ -224,21 +224,34 @@ function Deagle:Impact(hit, dir, phys, r)
 		log(string.format("%simpact %s at %.0f deg -> %s x%.2f hole %s", tag, name, graze, s.fx, scale, tostring(s.hole)))
 	end
 	-- stopped by steel: the round breaks up on it and its fragments spray along the face (Splash, as on plate armour)
-	local function stops()
+	-- why it stopped, in the shot log of a traced shot (cfg.debugShotLog)
+	local function stops(why)
 		if pen and pen.hard and s.fx == "metal" then self:Splash(hit.pos, hit.normal, dir, scale) end
+		if tag ~= "" and why then log(tag .. "stopped in " .. name .. ": " .. why) end
 		return false
 	end
 	if not (r and pen and pen.penetrable) or s.fx == "water" then return stops() end
 	local ratio = self:EnergyRatio(phys, energy)
-	if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then return stops() end   -- 9 mm level 2, .50 AE 3
+	if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then   -- 9 mm level 2, .50 AE 3
+		return stops(string.format("armour level %d needs more than %.0f J", pen.armour, energy or -1))
+	end
 	local depth = c.wallbang.budget * ratio / pen.density * (r.tumble and c.tumble.pen or 1)
 	local reach, back, p = depth + 0.01, {}, self:Player()
 	local ok, n = pcall(Physics.RayWorldIntersection, vadd(hit.pos, vscale(dir, reach)), vscale(dir, -reach), 1, ent_all, p and p.id, nil, back)
 	local far = ok and n and n > 0 and back[1]
 	local thick = far and far.entity == hit.entity and reach - far.dist or nil
+	local function farSide()   -- what the ray back from the round's reach met first
+		if not far then return "nothing" end
+		return string.format("%s%s at %.1f cm deep", surfaceName(far), far.entity ~= hit.entity and " (another object)" or "",
+			(reach - far.dist) * 100)
+	end
 	if THIN[s.fx] then thick = math.max(thick or 0, 0.005)
-	elseif not thick or thick < 0.002 then return stops() end     -- the far side is out of reach (or it's the near side)
-	if thick >= depth then return stops() end
+	elseif not thick or thick < 0.002 then   -- the far side is out of reach (or it's the near side)
+		return stops(string.format("no far side within its reach %.1f cm (back ray met %s)", depth * 100, farSide()))
+	end
+	if thick >= depth then
+		return stops(string.format("%.1f cm thick here, it could go %.1f cm (back ray met %s)", thick * 100, depth * 100, farSide()))
+	end
 	local exitPos = vadd(hit.pos, vscale(dir, thick))
 	local exitNormal = far and vdot(far.normal, dir) > 0 and far.normal or dir
 	if EXIT_FX[s.fx] then self:SpawnFx("deagle_impacts." .. s.fx .. "_exit", exitPos, dir, scale) end
@@ -265,7 +278,9 @@ function Deagle:Impact(hit, dir, phys, r)
 	r.pos, r.vel, r.dist = vadd(exitPos, vscale(out, 0.002)), vscale(out, math.sqrt(2 * left / phys.bullet)), r.dist + thick
 	if out ~= dir then r.turnPos, r.turnDist = r.pos, r.dist end
 	if c.tracers and c.tracer.mode == "flying" then self:SpawnFx(self:TracerFx(vlen(r.vel)), r.pos, out, 1.0) end
-	if self.state.logActions then log(string.format("through %s %.1f cm (could %.1f), %.0f J left", name, thick * 100, depth * 100, left)) end
+	if self.state.logActions or tag ~= "" then
+		log(string.format("%sthrough %s %.1f cm (could %.1f), %.0f J left", tag, name, thick * 100, depth * 100, left))
+	end
 	return true
 end
 
