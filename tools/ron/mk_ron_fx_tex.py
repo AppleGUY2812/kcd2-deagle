@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Ready or Not's pistol water impact (P_BulletImpact_Water, docs/ron/ron_impact_fx.md "RON_Water") as KCD2 textures.
+"""Ready or Not's impact effects ported 1:1, their textures for KCD2: the pistol water hit (P_BulletImpact_Water,
+docs/ron/ron_impact_fx.md "RON_Water") and the metal hit (P_Bullet_Impact_Metal_Big, "RON_Aluminium").
 RoN's materials combine textures in their shaders; KCD2's particles take one texture with alpha (plus a normal map for
 refraction), so each material is baked into what it draws:
   imp_ron_spray_diff   M_DropletMicro / M_DustPuff: T_FineParticle_DustAndDoplet, white, its alpha (the spray blob)
@@ -9,9 +10,13 @@ refraction), so each material is baked into what it draws:
   imp_ron_ring_diff    M_WaterWave's ring mask: |T_Ring_HeightMap - 0.5| x 2, white
   ron_ring_ddn         M_WaterWave's T_Ring02_N (refraction ring), green flipped (UE -> CryEngine)
   ron_drop_ddn         M_RoundDistortion's T_SpericalNormal (refracting droplets), green flipped
+  imp_ron_sparks01_diff  MI_Sparks_01: T_VFX_Sparks_01_B, 4x4 spark bursts, additive (opaque, black = nothing)
+  imp_ron_sparks03_diff  MI_Sparks_02: T_VFX_Sparks_03_B, 2x2 spark bursts, additive
+  imp_ron_puff_diff      MI_Muzzle_Puff_Front: T_muzzlePuff_Front_01, 8x4 dust puffs, alpha
+  imp_ron_shards_diff    M_MetalShards: T_WoodShard_OAH (R occlusion, G alpha, B height), 2x2, grey x occlusion
 Private use only (Ready or Not assets). Source PNGs: E:/Tools/deagle-work/ron_fx/particles (tools that exported them:
 docs/ron/ron_impact_fx.md). Output: E:/Tools/deagle-work/fx_tif_impacts, compiled by tools/fx_impact_textures.ps1.
-usage: mk_water_tex.py [src_dir] [out_dir]"""
+usage: mk_ron_fx_tex.py [src_dir] [out_dir]"""
 import sys
 import numpy as np
 from PIL import Image
@@ -60,3 +65,24 @@ save_alpha("imp_ron_ring_diff", np.abs(height[..., 0] - 0.5) * 2)
 
 save_normal("ron_ring_ddn", load("T_Ring02_N.png"))
 save_normal("ron_drop_ddn", load("T_SpericalNormal.png"))
+
+
+def save_rgba(name, px):
+    Image.fromarray((np.clip(px, 0, 1) * 255 + 0.5).astype(np.uint8), "RGBA").save(f"{out}/{name}.tif", compression="tiff_lzw")
+    print(f"{name}.tif  {px.shape[1]}x{px.shape[0]}")
+
+
+def additive(name, png):   # DXT1 sprite sheets on black: colour as is, opaque (additive blending ignores alpha)
+    px = load(png)
+    px[..., 3] = 1.0
+    save_rgba(name, px)
+
+
+additive("imp_ron_sparks01_diff", "T_VFX_Sparks_01_B.png")
+additive("imp_ron_sparks03_diff", "T_VFX_Sparks_03_B.png")
+save_rgba("imp_ron_puff_diff", load("T_muzzlePuff_Front_01.png"))
+shard = load("T_WoodShard_OAH.png")
+px = np.empty_like(shard)
+px[..., 0] = px[..., 1] = px[..., 2] = 0.35 + 0.65 * shard[..., 0]
+px[..., 3] = shard[..., 1]
+save_rgba("imp_ron_shards_diff", px)
