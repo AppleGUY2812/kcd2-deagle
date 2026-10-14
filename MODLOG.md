@@ -716,3 +716,14 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   sparks 10.24 1 : 0.28 : 0. Brightness per sub-material unchanged. cards.json is byte-identical after the rebake (the
   sparks' rng is seeded), so the skins stand.
 
+
+## 2026-10-14: new water / metal hits checked in game (Claude 2)
+- KCD2's own water particle textures: `water_splash_02` (the arrow-in-water jet flipbook, 6x6) and `water_splash_03`
+  (crowns) are tan in the texture AND tinted tan by their materials (they're the muddy-water ones): at night under
+  Henry's lantern the jet read orange. `water_ripple` / `water_splash` materials are white. Used white copies instead
+  (tools/ron/mk_water3_tex.py).
+- A 4096 particle texture (`water_splash_02_diff`, 16 MB top mip) streams in late: the first hit of a session drew a
+  blurry block (its small mips), later hits were sharp. Keep particle flipbooks at 2048 or less.
+- metal_v2 at 60 fps: fan + jets read as ~1 m streaks for 1-2 frames, gone by frame 3; four hits, four different
+  sprays (Deagle Progress\ron_fx\metal_old_vs_new.png). Ready or Not's metal flash light (Radius 1.5) lights the wall
+  orange for ~8 frames: that's the 1-frame flash the user liked.
