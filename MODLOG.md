@@ -440,3 +440,31 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   shooter's velocity; first ground contact 2.79 m out in game (ground 0.4 m lower there). The casing model's long
   axis is its local Y.
 - `Entity:GetAttachmentBone(slot, name)` returns the bone name, nil for no such attachment.
+
+## 2026-10-13 (night): sounds, water, attachments (Claude 2)
+- Ray masks: KCD2's `ent_all` = 287 and there's no `ent_water` global. Rays with ent_all go through water surfaces:
+  measured at a lake, the hit was the bed (mat_mudwater / mat_mud) up to 5 m under the surface; ent_all + 0x200 (CryEngine
+  ent_water) stops on mat_water at the surface. Every round into water used to splash on the bed (fixed in ballistics.lua).
+- RoN handling cues: `ronClick` is real ms, but it was subtracted from clip-timeline seconds; on a clip played at Rate
+  (Deagle 30/24) the event started only lead/1.25 early. Fixed (`lead * Rate`), plus `vm.cueLead` 0.045 s for the RoN
+  engine's output latency (256 x 4 mix buffer + device), and cues fire one frame ahead. The Deagle's reload / inspect cue
+  times were MWII-file times moved early by those files' lead-ins; now the clips' own frames (tracks.json, gun space):
+  tac mag out 0.729, seat 1.542; empty mag out 0.229, seat 1.292, slide home 2.000; inspect out 0.312, in 3.208, slide
+  4.667 (24 fps timeline).
+- RoN's own mix (rendered offline): 1P Grizzly Fire -3.2 dB, Grizzly MagIn -11, FN57 Dry Fire -40, G19 Dryfire Old -46.7.
+  Impact event: 3D position alone changes nothing; PropagateDistance fades it 5 m -3.9, 10 m -22.9, 12 m+ silent
+  (ricochets: 20 m -10.6, 45 m silent). Now the plugin's `Falloff=<m>` marker applies inverse distance instead.
+- 1P fire events are 2D (always in the head); `3P Grizzly Fire` / `3P G19 Fire` are 3D (1-150 m). `ron` without a position
+  puts a 3D event on the listener (the free camera when it's on).
+- Character attachments (WHGame 1.5.6, read from the binary): `CreateBoneAttachment(slot, bone, name)` ignores a 4th
+  argument; the new CA_BONE attachment has joint id -1 and identity transforms, and the joint is only resolved on the
+  character's next re-sort (characters in the animation queue). `GetAttachmentBone` returns "" until then. Projection makes
+  relative = inverse(joint bind) x identity, i.e. the model origin, unless SetAttachmentPos / Angles ran in the creation
+  frame (that keeps the relative transform). `SetAttachmentCGF(slot, name, path)` binds nothing if the load fails, and
+  always unhides. `ChangeAttachmentMaterial(name, mtl)` has no slot. A CGF attachment draws only with a resolved joint,
+  bit 13 (visible, set by the update when the character rendered in the last 5 frames) and bit 16 (hide) clear.
+- The mesh flash cards: created with the viewmodel they report bone tag_flash, yet nothing drew on the muzzle even
+  unhidden; a known-good model swapped onto a card wasn't seen either (but the gun was mid-inspect). Open.
+- Bullet holes: every CreateMatDecal call succeeds, no log line, none seen. `e_Decals 2` doesn't stick in retail. KCD2's
+  own bullet decals use size 0.2-0.3; ours 0.035 x energy with the hole covering 5-30 % of the texture. Open.
+- The pause menu shows a frozen frame: entities / decals spawned while it's up don't appear in window captures.
