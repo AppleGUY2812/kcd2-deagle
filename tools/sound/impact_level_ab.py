@@ -5,8 +5,8 @@ Real life (no published measurement of bullet-on-steel loudness exists, so the h
 - shot: A-weighted sound exposure at the shooter's ear, Meinke et al. 2014 (Int J Audiol 53 S16, Table 4, NIOSH):
   .44 Magnum 87.7 dB LAeq8 = 132.3 dB SEL_A, .357 Magnum 88.5 = 133.1 (SEL = LAeq8 + 10 log10(28800 s)).
   .50 AE (more powder than either) 134; the 9 mm 6.5 dB under it (the mod's own blast law, calibers.lua).
-- hit: the bullet splashes on the plate and hands it its momentum J = m v in about bullet length / v (Ramsay et al.
-  2023, .308 on 8 mm hard steel: force integral = m v, pulse 36-49 us). Energy into the plate's bending waves =
+- hit: the bullet splashes on the plate and hands it its momentum J = m v in about bullet length / v ("Ballistic
+  Impacts with Bullet Splash", PMC10254373, 2023, .308 on 8 mm hard steel: force integral = m v, pulse 36-49 us). Energy into the plate's bending waves =
   J^2 / pulse x the plate's point mobility 1 / (8 sqrt(B m'')); a free plate radiates most of it as sound (radiation
   vs damping loss factors), spread over a sphere, A-weighted, air loss per ISO 9613-1 (20 C, 50 %).
 In the mod: Ready or Not's own events rendered by its engine (tools/ron/FmodRender, final fader 0.5 like the game);
