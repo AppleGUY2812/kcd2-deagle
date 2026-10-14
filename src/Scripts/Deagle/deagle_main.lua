@@ -1260,7 +1260,7 @@ local TEST_WALL = {
 	{ "anvil", "objects/manmade/task_specific_props/metal_industry/smithing/anvil_small.cgf" },
 	{ "glass", "objects/intermediates/elements/window_glass_a.cgf", up = true, lift = 0.9 },
 	{ "sack", "objects/manmade/common_furniture/sacks/sack_b.cgf" },
-	{ "straw target", "objects/manmade/task_specific_props/combat/archery/target_b.cgf" },
+	{ "straw target", "objects/manmade/task_specific_props/combat/archery/target_b.cgf", lift = 0.55 },   -- origin at its middle
 	{ "hay", "objects/manmade/structures/industrial/hay/hay_sheaf_a.cgf" },
 	{ "vegetables", "objects/manmade/food/food/vegetable/basket_rectangular_a_turnip.cgf" },
 	{ "leather", "objects/manmade/common_tools/repairkit/repairkit_armour_big.cgf" },
