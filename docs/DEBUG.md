@@ -134,5 +134,7 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 
 ## Developer only
 `deagle_dev_reload` (re-run the script from the dev folder), `deagle_lua <code>` (run Lua), `deagle_vm_respawn`
-(rebuild the viewmodel), `deagle_input` (reload key bindings). Claude uses these through the dev console link
+(rebuild the viewmodel), `deagle_input` (reload key bindings), `deagle_fxreload [library]` (the plugin re-reads
+`Libs/Particles/<library>.xml`, default `deagle_impacts`, from the dev folder into the running game: impact effects tuned
+without a restart; refused within 3 s of a shot). Claude uses these through the dev console link
 (`tools/live.sh`); they're not needed for play.
