@@ -104,6 +104,16 @@ def main():
     print("calibration, SEL_A dBFS at volume 1:", {k: round(v, 1) for k, v in cal.items()})
     cases = [("deagle", 4), ("deagle", 10), ("deagle", 25), ("glock", 10)]
     rows = []
+    # first, each sound on its own, so you know what to listen for
+    solo = [("Deagle", "-", "the metal hit alone (what to listen for), as loud as the mod plays it up close", "metal_hit_alone.wav",
+             [(1.5, [IMP] + HIT + [f"vol:{IMPACT_VOLUME}"])] + [(1.5, ["ev:" + IMP] + HIT + [f"vol:{IMPACT_VOLUME}"])] * 2),
+            ("Deagle", "-", "the gunshot alone (bang + Ready or Not's echo)", "gunshot_alone.wav",
+             [(3.6, [GUNS["deagle"][1], "IsOutside=1", "global:ReverbSTREET=1", "start:" + RM])] + [(3.6, shot_args("deagle"))] * 2)]
+    for gun, d, label, name, segs in solo:
+        starts = render(out_win + "\\" + name, segs)
+        x, sr = sf.read(out + "/" + name)
+        sf.write(out + "/" + name, x[max(0, starts[0] - sr // 20):], sr, subtype="PCM_16")
+        rows.append((gun, d, label, None, None, name))
     for gun, d in cases:
         for mode in ("now", "hanging", "bolted"):
             if mode == "bolted" and d != 10: continue
@@ -127,15 +137,18 @@ def main():
             sf.write(out + "/" + name, x, sr, subtype="PCM_16")
             rows.append((GUNS[gun][0], d, label, rel, vol, name))
             print(f"{name:28s} hit vs shot {rel:+6.1f} dB  (event volume {vol:.4f})")
-    trs = "".join(f"<tr class='{'now' if 'now' in r[2] else 'real'}'><td>{r[0]}</td><td>{r[1]} m</td><td>{html.escape(r[2])}</td>"
-                  f"<td>{r[3]:+.0f} dB</td><td><audio controls preload='none' src='{r[5]}'></audio></td></tr>" for r in rows)
+    trs = "".join(f"<tr class='{'solo' if r[3] is None else 'now' if 'now' in r[2] else 'real'}'><td>{r[0]}</td>"
+                  f"<td>{'' if r[3] is None else str(r[1]) + ' m'}</td><td>{html.escape(r[2])}</td>"
+                  f"<td>{'' if r[3] is None else f'{r[3]:+.0f} dB'}</td><td><audio controls preload='none' src='{r[5]}'></audio></td></tr>" for r in rows)
     page = f"""<!doctype html><html><head><meta charset="utf-8"><title>Metal hit loudness</title><style>
 body{{font:15px system-ui;margin:16px;background:#111;color:#eee;max-width:900px}} table{{border-collapse:collapse;width:100%}}
-td,th{{border-bottom:1px solid #333;padding:6px 8px;text-align:left}} tr.now td{{background:#2b1d1d}} audio{{height:30px}}</style>
+td,th{{border-bottom:1px solid #333;padding:6px 8px;text-align:left}} tr.now td{{background:#2b1d1d}} tr.solo td{{background:#1d222b}} audio{{height:30px}}</style>
 </head><body><h1>Metal hit: how loud next to the gunshot</h1>
-<p>Each file: 3 shots outdoors, each followed by Ready or Not's steel hit at that distance (the hit arrives after the
-sound's travel time). Red rows = the mod now. The others = the same hit at the level it has in real life next to the
-same gunshot. Ready or Not's engine made every file. Set your volume once on the first file and don't touch it.</p>
+<p>Blue rows: each sound alone. Play the metal hit first so you know what it sounds like. Then the rest: 3 shots
+outdoors, each followed by that metal hit at that distance. Red rows = the mod now. The others = the hit at its
+real-life loudness next to the same gunshot. If you can't hear the hit in a file, that's the result: the gunshot's
+echo covers it (picture: what you hear.png). Ready or Not's engine made every file. Set your volume once on the first
+file and don't touch it.</p>
 <p>Real life: gunshot at the shooter's ear measured by NIOSH (Meinke et al. 2014); the hit is physics (the round's
 momentum into the steel plate, the plate's ring, spread with distance), about +-6 dB. Nobody has published a
 measurement of it.</p>
