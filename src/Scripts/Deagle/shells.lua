@@ -83,7 +83,8 @@ function Deagle:CaseTick()
 						ent_static + ent_terrain, id, nil, hits)
 					local sf = okR and n and n > 0 and hits[1] and RON_SURFACE[surfaceName(hits[1])]
 					if sf == "bell" then sf = 44 end   -- a casing on a bell: steel
-					if sf and self.native and f.ev then
+					-- Claude 3's sound budget: clinks 12 a second (burst 6), merged within 0.3 m / 0.1 s
+					if sf and self.native and f.ev and self:SoundBudget("casing", f.ev, pos) then
 						self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|Surface=%d", c.volume, pos.x, pos.y, pos.z, f.ev, sf))
 					end
 				end
