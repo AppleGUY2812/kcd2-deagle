@@ -47,3 +47,12 @@ immediate constants, or measure from the user's recorded kill cam. Four search r
    by phase (bullet in flight, in the body, past it), measured from the video.
 2. Organ path through the body: KCD2's NPC bones (tools/gen_hitbones.py) give the places; one effect per organ
    (Claude 2's effects), the X-ray sphere as a see-through pass (needs a test: KCD2 has no X-ray look).
+
+### Round 5-6 (loop re-run): how the cam properties are built
+The function that reads them (bin/SEV2_Remastered.exe 0x3f0b90, 2.2 KB) reads, per numbered stage, `InheritCamera`,
+`InheritTimeScale`, `InheritDuration`, then `Camera.Angle/Offset/FieldOfView.Initial|Final`, `LookAtBullet`,
+`TrackBullet`, `TimeScale.PreHit|Internal|PostExit`, `Duration`, `.ImpactTime`, `.ExitTime`. Names are prefixed with the
+cam's group and a `%02d.` stage number; a stage with its Inherit flag set copies the one before (0x38-byte entries).
+No file in the install holds numbered-prefix float records (pair search, all `.asr`/`.pc`; no text in `.brf`, `.ts`,
+`.txt`, `.xml`). The time scales therefore come from something this search can't see (a record type other than float,
+or built in code). Measuring them from a recorded kill cam is the way; the camera numbers above are the real defaults.
