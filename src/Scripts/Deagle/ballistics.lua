@@ -334,8 +334,15 @@ end
 
 -- the first solid thing along a step (from, by move), past invisible blockers and foliage: the hit (dist from the
 -- step's start), nil when nothing, false when the ray failed
+local sqrt = math.sqrt
+local MV = { x = 0, y = 0, z = 0 }     -- scratch: a step's move (the ray reads it at once; reused, no table per step)
+local WP = { x = 0, y = 0, z = 0 }     -- scratch: the point asked of the water lookup
+local HITS = {}                        -- scratch: the ray's hit list (the engine fills hits[1])
+local function cp(v) return { x = v.x, y = v.y, z = v.z } end
+
 function Deagle:FlightHit(from0, move, skip)
-	local hits, p = {}, self:Player()
+	local hits, p = HITS, self:Player()
+	hits[1] = nil
 	local ok, n = pcall(Physics.RayWorldIntersection, from0, move, 1, FLIGHT_MASK, p and p.id, skip, hits)
 	local through = 0
 	while true do
@@ -348,7 +355,7 @@ function Deagle:FlightHit(from0, move, skip)
 		through = through + 1
 		local dir, done = vnorm(move), hit.dist + 0.001     -- hit.dist counts from this step's start
 		if done >= vlen(move) then return nil end
-		hits = {}
+		hits[1] = nil
 		ok, n = pcall(Physics.RayWorldIntersection, vadd(from0, vscale(dir, done)), vscale(dir, vlen(move) - done), 1,
 			FLIGHT_MASK, p and p.id, skip, hits)
 		if ok and n and n > 0 and hits[1] then hits[1].dist = hits[1].dist + done end
@@ -361,54 +368,72 @@ end
 -- touches no hit object). Water surfaces are flat, so when to lies under a level that from was above, the round met
 -- that surface where its line crosses the level. A round that hits a lake's bed in this step crossed the lake's surface
 -- on the way down to it: the surface is what it meets
-function Deagle:WaterCrossing(from, to)
-	if to.z >= from.z then return nil end   -- crossing a surface from above needs a falling step
-	local ok, level, normal = pcall(CryAction.GetWaterInfo, to)
-	if not ok or type(level) ~= "number" or to.z >= level or from.z < level - 0.01 then return nil end
-	local d = vsub(to, from)
-	local t = math.max(0, (from.z - level) / (from.z - to.z))
+local function waterCross(self, px, py, pz, tx, ty, tz)
+	if tz >= pz then return nil end   -- crossing a surface from above needs a falling step
+	WP.x, WP.y, WP.z = tx, ty, tz
+	local ok, level, normal = pcall(CryAction.GetWaterInfo, WP)
+	if not ok or type(level) ~= "number" or tz >= level or pz < level - 0.01 then return nil end
+	local t = math.max(0, (pz - level) / (pz - tz))
+	local dx, dy, dz = tx - px, ty - py, tz - pz
 	if self.waterSurface == nil then
 		local okId, id = pcall(System.GetSurfaceTypeIdByName, "mat_water")
 		self.waterSurface = okId and id or false
 	end
-	return { pos = vadd(from, vscale(d, t)), dist = t * vlen(d), surface = self.waterSurface or nil,
-		normal = type(normal) == "table" and normal or { x = 0, y = 0, z = 1 } }
+	return { pos = { x = px + dx * t, y = py + dy * t, z = pz + dz * t }, dist = t * sqrt(dx * dx + dy * dy + dz * dz),
+		surface = self.waterSurface or nil, normal = type(normal) == "table" and normal or { x = 0, y = 0, z = 1 } }
 end
+function Deagle:WaterCrossing(from, to) return waterCross(self, from.x, from.y, from.z, to.x, to.y, to.z) end
 
--- one step of h seconds: true when the round is done (it hit something, or flew out of range / time)
+-- one step of h seconds: true when the round is done (it hit something, or flew out of range / time). r.pos and r.vel
+-- are the round's own tables, moved in place (a table something else assigned is copied first): no garbage on the
+-- common path, a step that hits nothing
 function Deagle:MoveRound(r, h)
-	local speed = vlen(r.vel)
-	local v1 = vscale(r.vel, 1 / (1 + speed * h / (r.tumble and self:TumbleDragLength(r.phys) or r.phys.dragLength)))
-	v1.z = v1.z - GRAVITY * h
-	local move = vscale(vadd(r.vel, v1), 0.5 * h)
-	local hit = self:FlightHit(r.pos, move, r.skip)
+	local pos, vel = r.pos, r.vel
+	if r.posOwn ~= pos then pos = cp(pos); r.pos, r.posOwn = pos, pos end
+	if r.velOwn ~= vel then vel = cp(vel); r.vel, r.velOwn = vel, vel end
+	local vx, vy, vz = vel.x, vel.y, vel.z
+	local speed = sqrt(vx * vx + vy * vy + vz * vz)
+	local k = 1 / (1 + speed * h / (r.tumble and self:TumbleDragLength(r.phys) or r.phys.dragLength))
+	local v1x, v1y, v1z = vx * k, vy * k, vz * k - GRAVITY * h
+	local hh = 0.5 * h
+	local mx, my, mz = (vx + v1x) * hh, (vy + v1y) * hh, (vz + v1z) * hh
+	MV.x, MV.y, MV.z = mx, my, mz
+	local mlen = sqrt(mx * mx + my * my + mz * mz)
+	local px, py, pz = pos.x, pos.y, pos.z
+	local hit = self:FlightHit(pos, MV, r.skip)
 	if hit == false then return true end
-	hit = self:WaterCrossing(r.pos, hit and hit.pos or vadd(r.pos, move)) or hit
+	local tx, ty, tz = px + mx, py + my, pz + mz
+	if hit then tx, ty, tz = hit.pos.x, hit.pos.y, hit.pos.z end
+	hit = waterCross(self, px, py, pz, tx, ty, tz) or hit
 	if hit then
-		local frac = hit.dist / vlen(move)   -- share of this step flown before the hit
-		hit.dist = r.dist + hit.dist        -- the ray's distance is from this step's start: the path flown so far
+		local frac = hit.dist / mlen          -- share of this step flown before the hit
+		hit.dist = r.dist + hit.dist          -- the ray's distance is from this step's start: the path flown so far
 		hit.energy = 0.5 * r.phys.bullet * speed * speed
+		local dirx, diry, dirz = mx / mlen, my / mlen, mz / mlen
 		if self.cfg.debugPaths then
-			self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
+			self:PathAdd(cp(pos), cp(hit.pos), (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
 			self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
 		end
 		r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
-		local goesOn = self:ApplyHit(hit, vnorm(move), r.phys, r)
+		local goesOn = self:ApplyHit(hit, { x = dirx, y = diry, z = dirz }, r.phys, r)
 		if self.KillCamHit then self:KillCamHit(hit, r) end   -- killcam.lua
 		if not goesOn then r.landed = true; return true end
-		if self.cfg.debugPaths and vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(hit.pos, r.pos, PATH_IN) end   -- through a wall / body
+		if self.cfg.debugPaths and vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(cp(hit.pos), cp(r.pos), PATH_IN) end   -- through a wall / body
 		-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
 		r.hops = (r.hops or 0) + 1
 		if r.hops > 8 or vlen(r.vel) < 30 then return true end
 		return self:MoveRound(r, h * (1 - frac))
 	end
-	if self.cfg.debugPaths then self:PathAdd(r.pos, vadd(r.pos, move), (r.hops or 0) > 0 and PATH_ON or PATH_FLY) end
-	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
+	if self.cfg.debugPaths then self:PathAdd(cp(pos), { x = tx, y = ty, z = tz }, (r.hops or 0) > 0 and PATH_ON or PATH_FLY) end
+	pos.x, pos.y, pos.z = tx, ty, tz
+	vel.x, vel.y, vel.z = v1x, v1y, v1z
+	r.age, r.dist = r.age + h, r.dist + mlen
 	return r.dist > self.cfg.range or r.age > ROUND_LIFE
 end
 
 function Deagle:StepRound(r, dt)
-	local done, from, moved = false, r.pos, dt > 1e-6
+	local p0 = r.pos
+	local done, from, moved = false, { x = p0.x, y = p0.y, z = p0.z }, dt > 1e-6   -- a copy: r.pos is moved in place
 	if dt > 1e-6 then
 		local n = math.ceil(dt / ROUND_STEP - 1e-9)
 		local h = dt / n
