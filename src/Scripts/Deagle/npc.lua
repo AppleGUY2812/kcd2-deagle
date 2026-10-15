@@ -35,6 +35,9 @@ local function segDist2(px, py, pz, fx, fy, fz, sx, sy, sz, len2)
 	local cx, cy, cz = fx + sx * t, fy + sy * t, fz + sz * t
 	return (px - cx) ^ 2 + (py - cy) ^ 2 + (pz - cz) ^ 2, cx, cy, cz
 end
+-- One fly-by message per NPC per FLYBY_GAP s: KCD2's arrows come about one a second; a spray past someone sent ~15 a
+-- second (Claude 3's audit 2026-10-15). Game time; the table is cleared at a load.
+local FLYBY_GAP = 0.75
 function Deagle:FlyBy(r, from)
 	local near = self.cfg.nearMiss
 	if not near or near <= 0 then return end
@@ -45,11 +48,14 @@ function Deagle:FlyBy(r, from)
 	local len = math.sqrt(len2)
 	local ok, found = pcall(Physics.SamplePhysEnvironment, { x = fx + sx / 2, y = fy + sy / 2, z = fz + sz / 2 }, len / 2 + near, ent_living)
 	if not ok or type(found) ~= "table" then return end
-	local p, near2 = self:Player(), near * near
+	local p, near2, now = self:Player(), near * near, System.GetCurrTime()
+	if not self.flybyNext or (self.flybyAt or 0) > now then self.flybyNext = {} end   -- first use, or the clock went back (a load)
+	self.flybyAt = now
 	for i = 1, #found do   -- entities, each followed by two numbers (its part and physics ids)
 		local e = found[i]
 		if type(e) == "table" and e ~= p and e.soul and e.actor and e.this
-			and not (r.flybys and r.flybys[e.id]) and not (r.hitIds and r.hitIds[e.id]) then
+			and not (r.flybys and r.flybys[e.id]) and not (r.hitIds and r.hitIds[e.id])
+			and now >= (self.flybyNext[e.id] or 0) then
 			local okD, dead = pcall(e.actor.IsDead, e.actor)
 			local okP, at = pcall(e.GetWorldPos, e)
 			if not (okD and dead) and okP and at then
@@ -57,6 +63,7 @@ function Deagle:FlyBy(r, from)
 				if d2 <= near2 then
 					r.flybys = r.flybys or {}
 					r.flybys[e.id] = true
+					self.flybyNext[e.id] = now + FLYBY_GAP
 					try("near miss", function()
 						local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id,
 							Position = { x = cx, y = cy, z = cz }, Direction = { x = sx / len, y = sy / len, z = sz / len } })

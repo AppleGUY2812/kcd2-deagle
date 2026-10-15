@@ -195,6 +195,19 @@ for _, m in ipairs(M.aiMessages) do if m.kind == "weapon:onPlayerArrowFlyingBy" 
 check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off, once)", table.concat(to, ",")), #to == 1 and to[1] == "nearWUID", #to)
 check(string.format("near miss: %d grid queries for 3 steps (widest %.1f m: half a 10 m step + 2.5), %d entity-system queries, the NPC 200 m off asked where it is %d times",
 	gridQueries, widest, entQueries, distantAsked), gridQueries == 3 and widest <= 7.5 + 1e-6 and entQueries == 0 and distantAsked == 0, entQueries)
+-- a second round past the same NPC a moment later sends nothing (one message per NPC per 0.75 s, like KCD2's arrows);
+-- one 1 s later does
+local function pastNear()
+	local r2 = { pos = vec(100, 146, 31.25) }
+	Deagle:FlyBy(r2, vec(100, 140, 31.25)); local f = r2.pos; r2.pos = vec(100, 156, 31.25); Deagle:FlyBy(r2, f)
+end
+M.aiMessages = {}
+pastNear()
+local soon = #M.aiMessages
+M.advance(1.0)
+M.aiMessages = {}
+pastNear()
+check(string.format("near miss: a second round 0 s later sends %d messages, one 1 s later %d", soon, #M.aiMessages), soon == 0 and #M.aiMessages == 1, soon)
 System.GetEntitiesInSphere, Physics.SamplePhysEnvironment = getEnts, sample
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
