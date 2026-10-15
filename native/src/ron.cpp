@@ -98,6 +98,7 @@ static double g_lastUpdate = 0;                           // live: the engine's 
 static const int kStatEvery = 3000;
 static int g_statN = 0, g_statSkipped = 0, g_statQuiet = 0; static double g_statSum = 0, g_statMax = 0;
 static size_t g_statPendMax = 0;
+static int g_statStarts = 0; static double g_statStartSum = 0, g_statStartMax = 0;   // sounds started, their cost (us)
 static const float kInaudible = 0.001f;                   // -60 dB under full level: not worth a voice
 static double Now() {
 	static LARGE_INTEGER f{}; LARGE_INTEGER c;
@@ -256,9 +257,13 @@ void RonUpdate(const float* cam) {
 	g_lastUpdate = t1;
 	g_statSum += us; if (us > g_statMax) g_statMax = us;
 	if (++g_statN >= kStatEvery) {
-		Log("ron: update %.0f us avg, %.0f max over %d (%d repeat camera steps skipped); %d inaudible sounds dropped; travel queue up to %zu",
-			g_statSum / g_statN, g_statMax, g_statN, g_statSkipped, g_statQuiet, g_statPendMax);
-		g_statN = g_statSkipped = g_statQuiet = 0; g_statSum = g_statMax = 0; g_statPendMax = 0;
+		int voices = 0, real = 0;
+		st.playing(g_core, &voices, &real);
+		Log("ron: update %.0f us avg, %.0f max over %d (%d repeat camera steps skipped); %d sounds started, %.0f us avg, %.0f max each;"
+			" %d inaudible dropped; travel queue up to %zu; %d voices playing (%d real)",
+			g_statSum / g_statN, g_statMax, g_statN, g_statSkipped, g_statStarts, g_statStarts ? g_statStartSum / g_statStarts : 0.0,
+			g_statStartMax, g_statQuiet, g_statPendMax, voices, real);
+		g_statN = g_statSkipped = g_statQuiet = g_statStarts = 0; g_statSum = g_statMax = g_statStartSum = g_statStartMax = 0; g_statPendMax = 0;
 	}
 	if (!g_filesGroup && g_hitsBus && g_echoTries < 50) { g_echoTries++; FilesEcho(); }
 	if (g_filesSend && g_hitsSend) { float v = 0; if (st.dspGetF(g_hitsSend, 1, &v, nullptr, 0) == 0) st.dspSetF(g_filesSend, 1, v); }
@@ -327,7 +332,16 @@ bool RonPlayAt(const char* event, const char* params, const float* at, float vol
 	return IsFile(event) ? FileSound(event) != nullptr : Desc(event) != nullptr;   // loaded now, played on time
 }
 
+static bool PlayTimed(const char* event, const char* params, const float* at, float vol);
+// every sound start timed (performance audit: 150-290 starts a second under a 75 rounds/s CIWS took the game to 8 fps)
 static bool PlayLocked(const char* event, const char* params, const float* at, float vol) {
+	double t0 = Now();
+	bool ok = PlayTimed(event, params, at, vol);
+	double us = (Now() - t0) * 1e6;
+	g_statStarts++; g_statStartSum += us; if (us > g_statStartMax) g_statStartMax = us;
+	return ok;
+}
+static bool PlayTimed(const char* event, const char* params, const float* at, float vol) {
 	// "PropagateDistance=@": RoN's game code gives its impact events the length of the sound's path; ours is the straight
 	// line from the listener, worked out now (the free camera may have moved while the sound travelled)
 	std::string ps = params ? params : "";

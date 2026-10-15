@@ -69,6 +69,7 @@ included), viewmodel / HUD / motion 0.2. These are our choice (anchored on [1][2
 | A `%1` console command given several words | refused ("Too many arguments"): use `%line` | e4b9570 |
 | Ready or Not's bank load (7 banks) | 531 ms, once, on the main thread | plugin log |
 | The game's camera step | 2-3 calls per drawn frame | plugin log (0e756ab) |
+| 150-290 Ready or Not sound starts a second | 8-12 fps (engine 76-120 ms), vs 41-61 fps without them | `deagle_stress 75 aim ab` (per-start µs: the plugin log, after the install) |
 
 ## 4. Tools
 
@@ -153,6 +154,7 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 32 | A plugin without `fxr` falls back to the crash path (an emitter per round per frame) | crash | tracer | 🟪 | 🔧 no tracers + a "restart the game" note |
 | 33 | Ready or Not's banks load on the first command (531 ms, main thread); `ronload` sample data loads inside the next update | one-time hitches | ron.cpp | 🟩 | ❓ load on a worker thread at plugin start |
 | 34 | RoN mixer blocks 256 x 4 (~188 wake-ups/s, the full bus graph each) | a core share, off the main thread | ron.cpp | 🟩 | ❓ measure; 512 x 4 if it matters (it was set so the bang lands with the flash) |
+| 36 | Hit sounds under a 75 rounds/s CIWS: 150-290 Ready or Not starts a second (each living 1-3 s, its engine on the main thread) | 8-12 fps, engine 76-120 ms; 41-61 fps with hit sounds off (`deagle_stress 75 aim ab`) | sound | 🟩 | ✅ d8be300 (`hitSoundBudget`: none within 0.5 m of a fresh one of the same surface, then 30 a second); the plugin times each start (`ron: update ... sounds started, us avg / max each`), install |
 | 35 | Not perf, found on the way: `deagle_testnpc` dummies still bleed; ArmorHit computes the same wound twice | | | 🟪🟥 | 🔧 |
 
 ## 6. Results per build
