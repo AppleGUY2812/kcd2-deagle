@@ -22,7 +22,7 @@ Read `README.md` (layout, build, test), `TODO.md` (status) and `MODLOG.md` (engi
 ## Who edits what (four Claude sessions can run at once)
 Scripts are one file per system in `src/Scripts/Deagle/` (README "Where things are"); `deagle_main.lua` loads them. A new
 script file needs an owner here: `tests/run_all.sh` fails otherwise, or when this list names a file that's gone.
-- 🟥 `ballistics.lua`, `killcam.lua` + `guns/penetration.lua`: rounds in flight, ricochets, corners, wallbangs,
+- 🟥 `ballistics.lua`, `killcam.lua`, `organs.lua` + `guns/penetration.lua`: rounds in flight, ricochets, corners, wallbangs,
   armour (the "ricochet" session). They use the shared helpers through `Deagle.U` (set in `deagle_main.lua`): keep
   that table in sync.
 - 🟩 Sound (the "sound" session): `sound.lua`, the `vmSoundCues` table at the top of `deagle_main.lua` and the `snd`

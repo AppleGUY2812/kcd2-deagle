@@ -525,3 +525,4 @@ function Deagle:RoundsTick(token)
 end
 
 Deagle:LoadModule("Scripts/Deagle/killcam.lua")   -- the kill cam (docs/se2_killcam.md)
+Deagle:LoadModule("Scripts/Deagle/organs.lua")    -- Sniper Elite V2's organs as models (deagle_organ)
