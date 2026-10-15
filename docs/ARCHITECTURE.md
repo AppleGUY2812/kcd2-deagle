@@ -59,10 +59,12 @@ from here. Keep it current: what's decided, what's measured, what's next.
    - perf checks in `tests/run_all.sh`.
 
 ## Resources
-- CryEngine's online documentation (WebSearch / WebFetch), and the public CRYENGINE 5 source on GitHub. Clone it
-  shallow into `E:\Tools\` when needed, without asking the user to download anything. It maps the engine's insides
-  (decal manager, particle system pfx1 / pfx2, physics ray queues, IScriptSystem).
-- KCD2 runs Warhorse's own fork of an older CryEngine (WHGame 1.5.6): public docs and source are a map, not proof.
+- CryEngine's online documentation (WebSearch / WebFetch), including its C++ API reference pages for the engine
+  interfaces (particles, decals, lights, physics, script system).
+- The official CRYENGINE GitHub repo is NOT open: it needs a GitHub account linked to a CryEngine account, and the
+  user's GitHub can't be linked right now (2026-10-15). Don't wait for it. Use the docs, the public headers of older
+  CryEngine SDKs and mod kits (KCD2's engine descends from that line), and above all the game binary.
+- KCD2 runs Warhorse's own fork of an older CryEngine (WHGame 1.5.6): docs and headers are a map, not proof.
   Confirm every offset and behaviour in the game binary (the rea reverse-engineering tools; MODLOG has the method)
   and in game.
 
