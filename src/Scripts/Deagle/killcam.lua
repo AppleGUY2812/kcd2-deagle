@@ -78,8 +78,11 @@ function Deagle:KillCamStep(r, done)
 	if r.dist < c.minDist then return end
 	local speed = vlen(r.vel)
 	if speed < 50 then return end
+	r.kcFrame = (r.kcFrame or 0) + 1
+	if r.kcFrame % 2 == 0 then return end                  -- every other frame: the look-ahead is longer than two frames' flight
+	if r.vel.z > 0.2 * speed then return end              -- climbing: a shot at the sky has nobody to look for
 	-- the stretch the camera will have: the speed the bullet will fly at, over the lead time
-	local reach = speed * c.speed.pre * c.lead * 1.25
+	local reach = speed * c.speed.pre * c.lead * 1.25 + speed / 60   -- + a frame of flight (it looks every other frame)
 	local p, hits = self:Player(), {}
 	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, vscale(r.vel, reach / speed), 1, ent_all, p and p.id, r.skip, hits)
 	local h = ok and n and n > 0 and hits[1]

@@ -95,8 +95,8 @@ for i = n0 + 1, #M.native do
 	offSent = offSent or M.native[i] == "[DN] freecam off"
 end
 check("the free camera went on and back off, and the cam ended", onSent and offSent and Deagle.kc == nil, tostring(Deagle.kc))
-check(string.format("the camera was %.2f m behind the bullet when it hit (1.1 - 2)", landed and (landed.pos.y - landed.camY) or -1),
-	landed and landed.camY and landed.pos.y - landed.camY > 1.05 and landed.pos.y - landed.camY < 2.05, landed and landed.camY)
+check(string.format("the camera was %.2f m behind the bullet when it hit (1.1 - 2, plus the bullet's last frame)", landed and (landed.pos.y - landed.camY) or -1),
+	landed and landed.camY and landed.pos.y - landed.camY > 1.05 and landed.pos.y - landed.camY < 2.3, landed and landed.camY)
 local fmin, fmax = math.huge, 0
 for i = 1, #fovs - 1 do fmin, fmax = math.min(fmin, fovs[i]), math.max(fmax, fovs[i]) end
 check(string.format("field of view eased %.1f -> %.1f degrees, then back to the game's (%.1f)", math.deg(fmin), math.deg(fmax), math.deg(fovs[#fovs] or 0)),

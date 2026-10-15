@@ -42,6 +42,13 @@ end
 function Deagle:ArmorOn(e, zone)
 	local out = {}
 	if not (self.armor and zone and e.inventory) then return out end
+	local now, key = System.GetCurrTime(), tostring(e.id) .. "/" .. zone
+	self.armorCache = self.armorCache or {}
+	local hit = self.armorCache[key]
+	if hit and now - hit.t < 2 and now >= hit.t then
+		for i, l in ipairs(hit.out) do out[i] = { a = l.a, health = l.health } end
+		return out
+	end
 	pcall(function()
 		for _, id in pairs(e.inventory:GetInventoryTable() or {}) do
 			local it = ItemManager.GetItem(id)
@@ -54,6 +61,9 @@ function Deagle:ArmorOn(e, zone)
 		end
 	end)
 	table.sort(out, function(x, y) return x.a.order > y.a.order end)
+	local keep = {}
+	for i, l in ipairs(out) do keep[i] = { a = l.a, health = l.health } end
+	self.armorCache[key] = { t = now, out = keep }
 	return out
 end
 
@@ -190,6 +200,7 @@ function Deagle:Impact(hit, dir, phys, r)
 	local c = self.cfg
 	local name = surfaceName(hit)
 	local s = SURFACES[name]
+	if s and s.fx == "pass" then return true end   -- foliage / invisible blocker: on through (no effect, no wallbang search)
 	if not s then
 		self.unknownSurface = self.unknownSurface or {}
 		if not self.unknownSurface[name] then
@@ -297,7 +308,11 @@ local GRAVITY = 9.81             -- m/s^2
 -- Physics.RayWorldIntersection reads every hit's object: the game crashed (BugSplat dump: a null read in
 -- RayWorldIntersection(Script)). Water surfaces come from Deagle:WaterCrossing instead
 local FLIGHT_MASK = ent_all
-local ROUND_STEP = 0.02          -- s: a longer frame is cut into steps this long, so the arc stays smooth
+local ROUND_STEP = 0.05          -- s: a longer frame is cut into equal steps no longer than this (the ray along a step is exact;
+                                 -- gravity and drag are taken at the chord: ~3 mm and ~3 % at 0.05 s; 0.02 doubled the rays
+                                 -- exactly when the frame rate was low)
+local ROUND_TICK_MAX = 0.1       -- s: most game time one tick advances a round (after a hitch it doesn't catch up in one frame)
+local ROUNDS_MAX = 64            -- rounds in flight: the oldest is dropped past this
 local ROUND_LIFE = 6             -- s: a round that hit nothing is dropped after this, or past cfg.range (a Deagle round
                                  -- takes ~5 s to fly 1000 m)
 
@@ -347,6 +362,7 @@ end
 -- that surface where its line crosses the level. A round that hits a lake's bed in this step crossed the lake's surface
 -- on the way down to it: the surface is what it meets
 function Deagle:WaterCrossing(from, to)
+	if to.z >= from.z then return nil end   -- crossing a surface from above needs a falling step
 	local ok, level, normal = pcall(CryAction.GetWaterInfo, to)
 	if not ok or type(level) ~= "number" or to.z >= level or from.z < level - 0.01 then return nil end
 	local d = vsub(to, from)
@@ -372,29 +388,33 @@ function Deagle:MoveRound(r, h)
 		local frac = hit.dist / vlen(move)   -- share of this step flown before the hit
 		hit.dist = r.dist + hit.dist        -- the ray's distance is from this step's start: the path flown so far
 		hit.energy = 0.5 * r.phys.bullet * speed * speed
-		self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
-		self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
+		if self.cfg.debugPaths then
+			self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
+			self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
+		end
 		r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
 		local goesOn = self:ApplyHit(hit, vnorm(move), r.phys, r)
 		if self.KillCamHit then self:KillCamHit(hit, r) end   -- killcam.lua
 		if not goesOn then r.landed = true; return true end
-		if vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(hit.pos, r.pos, PATH_IN) end   -- through a wall / body
+		if self.cfg.debugPaths and vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(hit.pos, r.pos, PATH_IN) end   -- through a wall / body
 		-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
 		r.hops = (r.hops or 0) + 1
 		if r.hops > 8 or vlen(r.vel) < 30 then return true end
 		return self:MoveRound(r, h * (1 - frac))
 	end
-	self:PathAdd(r.pos, vadd(r.pos, move), (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
+	if self.cfg.debugPaths then self:PathAdd(r.pos, vadd(r.pos, move), (r.hops or 0) > 0 and PATH_ON or PATH_FLY) end
 	r.pos, r.vel, r.age, r.dist = vadd(r.pos, move), v1, r.age + h, r.dist + vlen(move)
 	return r.dist > self.cfg.range or r.age > ROUND_LIFE
 end
 
 function Deagle:StepRound(r, dt)
 	local done, from, moved = false, r.pos, dt > 1e-6
-	while dt > 1e-6 do
-		local h = math.min(dt, ROUND_STEP)
-		dt = dt - h
-		if self:MoveRound(r, h) then done = true; break end
+	if dt > 1e-6 then
+		local n = math.ceil(dt / ROUND_STEP - 1e-9)
+		local h = dt / n
+		for _ = 1, n do
+			if self:MoveRound(r, h) then done = true; break end
+		end
 	end
 	self:TracerBullet(r, from)
 	if self.KillCamStep then self:KillCamStep(r, done) end   -- killcam.lua
@@ -419,6 +439,7 @@ function Deagle:LaunchRound(pos, dir, phys, trail)
 	if self:StepRound(r, self.frameDt or 1 / 30) then return r end   -- landed in this frame
 	self.rounds = self.rounds or {}
 	table.insert(self.rounds, r)
+	while #self.rounds > ROUNDS_MAX do table.remove(self.rounds, 1) end
 	if not self.roundsToken or System.GetCurrTime() - (self.roundsTickT or -1e9) > 0.5 then   -- none, or a dead chain
 		local token = {}
 		self.roundsToken = token
@@ -433,9 +454,11 @@ function Deagle:RoundsTick(token)
 	self.roundsTickT = System.GetCurrTime()
 	local now, keep = System.GetCurrTime(), {}
 	for _, r in ipairs(self.rounds or {}) do
-		local dt = now - r.t
+		local dt = math.min(math.max(now - r.t, 0), ROUND_TICK_MAX)
 		r.t = now
-		if not self:StepRound(r, dt) then keep[#keep + 1] = r end
+		local ok, done = pcall(self.StepRound, self, r, dt)
+		if not ok then log("$4round dropped: " .. tostring(done))
+		elseif not done then keep[#keep + 1] = r end
 	end
 	self.rounds = keep
 	if #keep > 0 then Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
