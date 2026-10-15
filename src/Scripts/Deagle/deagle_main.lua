@@ -2964,7 +2964,14 @@ end
 -- Classes: out_forest out_street out_covered in_<small|mid|hall|corridor>[_<stone|wood|metal|fabric>] in_cave(_stone)
 -- ---------------------------------------------------------------------------
 local ENV_UP, ENV_RING = {}, {}
+local envSurfKind
+local ENV_SURF = {}   -- surface name -> kind, worked out once per name (up to 30 finds each)
 local function envSurf(name)
+	local k = ENV_SURF[name]
+	if not k then k = envSurfKind(name); ENV_SURF[name] = k end
+	return k
+end
+function envSurfKind(name)
 	if name:find("^mat_rock") or name:find("stone") or name:find("brick") or name:find("plaster") or name:find("ceramic") then return "stone" end
 	if name:find("wood") or name:find("bark") or name:find("tree") or name:find("wicker") then return "wood" end
 	if name:find("metal") or name:find("chain") or name:find("plate") or name:find("bell") or name:find("iron") then return "metal" end
@@ -3024,7 +3031,13 @@ local ENV_MAT_GLOBAL = { stone = "CONCRETE", wood = "WOOD", metal = "METAL", fab
 local ENV_GLOBALS = {}
 for _, r in ipairs(ENV_ROOMS) do ENV_GLOBALS[#ENV_GLOBALS + 1] = "Reverb" .. r end
 for _, m in ipairs(ENV_MATS) do ENV_GLOBALS[#ENV_GLOBALS + 1] = "ReverbMaterial" .. ENV_MAT_GLOBAL[m] end
+local ENV_MIX = {}   -- class -> { mix, outside }: EnvFade asks every frame
 function Deagle:EnvMix(cls)
+	local m = ENV_MIX[cls]
+	if not m then m = { self:EnvMixOf(cls) }; ENV_MIX[cls] = m end
+	return m[1], m[2]
+end
+function Deagle:EnvMixOf(cls)
 	local mix = {}
 	for _, g in ipairs(ENV_GLOBALS) do mix[g] = 0 end
 	local room, mat
@@ -3072,15 +3085,24 @@ function Deagle:EnvSample()
 	return sample
 end
 -- every viewmodel frame: a new read every period s; the class changes after 2 agreeing reads; the weights fade to it
+local ENV_STILL = 0.5   -- m the eye may move and still count as the last read's place
 function Deagle:EnvTick()
 	local c = self.cfg.env
-	if not (self.gun and self.gun.ron) then return end
+	if not self:RonSounds() then return end   -- only Ready or Not's sounds use the place
 	local now = System.GetCurrTime()
 	-- now < envT: a save loaded while the game ran set the clock back (322 s once, Claude 4 2026-10-14): check at once
 	if c.on and (not self.envT or now < self.envT or now - self.envT >= c.period) then
 		self.envT = now
-		local cls, info = self:EnvClassify(self:EnvSample())
-		self.envInfo = info
+		-- the rays point the same way in the world every time, so standing still reads the same place: the last read
+		-- counts again, without its 21+ rays (performance audit 2026-10-15)
+		local eye, e0, cls = System.GetViewCameraPos(), self.envEye, nil
+		if e0 and self.envLastCls and (eye.x - e0.x) ^ 2 + (eye.y - e0.y) ^ 2 + (eye.z - e0.z) ^ 2 < ENV_STILL ^ 2 then
+			cls = self.envLastCls
+		else
+			local info
+			cls, info = self:EnvClassify(self:EnvSample())
+			self.envInfo, self.envEye, self.envLastCls = info, { x = eye.x, y = eye.y, z = eye.z }, cls
+		end
 		if cls == self.envClass then self.envPending = nil
 		elseif cls == self.envPending or not self.envClass then self.envClass, self.envPending = cls, nil
 		else self.envPending = cls end
@@ -3091,20 +3113,24 @@ end
 -- after a load is set at once (nothing to fade from)
 function Deagle:EnvFade(now)
 	if not self.envClass or not self.native then return end
-	local target = self:EnvMix(self.envClass)
 	local cur, first = self.envMixNow, self.envMixNow == nil
-	if first then cur = {}; self.envMixNow = cur end
 	local dt = math.max(0, now - (self.envFadeT or now))
 	self.envFadeT = now
+	if not first and self.envSettled == self.envClass then return end   -- every weight already there: nothing to send
+	local target = self:EnvMix(self.envClass)
+	if first then cur = {}; self.envMixNow = cur end
+	local moved = false
 	local step = self.cfg.env.fade > 0 and dt / self.cfg.env.fade or 1
 	for _, g in ipairs(ENV_GLOBALS) do
 		local was, want = cur[g], target[g]
 		local v = (first or was == nil) and want or (was < want and math.min(want, was + step) or math.max(want, was - step))
 		if v ~= was then
 			cur[g] = v
+			moved = true
 			self:Native(string.format("rong %s %.3f", g, v))
 		end
 	end
+	self.envSettled = not moved and self.envClass or nil
 end
 -- the gun's Ready or Not events load at the handshake, so the first shot has no load delay
 function Deagle:RonWarm()
@@ -3400,7 +3426,7 @@ end
 
 System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
 System.AddCCommand("deagle_freecam", "Deagle:Native('freecam ' .. Deagle.Arg([[%line]]))", "deagle_freecam [on|off|status|speed <m/s>|fast <x>|max <m>|keys wasd|nav|arrows|key <vk>]: free camera (time runs, Henry still aims and shoots, and doesn't walk). \\ toggles; WASD fly, Space up, Left Ctrl down, Shift faster")
-System.AddCCommand("deagle_env", "Deagle.envT = nil Deagle:EnvTick() Deagle:EnvPrint()", "deagle_env: the place the gunshot sounds like (Ready or Not's room and material weights) and the ray numbers")
+System.AddCCommand("deagle_env", "Deagle.envT, Deagle.envEye = nil, nil Deagle:EnvTick() Deagle:EnvPrint()", "deagle_env: the place the gunshot sounds like (Ready or Not's room and material weights) and the ray numbers")
 System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "internal: the plugin's free camera came on (1) or went off (0)")
 System.AddCCommand("deagle_slowmo", "Deagle:SlowMoCmd(Deagle.Arg([[%1]]))", "deagle_slowmo [speed|off]: slow motion at that game speed (0.01-1, kept: F9 uses it too); no value = on / off like F9")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")

@@ -49,11 +49,15 @@ local reads = { cases[4][2], cases[7][2], cases[7][2] }
 local k = 0
 Deagle.EnvSample = function() k = k + 1 return reads[math.min(k, #reads)] end
 Deagle.envT, Deagle.envClass, Deagle.envPending = nil, nil, nil
-Deagle:EnvTick(); local c1 = Deagle.envClass
-M.advance(0.3); Deagle:EnvTick(); local c2 = Deagle.envClass
-M.advance(0.3); Deagle:EnvTick(); local c3 = Deagle.envClass
+Deagle.envEye = nil; Deagle:EnvTick(); local c1 = Deagle.envClass   -- envEye = nil: as if the player had moved
+M.advance(0.3); Deagle.envEye = nil; Deagle:EnvTick(); local c2 = Deagle.envClass
+M.advance(0.3); Deagle.envEye = nil; Deagle:EnvTick(); local c3 = Deagle.envClass
 check(string.format("first read takes the class (%s), one different read doesn't (%s), the second does (%s)", tostring(c1), tostring(c2), tostring(c3)),
 	c1 == "in_small" and c2 == "in_small" and c3 == "in_cave_stone", c2)
+-- standing still: the rays point the same way, so the last read counts again without casting them
+local k0 = k
+M.advance(0.3); Deagle:EnvTick(); M.advance(0.3); Deagle:EnvTick()
+check(string.format("standing still: no new rays (%d samples), the class holds (%s)", k - k0, tostring(Deagle.envClass)), k == k0 and Deagle.envClass == c3, k - k0)
 -- the cellar's weights: CAVE + CONCRETE at 1, everything else 0, inside
 local mix, outside = Deagle:EnvMix("in_cave_stone")
 local on = {}
@@ -84,6 +88,10 @@ check(string.format("halfway through the fade: SMALL %.2f CAVE %.2f", g1.ReverbS
 	math.abs((g1.ReverbSMALL or 0) - 0.5) < 0.01 and math.abs((g1.ReverbCAVE or 0) - 0.5) < 0.01, g1.ReverbSMALL)
 Deagle:EnvFade(10 + Deagle.cfg.env.fade + 0.1)
 check("after the fade: the cellar's weights", Deagle.envMixNow.ReverbSMALL == 0 and Deagle.envMixNow.ReverbCAVE == 1 and Deagle.envMixNow.ReverbMaterialCONCRETE == 1, Deagle.envMixNow.ReverbSMALL)
+Deagle:EnvFade(10 + Deagle.cfg.env.fade + 0.2)
+n0 = #M.native
+Deagle:EnvFade(10 + Deagle.cfg.env.fade + 0.3)
+check("settled: the next frames send nothing", #M.native == n0 and Deagle.envSettled == "in_cave_stone", #M.native - n0)
 -- a shot: Ready or Not's MK V event with IsOutside from the place
 n0 = #M.native
 Deagle:CueFire("shoot", "shot")
