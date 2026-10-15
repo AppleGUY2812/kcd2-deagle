@@ -762,6 +762,14 @@ static void ApplyFilters() {
 	}
 }
 
+// a sound that didn't play: the first 20 logged, then every 200th (each Log flushes the file: a missing event fired by
+// every shot logged and flushed at the fire rate; performance audit 2026-10-15)
+static void RonMissLog(const std::string& ev) {
+	static int n = 0;
+	if (n < 20 || n % 200 == 0) Log("ron: %s didn't play (%d so far)", ev.c_str(), n + 1);
+	n++;
+}
+
 static void Command(const char* line) {
 	char cmd[32] = {};
 	if (sscanf_s(line, "%31s", cmd, (unsigned)sizeof(cmd)) != 1) return;
@@ -888,7 +896,7 @@ static void Command(const char* line) {
 		float v = 1.0f; int used = 0;
 		if (sscanf_s(rest, "%f %n", &v, &used) >= 1 && used > 0 && Finite(&v, 1) && RonEnsure()) {
 			std::string ev, params; RonSplit(rest + used, ev, params);
-			if (!RonPlay(ev.c_str(), params.c_str(), nullptr, v)) Log("ron: %s didn't play", ev.c_str());
+			if (!RonPlay(ev.c_str(), params.c_str(), nullptr, v)) RonMissLog(ev);
 		}
 	}
 	else if (!strcmp(cmd, "ron3")) {   // ron3 <vol> <x> <y> <z> <event path>|<name=value ...>: at a world point, heard after
@@ -896,7 +904,7 @@ static void Command(const char* line) {
 		float v = 1.0f, at[3] = {}; int used = 0;
 		if (sscanf_s(rest, "%f %f %f %f %n", &v, &at[0], &at[1], &at[2], &used) >= 4 && used > 0 && Finite(&v, 1) && Finite(at, 3) && RonEnsure()) {
 			std::string ev, params; RonSplit(rest + used, ev, params);
-			if (!RonPlayAt(ev.c_str(), params.c_str(), at, v)) Log("ron: %s didn't play", ev.c_str());
+			if (!RonPlayAt(ev.c_str(), params.c_str(), at, v)) RonMissLog(ev);
 		}
 	}
 	else if (!strcmp(cmd, "ronload")) {   // ronload <event path>: the gun's events, at draw (no load delay on the first shot)
