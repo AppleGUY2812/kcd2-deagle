@@ -80,6 +80,10 @@ from here. Keep it current: what's decided, what's measured, what's next.
   pool is 6 hidden BasicEntities moved to each hit. A plain BasicEntity got collision by default and they jolted the
   user at 75 rounds/s (fixed in d6fd352). Can native code hand the renderer a light per frame instead (CryEngine's
   per-frame render lights / `AddLightToRenderer`-style API in WHGame), with no entity, no physics and no pool to move?
+- Hits by what is drawn, not by the collision tag: KCD2's campfire cauldron is one static brush whose collision is
+  all `mat_wood` (5 rays around the pot, 2026-10-15), so an iron pot sounds and sparks like wood. Can native code read
+  the render material at the hit triangle (the static brush's render node and its .mtl surface type) and use that
+  when it disagrees with the physics surface? That would fix every mis-tagged prop at once.
 - Can native code use queued or batched ray casts (CryEngine `rwi_queue`) in WHGame?
 - Where are IScriptSystem's function-registration entry points in WHGame 1.5.6 (for the typed binding)?
 - The loader/core split with MinHook: the loader owns the hooks, the core gets callbacks. How to hand state over on
