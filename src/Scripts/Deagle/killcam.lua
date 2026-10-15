@@ -65,6 +65,9 @@ end
 
 -- every frame a round moves (StepRound; done = it ended this frame)
 function Deagle:KillCamStep(r, done)
+	if Deagle._kcWrappers.FreecamState ~= Deagle.FreecamState or Deagle._kcWrappers.OnGameplayStarted ~= Deagle.OnGameplayStarted then
+		self:KillCamInstall()
+	end
 	local kc = self.kc
 	if kc then
 		if kc.r == r then kc.roundDone = done end   -- the cam's own frame loop (KillCamFrame) reads it
@@ -141,24 +144,37 @@ function Deagle:KillCamHit(hit, r)
 	self:KillCamSpeed(kc.speed)
 end
 
--- the plugin tells Lua when its free camera is on / off (deagle_freecam_state); while a kill cam drives it the free-look
--- code (and its aim line) stays out of it
-local freecamState = Deagle.FreecamState
-function Deagle:FreecamState(on)
-	local kc = self.kc
-	if not kc then return freecamState(self, on) end
-	if Deagle.Arg(on) ~= "0" then
-		local e = System.GetViewCameraPos()
-		kc.camOn, kc.pos = true, { x = e.x, y = e.y, z = e.z }   -- it starts at Henry's eye
-	else
-		kc.camSent = false                 -- it went off by itself (a key, a load): nothing to switch off
-		self:KillCamEnd("free camera off")
-	end
+-- Two of deagle_main's functions are wrapped (no edit of that file). Wrapped at load and again at the first round's step,
+-- so it holds whichever order the files load in; a dev reload that makes new originals is wrapped anew.
+Deagle._kcWrappers = Deagle._kcWrappers or {}
+local function wrap(name, make)
+	local cur = Deagle[name]
+	if type(cur) ~= "function" or Deagle._kcWrappers[name] == cur then return end   -- not defined yet, or already ours
+	local w = make(cur)
+	Deagle[name], Deagle._kcWrappers[name] = w, w
 end
-
--- a save load: its timers and rounds are gone, the game's speed must not stay at 3 %
-local gameplayStarted = Deagle.OnGameplayStarted
-function Deagle:OnGameplayStarted(...)
-	self:KillCamAbort()
-	return gameplayStarted(self, ...)
+function Deagle:KillCamInstall()
+	-- the plugin tells Lua when its free camera is on / off (deagle_freecam_state); while a kill cam drives it the free-look
+	-- code (and its aim line) stays out of it
+	wrap("FreecamState", function(orig)
+		return function(self, on)
+			local kc = self.kc
+			if not kc then return orig(self, on) end
+			if Deagle.Arg(on) ~= "0" then
+				local e = System.GetViewCameraPos()
+				kc.camOn, kc.pos = true, { x = e.x, y = e.y, z = e.z }   -- it starts at Henry's eye
+			else
+				kc.camSent = false                 -- it went off by itself (a key, a load): nothing to switch off
+				self:KillCamEnd("free camera off")
+			end
+		end
+	end)
+	-- a save load: its timers and rounds are gone, the game's speed must not stay at 3 %
+	wrap("OnGameplayStarted", function(orig)
+		return function(self, ...)
+			self:KillCamAbort()
+			return orig(self, ...)
+		end
+	end)
 end
+Deagle:KillCamInstall()
