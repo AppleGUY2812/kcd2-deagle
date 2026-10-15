@@ -778,3 +778,7 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   the first one (deagle_stress changed from no argument to `[[%line]]`, reloaded twice, still "Too many arguments" in
   game). A changed command line (arguments) needs a game restart; until then call the function through `deagle_lua`.
 
+- A `System.SpawnEntity{ class = "BasicEntity" }` without `properties.Physics = { bPhysicalize = false }` is a solid
+  rigid body. The 6 impact-light entities (effects.lua) moved onto every sparky hit at 75 rounds/s and shoved the
+  player ("an invisible object in front of me"). Helper entities (lights, markers) need physics off, plus
+  `DestroyPhysics` for ones already spawned. tests/run_effects.lua checks it. (Claude 2, found by Claude 4)
