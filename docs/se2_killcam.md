@@ -56,3 +56,18 @@ cam's group and a `%02d.` stage number; a stage with its Inherit flag set copies
 No file in the install holds numbered-prefix float records (pair search, all `.asr`/`.pc`; no text in `.brf`, `.ts`,
 `.txt`, `.xml`). The time scales therefore come from something this search can't see (a record type other than float,
 or built in code). Measuring them from a recorded kill cam is the way; the camera numbers above are the real defaults.
+
+### Round 7: seed voting finds a stage-numbered cam (misc/Common.asr), `killcams.py vote`
+Every float record implies one seed per property name; a real camera's seed recurs. Seeds `47955e06`, `47955e25`,
+`47955e44` differ by 31 each (the stage digit before the final `.`: stages 00, 01, 02 of one cam):
+
+| stage | found | values |
+|---|---|---|
+| 00 | TimeScale.PreHit, FieldOfView.Initial | 0.03, 46.7 |
+| 01 | TimeScale.PostExit, FieldOfView.Final, Duration | 0.1, 46.7, 6 s |
+| 02 | FieldOfView.Initial, Duration | 46.7, 8 s |
+
+Likely, not verified: 3 % speed before the hit, 10 % after the exit, FOV 46.7, the stages inherit what they don't set.
+`TimeScale.Internal`, the angles, offsets and Look/Track flags aren't present for this group (inherited or another
+record type). Other seeds in the file (22.9/46.7, 180/12, -0.4/4, 1.5/1.5) show up under 2-3 names each: the same
+records read with a different name (names of different lengths alias by a factor of 31), so they are ambiguous.

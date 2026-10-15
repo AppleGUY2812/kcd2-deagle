@@ -65,3 +65,18 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def vote(blob, names=PROPS, need=3):
+    """Seeds that own at least `need` of the names: every float record implies one seed per name, real seeds recur."""
+    n = len(blob) // 4
+    arr = np.frombuffer(blob, dtype="<u4", count=n)
+    m = (arr[1:n - 4] == 3) & (arr[2:n - 3] == 0) & (arr[3:n - 2] == 0) & (arr[4:n - 1] == 1)
+    keys = arr[:n - 5][m[: n - 5]] if n > 6 else arr[:0]
+    keys = np.unique(keys)
+    per_name = []
+    for nm in names:
+        inv = np.uint32(pow(pow(31, len(nm), 1 << 32), -1, 1 << 32))
+        per_name.append(np.unique(((keys - np.uint32(h0(nm))) * inv).astype(np.uint32)))
+    seeds, counts = np.unique(np.concatenate(per_name), return_counts=True)
+    return [int(s) for s in seeds[counts >= need]]
