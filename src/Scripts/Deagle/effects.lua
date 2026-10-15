@@ -151,13 +151,16 @@ function Deagle:ImpactLight(name, pos, normal, scale)
 	pool[slot] = s
 	local e = s.id and System.GetEntity(s.id)
 	if not e then
+		-- no physics: a BasicEntity is a solid body by default, and moved onto every hit the 6 lights shoved the player
+		-- (an "invisible object in front of me", the user at 75 rounds/s, 2026-10-15)
 		local ok, ne = pcall(System.SpawnEntity, { class = "BasicEntity", name = "deagle_impact_light_" .. slot, position = pos,
-			flags = ENTITY_FLAG_NO_SAVE })
+			flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = "", Physics = { bPhysicalize = false } } })
 		if not (ok and ne) then return end
 		e = ne
 		e:SetFlags(ENTITY_FLAG_NO_SAVE, 0)   -- never into a save
 		s.id = e.id
 	end
+	if not s.noPhys then pcall(e.DestroyPhysics, e) s.noPhys = true end   -- also lights made before this fix
 	local i = L.intensity * k * (scale or 1)
 	local col = { x = i * IMPACT_LIGHT_HUE[1], y = i * IMPACT_LIGHT_HUE[2], z = i * IMPACT_LIGHT_HUE[3] }
 	e:SetWorldPos(normal and vadd(pos, vscale(normal, L.off)) or pos)   -- off the surface, so it lights it
