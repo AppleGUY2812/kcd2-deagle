@@ -50,12 +50,22 @@ check(string.format("idle: under 5 KB of Lua garbage a frame (%.2f KB; 3.97 on 2
 Deagle.state.ammo = 999
 reset()
 n0 = #M.native
+collectgarbage("collect"); collectgarbage("stop")
+kb0 = collectgarbage("count")
 for _ = 1, 30 do Deagle:Shoot(true); M.advance(0.1) end
-M.advance(3)
+local roundFrames = 0
+for _ = 1, 180 do roundFrames = roundFrames + #(Deagle.rounds or {}); M.advance(1 / 60) end
+local shootKb = (collectgarbage("count") - kb0) / 360
+local perRound = roundFrames > 0 and (collectgarbage("count") - kb0) / roundFrames or 0
+collectgarbage("restart")
+print(string.format("   shooting: %.1f KB garbage a frame, ~%.2f KB per round in the air per frame (%d round-frames after the burst)",
+	shootKb, perRound, roundFrames))
 local spawns = native(n0, "^%[DN%] fxs [%w_]*trail")
 print(string.format("   shooting 30 rounds: %d entity queries, %d tracer emitters spawned, %d tracer moves, %.0f rays",
 	queries(), spawns, native(n0, "^%[DN%] fxr "), counts.RayWorldIntersection or 0))
 check("shooting: no entity-system query per frame or per round", queries() <= 1, queries())
+check(string.format("shooting: under 100 KB of Lua garbage a frame with ~30 rounds up (%.1f KB; 75.8 on 2026-10-15, the budget is 15)", shootKb),
+	shootKb < 100, shootKb)
 check(string.format("shooting: no new tracer emitter per round per frame (%d spawns for 30 rounds)", spawns), spawns <= 30, spawns)
 
 -- an NPC hit plays armour + flesh (+ a ricochet) at one spot in one frame: the AI hears it once
