@@ -209,7 +209,10 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		local log = {}
 		for _, f in ipairs(M.fxLog or {}) do log[#log + 1] = f end
 		for i = (M.fxsFrom or 1), #M.native do   -- pieces the plugin spawns: fxs <fx> <scale> <len> <pos> <dir>
-			local fx, sc, _, px, py, pz, dx, dy, dz = M.native[i]:match("^%[DN%] fx[sr] [%d ]-(%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)$")
+			local fx, sc, _, px, py, pz, dx, dy, dz = M.native[i]:match("^%[DN%] fxr %d+ (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)$")
+			if not fx then   -- fxs, maybe ending with its hold time (s, effects.lua FX_HOLD)
+				fx, sc, _, px, py, pz, dx, dy, dz = M.native[i]:match("^%[DN%] fxs (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)%s*[%d%.]*$")
+			end
 			if fx then log[#log + 1] = { n = fx, scale = tonumber(sc), pos = vec(tonumber(px), tonumber(py), tonumber(pz)),
 				dir = vec(tonumber(dx), tonumber(dy), tonumber(dz)), t = M.nativeT and M.nativeT[i] or 0 } end
 		end
