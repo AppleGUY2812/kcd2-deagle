@@ -380,6 +380,15 @@ do
 	for _, l in ipairs(M.logs) do if l:find("STRESS start: 75 rounds a second") then started = true end end
 	check(string.format("deagle_stress 75: %d shots in two 5 s phases (750 due), started %s, done %s", shots, tostring(started), tostring(Deagle.stress == nil)),
 		started and shots >= 700 and shots <= 760 and Deagle.stress == nil, shots)
+	-- the impact A/B: 9 phases, each part of a hit off in its own phase and back afterwards
+	local fxWas, decalWas, soundWas = Deagle.SpawnFx, Particle.CreateMatDecal, Deagle.HitSound
+	M.console("deagle_stress", "20 aim ab")
+	M.advance(32, 60)
+	local summaries = 0
+	for _, l in ipairs(M.logs) do if l:find("STRESS == FIRE no") or l:find("STRESS == FIRE all") then summaries = summaries + 1 end end
+	check(string.format("deagle_stress 20 aim ab: %d fire-phase summaries (4), effects / holes / sounds put back %s %s %s", summaries,
+		tostring(Deagle.SpawnFx == fxWas), tostring(Particle.CreateMatDecal == decalWas), tostring(Deagle.HitSound == soundWas)),
+		summaries == 4 and Deagle.SpawnFx == fxWas and Particle.CreateMatDecal == decalWas and Deagle.HitSound == soundWas and Deagle.stress == nil, summaries)
 	Deagle.Fire = fireWas
 	M.view.pitch = pitch
 end

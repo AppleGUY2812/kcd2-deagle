@@ -162,10 +162,36 @@ end
 -- deagle_stress [rounds a second] [sky | aim]: any fire rate (a CIWS is ~75; several shots a frame when needed), and
 -- "aim" fires where you look instead of only at the sky, so impacts are measured too, with no recoil (the view stays
 -- put); it holds fire while the view points at a person or an animal (a ray from the eye, 300 m). Lines also count impacts and impact effects.
+-- A third word "ab" (deagle_stress 75 aim ab) runs the impact A/B instead: fire with everything, then with the impact
+-- effects off, the holes off, the impact sounds off, a rest between, so one run shows which part of a hit costs
+-- (the user's 75 aim run fell to 4 fps, 2026-10-15). Phase: name, s, fire, tracers, what is off.
 local STRESS = {
 	{ "idle", 2, false, true }, { "FIRE tracers on", 5, true, true }, { "stop, tracers off", 3, false, false },
 	{ "idle again", 3, false, false }, { "FIRE tracers off", 5, true, false }, { "stop", 3, false, false },
 }
+local STRESS_AB = {
+	{ "idle", 2, false, true }, { "FIRE all", 4, true, true }, { "rest", 3, false, true },
+	{ "FIRE no impact fx", 4, true, true, "fx" }, { "rest", 3, false, true },
+	{ "FIRE no holes", 4, true, true, "holes" }, { "rest", 3, false, true },
+	{ "FIRE no hit sounds", 4, true, true, "sounds" }, { "rest", 3, false, true },
+}
+local noop = function() end
+-- switch one part of a hit off for a phase (X.offOrig keeps what to put back)
+local function stressOff(X, what)
+	if X.offOrig then
+		local o = X.offOrig
+		X.offOrig = nil
+		if o.fx then Deagle.SpawnFx = o.fx end
+		if o.decal then Particle.CreateMatDecal = o.decal end
+		if o.sound then Deagle.HitSound = o.sound end
+	end
+	if not what then return end
+	local o = {}
+	if what == "fx" then o.fx = Deagle.SpawnFx; Deagle.SpawnFx = noop
+	elseif what == "holes" then o.decal = Particle.CreateMatDecal; Particle.CreateMatDecal = noop
+	elseif what == "sounds" then o.sound = Deagle.HitSound; Deagle.HitSound = noop end
+	X.offOrig = o
+end
 local STRESS_LUA = { "VmTick", "VmPlace", "RoundsTick", "Fire", "EnvTick", "MotionTick", "DrawHud" }
 local MOD_AVG, MOD_P99 = 1.0, 2.0   -- ms of our Lua a frame (docs/PERFORMANCE.md)
 local function pct(sorted, q) return sorted[math.max(1, math.min(#sorted, math.ceil(#sorted * q)))] or 0 end
@@ -183,6 +209,7 @@ function Deagle:Stress(arg)
 	for w in tostring(Deagle.Arg(arg) or ""):gmatch("%S+") do words[#words + 1] = w end
 	local rps = math.max(1, math.min(200, tonumber(words[1]) or 10))
 	local mode = words[2] == "aim" and "aim" or "sky"
+	local phases = words[3] == "ab" and STRESS_AB or STRESS
 	local clock = System.GetCurrAsyncTime
 	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0,
 		orig = {}, frames = {}, luas = {} }
@@ -228,7 +255,8 @@ function Deagle:Stress(arg)
 	self.VmTick = function(s, ...)
 		local a, g = clock(), System.GetCurrTime()
 		if lastA and lastG and g > lastG then   -- frames the game ran (not paused in the background)
-			local ph = STRESS[X.ph]
+			local ph = phases[X.ph]
+			if X.offFor ~= X.ph then X.offFor = X.ph; stressOff(X, ph[5]) end
 			X.start, X.t0 = X.start or g, X.t0 or g
 			X.win = X.win or { t = g, n = 0, sum = 0, max = 0 }
 			local w, dt = X.win, a - lastA
@@ -259,7 +287,8 @@ function Deagle:Stress(arg)
 			if g - X.t0 >= ph[2] then
 				phaseEnd(s, ph)
 				X.ph, X.t0 = X.ph + 1, g
-				if X.ph > #STRESS then
+				if X.ph > #phases then
+					stressOff(X, nil)
 					for k, f in pairs(X.orig) do s[k] = f end
 					s.cfg.tracers, s.stress = X.tracersWas, nil
 					s:Native("fxrstat")
@@ -271,7 +300,10 @@ function Deagle:Stress(arg)
 		lastA, lastG = a, g
 		return vt(s, ...)
 	end
-	log(string.format("STRESS start: %d rounds a second, %s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky"))
-	self:Notify(mode == "aim" and string.format("stress test: %d rounds/s where you look, 21 s", rps)
-		or string.format("stress test: %d rounds/s, look at the sky for 21 s", rps))
+	log(string.format("STRESS start: %d rounds a second, %s%s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky",
+		phases == STRESS_AB and ", impact A/B" or ""))
+	local total = 0
+	for _, ph in ipairs(phases) do total = total + ph[2] end
+	self:Notify(mode == "aim" and string.format("stress test: %d rounds/s where you look, %d s", rps, total)
+		or string.format("stress test: %d rounds/s, look at the sky for %d s", rps, total))
 end

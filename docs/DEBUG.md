@@ -153,7 +153,8 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 - `deagle_stress [rounds a second] [sky | aim]`: frame-rate test. Look at the sky (it only fires while you do), type it,
   keep looking up for 21 s until "stress test done". Infinite ammo, 10 rounds a second by default (`deagle_stress 75`
   is a CIWS); `aim` fires where you look with no recoil, impacts included, and holds fire while you look at a person or an animal.
-  5 s with tracers, a pause, 5 s without. kcd.log gets a
+  5 s with tracers, a pause, 5 s without. A third word `ab` (`deagle_stress 75 aim ab`, 30 s) fires with everything,
+  then with the impact effects off, the holes off, the hit sounds off: which part of a hit costs. kcd.log gets a
   `STRESS` line every 0.5 s: frame time split into our Lua and the engine, rounds in the air, tracer commands sent;
   after each phase a `STRESS ==` line: frame time p50 / p95 / p99 / max and the mod's Lua per frame against the budget
   (1.0 ms average, 2.0 ms p99, docs/PERFORMANCE.md): PASS or OVER.
