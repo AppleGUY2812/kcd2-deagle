@@ -74,6 +74,10 @@ from here. Keep it current: what's decided, what's measured, what's next.
   mesh and allocates a new render mesh; ~200 a second took the frame to 250 ms, recovering within ~1 s of stopping, so
   creating them costs and drawing them doesn't (the user's A/B run 2026-10-15). It is capped for now
   (`cfg.holeBudget`); the user asked why drawing an image should need a limit at all.
+- Lights without entities: from Lua a light needs an entity to hang on (`LoadLight` into a slot), so the impact light
+  pool is 6 hidden BasicEntities moved to each hit. A plain BasicEntity got collision by default and they jolted the
+  user at 75 rounds/s (fixed in d6fd352). Can native code hand the renderer a light per frame instead (CryEngine's
+  per-frame render lights / `AddLightToRenderer`-style API in WHGame), with no entity, no physics and no pool to move?
 - Can native code use queued or batched ray casts (CryEngine `rwi_queue`) in WHGame?
 - Where are IScriptSystem's function-registration entry points in WHGame 1.5.6 (for the typed binding)?
 - The loader/core split with MinHook: the loader owns the hooks, the core gets callbacks. How to hand state over on
