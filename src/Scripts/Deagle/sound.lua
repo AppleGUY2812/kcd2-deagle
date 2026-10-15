@@ -171,6 +171,11 @@ function Deagle:HitSound(what, pos, scale, vol)
 	local keep = what == SURFACES.mat_flesh.ron or ARMOR_HIT[what] ~= nil
 	if ARMOR_HIT[what] ~= nil then what = ARMOR_HIT[what] end
 	if not self:SoundBudget(what == "ricochet" and "ricochet" or "hit", what, pos, keep and "keep" or nil) then return end
+	return self:HitSoundPlay(what, pos, scale, vol)
+end
+-- the hit sound itself, past the budget (deagle_stress spawn hitsound times it raw)
+function Deagle:HitSoundPlay(what, pos, scale, vol)
+	local c = self.cfg
 	if self.native and what then
 		local ev, params
 		-- Falloff: the plugin's distance law from the listener (the free camera too), instead of RoN's PropagateDistance
@@ -555,3 +560,16 @@ System.AddCCommand("deagle_native_caps", "Deagle:NativeCaps([[%line]])", "intern
 
 -- for the files loaded after this one
 U.RON_SURFACE = RON_SURFACE
+
+-- deagle_stress spawn <name> <per second> (debug.lua): one sound kind N times a second at a fixed spot, for the cost of a
+-- Ready or Not sound start next to the plugin's per-start microseconds (ron: update ... sounds started, us each)
+Deagle.StressSpawners = Deagle.StressSpawners or {}
+Deagle.StressSpawners.hitsound = function(pos) Deagle:HitSoundPlay(8, pos, 1) end              -- stone, no budget
+Deagle.StressSpawners.hitsound_budget = function(pos) Deagle:HitSound(8, pos, 1) end           -- stone, through the budget
+Deagle.StressSpawners.plate = function(pos) Deagle:HitSoundPlay(PLATE, pos, 1) end              -- our file sound, no budget
+Deagle.StressSpawners.gunshot3p = function(pos)                                                  -- the gun's 3D shot, there
+	local ron = Deagle:RonSounds()
+	if not (ron and ron.fire3p and Deagle.native) then return end
+	Deagle:Native(string.format("ron3 1.000 %.2f %.2f %.2f %s|IsOutside=%d Occlusion=0 PropagateDistance=@ Falloff=3", pos.x, pos.y,
+		pos.z, ron.fire3p, Deagle:EnvOutside() and 1 or 0))
+end

@@ -130,6 +130,15 @@ for i = 1, 100 do Deagle:HitSound("ricochet", { x = cp.x + i * 2, y = cp.y + 5, 
 local R = Deagle.cfg.soundBudget.ricochet
 check(string.format("ricochets: 100 over 1 s play at most burst + rate (%d of %d)", ron3(k0), R.burst + R.rate), ron3(k0) <= R.burst + R.rate + 1, ron3(k0))
 
+-- the stress sampler's sound spawners (deagle_stress spawn <name>): raw hit sounds skip the budget, the budgeted one doesn't
+Deagle.soundBudgetState = nil
+k0 = #M.native
+for _ = 1, 20 do Deagle.StressSpawners.hitsound({ x = cp.x, y = cp.y + 5, z = cp.z }) end
+local raw = ron3(k0)
+k0 = #M.native
+for _ = 1, 20 do Deagle.StressSpawners.hitsound_budget({ x = cp.x, y = cp.y + 5, z = cp.z }) end
+check(string.format("stress spawners: raw hit sounds all play (%d of 20), budgeted ones merge (%d)", raw, ron3(k0)), raw == 20 and ron3(k0) == 1, raw)
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("perf: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
