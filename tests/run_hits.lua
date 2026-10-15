@@ -186,6 +186,30 @@ check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off
 	table.concat(to, ","), queries), #to == 1 and to[1] == "nearWUID" and queries == 1, queries)
 check(string.format("near miss: an NPC 200 m off the path is asked where it is %d time for 3 steps (only for the list)", distantAsked),
 	distantAsked == 1, distantAsked)
+-- the check makes no garbage for NPCs away from the path: 44 of them 40 m either side (the crowd's box takes in the path,
+-- so each one is checked), 1000 steps (tables per NPC per step cost 2 ms a frame in town, timed live 2026-10-15)
+local crowd = {}
+for i = 1, 44 do
+	local c = newNpc()
+	c.id, c.this = "crowd" .. i, { id = "crowdWUID" .. i }
+	function c:GetWorldPos() return vec(i % 2 == 0 and 60 or 140, 140 + i, 30) end
+	crowd[i] = c
+end
+System.GetEntitiesInSphere = function() return crowd end
+Deagle.nearList = nil
+local jitWas = jit and jit.status()
+if jit then jit.off() end
+local sky = { pos = vec(100, 140, 31.25) }
+local from2 = vec(100, 140, 31.25)
+Deagle:FlyBy(sky, from2)   -- builds the list
+collectgarbage("collect"); collectgarbage("stop")
+local kb = collectgarbage("count")
+for i = 1, 1000 do sky.pos.z = 31.25 + i * 0.01; Deagle:FlyBy(sky, from2) end
+local grew = collectgarbage("count") - kb
+collectgarbage("restart")
+if jit and jitWas then jit.on() end
+System.GetEntitiesInSphere = getEnts
+check(string.format("near miss: 1000 steps past 44 NPCs 40 m off make %.1f KB of garbage (one table per NPC per step would be 1700)", grew), grew < 20, grew)
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))

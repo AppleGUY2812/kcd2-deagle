@@ -1284,22 +1284,28 @@ end
 -- The NPCs come from Deagle:NearMissList, not a query per step: KCD2's GetEntitiesInSphere costs ~6 ms a call in a town
 -- whatever its radius (measured live 2026-10-15: 3412 calls, 20 s; the frame rate fell while rounds flew, "when the
 -- bullet falls out of range then it unlags")
--- The list keeps where each NPC stood; a step only asks the engine about an NPC within NEAR_CULL m of its path there.
--- Asking about every NPC in it for every step of every round (44 in town: IsDead + GetWorldPos, ~10 rounds in the air)
--- still took the frame rate from 93 to 55 (the user's test 2026-10-15: gone with nearMiss 0).
+-- The list keeps where each NPC's chest was; a step only asks the engine about an NPC within NEAR_CULL m of its path
+-- there. Asking about every NPC in it for every step of every round (44 in town: IsDead + GetWorldPos, ~10 rounds in
+-- the air) still took the frame rate from 93 to 55 (the user's test 2026-10-15: gone with nearMiss 0). The check is
+-- plain numbers, no tables: building a few small tables per NPC per step still cost 2 ms a frame (every function in the
+-- game timed live while the user shot into the sky: FlyBy 2.00 of the 2.31 ms the rounds added). A step whose path
+-- is nowhere near the list's box (a round high in the sky) returns at once.
 local NEAR_LIST_R, NEAR_LIST_EVERY = 300, 2   -- m around the player, s of game time between queries
 local NEAR_CULL = 30                          -- m an NPC can move between queries (a galloping horse ~15 m/s)
-local function segDist(pt, from, seg, len2)   -- distance from pt to the segment from .. from + seg; and where on it
-	local t = len2 > 0 and math.max(0, math.min(1, vdot(vsub(pt, from), seg) / len2)) or 0
-	local closest = vadd(from, vscale(seg, t))
-	return vlen(vsub(pt, closest)), closest
+local CHEST = 1.25                            -- m above an NPC's feet
+-- squared distance from (px, py, pz) to the segment from (fx, fy, fz) along (sx, sy, sz), and the closest point on it
+local function segDist2(px, py, pz, fx, fy, fz, sx, sy, sz, len2)
+	local t = ((px - fx) * sx + (py - fy) * sy + (pz - fz) * sz) / len2
+	t = t < 0 and 0 or (t > 1 and 1 or t)
+	local cx, cy, cz = fx + sx * t, fy + sy * t, fz + sz * t
+	return (px - cx) ^ 2 + (py - cy) ^ 2 + (pz - cz) ^ 2, cx, cy, cz
 end
 function Deagle:NearMissList()
 	local now = System.GetCurrTime()
 	local L = self.nearList
-	if L and now - L.t >= 0 and now - L.t < NEAR_LIST_EVERY then return L.npcs end
+	if L and now - L.t >= 0 and now - L.t < NEAR_LIST_EVERY then return L end
 	local p = self:Player()
-	local npcs = {}
+	L = { t = now, n = 0, x0 = math.huge, y0 = math.huge, z0 = math.huge, x1 = -math.huge, y1 = -math.huge, z1 = -math.huge }
 	local okP, at = pcall(p.GetWorldPos, p)
 	local ok, ents = false, nil
 	if okP and at then ok, ents = pcall(System.GetEntitiesInSphere, at, NEAR_LIST_R) end
@@ -1307,36 +1313,53 @@ function Deagle:NearMissList()
 		for _, e in ipairs(ents) do
 			if e ~= p and e.soul and e.actor and e.this then
 				local okW, w = pcall(e.GetWorldPos, e)
-				if okW and w then npcs[#npcs + 1] = { e = e, pos = { x = w.x, y = w.y, z = w.z } } end
+				if okW and w then
+					local x, y, z = w.x, w.y, w.z + CHEST
+					L[#L + 1] = { e = e, x = x, y = y, z = z }
+					L.x0, L.y0, L.z0 = math.min(L.x0, x), math.min(L.y0, y), math.min(L.z0, z)
+					L.x1, L.y1, L.z1 = math.max(L.x1, x), math.max(L.y1, y), math.max(L.z1, z)
+				end
 			end
 		end
 	end
-	self.nearList = { t = now, npcs = npcs }
-	return npcs
+	self.nearList = L
+	return L
 end
 function Deagle:FlyBy(r, from)
 	local near = self.cfg.nearMiss
 	if not near or near <= 0 then return end
-	local seg = vsub(r.pos, from)
-	local len = vlen(seg)
-	if len < 1e-3 then return end
-	r.flybys = r.flybys or {}
-	local len2 = len * len
-	for _, n in ipairs(self:NearMissList()) do
-		local e = n.e
-		if not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id])
-			and segDist({ x = n.pos.x, y = n.pos.y, z = n.pos.z + 1.25 }, from, seg, len2) <= near + NEAR_CULL then
-			local okD, dead = pcall(e.actor.IsDead, e.actor)
-			local okP, at = pcall(e.GetWorldPos, e)
-			if not (okD and dead) and okP and at then
-				local d, closest = segDist({ x = at.x, y = at.y, z = at.z + 1.25 }, from, seg, len2)
-				if d <= near then
-					r.flybys[e.id] = true
-					local dirN = vscale(seg, 1 / len)
-					try("near miss", function()
-						local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id, Position = closest, Direction = dirN })
-						XGenAIModule.SendMessageToEntityData(e.this.id, "weapon:onPlayerArrowFlyingBy", msg)
-					end)
+	local fx, fy, fz, tx, ty, tz = from.x, from.y, from.z, r.pos.x, r.pos.y, r.pos.z
+	local sx, sy, sz = tx - fx, ty - fy, tz - fz
+	local len2 = sx * sx + sy * sy + sz * sz
+	if len2 < 1e-6 then return end
+	local L = self:NearMissList()
+	local m = near + NEAR_CULL
+	local x0, x1 = math.min(fx, tx) - m, math.max(fx, tx) + m
+	local y0, y1 = math.min(fy, ty) - m, math.max(fy, ty) + m
+	local z0, z1 = math.min(fz, tz) - m, math.max(fz, tz) + m
+	if L.x1 < x0 or L.x0 > x1 or L.y1 < y0 or L.y0 > y1 or L.z1 < z0 or L.z0 > z1 then return end
+	local m2, near2 = m * m, near * near
+	for i = 1, #L do
+		local n = L[i]
+		local x, y, z = n.x, n.y, n.z
+		if x >= x0 and x <= x1 and y >= y0 and y <= y1 and z >= z0 and z <= z1
+			and segDist2(x, y, z, fx, fy, fz, sx, sy, sz, len2) <= m2 then
+			local e = n.e
+			r.flybys = r.flybys or {}
+			if not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id]) then
+				local okD, dead = pcall(e.actor.IsDead, e.actor)
+				local okP, at = pcall(e.GetWorldPos, e)
+				if not (okD and dead) and okP and at then
+					local d2, cx, cy, cz = segDist2(at.x, at.y, at.z + CHEST, fx, fy, fz, sx, sy, sz, len2)
+					if d2 <= near2 then
+						r.flybys[e.id] = true
+						local len = math.sqrt(len2)
+						try("near miss", function()
+							local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id,
+								Position = { x = cx, y = cy, z = cz }, Direction = { x = sx / len, y = sy / len, z = sz / len } })
+							XGenAIModule.SendMessageToEntityData(e.this.id, "weapon:onPlayerArrowFlyingBy", msg)
+						end)
+					end
 				end
 			end
 		end

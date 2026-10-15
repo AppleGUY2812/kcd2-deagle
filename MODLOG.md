@@ -751,4 +751,8 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - 2026-10-15 (later): with the shared list the near miss still took 93 -> 55 fps (the user: gone with `nearMiss 0`):
   every step of every round still asked the engine about all ~44 NPCs in it (`actor:IsDead` + `GetWorldPos`). The list
   now keeps their positions; a step asks the engine only about an NPC within 30 m of its path.
+- 2026-10-15 (third): still 2 ms a frame. Every function in the game wrapped with a timer (5125, from `_G`'s tables),
+  idle vs shooting: FlyBy 2.00 of the 2.31 ms the rounds added; the per-NPC cull built small tables (vsub/vadd/...) for
+  44 NPCs per step. Now plain numbers, and a whole-list box reject first. My "0.00 ms" check before this was run with
+  `nearMiss 0` set (FlyBy returned at once): set the setting inside a timing snippet.
 
