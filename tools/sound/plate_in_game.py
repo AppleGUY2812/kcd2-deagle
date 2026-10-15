@@ -8,8 +8,9 @@ against 7 shots with no plate), which the game already plays.
 
 usage: plate_in_game.py <recording.wav> <hits.json> <hit number> <outdir> [tag:full:gain[:tones] ...]
 Every variant on the same rendered shots (Ready or Not picks a random take per render). full: plate_rings.CLANK_FULL
-in s; gain: dB over the clip's balance; tones: all (default: plate_rings.all_tones, with the second pass) or first
-(only plate_rings.tones, the plate as it was before 2026-10-15)."""
+in s; gain: dB over the clip's balance; tones: all (default: plate_rings.all_tones, with the second pass), first
+(only plate_rings.tones, the plate as it was before 2026-10-15) or whole (the plate plus everything plate_rings leaves
+out after the strike: Hickok's own recording from the strike on, his gun's echo, voice and music included)."""
 import json, os, subprocess, sys
 import numpy as np, soundfile as sf
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -32,6 +33,7 @@ def main():
     x, _ = sf.read(src, start=int((h["shot"] - 1) * sr), stop=int((h["shot"] + h["onset"] + pr.RING_LEN + .5) * sr))
     x = x.mean(1) if x.ndim > 1 else x
     found = {"all": pr.all_tones(x, sr, 1.0, h["onset"]), "first": pr.tones(x, sr, 1.0, h["onset"])}
+    found["whole"] = found["all"]
     pk = int(.95 * sr) + int(np.argmax(np.abs(x[int(.95 * sr): int(1.05 * sr)])))      # the clip's bang
     echo_clip = rms(hi(x, sr)[pk + int(.07 * sr): pk + int(.11 * sr)])
     clip = x[pk - int(.3 * sr): pk + int(2.2 * sr)]
@@ -47,7 +49,8 @@ def main():
     mixes = {}
     for tag, full, gain_db, which in variants:
         pr.CLANK_FULL = float(full)
-        plate, _, at0 = pr.ring(x, sr, 1.0, h["onset"], found[which])
+        plate, rest, at0 = pr.ring(x, sr, 1.0, h["onset"], found[which])
+        if which == "whole": plate = plate + rest
         delay = (at0 - pk) / sr                                 # the plate after the clip's bang
         mix = g.copy()
         for b in bangs:
