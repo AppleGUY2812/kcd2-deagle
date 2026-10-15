@@ -167,7 +167,8 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   ends a run at once; a run also stops itself when frames stay over 150 ms for a second.
 - `deagle_lua Deagle:Stress('spawn <name> <per second>')`: one system's cost on its own. A registered spawner runs N
   times a second at the spot you look at (10 m ahead if nothing), 10 s, no gun, same `STRESS` lines. `hole` = bullet
-  holes as the game makes them (no budget); `hitsound` = a stone hit sound with no budget, `hitsound_budget` = the same through the sound budget, `plate` = the steel plate file, `gunshot3p` = the gun's 3D shot there (sound.lua; the plugin log's `ron: update` line gives the microseconds per sound start); a wrong name lists the registered ones. Owners add theirs with
+  holes as the game makes them (no budget); `fx_<effect>` = one impact effect raw, no budget, light or extra rays
+  (`fx_metal`, `fx_soil`, `fx_stone`, `fx_water`, `fx_water_v3`, `fx_metal_v2`, ...); `light` = the impact light pool; `hitsound` = a stone hit sound with no budget, `hitsound_budget` = the same through the sound budget, `plate` = the steel plate file, `gunshot3p` = the gun's 3D shot there (sound.lua; the plugin log's `ron: update` line gives the microseconds per sound start); a wrong name lists the registered ones. Owners add theirs with
   `Deagle.StressSpawners.<name> = function(pos, normal, i) ... end`. kcd.log gets a
   `STRESS` line every 0.5 s: frame time split into our Lua and the engine, rounds in the air, tracer commands sent;
   after each phase a `STRESS ==` line: frame time p50 / p95 / p99 / max and the mod's Lua per frame against the budget

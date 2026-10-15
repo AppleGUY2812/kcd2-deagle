@@ -89,6 +89,18 @@ function Deagle:FxBudget(name, pos, scale)
 	return true
 end
 
+-- the spawn itself: through the plugin (drawn from its first frame, held FX_HOLD s) or the old Lua way
+local function spawnRaw(self, name, pos, normal, scale)
+	local lib = string.match(name, "^([%w_]+)%.")
+	if self.cfg.impactSpawn == "plugin" and self.native and PLUGIN_FX[lib] and pos and normal then
+		-- fxs <effect> <scale> <box length m along the normal> <pos> <dir> <hold s>: drawn from its first frame
+		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f %.2f", name, scale or 1.0, 0.3,
+			pos.x, pos.y, pos.z, normal.x, normal.y, normal.z, FX_HOLD[name] or 2))
+		return
+	end
+	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
+end
+
 function Deagle:SpawnFx(name, pos, normal, scale)
 	if not name then return end
 	if self.cfg.impactLook == "new" and LOOK_NEW[name] then name = LOOK_NEW[name] end
@@ -113,13 +125,7 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 		end
 		normal = coneDir(normal, vary.tilt)
 	end
-	if self.cfg.impactSpawn == "plugin" and self.native and PLUGIN_FX[lib] and pos and normal then
-		-- fxs <effect> <scale> <box length m along the normal> <pos> <dir>: drawn from its first frame
-		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f %.2f", name, scale or 1.0, 0.3,
-			pos.x, pos.y, pos.z, normal.x, normal.y, normal.z, FX_HOLD[name] or 2))
-		return
-	end
-	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
+	spawnRaw(self, name, pos, normal, scale)
 end
 
 -- Impact lights (the user 2026-10-15, for a CIWS: "impacts allow me to light up the entire environment"): sparks and
@@ -179,6 +185,16 @@ function Deagle:ImpactLight(name, pos, normal, scale)
 		end
 	end)
 end
+
+-- deagle_stress spawn (docs/ARCHITECTURE.md step 4): one impact effect's own cost at 30 / 100 / 300 a second, raw (no
+-- budget, no light, no extra rays): fx_<effect> for every effect in FX_HOLD (fx_metal, fx_soil, fx_water_v3, ...);
+-- light = the impact light pool on its own (its cap of cfg.impactLight.max stays)
+Deagle.StressSpawners = Deagle.StressSpawners or {}
+for full in pairs(FX_HOLD) do
+	local short = full:match("^deagle_impacts%.(.+)$")
+	if short then Deagle.StressSpawners["fx_" .. short] = function(pos, normal) spawnRaw(Deagle, full, pos, normal, 1) end end
+end
+Deagle.StressSpawners.light = function(pos, normal) Deagle:ImpactLight("deagle_impacts.metal", pos, normal, 1) end
 
 function Deagle:FxTest(name)
 	name = unquote(name)

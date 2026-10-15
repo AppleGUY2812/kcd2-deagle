@@ -34,5 +34,15 @@ local direct = 0
 for _, f in ipairs(M.fxLog or {}) do if f.n == "deagle_impacts.stone" then direct = direct + 1 end end
 local spawnedFx = math.max(fxs, direct)
 check("effect budget: 75 hits on one spot at once spawn at most the burst", spawnedFx >= 1 and spawnedFx <= D.cfg.fxBudget.burst, spawnedFx)
+-- the stress spawners: every impact effect raw (no budget), and the light pool
+local S = Deagle.StressSpawners or {}
+check("stress spawners: fx_metal, fx_soil, fx_water_v3 and light registered", S.fx_metal and S.fx_soil and S.fx_water_v3 and S.light, S.fx_metal)
+local b2 = #M.native
+for i = 1, 40 do S.fx_soil({ x = 20, y = 0, z = 0 }, { x = 0, y = 0, z = 1 }, i) end
+local raw = 0
+for i = b2 + 1, #M.native do if M.native[i]:find("^%[DN%] fxs deagle_impacts%.soil ") then raw = raw + 1 end end
+local rawLua = 0
+for _, f in ipairs(M.fxLog or {}) do if f.n == "deagle_impacts.soil" then rawLua = rawLua + 1 end end
+check("stress spawner fx_soil: raw, all 40 spawned (no budget)", math.max(raw, rawLua) == 40, math.max(raw, rawLua))
 print(fails == 0 and "EFFECTS OK" or ("EFFECTS FAILED: " .. fails))
 os.exit(fails == 0 and 0 or 1)
