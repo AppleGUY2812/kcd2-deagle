@@ -106,6 +106,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `range` | `250` | metres a round flies before it's dropped |
 | `holeSize` | `0.035` | bullet hole size in m for a 9 mm (bigger rounds scale it up) |
 | `holeLife` | `300` | seconds a bullet hole stays |
+| `holeBudget.on` | `true` | bullet hole budget: no hole within `holeBudget.near` (0.1 m) of one made in the last `holeBudget.nearTime` (0.5 s) on the same face, then at most `holeBudget.rate` (30) a second after a burst of `holeBudget.burst` (15); skips are logged. `0` = every hit a hole (at 75 rounds/s that took the frame to 250 ms) |
 | `hitReactions` | `true` | NPCs flinch / stagger when hit (KCD2's own reactions, needs the plugin) |
 | `hitReactType` | `0` | which of KCD2's reaction sets plays (0 = normal hits; 3 = collision, big staggers only) |
 | `hitReactMajor` | `50` | health lost from which a hit is a big stagger instead of a flinch |
