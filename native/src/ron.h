@@ -24,5 +24,8 @@ void RonGlobal(const char* name, float value);
 bool RonHold(const char* event, bool on);
 void RonSpeed(float speed);    // game speed (slow motion): the whole engine plays at it
 void RonVolume(float vol);     // the final fader
+// soak counters (docs/PERFORMANCE.md "Soak line"): Ready or Not's voices playing (virtual + real) and real, and the
+// sounds still on their way (travel queue). All 0 before RonInit.
+void RonStats(int* voices, int* real, int* pending);
 // test helper: run n engine updates (offline rendering advances 1024 samples per update)
 void RonStep(int n);

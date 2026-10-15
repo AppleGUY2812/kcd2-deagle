@@ -53,6 +53,7 @@ typedef int (__stdcall* C_DspGetI)(void* dsp, int idx, int* v, char* s, int len)
 typedef int (__stdcall* C_DspGetF)(void* dsp, int idx, float* v, char* s, int len);
 typedef int (__stdcall* C_DspSetI)(void* dsp, int idx, int v);
 typedef int (__stdcall* C_DspSetF)(void* dsp, int idx, float v);
+typedef int (__stdcall* C_Playing)(void* core, int* channels, int* real);
 
 static struct {
 	S_Create create; S_Core core; S_Init init; S_LoadBank loadBank; S_Sys update, release, flush; S_GetEvent getEvent;
@@ -63,7 +64,7 @@ static struct {
 	C_ChanI chanPaused; C_Listener coreListener;
 	S_GetBus getBus; S_Inst busLock; S_BusCG busCG; C_CreateGroup createGroup; C_CreateDSP createDSP; C_GroupN groupNumDSPs;
 	C_GroupDSP groupDSP; C_GroupAddDSP groupAddDSP; C_DspType dspType; C_DspGetI dspGetI; C_DspGetF dspGetF; C_DspSetI dspSetI;
-	C_DspSetF dspSetF;
+	C_DspSetF dspSetF; C_Playing playing;
 } st{};
 
 static std::mutex g_mu;            // Lua commands and the camera step can come from different threads
@@ -174,7 +175,7 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 		& Get(core, st.groupDSP, "FMOD_ChannelGroup_GetDSP") & Get(core, st.groupAddDSP, "FMOD_ChannelGroup_AddDSP")
 		& Get(core, st.dspType, "FMOD_DSP_GetType") & Get(core, st.dspGetI, "FMOD_DSP_GetParameterInt")
 		& Get(core, st.dspGetF, "FMOD_DSP_GetParameterFloat") & Get(core, st.dspSetI, "FMOD_DSP_SetParameterInt")
-		& Get(core, st.dspSetF, "FMOD_DSP_SetParameterFloat");
+		& Get(core, st.dspSetF, "FMOD_DSP_SetParameterFloat") & Get(core, st.playing, "FMOD_System_GetChannelsPlaying");
 	if (!ok) return false;
 	void* sys = nullptr;
 	int r = st.create(&sys, 0x00020310);   // FMOD 2.03.10, the version Ready or Not ships
@@ -409,6 +410,14 @@ bool RonHold(const char* event, bool on) {
 
 void RonSpeed(float speed) { std::lock_guard<std::mutex> lk(g_mu); g_speed = speed; ApplyMaster(); }
 void RonVolume(float vol) { std::lock_guard<std::mutex> lk(g_mu); g_vol = vol; ApplyMaster(); }
+
+void RonStats(int* voices, int* real, int* pending) {
+	std::lock_guard<std::mutex> lk(g_mu);
+	*voices = *real = *pending = 0;
+	if (!g_core) return;
+	st.playing(g_core, voices, real);
+	*pending = (int)g_pending.size();
+}
 
 void RonStep(int n) {
 	for (int i = 0; i < n; i++) RonUpdate(nullptr);
