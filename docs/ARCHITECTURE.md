@@ -11,6 +11,15 @@ from here. Keep it current: what's decided, what's measured, what's next.
 - Ready or Not's muzzle flash, sound and effects, measured against RoN, not guessed.
 - "This bridge seems very brittle and not professional": the Lua <-> plugin text bridge.
 
+## The bar (the user, 2026-10-15)
+"A 60 player lobby with full auto guns in Phantom Forces shooting auto guns, that is the bare minimum." At ~800
+rounds/min each (typical full auto; Phantom Forces' own numbers not checked), all 60 firing = ~800 rounds/s; target
+**1000 rounds/s, 60 fps, p99 frame <= 16.7 ms**, every round a real round (~700 in flight), 2000-4000 hits/s. This needs:
+hit budgets by priority (full effects near and on screen, merged / cheaper far, none unseen) instead of flat caps;
+the fast-fire mode for every shooter (looped distant sound, small flash, tracer every Nth); NPC gunners themselves
+(AI, animation) are KCD2's cost and a project of their own. Benchmark: a `lobby` stress mode, 60 invisible gun spots
+around the player, full auto ~13 rounds/s each, across the map: same rounds, hits, sounds and tracers, no NPCs.
+
 ## Where we are (measured in game 2026-10-15; details in docs/PERFORMANCE.md and MODLOG.md)
 - **Lua** (KCD2's official mod scripting, patch-stable, hot-reloadable with `tools/live.sh reload`): 14 modules in
   `src/Scripts/Deagle/` plus `ballistics.lua`, `killcam.lua`, `guns/`. Owners are listed in CLAUDE.md "Who edits what".
