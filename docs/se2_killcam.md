@@ -94,3 +94,13 @@ Clavicle L/R + Tube, Windpipe upper / lower, destroyed_heart, Lung left / right 
 `...EntryWound` / `...ExitWound` / `...nExitWound` (62-71 KB). Also the weapons and the soldiers' hats and heads.
 Next: the vertex / index layout (counts and stride after the sub-mesh name), then an OBJ exporter
 (tools/se2/hskn.py) to bring the real organs and bones into KCD2.
+
+### Round 10: HSKN sub-mesh header (partly decoded)
+Per sub-mesh, after its name `<model>_NN\0`: `00` pad, u32 data size (LE; mesh 01 of BCV_Skull_04 = 0x11e0 = 4576 B,
+the region to the next name is that + 5), `0d 00 00 00` (13, constant), two LE counts (36 / 86, 51 / 128, 26 / 60, 45 /
+106, 31 / 68, 23 / 50 for the six meshes of BCV_Skull_04), `01 01 01 00` flags, `00 ff ff 00`, `c9`, then packed 16-bit
+data. The two counts are not simply vertices and triangles at a fixed stride (no linear fit of size on them across the
+six meshes), so there are more blocks than positions + indices (weights, UVs, the 8-float control-point records).
+The loader is bin/SEV2_Remastered.exe 0x8fc50 (1756 B), called from the chunk switch at 0x91f80 (HSKN case 0x92e83): it
+reads a 0x18-byte header, then through a stream vtable (`[rax+8]` = read n bytes: 1, 4 and 0x10 at a time; one 0xc8
+block). Next: follow those reads to the vertex / index counts, or fit the data against a known mesh (BCV_Eyeball).
