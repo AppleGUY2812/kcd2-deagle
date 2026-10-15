@@ -149,3 +149,12 @@ even offset, keeping the shortest triangle edges among organ-sized (1-50 cm) sha
 with the optic nerve (28 x 31 x 125 mm), testicle and tube. destroyed_heart (the blast) isn't right yet (its vertices
 are probably morph / piece records). Picture: Desktop\Deagle Progress\24 Sniper Elite organs\organ models from their data.png.
 Next: UVs (the duplicated u32 at the start of each 36-byte record) and the KCD2 import.
+
+### Round 15: UVs
+The u32 at the start of each 36-byte vertex record (stored twice, UV0 and UV1) is a **half2 UV**, at `pos_off - 16 + 36 i`.
+Checked by painting their own textures on the models (Desktop\Deagle Progress\24 Sniper Elite organs\organs textured
+from their data.png): heart / lungs / windpipe with heartlungs_colspec, kidney / liver with gutsliverkidneys_colspec, the
+eyeball with eyeball_d. The OBJ files (E:\Tools\deagle-work\se2\organs) carry `vt` now (v flipped for OBJ).
+Texture per model: heart, lungs, windpipe = heartlungs; kidneys, liver, intestines = gutsliverkidneys; bones = bones_colspec
+(+ bone_detail_nd); eyeball = eyeball_d; testicles = testes_col; wound models = wounds_colspec / heartsplat / teeth.
+Next: the KCD2 import (OBJ -> model with these textures) and the `deagle_organ <name>` test command.

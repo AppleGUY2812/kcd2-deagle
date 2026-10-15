@@ -79,9 +79,9 @@ def organs(b):
         pos_off, tri, edge, q = lay
         pos = np.lib.stride_tricks.as_strided(np.frombuffer(raw, dtype=np.uint8)[pos_off:], shape=(nv, 8), strides=(36, 1)).copy()
         pos = pos.view("<f2").astype(np.float32).reshape(nv, 4)[:, :3]   # metres
-        best = (edge, q, tri)
-        tri = best[2]
-        yield {"name": name, "nv": nv, "ntri": ntri, "raw_pos": pos, "tri": tri, "box": box, "nA": na, "edge": edge, "idx_at": q, "flags": flags, "pos_off": pos_off}
+        uv = np.lib.stride_tricks.as_strided(np.frombuffer(raw, dtype=np.uint8)[pos_off - 16:], shape=(nv, 4), strides=(36, 1)).copy()
+        uv = uv.view("<f2").astype(np.float32).reshape(nv, 2)   # the u32 at the record start (twice): half2 UVs
+        yield {"name": name, "nv": nv, "ntri": ntri, "raw_pos": pos, "tri": tri, "box": box, "nA": na, "edge": edge, "idx_at": q, "flags": flags, "pos_off": pos_off, "uv": uv}
 
 def write_obj(path, m, scale=None):
     p = m["raw_pos"]
@@ -91,7 +91,8 @@ def write_obj(path, m, scale=None):
     with open(path, "w") as f:
         f.write(f"# {m['name']} (Sniper Elite V2, private)\n")
         for v in p: f.write("v %.6f %.6f %.6f\n" % tuple(v))
-        for a, b_, c in m["tri"]: f.write(f"f {a + 1} {b_ + 1} {c + 1}\n")
+        for t in m["uv"]: f.write("vt %.5f %.5f\n" % (t[0], 1.0 - t[1]))
+        for a, b_, c in m["tri"]: f.write(f"f {a + 1}/{a + 1} {b_ + 1}/{b_ + 1} {c + 1}/{c + 1}\n")
 
 if __name__ == "__main__":
     blob = load(sys.argv[1])
