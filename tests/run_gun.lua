@@ -389,6 +389,17 @@ do
 	check(string.format("deagle_stress 20 aim ab: %d fire-phase summaries (4), effects / holes / sounds put back %s %s %s", summaries,
 		tostring(Deagle.SpawnFx == fxWas), tostring(Particle.CreateMatDecal == decalWas), tostring(Deagle.HitSound == soundWas)),
 		summaries == 4 and Deagle.SpawnFx == fxWas and Particle.CreateMatDecal == decalWas and Deagle.HitSound == soundWas and Deagle.stress == nil, summaries)
+	-- spawn mode: a registered spawner N times a second at one spot, 10 s, no gun (Claude 5's plan step 4)
+	local calls, shotsBefore = 0, shots
+	Deagle.StressSpawners.test = function(pos, normal, i) calls = calls + 1 end
+	M.console("deagle_lua", "Deagle:Stress('spawn test 30')")
+	if not Deagle.stress then Deagle:Stress("spawn test 30") end
+	M.advance(16, 60)
+	local spawnStart = false
+	for _, l in ipairs(M.logs) do if l:find("STRESS start: spawn test, 30 a second") then spawnStart = true end end
+	check(string.format("deagle_stress spawn test 30: %d spawner calls in 10 s (300 due), %d shots, started %s, done %s", calls, shots - shotsBefore,
+		tostring(spawnStart), tostring(Deagle.stress == nil)), spawnStart and calls >= 290 and calls <= 310 and shots == shotsBefore and Deagle.stress == nil, calls)
+	Deagle.StressSpawners.test = nil
 	-- deagle_stress stop ends a run at once and puts everything back
 	local vtWas = Deagle.VmTick
 	M.console("deagle_stress", "75")

@@ -175,6 +175,17 @@ local STRESS_AB = {
 	{ "FIRE no holes", 4, true, true, "holes" }, { "rest", 3, false, true },
 	{ "FIRE no hit sounds", 4, true, true, "sounds" }, { "rest", 3, false, true },
 }
+-- Spawn mode (Claude 5's plan step 4): deagle_lua Deagle:Stress('spawn <name> <per second>') calls a registered
+-- spawner N times a second at one fixed spot ahead of the camera (where the view hits, else 10 m out) for 10 s, with
+-- no gun and no ballistics, so one system's cost per event shows on its own. Owners register theirs:
+-- Deagle.StressSpawners[name] = function(pos, normal, i) ... end (the table survives a reload).
+local STRESS_SPAWN = { { "idle", 2, false, true }, { "SPAWN", 10, true, true }, { "rest", 3, false, true } }
+Deagle.StressSpawners = Deagle.StressSpawners or {}
+-- bullet holes as the game makes them (no budget): soil
+Deagle.StressSpawners.hole = function(pos, normal)
+	Particle.CreateMatDecal({ x = pos.x + normal.x * 0.005, y = pos.y + normal.y * 0.005, z = pos.z + normal.z * 0.005 }, normal,
+		Deagle.cfg.holeSize, Deagle.cfg.holeLife, "Materials/deagle/decals/bullet_hole_soil", math.random() * 360, normal)
+end
 local noop = function() end
 -- switch one part of a hit off for a phase (X.offOrig keeps what to put back)
 local function stressOff(X, what)
@@ -232,10 +243,23 @@ function Deagle:Stress(arg)
 	for w in tostring(Deagle.Arg(arg) or ""):gmatch("%S+") do words[#words + 1] = w end
 	if words[1] == "stop" then return self:StressStop("stopped") end
 	if self.stress then return end
-	local rps = math.max(1, math.min(2000, tonumber(words[1]) or 10))
+	local spawner, spawnName
+	if words[1] == "spawn" then
+		spawnName = words[2] or ""
+		spawner = Deagle.StressSpawners[spawnName]
+		if not spawner then
+			local names = {}
+			for k in pairs(Deagle.StressSpawners) do names[#names + 1] = k end
+			table.sort(names)
+			log("$4STRESS: no spawner '" .. spawnName .. "' (registered: " .. table.concat(names, ", ") .. ")")
+			return
+		end
+		table.remove(words, 1); table.remove(words, 1)
+	end
+	local rps = math.max(1, math.min(2000, tonumber(words[1]) or (spawner and 30 or 10)))
 	local perFrame = math.max(8, math.ceil(rps / 30))   -- shots a frame at most (a long frame doesn't dump a burst)
-	local mode = words[2] == "aim" and "aim" or "sky"
-	local phases = words[3] == "ab" and STRESS_AB or STRESS
+	local mode = spawner and "spawn" or (words[2] == "aim" and "aim" or "sky")
+	local phases = spawner and STRESS_SPAWN or (words[3] == "ab" and STRESS_AB or STRESS)
 	local clock = System.GetCurrAsyncTime
 	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0,
 		orig = {}, frames = {}, luas = {} }
@@ -293,6 +317,23 @@ function Deagle:Stress(arg)
 			s.cfg.tracers = ph[4]
 			nextShot = nextShot or g
 			if not ph[3] then nextShot = g
+			elseif mode == "spawn" then
+				if not X.spot then   -- where the view hits now (10 m out if nothing), for the whole run
+					local eye, dir, hits = System.GetViewCameraPos(), System.GetViewCameraDir(), {}
+					local okR, nR = pcall(Physics.RayWorldIntersection, eye, vscale(dir, 30), 1, ent_all, s:Player().id, nil, hits)
+					local h = okR and nR and nR > 0 and hits[1]
+					X.spot = h and { pos = h.pos, normal = h.normal } or { pos = vadd(eye, vscale(dir, 10)), normal = vscale(dir, -1) }
+				end
+				local n = 0
+				local a0 = clock()
+				while g >= nextShot and n < perFrame do
+					X.spawned = (X.spawned or 0) + 1
+					pcall(spawner, X.spot.pos, X.spot.normal, X.spawned)
+					nextShot, n = nextShot + 1 / rps, n + 1
+				end
+				local d = clock() - a0
+				X.lua, X.frameLua = X.lua + d, X.frameLua + d
+				if g >= nextShot then nextShot = g end
 			elseif (mode == "sky" and System.GetViewCameraDir().z > 0.5) or (mode == "aim" and not aimsAtLife(s)) then
 				local n = 0
 				while g >= nextShot and n < perFrame do   -- every shot due this frame
@@ -329,10 +370,14 @@ function Deagle:Stress(arg)
 		lastA, lastG = a, g
 		return vt(s, ...)
 	end
-	log(string.format("STRESS start: %d rounds a second, %s%s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky",
-		phases == STRESS_AB and ", impact A/B" or ""))
+	if spawner then log(string.format("STRESS start: spawn %s, %d a second at one spot ahead, no gun", spawnName, rps))
+	else
+		log(string.format("STRESS start: %d rounds a second, %s%s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky",
+			phases == STRESS_AB and ", impact A/B" or ""))
+	end
 	local total = 0
 	for _, ph in ipairs(phases) do total = total + ph[2] end
-	self:Notify(mode == "aim" and string.format("stress test: %d rounds/s where you look, %d s", rps, total)
+	self:Notify(mode == "spawn" and string.format("stress test: %s x%d a second, %d s", spawnName, rps, total)
+		or mode == "aim" and string.format("stress test: %d rounds/s where you look, %d s", rps, total)
 		or string.format("stress test: %d rounds/s, look at the sky for %d s", rps, total))
 end

@@ -164,7 +164,11 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   is a CIWS); `aim` fires where you look with no recoil, impacts included, and holds fire while you look at a person or an animal.
   5 s with tracers, a pause, 5 s without. A third word `ab` (`deagle_stress 75 aim ab`, 30 s) fires with everything,
   then with the impact effects off, the holes off, the hit sounds off: which part of a hit costs. `deagle_stress stop`
-  ends a run at once; a run also stops itself when frames stay over 150 ms for a second. kcd.log gets a
+  ends a run at once; a run also stops itself when frames stay over 150 ms for a second.
+- `deagle_lua Deagle:Stress('spawn <name> <per second>')`: one system's cost on its own. A registered spawner runs N
+  times a second at the spot you look at (10 m ahead if nothing), 10 s, no gun, same `STRESS` lines. `hole` = bullet
+  holes as the game makes them (no budget); a wrong name lists the registered ones. Owners add theirs with
+  `Deagle.StressSpawners.<name> = function(pos, normal, i) ... end`. kcd.log gets a
   `STRESS` line every 0.5 s: frame time split into our Lua and the engine, rounds in the air, tracer commands sent;
   after each phase a `STRESS ==` line: frame time p50 / p95 / p99 / max and the mod's Lua per frame against the budget
   (1.0 ms average, 2.0 ms p99, docs/PERFORMANCE.md): PASS or OVER.
