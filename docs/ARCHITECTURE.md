@@ -58,6 +58,14 @@ from here. Keep it current: what's decided, what's measured, what's next.
    - the soak line (docs/PERFORMANCE.md);
    - perf checks in `tests/run_all.sh`.
 
+## Resources
+- CryEngine's online documentation (WebSearch / WebFetch), and the public CRYENGINE 5 source on GitHub. Clone it
+  shallow into `E:\Tools\` when needed, without asking the user to download anything. It maps the engine's insides
+  (decal manager, particle system pfx1 / pfx2, physics ray queues, IScriptSystem).
+- KCD2 runs Warhorse's own fork of an older CryEngine (WHGame 1.5.6): public docs and source are a map, not proof.
+  Confirm every offset and behaviour in the game binary (the rea reverse-engineering tools; MODLOG has the method)
+  and in game.
+
 ## Questions to answer first (research and reverse engineering)
 - Does KCD2 still contain CryEngine's newer particle system (pfx2 / "wavicle": GPU particles, curves)? It's much
   closer to RoN's Niagara than the legacy pfx1 we bake into.
