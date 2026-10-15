@@ -50,12 +50,29 @@ check(string.format("idle: under 5 KB of Lua garbage a frame (%.2f KB; 3.97 on 2
 Deagle.state.ammo = 999
 reset()
 n0 = #M.native
+-- who makes the garbage: KB allocated inside each Deagle function (inclusive: a caller counts its callees too; the
+-- mock's Physics.RayWorldIntersection builds its hit tables in Lua, which the engine doesn't)
+local gc, wrapped = {}, {}
+local function finish(k, a, ...) gc[k] = (gc[k] or 0) + collectgarbage("count") - a return ... end   -- no table of its own
+for k, f in pairs(Deagle) do
+	if type(f) == "function" and k ~= "Native" then
+		wrapped[k] = f
+		Deagle[k] = function(...) return finish(k, collectgarbage("count"), f(...)) end
+	end
+end
 collectgarbage("collect"); collectgarbage("stop")
 kb0 = collectgarbage("count")
 for _ = 1, 30 do Deagle:Shoot(true); M.advance(0.1) end
 local roundFrames = 0
 for _ = 1, 180 do roundFrames = roundFrames + #(Deagle.rounds or {}); M.advance(1 / 60) end
 local shootKb = (collectgarbage("count") - kb0) / 360
+for k, f in pairs(wrapped) do Deagle[k] = f end
+local top = {}
+for k, v in pairs(gc) do top[#top + 1] = { k, v / 360 } end
+table.sort(top, function(a, b) return a[2] > b[2] end)
+local tl = {}
+for i = 1, math.min(8, #top) do tl[#tl + 1] = string.format("%s %.1f", top[i][1], top[i][2]) end
+print("   shooting garbage by function, KB a frame (inclusive): " .. table.concat(tl, ", "))
 local perRound = roundFrames > 0 and (collectgarbage("count") - kb0) / roundFrames or 0
 collectgarbage("restart")
 print(string.format("   shooting: %.1f KB garbage a frame, ~%.2f KB per round in the air per frame (%d round-frames after the burst)",
