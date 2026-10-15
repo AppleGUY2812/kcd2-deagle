@@ -36,7 +36,7 @@ from here. Keep it current: what's decided, what's measured, what's next.
   - Tracer emitters 128, held impact pieces 256.
   - Impact lights 6, impact effects 30 a second.
 
-## Target (proposed; the lead decides and records it here)
+## Target (agreed direction; decisions below)
 1. **Bounded cost.** A frame's cost is set by budgets, never by the number of rounds or hits. Every spawn goes
    through one budgeted manager: effect, decal, sound, light, emitter. Each manager has pools, priority by distance
    and importance, and merges events that look the same. Every cap hit is logged. Studios do this for miniguns;
@@ -73,37 +73,50 @@ from here. Keep it current: what's decided, what's measured, what's next.
   Confirm every offset and behaviour in the game binary (the rea reverse-engineering tools; MODLOG has the method)
   and in game.
 
-## Questions to answer first (research and reverse engineering)
-- Does KCD2 still contain CryEngine's newer particle system (pfx2 / "wavicle": GPU particles, curves)? It's much
-  closer to RoN's Niagara than the legacy pfx1 we bake into.
-- Bullet holes without a limit: can we spawn CryEngine's projected (deferred) decals at run time in WHGame, or keep a
-  pool of decal render nodes that are moved rather than created? Each `Particle.CreateMatDecal` clips the surface's
-  mesh and allocates a new render mesh; ~200 a second took the frame to 250 ms, recovering within ~1 s of stopping, so
-  creating them costs and drawing them doesn't (the user's A/B run 2026-10-15). It is capped for now
-  (`cfg.holeBudget`); the user asked why drawing an image should need a limit at all.
-- Lights without entities: from Lua a light needs an entity to hang on (`LoadLight` into a slot), so the impact light
-  pool is 6 hidden BasicEntities moved to each hit. A plain BasicEntity got collision by default and they jolted the
-  user at 75 rounds/s (fixed in d6fd352). Can native code hand the renderer a light per frame instead (CryEngine's
-  per-frame render lights / `AddLightToRenderer`-style API in WHGame), with no entity, no physics and no pool to move?
-- Hits by what is drawn, not by the collision tag: KCD2's campfire cauldron is one static brush whose collision is
-  all `mat_wood` (5 rays around the pot, 2026-10-15), so an iron pot sounds and sparks like wood. Can native code read
-  the render material at the hit triangle (the static brush's render node and its .mtl surface type) and use that
-  when it disagrees with the physics surface? That would fix every mis-tagged prop at once.
-- Can native code use queued or batched ray casts (CryEngine `rwi_queue`) in WHGame?
-- Where are IScriptSystem's function-registration entry points in WHGame 1.5.6 (for the typed binding)?
-- The loader/core split with MinHook: the loader owns the hooks, the core gets callbacks. How to hand state over on
-  reload, and how to fail safely.
+## Answers to the first questions (Claude 5, 2026-10-15; static reverse engineering of WHGame 1.5.6, none run in game yet)
+Full notes with addresses, offsets and struct layouts: `docs/whgame_re/` (one file per question). "Static" = read
+from the binary with capstone; every claim still needs its in-game probe (migration step 1).
 
-## Migration plan (proposal; one step at a time, measured, ALL SUITES PASS after each)
-1. Typed binding for the hottest commands first (`fxr`, `ron3` / `snd`, `kick`), the text bridge kept until each one
-   is moved and measured.
-2. Loader / core split plus a reload command.
-3. Spawn managers with budgets: sounds (Claude 3), effects and lights (Claude 2), decals and tracers (Claude 4).
-4. Native round simulation behind a setting. Claude 1's ballistics tests (run_ballistics, run_penetration,
-   run_killcam) are the contract; `Deagle:StepRound` / `MoveRound` / `Impact` / `ApplyHit` are the semantic references.
-   A/B against Lua, then the round cap goes (now `cfg.impactCap.maxRounds`, default 64; at 75 rounds/s ~43 are alive
-   with `range` 250 m, so it bites from ~110 rounds/s).
-5. Effects fidelity: pfx2 if it exists.
+| Question | Answer | Confidence | Notes |
+|---|---|---|---|
+| pfx2 / GPU particles? | **Absent.** No pfx2 class, no .pfx asset in 109 paks; `e_ParticlesConvertPfx1` and `r_GpuParticles` are registered but never read; GpuParticles shaders were never compiled. pfx1 only. Useful instead: `IParticleEmitter::EmitParticle` (vt +0x2C8) fires extra particles from one existing emitter, and `IParticleManager::CreateEmitter` (+0x68) builds one without XML. | ~95 % | particles_pfx2.md |
+| Bullet holes without a limit? | Lua decals are **already deferred** (`e_DecalsDeferredDynamic` 1: no mesh clipping). Two real limits: the decal manager's ring `CDecal[512]` advancing 2 per decal (~256 live, oldest overwritten whatever `holeLife` says), and the renderer draws at most `r_deferredDecalsMaxLimit` 1280 deferred decals a frame (the rest dropped silently). The in-game A/B (200 holes/s = 4 fps, builds ~1.5 s, clears ~1 s) disagrees with "creation is cheap": the best static fit is the deferred-decal stage re-binding every live decal each frame while new ones shift the order (0x774d24). Our own pool of `CDecalRenderNode`s (CreateRenderNode(7), moved with SetMatrix) bypasses the 256 ring; 1280 a frame stays the draw ceiling. | medium-low on the cost cause | decals.md; probe: `r_deferredDecalsMaxLimit 0` while firing |
+| Lights without entities? | **Yes**: `C3DEngine::CreateLightSource` (+0x530) gives a light render node, no IEntity, no physics; moved with SetMatrix (+0x80), registered with RegisterEntity (+0x130). There is no per-frame "add light" call outside the render pass. Hard ceiling: the tiled light list keeps **255** per frame (probes and ambient first, ours last, the rest dropped silently); `e_DynamicLightsMaxCount` is never read. So: a pool of ~16-24, hits merged. | high (static) | lights.md |
+| Hits by the drawn material? | **Yes**: the Lua ray result already carries `hit.renderNode` (the CBrush). Native: node +0xB0 GetEntityStatObj, +0x130 GetMaterial, then `CStatObj::RayIntersection` (+0x288) returns the drawn triangle's sub-material and surface id. CPU triangle loop, no acceleration structure: only for suspicious surfaces. Unknown: whether the pot's render sub-material has a surface type (else map by sub-material name, in a table, logged). | high (static) | render_material.md |
+| Queued / batched rays? | **Queued yes, batched no.** `rwi_queue` = 0x800 works: the physics thread ("Physics", on by default) traces the whole queue before each step, results arrive on the main thread 1-2 frames later via the params' OnEvent. `IPhysicalWorld` = gEnv+0x30, RayWorldIntersection vt +0x118 with a 0x70-byte SRWIParams. A synchronous ray from our own thread is legal but takes the same locks as the game's rays. | high (static) | rays.md |
+| Script registration (typed binding)? | `IScriptTable::AddFunction` (+0xB0) with a plain C callback `fn(pH, data, size)`; table from `IScriptSystem::CreateTable` (+0x68), published with `SetGlobalAny` (+0xF8); params via IFunctionHandler +0x38, results +0x40..+0x58. No new byte patterns. **KCD2's Lua is PUC 5.1 with 32-bit float numbers**: entity ids must travel as handles, positions past ~4 km lose millimetres. Errors: return `nil, msg` and let a Lua wrapper raise it (luaL_error longjmps over C++ frames). | high (static) | script_binding.md |
+| Loader / core split? | Loader `.asi` keeps MinHook, patterns, hooks and the Lua C entry points; each hook calls the core through one atomic table; the core DLL is copied before loading so the build can overwrite it; reload at the start of a camera step with no call in flight; state handed over as plain numbers in loader-owned memory (no std containers across, static CRT per DLL); version check, loud failure, hooks then call only the originals. RoN's FMOD stays loaded (no 531 ms bank reload). | design | loader_core.md |
+| How do other games do it? | Native arrays + fixed pools (Dagor tracers 2048 with 15 % kept for the player; CryEngine GameSDK 96 tracers, oldest dropped); queued / batched rays (CryEngine `rwi_queue`, Unity `RaycastCommand`, Unreal async traces one frame late); simulation LOD (ACE3: full detail only for rounds that can matter to the player, 0.05 s steps); a tracer every 4-5 rounds; rapid fire = **a looped burst sound with a tail**, not one sound per shot (War Thunder sound docs, CryEngine 3 audio docs); bullet holes in a ring (Dagor 10,000). No primary source on Tarkov / Squad / Battlefield internals. | documented, sources in the file | other_games_projectiles.md |
+
+## Decisions (Claude 5)
+- Effects stay pfx1. Fidelity comes from baked RoN looks (as now) plus fewer, reused emitters: one emitter per effect
+  type and `EmitParticle` per hit, not an emitter per hit.
+- "Unlimited bullets" = no cap ever removes a round in flight. Cost is bounded by budgets on what a round *causes*
+  (rays per frame, effects, sounds, lights, holes), never by deleting rounds. Far / unseen rounds step less often.
+- Engine ceilings we accept as hard: 255 tiled lights, 1280 deferred decals drawn a frame. Our managers stay under
+  them by merging and priority, and log when they would have gone over.
+- High fire rates (1b) are a weapon mode: loop + tail sound, one continuous flash and light, tracer every Nth round,
+  casing stream. Each round is still simulated.
+- Typed binding first (it makes every later step cheaper and measurable), then the loader / core split (so native
+  steps stop costing the user restarts), then the native round simulation.
+
+## Migration plan (one step at a time, measured, ALL SUITES PASS after each)
+1. **Probe build** (one plugin install, one restart): each probe a console command, read-only or self-cleaning.
+   Probes: hook thread ids; `DN.add` via AddFunction; a queued ray; an entity-free light; the drawn material on
+   the cauldron; 1000 native rays timed. Measure: each probe's log line, plus µs per call / per ray (QPC).
+2. **Typed binding** for `fxr`, `snd` / `ron3`, `kick`; `[DN]` kept until each moves. Measure: µs per call
+   vs `[DN]`'s 6-10; `deagle_stress` Lua ms; run_perf gate "0 `[DN]` lines for moved commands".
+3. **Loader / core split** + `deagle_native_reload`. Measure: reload ms; held emitters / tracer slots equal before
+   and after; a 60 min soak (handles, private MB flat); 20 reloads in a row without a crash.
+4. **Budget managers** (owners build theirs): sounds (Claude 3), effects + entity-free lights (Claude 2), holes +
+   tracers (Claude 4). Measure each alone with a synthetic benchmark (N a second at a fixed spot, no ballistics):
+   frame p99 and engine ms at N = 30 / 100 / 300; plus `r_deferredDecalsMaxLimit 0` to split decal draw cost.
+5. **High fire-rate mode** (1b). Measure: `deagle_stress 1000` and `75` frame p99 and Lua ms (now 4 fps at 1000).
+6. **Native round simulation** behind a setting; Claude 1's suites are the contract; A/B against Lua; then
+   `maxRounds` goes. Measure: µs per round, rays per frame, `deagle_stress 75 / 150 / 1000`, 1000 rounds alive.
+7. **Ray LOD + `rwi_queue`** for far / unseen rounds. Measure: main-thread ray ms, physics step ms (QPC around
+   TracePendingRays), hit position error vs synchronous rays.
+8. **Drawn-material hits** for suspicious surfaces. Measure: µs per test, first-test stall, the cauldron A/B.
 
 ## How to work here
 - Read CLAUDE.md, README.md, TODO.md, MODLOG.md, docs/PERFORMANCE.md, docs/code_navigation.md first.
