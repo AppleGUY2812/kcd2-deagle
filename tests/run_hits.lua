@@ -210,6 +210,24 @@ pastNear()
 check(string.format("near miss: a second round 0 s later sends %d messages, one 1 s later %d", soon, #M.aiMessages), soon == 0 and #M.aiMessages == 1, soon)
 System.GetEntitiesInSphere, Physics.SamplePhysEnvironment = getEnts, sample
 
+-- bullet holes are budgeted like the effects and sounds: 20 hits on one spot make 1 hole, 300 hits spread over 1 s at
+-- most the burst + a second's rate (~200 holes a second took the frame to 250 ms, the user's A/B run 2026-10-15)
+do
+	M.decals = {}
+	Deagle.holeState = nil
+	local up = vec(0, 0, 1)
+	for i = 1, 20 do Deagle:Mark({ hole = "soil" }, { pos = vec(100, 210, 30), normal = up }, vec(0, 1, 0), 1) end
+	local spot = #M.decals
+	M.advance(1.0)
+	M.decals = {}
+	for i = 1, 300 do
+		Deagle:Mark({ hole = "soil" }, { pos = vec(100 + (i % 20) * 0.5, 210 + math.floor(i / 20) * 0.5, 30), normal = up }, vec(0, 1, 0), 1)
+		M.t = M.t + 1 / 300   -- (the clock alone: M.advance steps whole frames)
+	end
+	check(string.format("bullet holes: 20 hits on one spot make %d, 300 spread over 1 s make %d (budget 15 + 30 a second)", spot, #M.decals),
+		spot == 1 and #M.decals >= 40 and #M.decals <= 47, #M.decals)
+end
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

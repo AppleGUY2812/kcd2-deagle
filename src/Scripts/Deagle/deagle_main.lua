@@ -190,6 +190,11 @@ Deagle.cfg = {
 	gore = { ragdollOnKill = true, killPush = 1.0, pushDelay = 60 },
 	bodyExit = 0.35,          -- m from the entry where a through-and-through round goes on
 	holeLife = 300,           -- s a bullet hole stays
+	-- bullet holes like the effects and hit sounds (Deagle:HoleAllowed): none within near m (x the impact scale) of one
+	-- made in the last nearTime s, then at most rate a second after a burst. At 75 rounds/s into the ground ~200 holes a
+	-- second took the frame to 250 ms (engine time: KCD2 builds each decal later in the frame; the user's A/B run
+	-- 2026-10-15, holes off held 51-70 fps)
+	holeBudget = { on = true, rate = 30, burst = 15, near = 0.1, nearTime = 0.5 },
 	bloodPaint = 0.45,        -- actor:AddBlood amount per hit on that body part
 	bleeding = true,          -- non-lethal hits apply the game's bleeding buff
 	bleedingBuff = "0c903899-fcc9-4cf2-9ee3-1130ac08b0fc",

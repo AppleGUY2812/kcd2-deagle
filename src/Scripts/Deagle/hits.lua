@@ -175,11 +175,48 @@ function Deagle:HitStrength(dmg, stam)
 end
 
 -- the mark a round leaves: the surface's effect, sized by the round, and a bullet hole that stays a while
+-- the hole budget (cfg.holeBudget): the last HOLE_RING holes' places and times in plain arrays, a token bucket
+local HOLE_RING = 32
+function Deagle:HoleAllowed(pos, normal, scale)
+	local b = self.cfg.holeBudget
+	if not b or not b.on then return true end
+	local now = System.GetCurrTime()
+	local H = self.holeState
+	if not H or H.last > now then   -- first hole, or the clock went back (a load)
+		H = { x = {}, y = {}, z = {}, nx = {}, ny = {}, nz = {}, t = {}, i = 0, tokens = b.burst, last = now, skipped = 0, said = -math.huge }
+		self.holeState = H
+	end
+	H.tokens, H.last = math.min(b.burst, H.tokens + (now - H.last) * b.rate), now
+	local r = b.near * (scale or 1)
+	local r2, ok = r * r, H.tokens >= 1
+	for k = 1, HOLE_RING do
+		local tk = H.t[k]
+		if ok and tk and now - tk < b.nearTime then
+			local dx, dy, dz = pos.x - H.x[k], pos.y - H.y[k], pos.z - H.z[k]
+			-- the same face only: a plank's exit hole sits 3 cm from its entry, on the other side
+			if dx * dx + dy * dy + dz * dz < r2 and normal.x * H.nx[k] + normal.y * H.ny[k] + normal.z * H.nz[k] > 0.5 then ok = false end
+		end
+	end
+	if not ok then
+		H.skipped = H.skipped + 1
+		if now - H.said >= 2 then
+			H.said = now
+			log(string.format("bullet holes: %d skipped so far (budget %g a second, none within %g m of a fresh one)", H.skipped, b.rate, b.near))
+		end
+		return false
+	end
+	H.tokens = H.tokens - 1
+	H.i = H.i % HOLE_RING + 1
+	H.x[H.i], H.y[H.i], H.z[H.i], H.t[H.i] = pos.x, pos.y, pos.z, now
+	H.nx[H.i], H.ny[H.i], H.nz[H.i] = normal.x, normal.y, normal.z
+	return true
+end
+
 function Deagle:Mark(s, hit, dir, scale, size)
 	local c = self.cfg
 	if s.fx then self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale) end
 	if s.ron then self:HitSound(s.ron, hit.pos, scale) end
-	if s.hole then
+	if s.hole and self:HoleAllowed(hit.pos, hit.normal, scale) then
 		size = (size or c.holeSize) * scale * (0.85 + 0.3 * math.random())
 		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
 			"Materials/deagle/decals/bullet_hole_" .. s.hole, math.random() * 360, dir, hit.entity and hit.entity.id or nil, hit.partid)
