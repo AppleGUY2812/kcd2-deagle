@@ -159,6 +159,9 @@ end
 -- after each phase its frame time p50 / p95 / p99 / max and the mod's Lua per frame (average, p99) against the
 -- budget in docs/PERFORMANCE.md (1.0 ms average, 2.0 ms p99). Functions called inside each other are counted once
 -- (only the outermost). Made after the user's "spammed 3 clips, 140 to 70 fps" (2026-10-15).
+-- deagle_stress [rounds a second] [sky | aim]: any fire rate (a CIWS is ~75; several shots a frame when needed), and
+-- "aim" fires where you look instead of only at the sky, so impacts are measured too; it holds fire while the view
+-- points at a person or an animal (a ray from the eye, 300 m). Lines also count impacts and impact effects.
 local STRESS = {
 	{ "idle", 2, false, true }, { "FIRE tracers on", 5, true, true }, { "stop, tracers off", 3, false, false },
 	{ "idle again", 3, false, false }, { "FIRE tracers off", 5, true, false }, { "stop", 3, false, false },
@@ -166,11 +169,23 @@ local STRESS = {
 local STRESS_LUA = { "VmTick", "VmPlace", "RoundsTick", "Fire", "EnvTick", "MotionTick", "DrawHud" }
 local MOD_AVG, MOD_P99 = 1.0, 2.0   -- ms of our Lua a frame (docs/PERFORMANCE.md)
 local function pct(sorted, q) return sorted[math.max(1, math.min(#sorted, math.ceil(#sorted * q)))] or 0 end
-function Deagle:Stress()
+-- the view's first hit is a living thing (a person, an animal, chickens): "aim" holds fire
+local function aimsAtLife(self)
+	local hits, p = {}, self:Player()
+	local ok, n = pcall(Physics.RayWorldIntersection, System.GetViewCameraPos(), vscale(System.GetViewCameraDir(), 300), 1, ent_all,
+		p and p.id, nil, hits)
+	local e = ok and n and n > 0 and hits[1] and hits[1].entity
+	return e and (e.actor or e.soul or e.OnBoidHit or (type(e.class) == "string" and e.class:find("Boid"))) and true or false
+end
+function Deagle:Stress(arg)
 	if self.stress then return end
+	local words = {}
+	for w in tostring(Deagle.Arg(arg) or ""):gmatch("%S+") do words[#words + 1] = w end
+	local rps = math.max(1, math.min(200, tonumber(words[1]) or 10))
+	local mode = words[2] == "aim" and "aim" or "sky"
 	local clock = System.GetCurrAsyncTime
-	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, orig = {},
-		frames = {}, luas = {} }
+	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0,
+		orig = {}, frames = {}, luas = {} }
 	self.stress = X
 	for _, k in ipairs(STRESS_LUA) do
 		local f = self[k]
@@ -186,9 +201,14 @@ function Deagle:Stress()
 	end
 	X.orig.Native = self.Native
 	self.Native = function(s, cmd, ...)
-		if type(cmd) == "string" and (cmd:sub(1, 4) == "fxs " or cmd:sub(1, 4) == "fxr ") then X.pieces = X.pieces + 1 end
+		if type(cmd) == "string" then
+			local k = cmd:sub(1, 4)
+			if k == "fxr " then X.pieces = X.pieces + 1 elseif k == "fxs " then X.fx = X.fx + 1 end
+		end
 		return X.orig.Native(s, cmd, ...)
 	end
+	X.orig.ApplyHit = self.ApplyHit
+	self.ApplyHit = function(...) X.impacts = X.impacts + 1 return X.orig.ApplyHit(...) end
 	local vt = self.VmTick   -- the timed one: the frame clock goes around it
 	local lastA, lastG, nextShot
 	local function phaseEnd(s, ph)
@@ -213,18 +233,24 @@ function Deagle:Stress()
 			X.luas[#X.luas + 1] = X.frameLua * 1000
 			X.frameLua = 0
 			s.cfg.tracers = ph[4]
-			if ph[3] and System.GetViewCameraDir().z > 0.5 and g >= (nextShot or 0) then
-				s.state.ammo = 7
-				pcall(s.Fire, s, true)
-				nextShot = g + 0.1
-			end
+			nextShot = nextShot or g
+			if not ph[3] then nextShot = g
+			elseif (mode == "sky" and System.GetViewCameraDir().z > 0.5) or (mode == "aim" and not aimsAtLife(s)) then
+				local n = 0
+				while g >= nextShot and n < 8 do   -- every shot due this frame (at most 8: a long frame doesn't dump a burst)
+					s.state.ammo = 7
+					pcall(s.Fire, s, true)
+					nextShot, n = nextShot + 1 / rps, n + 1
+				end
+				if g >= nextShot then nextShot = g end
+			else nextShot = g end
 			if g - w.t >= 0.5 then
 				local rounds = 0
 				for _ in pairs(s.rounds or {}) do rounds = rounds + 1 end
 				local fm, lm = w.sum / w.n * 1000, X.lua / w.n * 1000
-				log(string.format("STRESS %4.1fs %-18s %5.1f ms (%3.0f fps, worst %4.1f) = Lua %4.2f + engine %5.1f | rounds %2d, tracer cmds %4d",
-					g - X.start, ph[1], fm, 1000 / fm, w.max * 1000, lm, fm - lm, rounds, X.pieces))
-				X.lua, X.pieces, X.win = 0, 0, nil
+				log(string.format("STRESS %4.1fs %-18s %5.1f ms (%3.0f fps, worst %4.1f) = Lua %4.2f + engine %5.1f | rounds %2d, tracer cmds %4d, impacts %3d, impact fx %3d",
+					g - X.start, ph[1], fm, 1000 / fm, w.max * 1000, lm, fm - lm, rounds, X.pieces, X.impacts, X.fx))
+				X.lua, X.pieces, X.impacts, X.fx, X.win = 0, 0, 0, 0, nil
 			end
 			if g - X.t0 >= ph[2] then
 				phaseEnd(s, ph)
@@ -241,5 +267,7 @@ function Deagle:Stress()
 		lastA, lastG = a, g
 		return vt(s, ...)
 	end
-	self:Notify("stress test: look at the sky for 21 s")
+	log(string.format("STRESS start: %d rounds a second, %s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky"))
+	self:Notify(mode == "aim" and string.format("stress test: %d rounds/s where you look, 21 s", rps)
+		or string.format("stress test: %d rounds/s, look at the sky for 21 s", rps))
 end

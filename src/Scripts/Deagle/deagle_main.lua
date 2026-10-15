@@ -823,7 +823,7 @@ System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))"
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
 
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")
-System.AddCCommand("deagle_stress", "Deagle:EnsureInit() Deagle:Stress()", "Frame-rate test: infinite-ammo fire into the sky in phases, frame times in kcd.log")
+System.AddCCommand("deagle_stress", "Deagle:EnsureInit() Deagle:Stress([[%line]])", "deagle_stress [rounds a second, default 10] [sky | aim]: frame-rate test, infinite ammo, frame times in kcd.log")
 System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")
 System.AddCCommand("deagle_inspect", "Deagle:Inspect()", "Play the inspect animation")
 System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give()", "Add the Desert Eagle (if missing) and 49 cartridges")

@@ -370,6 +370,16 @@ do
 	check(string.format("deagle_stress: %d shots, %d log lines, %d phase summaries, done %s, functions back %s, tracers back %s", shots, lines,
 		phases, tostring(done), tostring(Deagle.stress == nil), tostring(Deagle.cfg.tracers == tracers)),
 		wrapped and shots >= 90 and shots <= 110 and lines >= 40 and phases == 6 and done and Deagle.stress == nil and Deagle.cfg.tracers == tracers, shots)
+	-- a CIWS rate: 75 rounds a second, more than one shot in some frames, ~750 over the two 5 s fire phases
+	shots = 0
+	M.console("deagle_stress", "75")
+	f = Deagle.Fire
+	Deagle.Fire = function(...) shots = shots + 1 return f(...) end
+	M.advance(22, 60)
+	local started = false
+	for _, l in ipairs(M.logs) do if l:find("STRESS start: 75 rounds a second") then started = true end end
+	check(string.format("deagle_stress 75: %d shots in two 5 s phases (750 due), started %s, done %s", shots, tostring(started), tostring(Deagle.stress == nil)),
+		started and shots >= 700 and shots <= 760 and Deagle.stress == nil, shots)
 	Deagle.Fire = fireWas
 	M.view.pitch = pitch
 end

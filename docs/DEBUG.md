@@ -148,8 +148,10 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 ## Checking effects
 - F9 slow motion, then shoot: flash, smoke, casings, light at 1/10 speed. For the flash go slower: `deagle_slowmo 0.02` (1/50) or `0.01` (1/100).
 - `deagle_fx <effect>` spawns a particle effect 3 m ahead (e.g. `deagle_fx deagle.muzzle`).
-- `deagle_stress`: frame-rate test. Look at the sky (it only fires while you do), type it, keep looking up for 21 s
-  until "stress test done". Infinite ammo, 10 rounds a second: 5 s with tracers, a pause, 5 s without. kcd.log gets a
+- `deagle_stress [rounds a second] [sky | aim]`: frame-rate test. Look at the sky (it only fires while you do), type it,
+  keep looking up for 21 s until "stress test done". Infinite ammo, 10 rounds a second by default (`deagle_stress 75`
+  is a CIWS); `aim` fires where you look, impacts included, and holds fire while you look at a person or an animal.
+  5 s with tracers, a pause, 5 s without. kcd.log gets a
   `STRESS` line every 0.5 s: frame time split into our Lua and the engine, rounds in the air, tracer commands sent;
   after each phase a `STRESS ==` line: frame time p50 / p95 / p99 / max and the mod's Lua per frame against the budget
   (1.0 ms average, 2.0 ms p99, docs/PERFORMANCE.md): PASS or OVER.
