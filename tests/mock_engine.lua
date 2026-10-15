@@ -298,6 +298,10 @@ function M.console(name, arg)
 	local code = M.cmds[name]
 	if not code then table.insert(M.errors, "no console command " .. name) return end
 	-- like KCD2 (checked live): %1 / %line become the argument in quotes ("clear")
+	-- like KCD2 (in game 2026-10-15): a command written with %1 refuses more than one word ("Too many arguments for")
+	if code:find("%%1") and not code:find("%%line") and tostring(arg or ""):find("%S%s+%S") then
+		table.insert(M.errors, "[Warning] Too many arguments for: " .. name) return
+	end
 	local quoted = '"' .. tostring(arg or "") .. '"'
 	code = code:gsub("%%1", function() return quoted end):gsub("%%line", function() return quoted end)
 	local f, err = loadstring(code)

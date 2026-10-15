@@ -3502,7 +3502,9 @@ System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.s
 System.AddCCommand("deagle_fx", "Deagle:FxTest(Deagle.Arg([[%1]]))", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
 System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end; Deagle:RonWarm()", "internal: native plugin handshake")
-System.AddCCommand("deagle_native_caps", "Deagle:NativeCaps([[%1]])", "internal: what the native plugin can do (files)")
+-- %line: the plugin sends several words ("files fxr"); with %1 KCD2 refused the command ("Too many arguments for:
+-- deagle_native_caps", 2026-10-15), so no capability was set at all
+System.AddCCommand("deagle_native_caps", "Deagle:NativeCaps([[%line]])", "internal: what the native plugin can do (files, fxr)")
 System.AddCCommand("deagle_ron_state", "Deagle:RonState([[%1]])", "internal: Ready or Not's sound engine started in the plugin (1) or failed (0)")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
 System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")

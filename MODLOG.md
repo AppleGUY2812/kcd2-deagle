@@ -761,4 +761,7 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   HeapOffset 999996` (heap end reached, the free space fragmented). Now one emitter per round (plugin `fxr <round id>`):
   moved with its box carried along and Restart (+0x268) each frame; let go 0.25 s after its round stops sending. The
   plugin says `deagle_native_caps files fxr`; Lua uses fxr only then. `deagle_stress` measures it (docs/DEBUG.md).
+- 2026-10-15: `deagle_native_caps files fxr` was refused by KCD2 ("[Warning] Too many arguments for:
+  deagle_native_caps"): a console command written with `%1` takes ONE word. No capability was set (fxr tracers and the
+  steel plate files both off). Now `%line`; the mock refuses `%1` commands given several words, like KCD2.
 
