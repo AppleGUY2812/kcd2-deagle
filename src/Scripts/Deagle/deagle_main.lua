@@ -33,9 +33,12 @@ Deagle.cfg = {
 	-- with spawn "plugin" and fx deagle_tracers.trail: seen at once (user). fx "auto": each piece glows about one frame
 	-- (trail_025 / _040 / _060 by the frame time), so the tracer is one streak running with the round, like a real one
 	-- filmed (the user's reference clip), not a line left behind it. trail_025 / _040 / _060 / _080: pieces
-	-- living that long (no fade), a streak running with the round; trail (0.12 s) drew as a 50 m "laser"
+	-- living that long (no fade), a streak running with the round; trail (0.12 s) drew as a 50 m "laser".
+	-- spawn "restart" (default): the same pieces from ONE emitter per round, moved and restarted each frame (plugin
+	-- fxr): a new emitter per round per frame ("plugin") took 140 -> 70 fps spraying three magazines and crashed KCD2
+	-- (DX12 descriptor heap out, 2026-10-15)
 	tracer = { mode = "trail", fx = "auto", dash = 1.0, start = 1.0, length = 1.5, scaled = true, anchor = "start",
-		spawn = "plugin" },
+		spawn = "restart" },
 	-- CS2 accuracy: scale 1 = CS2's own numbers (0.5 = twice as tight, 0 = no spread); crouched = eye under crouchEye m
 	-- (+- crouchBand; measured live: 1.54 standing, 1.02 crouched)
 	accuracy = { scale = 1, crouchEye = 1.27, crouchBand = 0.05 },
@@ -1789,7 +1792,15 @@ function Deagle:TracerBullet(r, from)
 	end
 	local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2   -- where the effect sits; the end is p1
 	local at = vsub(p1, vscale(dir, back))
-	if c.spawn == "plugin" and self.native then   -- seen from its first frame (plugin fxs)
+	local restart = c.spawn == "restart" and self.native and self.nativeCaps and self.nativeCaps.fxr
+	if c.spawn == "restart" and self.native and not restart and not self.fxrSaid then   -- a plugin from before fxr
+		self.fxrSaid = true
+		log("$4tracers: the running plugin has no fxr (one emitter per round): restart the game to load the new one")
+	end
+	if restart then   -- the round's own emitter, restarted here (plugin fxr)
+		if not r.traceId then self.traceIds = (self.traceIds or 0) % 1000000 + 1; r.traceId = self.traceIds end
+		self:Native(string.format("fxr %d %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", r.traceId, fx, l / c.dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
+	elseif (c.spawn == "plugin" or c.spawn == "restart") and self.native then   -- seen from its first frame (plugin fxs)
 		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", fx, l / c.dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
 	else self:SpawnFx(fx, at, dir, l / c.dash) end
 end
@@ -3394,7 +3405,79 @@ System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "inter
 System.AddCCommand("deagle_slowmo", "Deagle:SlowMoCmd(Deagle.Arg([[%1]]))", "deagle_slowmo [speed|off]: slow motion at that game speed (0.01-1, kept: F9 uses it too); no value = on / off like F9")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
+-- deagle_stress: a frame-rate test anyone can run. Infinite ammo, 10 rounds a second while the view looks at the sky
+-- (no one gets hit), in phases: fire with tracers, stop with tracers off (the pieces still held age out), fire
+-- without. Every 0.5 s of game time the log gets the frame time split into our Lua (the per-frame functions and Fire)
+-- and the rest (the engine: rendering, particles, physics), with the rounds in the air and the tracer commands sent.
+-- Made after the user's "spammed 3 clips, 140 to 70 fps" (2026-10-15).
+local STRESS = {
+	{ "idle", 2, false, true }, { "FIRE tracers on", 5, true, true }, { "stop, tracers off", 3, false, false },
+	{ "idle again", 3, false, false }, { "FIRE tracers off", 5, true, false }, { "stop", 3, false, false },
+}
+local STRESS_LUA = { "VmTick", "RoundsTick", "Fire", "EnvTick", "MotionTick", "DrawHud" }
+function Deagle:Stress()
+	if self.stress then return end
+	local clock = System.GetCurrAsyncTime
+	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, pieces = 0, orig = {} }
+	self.stress = X
+	for _, k in ipairs(STRESS_LUA) do
+		local f = self[k]
+		X.orig[k] = f
+		self[k] = function(...)
+			local a = clock()
+			local r = { f(...) }
+			X.lua = X.lua + clock() - a
+			return unpack(r)
+		end
+	end
+	X.orig.Native = self.Native
+	self.Native = function(s, cmd, ...)
+		if type(cmd) == "string" and (cmd:sub(1, 4) == "fxs " or cmd:sub(1, 4) == "fxr ") then X.pieces = X.pieces + 1 end
+		return X.orig.Native(s, cmd, ...)
+	end
+	local vt = self.VmTick   -- the timed one: the frame clock goes around it
+	local lastA, lastG, nextShot
+	self.VmTick = function(s, ...)
+		local a, g = clock(), System.GetCurrTime()
+		if lastA and lastG and g > lastG then   -- frames the game ran (not paused in the background)
+			local ph = STRESS[X.ph]
+			X.start, X.t0 = X.start or g, X.t0 or g
+			X.win = X.win or { t = g, n = 0, sum = 0, max = 0 }
+			local w, dt = X.win, a - lastA
+			w.n, w.sum, w.max = w.n + 1, w.sum + dt, math.max(w.max, dt)
+			s.cfg.tracers = ph[4]
+			if ph[3] and System.GetViewCameraDir().z > 0.5 and g >= (nextShot or 0) then
+				s.state.ammo = 7
+				pcall(s.Fire, s, true)
+				nextShot = g + 0.1
+			end
+			if g - w.t >= 0.5 then
+				local rounds = 0
+				for _ in pairs(s.rounds or {}) do rounds = rounds + 1 end
+				local fm, lm = w.sum / w.n * 1000, X.lua / w.n * 1000
+				log(string.format("STRESS %4.1fs %-18s %5.1f ms (%3.0f fps, worst %4.1f) = Lua %4.2f + engine %5.1f | rounds %2d, tracer cmds %4d",
+					g - X.start, ph[1], fm, 1000 / fm, w.max * 1000, lm, fm - lm, rounds, X.pieces))
+				X.lua, X.pieces, X.win = 0, 0, nil
+			end
+			if g - X.t0 >= ph[2] then
+				X.ph, X.t0 = X.ph + 1, g
+				if X.ph > #STRESS then
+					for k, f in pairs(X.orig) do s[k] = f end
+					s.cfg.tracers, s.stress = X.tracersWas, nil
+					s:Native("fxrstat")
+					log("STRESS done")
+					s:Notify("stress test done")
+				end
+			end
+		end
+		lastA, lastG = a, g
+		return vt(s, ...)
+	end
+	self:Notify("stress test: look at the sky for 21 s")
+end
+
 System.AddCCommand("deagle_fire", "Deagle:EnsureInit() Deagle:Fire()", "Fire one shot")
+System.AddCCommand("deagle_stress", "Deagle:EnsureInit() Deagle:Stress()", "Frame-rate test: infinite-ammo fire into the sky in phases, frame times in kcd.log")
 System.AddCCommand("deagle_reload", "Deagle:Reload()", "Reload")
 System.AddCCommand("deagle_inspect", "Deagle:Inspect()", "Play the inspect animation")
 System.AddCCommand("deagle_give", "Deagle:EnsureInit() Deagle:Give()", "Add the Desert Eagle (if missing) and 49 cartridges")

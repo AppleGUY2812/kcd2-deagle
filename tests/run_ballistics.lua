@@ -209,7 +209,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 		local log = {}
 		for _, f in ipairs(M.fxLog or {}) do log[#log + 1] = f end
 		for i = (M.fxsFrom or 1), #M.native do   -- pieces the plugin spawns: fxs <fx> <scale> <len> <pos> <dir>
-			local fx, sc, _, px, py, pz, dx, dy, dz = M.native[i]:match("^%[DN%] fxs (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)$")
+			local fx, sc, _, px, py, pz, dx, dy, dz = M.native[i]:match("^%[DN%] fx[sr] [%d ]-(%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+) (%S+)$")
 			if fx then log[#log + 1] = { n = fx, scale = tonumber(sc), pos = vec(tonumber(px), tonumber(py), tonumber(pz)),
 				dir = vec(tonumber(dx), tonumber(dy), tonumber(dz)), t = M.nativeT and M.nativeT[i] or 0 } end
 		end
@@ -250,12 +250,20 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	for _, k in pairs(frames) do perFrame = math.max(perFrame, k) end
 	check(string.format("%s: tracer: %d streaks, at most %d a frame, longest %.2f m (cfg %.1f), each a frame further on",
 		id, #ps, perFrame, longest, tc.length), perFrame == 1 and longest <= tc.length + 1e-3 and along and ahead, longest)
+	-- all of a round's pieces come from one emitter the plugin restarts (fxr <round id>): a new emitter per piece took
+	-- 140 -> 70 fps and crashed KCD2 (DX12 descriptor heap, 2026-10-15)
+	local ids, nIds = {}, 0
+	for i = M.fxsFrom, #M.native do
+		local rid = M.native[i]:match("^%[DN%] fxr (%d+) deagle_tracers")
+		if rid and not ids[rid] then ids[rid] = true; nIds = nIds + 1 end
+	end
+	check(string.format("%s: tracer: the round's %d pieces come from %d emitter (fxr round id)", id, #ps, nIds), nIds == 1, nIds)
 	local first = ps[1]
 	check(string.format("%s: first streak leaves from the muzzle side (%.2f m from it)", id, first and shot and shot.muzzle and dist(first.a, shot.muzzle) or -1),
 		first and shot and shot.muzzle and dist(first.a, shot.muzzle) < 8, first)
 	local used = {}
 	for _, f in ipairs(M.fxLog or {}) do if f.n:find("^deagle_tracers%.trail") then used[f.n] = true end end
-	for i = 1, #M.native do local fx = M.native[i]:match("^%[DN%] fxs (deagle_tracers%.%S+) ") if fx then used[fx] = true end end
+	for i = 1, #M.native do local fx = M.native[i]:match("^%[DN%] fx[sr] [%d ]-(deagle_tracers%.%S+) ") if fx then used[fx] = true end end
 	local names, allIn = {}, true
 	for fx in pairs(used) do names[#names + 1] = fx; allIn = allIn and tracerLib:find('Name="' .. fx:match("%.(.+)$") .. '"', 1, true) ~= nil end
 	check(string.format("%s: pieces %s (one frame's glow at 60 fps) are in deagle_tracers.xml, dash %.1f m = tools/gen_tracers.py", id,

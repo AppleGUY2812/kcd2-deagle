@@ -213,6 +213,63 @@ static void ReleaseOldPieces(bool all) {
 	}
 }
 
+// ---- tracers: one emitter per round in flight (fxr), moved onto the round and restarted every frame, so each frame's
+// piece is the same one fxs spawned but the engine makes no new emitter. A new emitter per round per frame (fxs, each
+// held 2 s: up to 1024 alive) took 140 -> 70 fps spraying three magazines and ran KCD2's DX12 descriptor heap out
+// (crash 2026-10-15 05:41: "CDeviceDescriptorAllocator::Allocate(3) failed: Out of device descriptor memory").
+// Restart (+0x268) resets the emitter's age and stop times, so its burst plays again (docs/muzzle_flash_research.md
+// section 6); it doesn't touch the bounding box, SetLocation empties it, so the box is carried along as for the flash.
+// A new slot's place is set again for its first frames (as TouchPieces does for fxs). A slot no round refreshed for
+// 0.25 s of game time is let go: its round is done.
+using RestartFn = void(__fastcall*)(uintptr_t emitter);
+struct TraceSlot { int id; uintptr_t em; double used; int touches; float loc[8]; char effect[64]; };
+static TraceSlot g_traces[64]; static int g_nTraces = 0;
+static uint64_t g_traceSpawns = 0, g_traceRestarts = 0;
+static void SafeRestart(uintptr_t em) { __try { if (auto f = (RestartFn)VFn(em, 0x268)) f(em); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
+static void MoveKeepBox(uintptr_t em, const float* loc) {
+	float box[6]; bool had = BoxValid(em) && ReadBox(em, box);
+	float old[3] = {}; __try { memcpy(old, (void*)(em + 0x80), 12); } __except (EXCEPTION_EXECUTE_HANDLER) { had = false; }
+	SafeSetLocation(em, loc);
+	if (had) {
+		for (int k = 0; k < 3; k++) { box[k] += loc[4 + k] - old[k]; box[3 + k] += loc[4 + k] - old[k]; }
+		WriteBox(em, box);
+	}
+}
+static void TraceRound(int id, const char* effect, const float* loc) {
+	for (int i = 0; i < g_nTraces; i++) {
+		TraceSlot& t = g_traces[i];
+		if (t.id != id) continue;
+		if (!strcmp(t.effect, effect)) {
+			MoveKeepBox(t.em, loc); SafeRestart(t.em);
+			memcpy(t.loc, loc, sizeof(t.loc)); t.used = g_pieceClock; g_traceRestarts++;
+			return;
+		}
+		SafeRelease(t.em); g_traces[i] = g_traces[--g_nTraces];   // another piece effect (the frame rate moved): a new emitter
+		break;
+	}
+	if (g_nTraces == (int)(sizeof(g_traces) / sizeof(g_traces[0]))) {   // full: the least recently used goes
+		int lru = 0;
+		for (int i = 1; i < g_nTraces; i++) if (g_traces[i].used < g_traces[lru].used) lru = i;
+		SafeRelease(g_traces[lru].em); g_traces[lru] = g_traces[--g_nTraces];
+	}
+	uintptr_t em = SafeSpawnFlash(effect, loc);
+	if (!em || em == (uintptr_t)-1) { static int said = 0; if (said++ < 5) Log("fxr: %s didn't spawn", effect); return; }
+	TraceSlot& t = g_traces[g_nTraces++];
+	t.id = id; t.em = em; t.used = g_pieceClock; t.touches = 3; memcpy(t.loc, loc, sizeof(t.loc));
+	strcpy_s(t.effect, effect); g_traceSpawns++;
+}
+// every camera step: new slots' places set again; done rounds' emitters let go
+static void TraceStep() {
+	int keep = 0;
+	for (int i = 0; i < g_nTraces; i++) {
+		TraceSlot& t = g_traces[i];
+		if (g_pieceClock - t.used > 0.25) { SafeRelease(t.em); continue; }
+		if (t.touches > 0) { t.touches--; MoveKeepBox(t.em, t.loc); }
+		g_traces[keep++] = t;
+	}
+	g_nTraces = keep;
+}
+
 static void ReleaseFlashes() {
 	for (int i = 0; i < g_nFlashes; i++) SafeRelease(g_flashes[i].emitter);
 	g_nFlashes = 0;
@@ -720,7 +777,7 @@ static void Command(const char* line) {
 		{
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
-			g_console.push_back("deagle_native_caps files");   // ron3 / ron play "file:<path>" sounds (ron.cpp)
+			g_console.push_back("deagle_native_caps files fxr");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
@@ -790,6 +847,14 @@ static void Command(const char* line) {
 			else { static int said = 0; if (said++ < 5) Log("fxs: %s didn't spawn", effect); }
 		}
 	}
+	else if (!strcmp(cmd, "fxr")) {   // fxr <round id> <effect> <scale> <len m> <pos xyz> <dir xyz>: a round's tracer piece, on its own emitter
+		int id = 0; char effect[64] = {}; float scale = 1, len = 1, p[3] = {}, d[3] = {}, loc[8];
+		int n = sscanf_s(rest, "%d %63s %f %f %f %f %f %f %f %f", &id, effect, (unsigned)sizeof(effect), &scale, &len, &p[0], &p[1], &p[2], &d[0], &d[1], &d[2]);
+		if (n == 10 && Finite(p, 3) && Finite(d, 3) && LocFromDir(p, d, scale, loc)) TraceRound(id, effect, loc);
+		else { static int said = 0; if (said++ < 5) Log("bad fxr command: %s", rest); }
+	}
+	else if (!strcmp(cmd, "fxrstat")) Log("fxr: %d rounds traced now, %llu emitters made, %llu restarts; fxs pieces held %d", g_nTraces,
+		(unsigned long long)g_traceSpawns, (unsigned long long)g_traceRestarts, g_heldN);
 	else if (!strcmp(cmd, "flashseed")) { float v = (float)atof(rest); g_flashSeed = Finite(&v, 1) && v > 0 ? v : 0; Log("flash seed box %.2f m", g_flashSeed); }
 	else if (!strcmp(cmd, "flashpos"))
 		sscanf_s(rest, "%f %f %f %f %f %f", &g_flashPos[0], &g_flashPos[1], &g_flashPos[2], &g_flashDir[0], &g_flashDir[1], &g_flashDir[2]);
@@ -969,6 +1034,7 @@ static void OnCamera(uintptr_t camera) {
 	ApplyFilters();
 	TouchPieces();
 	ReleaseOldPieces(false);
+	TraceStep();
 	{   // tell Lua when the free camera comes and goes (its look mode, the aim line)
 		static bool fcWas = false;
 		bool fc = Freecam_Active();

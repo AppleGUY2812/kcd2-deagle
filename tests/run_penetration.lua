@@ -543,7 +543,7 @@ do
 		end
 		for i = n0 + 1, #M.native do
 			local l = M.native[i]
-			if l:find("^%[DN%] flashfx") or l:find("^%[DN%] fxs deagle_tracers") or l:find("Fire|") or l:find("casespin") then gun[#gun + 1] = l:sub(1, 40) end
+			if l:find("^%[DN%] flashfx") or l:find("^%[DN%] fx[sr] [%d ]-deagle_tracers") or l:find("Fire|") or l:find("casespin") then gun[#gun + 1] = l:sub(1, 40) end
 		end
 		return gun, fx, #M.decals
 	end

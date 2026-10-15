@@ -92,6 +92,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `physics.flashPerUnit` | `0.30` | flash size per unit of blast (Deagle 0.63, Glock 0.30) |
 | `tracers` | `true` | a tracer on every round (same as `deagle_tracers`) |
 | `tracer.fx` | `deagle_tracers.trail_040` | tracer streak length: how long each piece glows. `deagle_tracers.trail_025` (shortest, ~1 frame), `_040`, `_060`, `_080`, `deagle_tracers.trail` (0.12 s, long laser) |
+| `tracer.spawn` | `restart` | `restart`: each round's tracer is one effect the plugin moves and restarts every frame (needs the plugin from 2026-10-15; an older one says so in the log); `plugin`: a new effect every frame per round (the old way: 140 -> 70 fps spraying, and a DX12 crash) |
 | `tracer.mode` | `trail` | `trail`: the round's real path drawn as it flies, muzzle to hit (ricochets and wallbangs too); `flying`: the old self-flying particle |
 | `tracer.scaled` | `false` | the last piece of a trail shortened to end exactly on the hit (only once the scale-length check passes in game) |
 | `range` | `250` | metres a round flies before it's dropped |
@@ -147,6 +148,9 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 ## Checking effects
 - F9 slow motion, then shoot: flash, smoke, casings, light at 1/10 speed. For the flash go slower: `deagle_slowmo 0.02` (1/50) or `0.01` (1/100).
 - `deagle_fx <effect>` spawns a particle effect 3 m ahead (e.g. `deagle_fx deagle.muzzle`).
+- `deagle_stress`: frame-rate test. Look at the sky (it only fires while you do), type it, keep looking up for 21 s
+  until "stress test done". Infinite ammo, 10 rounds a second: 5 s with tracers, a pause, 5 s without. kcd.log gets a
+  `STRESS` line every 0.5 s: frame time split into our Lua and the engine, rounds in the air, tracer commands sent.
 - Recording: OBS into `Desktop\Deagle Progress\test records`; Claude reads the clips frame by frame.
 
 ## Logs (for Claude)

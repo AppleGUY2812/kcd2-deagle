@@ -755,4 +755,10 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   idle vs shooting: FlyBy 2.00 of the 2.31 ms the rounds added; the per-NPC cull built small tables (vsub/vadd/...) for
   44 NPCs per step. Now plain numbers, and a whole-list box reject first. My "0.00 ms" check before this was run with
   `nearMiss 0` set (FlyBy returned at once): set the setting inside a timing snippet.
+- 2026-10-15: tracers were the big frame cost and a crash. Every round spawned a NEW particle emitter every frame (fxs
+  pieces, held 2 s: up to 1024 alive): "spammed 3 clips, 140 -> 70 fps", and KCD2 died on alt-tab with
+  `NCryDX12::CDeviceDescriptorAllocator::Allocate(3) failed: Out of device descriptor memory, remaining 252278/1000000
+  HeapOffset 999996` (heap end reached, the free space fragmented). Now one emitter per round (plugin `fxr <round id>`):
+  moved with its box carried along and Restart (+0x268) each frame; let go 0.25 s after its round stops sending. The
+  plugin says `deagle_native_caps files fxr`; Lua uses fxr only then. `deagle_stress` measures it (docs/DEBUG.md).
 

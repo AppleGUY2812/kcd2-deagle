@@ -338,6 +338,29 @@ if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
 		cueCheck.heard == cueCheck.n and cueCheck.worst <= 1 / 60 + 1e-3, cueCheck.worst)
 end
+-- deagle_stress: 21 s of game time, fires only while looking up, logs every 0.5 s, puts everything back
+do
+	local pitch, tracers, fireWas = M.view.pitch, Deagle.cfg.tracers, Deagle.Fire
+	local shots = 0
+	if not Deagle.vmShown then act("deagle_toggle"); M.advance(2.0) end
+	M.view.pitch = 1.2
+	M.console("deagle_stress")
+	local wrapped = Deagle.Fire ~= fireWas
+	local f = Deagle.Fire
+	Deagle.Fire = function(...) shots = shots + 1 return f(...) end
+	M.advance(22, 60)
+	local lines, done = 0, false
+	for _, l in ipairs(M.logs) do
+		if l:find("STRESS%s+%d") then lines = lines + 1 end
+		if l:find("STRESS done") then done = true end
+	end
+	check(string.format("deagle_stress: %d shots, %d log lines, done %s, functions back %s, tracers back %s", shots, lines,
+		tostring(done), tostring(Deagle.stress == nil), tostring(Deagle.cfg.tracers == tracers)),
+		wrapped and shots >= 90 and shots <= 110 and lines >= 40 and done and Deagle.stress == nil and Deagle.cfg.tracers == tracers, shots)
+	Deagle.Fire = fireWas
+	M.view.pitch = pitch
+end
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))
 os.exit(fails == 0 and 0 or 1)
