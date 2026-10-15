@@ -227,6 +227,16 @@ do
 	check(string.format("bullet holes: 20 hits on one spot make %d, 300 spread over 1 s make %d (budget 15 + 30 a second)", spot, #M.decals),
 		spot == 1 and #M.decals >= 40 and #M.decals <= 47, #M.decals)
 end
+-- a world hole (no entity) never passes a part id: KCD2 would read it as a render-node pointer
+do
+	local made = Particle.CreateMatDecal
+	local arg8, arg9 = "unset", "unset"
+	Particle.CreateMatDecal = function(...) local a = { ... }; arg8, arg9 = a[8], a[9] end
+	Deagle.holeState = nil
+	Deagle:Mark({ hole = "soil" }, { pos = vec(130, 210, 30), normal = vec(0, 0, 1), partid = 7 }, vec(0, 1, 0), 1)
+	Particle.CreateMatDecal = made
+	check(string.format("bullet hole on the world: entity %s, part %s (both nil)", tostring(arg8), tostring(arg9)), arg8 == nil and arg9 == nil, arg9)
+end
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))

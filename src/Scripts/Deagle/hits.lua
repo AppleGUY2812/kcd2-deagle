@@ -218,8 +218,12 @@ function Deagle:Mark(s, hit, dir, scale, size)
 	if s.ron then self:HitSound(s.ron, hit.pos, scale) end
 	if s.hole and self:HoleAllowed(hit.pos, hit.normal, scale) then
 		size = (size or c.holeSize) * scale * (0.85 + 0.3 * math.random())
+		-- the part id only with an entity: without one, KCD2 reads the 9th argument as a raw render-node pointer
+		-- (WHGame 1.5.6, CreateMatDecal's binding: Claude 5's reverse engineering 2026-10-15), so a world hit's part id
+		-- would hand the engine a garbage pointer
+		local ent = hit.entity
 		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
-			"Materials/deagle/decals/bullet_hole_" .. s.hole, math.random() * 360, dir, hit.entity and hit.entity.id or nil, hit.partid)
+			"Materials/deagle/decals/bullet_hole_" .. s.hole, math.random() * 360, dir, ent and ent.id or nil, ent and hit.partid or nil)
 	end
 end
 
