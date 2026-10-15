@@ -104,3 +104,17 @@ six meshes), so there are more blocks than positions + indices (weights, UVs, th
 The loader is bin/SEV2_Remastered.exe 0x8fc50 (1756 B), called from the chunk switch at 0x91f80 (HSKN case 0x92e83): it
 reads a 0x18-byte header, then through a stream vtable (`[rax+8]` = read n bytes: 1, 4 and 0x10 at a time; one 0xc8
 block). Next: follow those reads to the vertex / index counts, or fit the data against a known mesh (BCV_Eyeball).
+
+### Round 11: the mesh reader works (`tools/se2/hskn.py`)
+Layout read from the exe (HSKN loader 0x8fc50, sub-mesh parser 0x1d1cc0, string reader 0x9ddb0): strings are read in
+whole 4-byte words (padded to 4); per node: name, u8 (v >= 10), u32 size, the mesh. Mesh: version 10-13, nverts, nfaces,
+three flags, a box, then **nverts x 3 float32 positions** and **nfaces x 4 u16 faces** (v0 v1 v2 + a 4th), then per-face
+tables and (version 13) the attribute block (normals / UVs / weights; not read yet).
+`hskn.py <archive> --list [name]` / `--obj <outdir> [name]`. 58 of 158 models in `Common.asr` parse, no face index out of
+range: the breakable bone shards (BCV_Skull_04/05/06, Skull_fragments, Jaw_01-03, Arm_R_L1/U1/U2/U3, Leg_R_L1/U1/U2/U3,
+Vertibrae_Shatter, Pelvis_Shatter1, L_Scapula_Shatter, Thigh_test2, Extra_Bone_Detail), the eyes (BCV_eye_L/R_Complete) and
+the wounds (SmallEntryWound / SmallExitWound / OrganExitWound), exported as OBJ to E:\Tools\deagle-work\se2\models (private).
+Skull picture: Desktop\Deagle Progress\24 Sniper Elite organs\skull model BCV_Skull_04 from their data.png: angular shards
+of ~2.5 cm, the pieces a head shot throws apart (SE2's "shatter" rig).
+Not parsed yet (0 meshes in their node list): Heart_Solid, destroyed_heart, Lung_Left_Collapse / Lung_Right_Coll,
+Windpipe, BCV_Eyeball, Clavicle: their meshes sit behind another record type (to find next).
