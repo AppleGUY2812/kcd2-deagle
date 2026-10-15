@@ -114,7 +114,10 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    Already there: sound.lua HitBudget (d8be300), effects.lua FxBudget (b0bad31). One shared sampler: a `deagle_stress`
    spawner mode in debug.lua: `Deagle:Stress('spawn <name> <per s>')` (Claude 4). Sound's Lua manager is built
    (Claude 3, 8d856c0 / 1336ea1: `SoundBudget` per category hit / ricochet / casing, close-hit reserve, flesh never
-   dropped; casing waits on one line in shells.lua). Still to do: the plugin's instance ring (step 3) and the effect /
+   dropped; casing waits on one line in shells.lua). Spawners registered: `hole` (Claude 4), `fx_<effect>` and
+   `light` (Claude 2, 3ec59cc), `hitsound`, `hitsound_budget`, `plate`, `gunshot3p` (Claude 3). First run (next game
+   session, the game in front): hole 50 / 100 / 200 / 400, then hole 200 with `r_deferredDecalsMaxLimit 0`; fx_soil,
+   fx_stone, fx_metal 30 / 100 / 300; light 300; hitsound 30 / 100 / 300. Still to do: the plugin's instance ring (step 3) and the effect /
    light calls (step 2).
 5. **High fire-rate mode** (1b). Measure: `deagle_stress 1000` and `75` frame p99 and Lua ms (now 4 fps at 1000).
    Ready or Not has no loop / tail fire events (Claude 3: all 1015 weapon events are one per shot, the M249 too), so
