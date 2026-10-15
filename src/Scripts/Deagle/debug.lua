@@ -160,8 +160,8 @@ end
 -- budget in docs/PERFORMANCE.md (1.0 ms average, 2.0 ms p99). Functions called inside each other are counted once
 -- (only the outermost). Made after the user's "spammed 3 clips, 140 to 70 fps" (2026-10-15).
 -- deagle_stress [rounds a second] [sky | aim]: any fire rate (a CIWS is ~75; several shots a frame when needed), and
--- "aim" fires where you look instead of only at the sky, so impacts are measured too; it holds fire while the view
--- points at a person or an animal (a ray from the eye, 300 m). Lines also count impacts and impact effects.
+-- "aim" fires where you look instead of only at the sky, so impacts are measured too, with no recoil (the view stays
+-- put); it holds fire while the view points at a person or an animal (a ray from the eye, 300 m). Lines also count impacts and impact effects.
 local STRESS = {
 	{ "idle", 2, false, true }, { "FIRE tracers on", 5, true, true }, { "stop, tracers off", 3, false, false },
 	{ "idle again", 3, false, false }, { "FIRE tracers off", 5, true, false }, { "stop", 3, false, false },
@@ -206,6 +206,10 @@ function Deagle:Stress(arg)
 			if k == "fxr " then X.pieces = X.pieces + 1 elseif k == "fxs " then X.fx = X.fx + 1 end
 		end
 		return X.orig.Native(s, cmd, ...)
+	end
+	if mode == "aim" then   -- no kick: at 75 rounds a second it climbed the view straight into the sky (the user)
+		X.orig.Recoil = self.Recoil
+		self.Recoil = function() end
 	end
 	X.orig.ApplyHit = self.ApplyHit
 	self.ApplyHit = function(...) X.impacts = X.impacts + 1 return X.orig.ApplyHit(...) end
