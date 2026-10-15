@@ -46,7 +46,7 @@ Video checks: drag an OBS clip onto `Desktop\Make Scrubbable.bat`, then step wit
 ## Where things are
 | Path | What |
 |---|---|
-| `src/` | mod content, packed into `data/deagle.pak` (scripts `Scripts/Deagle/deagle_main.lua` and `ballistics.lua` (rounds, ricochets, wallbangs, armour), particles, viewmodel, clips) |
+| `src/` | mod content, packed into `data/deagle.pak`: particles, viewmodel, clips, and the scripts in `Scripts/Deagle/`, one file per system (see below) |
 | `native/` | the C++ plugin (MinHook) and its build/install scripts |
 | `tools/` | the conversion pipeline (Blender, rc, audits) |
 | `tests/` | mock-engine tests |
@@ -57,6 +57,29 @@ Video checks: drag an OBS clip onto `Desktop\Make Scrubbable.bat`, then step wit
 | `E:\Tools\deagle-work\downloads\` | the original downloads (GameBanana mod zip, MW19 muzzle pack, SourceIO) |
 | `E:\Tools\deagle-work\{vm,animroot,out}` | export work, rc animation root (SkeletonList), compiled image, renders, audit data |
 | `E:\Tools\blender-4.3.2-windows-x64`, `E:\Tools\blender-user` | Blender and its add-ons (SourceIO 5.5.4, KCD2 toolkit) |
+
+Scripts (`src/Scripts/Deagle/`): `deagle_main.lua` loads the others in this order and holds the settings (`cfg`), the
+shared helpers (`Deagle.U`), input, start-up, the settings commands and the console command table.
+
+| File | System |
+|---|---|
+| `surfaces.lua` | what each KCD2 surface does when hit: effect, hole and sound columns (`SURFACES`) |
+| `physics.lua` | cartridge physics: recoil impulse, muzzle gas, wound energy |
+| `effects.lua` | impact effects: `SpawnFx`, per-hit variety, `deagle_fx`, `deagle_fxreload` |
+| `sound.lua` | gunshot gain, Ready or Not hit sounds, pain voices, sound cues, the room check |
+| `flash.lua` | muzzle flash: particle flash, flash cards, flash light |
+| `debug.lua` | zoom, slow motion, test NPC / test wall, round paths, stress test |
+| `recoil.lua` | recoil: kick, spray pattern, camera recoil |
+| `hits.lua` | hits: body parts from bones, blood, hit reactions, impact marks, `ApplyHit` |
+| `npc.lua` | NPC reactions: XP, near misses, AI hit / hearing events |
+| `tracers.lua` | tracer trail pieces |
+| `shells.lua` | ejected cases |
+| `weapon.lua` | firing, ammo, reloads, aiming, inspect, fire modes, CS2 accuracy |
+| `viewmodel.lua` | the first-person arms + gun, its animation states, gear hiding, HUD |
+| `freecam.lua` | free camera |
+| `ballistics.lua` | rounds in flight, ricochets, corners, wallbangs, armour (loads `killcam.lua`) |
+| `motion.lua` | weapon movement inputs |
+| `guns/` | gun data (`cs2.lua`, `calibers.lua`, `penetration.lua`, `armor.lua`, one file per gun, ...) |
 
 ## Pipeline
 1. `blender` + SourceIO imports the Source MDL with its sequences -> `mwii_vm.blend`

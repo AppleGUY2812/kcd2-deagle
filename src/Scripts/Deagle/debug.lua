@@ -1,0 +1,224 @@
+-- Debug tools: zoom, slow motion, the test NPC and test wall, round paths (deagle_paths), the stress test.
+-- Split out of deagle_main.lua (2026-10-15), which loads it (Deagle:LoadModule); its helpers come from Deagle.U.
+local U = Deagle.U
+local log, vadd, vscale, vsub = U.log, U.vadd, U.vscale, U.vsub
+
+-- slow motion for checking effects (F9): KCD2 has CryEngine's t_Scale
+-- Debug zoom (F2 or mouse button 4 / deagle_zoom): steps through cfg.debugZoom (x4, x10) and back to normal, to look at impacts, holes
+-- and tracers far away. The gun is hidden from view while zoomed (it would fill the screen); it keeps working.
+function Deagle:SetZoom(factor)
+	self.zoom = factor and factor > 1 and factor or nil
+	self:EaseFov(self.state.aiming)
+	self:Notify(self.zoom and string.format("zoom x%g", self.zoom) or "zoom off")
+end
+
+function Deagle:CycleZoom()
+	local list = self.cfg.debugZoom
+	self.zoomStep = ((self.zoomStep or 0) + 1) % (#list + 1)
+	self:SetZoom(list[self.zoomStep])
+end
+
+-- the game's speed now: cfg.slowmo while slow motion is on, kept to 0.01-1 (the plugin's clock and sounds stop at 0.01)
+function Deagle:GameSpeed()
+	if not self.slowOn then return 1 end
+	return math.max(0.01, math.min(1, tonumber(self.cfg.slowmo) or 0.1))
+end
+
+function Deagle:SlowMo(on)
+	self.slowOn = on and true or false
+	pcall(System.SetCVar, "t_Scale", self:GameSpeed())
+	self:Native(string.format("speed %.3f", self:GameSpeed()))   -- our sounds slow down with the game's
+	log("slow motion " .. (on and ("x" .. tostring(self:GameSpeed())) or "off"))
+end
+
+-- deagle_slowmo [speed|off]: no value toggles it like F9; a speed is kept (F9 uses it from then on) and turns it on
+function Deagle:SlowMoCmd(arg)
+	if arg == "" then return self:SlowMo(not self.slowOn) end
+	if arg == "off" or arg == "0" then return self:SlowMo(false) end
+	local v = tonumber(arg)
+	if not v or v <= 0 or v > 1 then log("usage: deagle_slowmo [speed 0.01-1 | off]") return end
+	self:Set("slowmo " .. v)   -- applies it live when slow motion is on (AFTER_SET)
+	if not self.slowOn then self:SlowMo(true) end
+end
+
+-- deagle_testnpc: the NPC you aim at (within 60 m) takes no damage from our rounds (so no crime either) and a message
+-- says what each hit would have done: for testing hits, armour and sounds on real NPCs. deagle_testnpc clear ends it.
+-- (Spawning NPCs instead froze the game: KCD2's own CombatDebug spawner needs XGenAIModule.SpawnEntity, missing in the
+-- shipped game, and an NPC spawned outside it hung the game a few minutes later; MODLOG 2026-10-13.)
+function Deagle:IsTestNpc(e)
+	return self.testNpcs ~= nil and e ~= nil and self.testNpcs[tostring(e.id)] == true
+end
+function Deagle:TestNpc(args)
+	if tostring(args or ""):lower():find("clear") then
+		self.testNpcs = nil
+		self:Notify("test NPCs: back to normal")
+		return
+	end
+	local pl = self:Player()
+	local hits = {}
+	local ok, n = pcall(Physics.RayWorldIntersection, System.GetViewCameraPos(), vscale(System.GetViewCameraDir(), 60), 1, ent_all,
+		pl and pl.id, nil, hits)
+	local e = ok and n and n > 0 and hits[1] and hits[1].entity
+	if not (e and e.actor and e.soul) then self:Notify("deagle_testnpc: aim at an NPC (within 60 m) first") return end
+	self.testNpcs = self.testNpcs or {}
+	self.testNpcs[tostring(e.id)] = true
+	local name = ""
+	pcall(function() name = e:GetName() end)
+	self:Notify("test NPC: " .. name .. " takes no damage from your rounds (deagle_testnpc clear)")
+end
+
+-- deagle_testwall: a row of KCD2's own objects 4 m ahead, one per surface type, to shoot and hear / see each impact.
+-- Each is a real game model whose physics proxy has that SurfaceType (found by parsing every .cgf's material chunk and
+-- its .mtl: IPL_Objects paks; scratch notes in MODLOG 2026-10-13). Static, never saved. deagle_testwall clear.
+-- KCD2 has no object with mat_bells (church bells are mat_metal) and none flat in mat_wood_soft / mat_stairs_stone.
+-- up = stand it up (90 deg about its X: the window pane is modelled lying flat, 1.0 x 1.44 m, to be set into a wall),
+-- lift = m off the ground
+local TEST_WALL = {
+	{ "stone", "objects/manmade/common_decorations/streets_deco/guard_stone_wall_a.cgf" },
+	{ "plaster", "objects/manmade/task_specific_props/food_processing/baking/oven_bread_a.cgf" },
+	{ "pots", "objects/manmade/task_specific_props/container_making/pottery/ceramics_set_c.cgf" },
+	{ "wood door", "objects/manmade/common_fixtures/doors/lvl2_door_a_static.cgf" },
+	{ "wood crate", "objects/manmade/common_furniture/crates/crate_short.cgf" },
+	{ "wicker", "objects/manmade/common_furniture/baskets/basket_with_lid_a.cgf" },
+	{ "metal door", "objects/manmade/common_fixtures/doors/lvl4_door_b_static.cgf" },
+	{ "anvil", "objects/manmade/task_specific_props/metal_industry/smithing/anvil_small.cgf" },
+	{ "glass", "objects/intermediates/elements/window_glass_a.cgf", up = true, lift = 0.9 },
+	{ "sack", "objects/manmade/common_furniture/sacks/sack_b.cgf" },
+	{ "straw target", "objects/manmade/task_specific_props/combat/archery/target_b.cgf", lift = 0.55 },   -- origin at its middle
+	{ "hay", "objects/manmade/structures/industrial/hay/hay_sheaf_a.cgf" },
+	{ "vegetables", "objects/manmade/food/food/vegetable/basket_rectangular_a_turnip.cgf" },
+	{ "leather", "objects/manmade/common_tools/repairkit/repairkit_armour_big.cgf" },
+}
+function Deagle:TestWall(args)
+	for _, id in ipairs(self.testWall or {}) do if System.GetEntity(id) then System.RemoveEntity(id) end end
+	self.testWall = nil
+	if tostring(args or ""):lower():find("clear") then self:Notify("test wall removed") return end
+	local pl = self:Player()
+	if not pl then return end
+	local p, d = pl:GetPos(), pl:GetWorldDir()
+	local yaw = math.atan2(-d.x, d.y)
+	local gap, ids, names = 1.6, {}, {}
+	for i, w in ipairs(TEST_WALL) do
+		local side = (i - (#TEST_WALL + 1) / 2) * gap
+		local pos = { x = p.x + 4 * d.x + side * d.y, y = p.y + 4 * d.y - side * d.x, z = p.z + (w.lift or 0) }
+		local ok, e = pcall(System.SpawnEntity, { class = "BasicEntity", name = "deagle_testwall_" .. i, position = pos,
+			flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = w[2], Physics = { bPhysicalize = true, bRigidBody = false, Mass = 0, Density = -1 } } })
+		if ok and e then
+			pcall(e.SetFlags, e, ENTITY_FLAG_NO_SAVE, 0)
+			pcall(e.SetAngles, e, { x = w.up and math.pi / 2 or 0, y = 0, z = yaw })   -- x first, then the yaw
+			ids[#ids + 1] = e.id
+			names[#names + 1] = w[1]
+		else log("$4test wall: " .. w[1] .. " didn't spawn: " .. tostring(e)) end
+	end
+	self.testWall = ids
+	local msg = "test wall, left to right: " .. table.concat(names, ", ") .. " (deagle_testwall clear)"
+	log(msg); self:Notify(msg)
+end
+
+-- Debug: every round's path drawn in the world and kept until cleared (deagle_paths 1 / 0 / clear): flight yellow,
+-- after a ricochet / wallbang / body cyan, inside a wall or body red, hits as small crosses (white world, red body).
+-- Lines are redrawn every frame (System.DrawLine) from a list capped at cfg.debugPathsMax.
+local PATH_FLY, PATH_ON, PATH_IN = { 1, 0.9, 0.1 }, { 0.2, 0.9, 1 }, { 1, 0.15, 0.1 }
+Deagle.U.PATH = { fly = PATH_FLY, on = PATH_ON, inside = PATH_IN }
+function Deagle:PathAdd(a, b, color)
+	if not self.cfg.debugPaths then return end
+	local list = self.paths or {}
+	self.paths = list
+	list[#list + 1] = { a = a, b = b, c = color }
+	while #list > self.cfg.debugPathsMax do table.remove(list, 1) end
+	-- (re)start the frame loop: none running, or one that stopped ticking (a dev reload can break a timer chain and
+	-- leave its token behind: the lines were never drawn again, in game 2026-10-12)
+	if not self.pathsToken or System.GetCurrTime() - (self.pathsTickT or -1e9) > 0.5 then
+		local token = {}
+		self.pathsToken = token
+		Script.SetTimer(0, function() Deagle:PathTick(token) end)
+	end
+end
+function Deagle:PathMark(p, color)
+	for _, d in ipairs({ { x = 0.06, y = 0, z = 0 }, { x = 0, y = 0.06, z = 0 }, { x = 0, y = 0, z = 0.06 } }) do
+		self:PathAdd(vsub(p, d), vadd(p, d), color)
+	end
+end
+function Deagle:PathTick(token)
+	if token ~= self.pathsToken then return end
+	self.pathsTickT = System.GetCurrTime()
+	if not self.cfg.debugPaths or not self.paths or #self.paths == 0 then self.pathsToken = nil; return end
+	for _, l in ipairs(self.paths) do pcall(System.DrawLine, l.a, l.b, l.c[1], l.c[2], l.c[3], 1) end
+	Script.SetTimer(0, function() Deagle:PathTick(token) end)
+end
+function Deagle:Paths(arg)
+	arg = Deagle.Arg(arg)   -- here too: a command registered before a dev reload still passes it quoted
+	if arg == "clear" then self.paths = {}
+	else self:Set("debugPaths " .. (arg:find("0") and "0" or "1")) end
+	self:Notify("bullet paths " .. (self.cfg.debugPaths and "on" or "off") .. (arg == "clear" and " (cleared)" or ""))
+end
+-- deagle_stress: a frame-rate test anyone can run. Infinite ammo, 10 rounds a second while the view looks at the sky
+-- (no one gets hit), in phases: fire with tracers, stop with tracers off (the pieces still held age out), fire
+-- without. Every 0.5 s of game time the log gets the frame time split into our Lua (the per-frame functions and Fire)
+-- and the rest (the engine: rendering, particles, physics), with the rounds in the air and the tracer commands sent.
+-- Made after the user's "spammed 3 clips, 140 to 70 fps" (2026-10-15).
+local STRESS = {
+	{ "idle", 2, false, true }, { "FIRE tracers on", 5, true, true }, { "stop, tracers off", 3, false, false },
+	{ "idle again", 3, false, false }, { "FIRE tracers off", 5, true, false }, { "stop", 3, false, false },
+}
+local STRESS_LUA = { "VmTick", "RoundsTick", "Fire", "EnvTick", "MotionTick", "DrawHud" }
+function Deagle:Stress()
+	if self.stress then return end
+	local clock = System.GetCurrAsyncTime
+	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, pieces = 0, orig = {} }
+	self.stress = X
+	for _, k in ipairs(STRESS_LUA) do
+		local f = self[k]
+		X.orig[k] = f
+		self[k] = function(...)
+			local a = clock()
+			local r = { f(...) }
+			X.lua = X.lua + clock() - a
+			return unpack(r)
+		end
+	end
+	X.orig.Native = self.Native
+	self.Native = function(s, cmd, ...)
+		if type(cmd) == "string" and (cmd:sub(1, 4) == "fxs " or cmd:sub(1, 4) == "fxr ") then X.pieces = X.pieces + 1 end
+		return X.orig.Native(s, cmd, ...)
+	end
+	local vt = self.VmTick   -- the timed one: the frame clock goes around it
+	local lastA, lastG, nextShot
+	self.VmTick = function(s, ...)
+		local a, g = clock(), System.GetCurrTime()
+		if lastA and lastG and g > lastG then   -- frames the game ran (not paused in the background)
+			local ph = STRESS[X.ph]
+			X.start, X.t0 = X.start or g, X.t0 or g
+			X.win = X.win or { t = g, n = 0, sum = 0, max = 0 }
+			local w, dt = X.win, a - lastA
+			w.n, w.sum, w.max = w.n + 1, w.sum + dt, math.max(w.max, dt)
+			s.cfg.tracers = ph[4]
+			if ph[3] and System.GetViewCameraDir().z > 0.5 and g >= (nextShot or 0) then
+				s.state.ammo = 7
+				pcall(s.Fire, s, true)
+				nextShot = g + 0.1
+			end
+			if g - w.t >= 0.5 then
+				local rounds = 0
+				for _ in pairs(s.rounds or {}) do rounds = rounds + 1 end
+				local fm, lm = w.sum / w.n * 1000, X.lua / w.n * 1000
+				log(string.format("STRESS %4.1fs %-18s %5.1f ms (%3.0f fps, worst %4.1f) = Lua %4.2f + engine %5.1f | rounds %2d, tracer cmds %4d",
+					g - X.start, ph[1], fm, 1000 / fm, w.max * 1000, lm, fm - lm, rounds, X.pieces))
+				X.lua, X.pieces, X.win = 0, 0, nil
+			end
+			if g - X.t0 >= ph[2] then
+				X.ph, X.t0 = X.ph + 1, g
+				if X.ph > #STRESS then
+					for k, f in pairs(X.orig) do s[k] = f end
+					s.cfg.tracers, s.stress = X.tracersWas, nil
+					s:Native("fxrstat")
+					log("STRESS done")
+					s:Notify("stress test done")
+				end
+			end
+		end
+		lastA, lastG = a, g
+		return vt(s, ...)
+	end
+	self:Notify("stress test: look at the sky for 21 s")
+end
