@@ -150,11 +150,13 @@ function Deagle:KillCamHit(hit, r)
 	local c = self.cfg.killCam
 	kc.hit, kc.hitT, kc.phase, kc.speed = true, kc.t, "internal", c.speed.internal
 	self:KillCamSpeed(kc.speed)
-	if c.organs and self.ShowOrgans and kc.target and hit.entity == kc.target then
+	-- only on a person: the organs are a human's, at human size and places (an animal has none of them)
+	if c.organs and self.ShowOrgans and kc.target and hit.entity == kc.target and kc.target.human then
 		local n = self:ShowOrgans(kc.target, hit.bodyPart or "torso")
 		if n > 0 then
 			kc.organs = true
 			pcall(kc.target.Hide, kc.target, 1)   -- the body away, the organs in its place
+			log(string.format("kill cam: %d organs shown on %s", n, tostring(kc.target.GetName and kc.target:GetName() or kc.target.id)))
 		end
 	end
 end

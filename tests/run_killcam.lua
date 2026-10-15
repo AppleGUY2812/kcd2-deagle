@@ -15,7 +15,7 @@ local function check(label, ok, detail)
 end
 
 -- the world: one NPC at y = npcY, a wall of nothing else
-local npc = { id = "npc1", soul = {}, actor = {}, health = 100 }
+local npc = { id = "npc1", soul = {}, actor = {}, health = 100, human = true }
 function npc:GetName() return "npc1" end
 function npc:GetWorldPos() return vec(100, self.y, 30.3) end
 function npc:GetDirectionVector() return vec(0, -1, 0) end
@@ -124,6 +124,19 @@ do
 	check(string.format("at the hit the body is hidden (%s) and %d organs are shown; at the end the body is back (%s) and they're removed (%s)",
 		tostring(hiddenAtHit), nAtHit or -1, tostring(npc.hidden), tostring(Deagle.organIds)),
 		hiddenAtHit == 1 and (nAtHit or 0) >= 6 and npc.hidden == 0 and Deagle.organIds == nil, npc.hidden)
+end
+-- an animal: the kill cam runs, but no organs (they're a person's) and the body stays
+do
+	npc.human = nil
+	local spawned = 0
+	local spawn = System.SpawnEntity
+	System.SpawnEntity = function(t) if t.name and t.name:find("^deagle_organ_") then spawned = spawned + 1 end return spawn(t) end
+	npc.hidden = nil
+	shoot(120, 5); frames(900)
+	System.SpawnEntity = spawn
+	npc.human = true
+	check(string.format("an animal gets the kill cam but no organs (%d spawned) and its body isn't hidden (%s)", spawned, tostring(npc.hidden)),
+		landed and spawned == 0 and npc.hidden == nil, npc.hidden)
 end
 -- 2. nothing for a near shot, a survivable hit, a dead target, or with the cam off
 local cases = {
