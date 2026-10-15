@@ -55,6 +55,34 @@ def tones(x, sr, shot, onset):
         if len(out) == MAX_TONES: break
     return sorted(out)
 
+def more_tones(x, sr, shot, onset, freqs):
+    """Plate tones the first pass missed: next to a stronger tone a weaker one doesn't stand 10 dB over a 360 Hz median,
+    so the rest left after taking the found ones is searched again (the user heard plate tones in left_out, pack 19).
+    A tone here: >= 10 dB over a 160 Hz median at +0.03-0.3 s, >= 6 dB at the same pitch at +0.3-0.7 s, >= 10 dB over
+    the band before the shot. On 12 shots with no plate this finds nothing (2026-10-15); on hits 1-10 it found 1-15
+    each, repeating on hits of the same plate (plate C: 2391, 3035, 3680, 8379, 8730, 10148, 11285 Hz)."""
+    if not freqs: return []
+    _, rest, _ = ring(x, sr, shot, onset, freqs)
+    n = 4096
+    def psd(seg):
+        f, P = welch(seg, sr, nperseg=min(n, len(seg)), noverlap=min(n, len(seg)) * 3 // 4)
+        return f, 10 * np.log10(P + 1e-20)
+    f, A = psd(rest[int(.03 * sr): int(.3 * sr)]); _, B = psd(rest[int(.3 * sr): int(.7 * sr)])
+    _, P = psd(x[int((shot - .7) * sr): int((shot - .03) * sr)])
+    w = max(3, int(160 / (f[1] - f[0])) | 1)
+    a, b = A - median_filter(A, size=w, mode="nearest"), B - median_filter(B, size=w, mode="nearest")
+    near = lambda p: np.maximum.reduce([np.roll(p, k) for k in (-1, 0, 1)])
+    ok = (f > LO) & (f < HI) & (a >= 10) & (near(b) >= 6) & (A - near(P) >= 10)
+    out = []
+    for i in np.nonzero(ok)[0]:
+        if a[i] == a[max(0, i - 2): i + 3].max() and all(abs(f[i] - g) > 25 for g in list(freqs) + out): out.append(float(f[i]))
+    return sorted(out)
+
+def all_tones(x, sr, shot, onset):
+    """tones() plus the ones it missed (more_tones)."""
+    fr = tones(x, sr, shot, onset)
+    return sorted(fr + more_tones(x, sr, shot, onset, fr))
+
 def env(y, sr):
     """Level of a narrow band over time, smoothed over 20 ms."""
     w = int(.02 * sr)
@@ -130,7 +158,7 @@ def main():
         x, _ = sf.read(src, start=int((h["shot"] - 1) * sr), stop=int((h["shot"] + h["onset"] + RING_LEN + .5) * sr))
         x = x.mean(1) if x.ndim > 1 else x
         h = dict(h, shot=1.0)                                   # times in this slice
-        fr = tones(x, sr, h["shot"], h["onset"])
+        fr = all_tones(x, sr, h["shot"], h["onset"])
         if len(fr) < 3: print(f"hit {i + 1}: only {len(fr)} tones, skipped"); continue
         y, rest, _ = ring(x, sr, h["shot"], h["onset"], fr)
         k = 0.89 / np.abs(y).max()

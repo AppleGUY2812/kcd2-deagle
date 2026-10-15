@@ -40,7 +40,7 @@ def main():
         h = hits[k - 1]
         x, _ = sf.read(src, start=int((h["shot"] - 1) * sr), stop=int((h["shot"] + h["onset"] + pr.RING_LEN + .5) * sr))
         x = x.mean(1) if x.ndim > 1 else x
-        plate, _, at0 = pr.ring(x, sr, 1.0, h["onset"], pr.tones(x, sr, 1.0, h["onset"]))
+        plate, _, at0 = pr.ring(x, sr, 1.0, h["onset"], pr.all_tones(x, sr, 1.0, h["onset"]))
         level = rms(hi(plate, sr)[: int(.3 * sr)])
         if ref is None:   # hit 1: the clip's balance and the plate's distance
             pk = int(.95 * sr) + int(np.argmax(np.abs(x[int(.95 * sr): int(1.05 * sr)])))
