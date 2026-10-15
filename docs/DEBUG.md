@@ -70,6 +70,11 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `hitSoundBudget.on` / `.rate` / `.burst` / `.near` | `true` / `30` / `15` / `0.5` | hit sounds under heavy fire (a CIWS): a hit within `near` m of a fresh hit sound of the same surface (0.12 s) plays none, and after a burst of `burst` at most `rate` a second play (skips logged). 150-290 a second took the game to 8 fps. A/B: `deagle_set hitSoundBudget.on 0` |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on (0.01-1; changes at once if it's on) |
 | `debugShotLog` | `false` | every shot is traced in kcd.log: Henry's eye and aim, the free camera, the round's place each frame, and each hit's surface, angle and outcome (ricochet / impact), so Claude can check what a shot did |
+| `impactCap.perRound` | `2` | impact effects (effect, decal, sound) a round makes at the world: its first hit and its first skip; damage, penetration and ricochets are never capped (the user's 75 rounds/s stress test did 2-6 impacts a round) |
+| `impactCap.perFrame` | `6` | impact effects all rounds together make in one frame |
+| `impactCap.mergeDist` / `.mergeTime` | `0.3` / `0.1` | metres and seconds: a second effect on the same surface this close to the last one looks the same and is skipped |
+| `impactCap.maxHops` | `4` | hits a round survives (ricochets and wallbangs chain) |
+| `impactCap.maxRounds` | `64` | rounds in flight; past this the oldest is dropped (steady state at 75 rounds/s is about 43: a round lives 0.57 s at 250 m) |
 | `killCam.on` | `true` | Sniper Elite V2's kill cam: a long shot that will kill a living NPC slows the game to 3 %, the camera rides behind the bullet (1.1 m easing to 2 m, field of view 10 -> 30 degrees), the hit and the way out play at 10 %, then normal speed (numbers read from its data: docs/se2_killcam.md) |
 | `killCam.minDist` | `40` | metres the round must have flown for a kill cam (nearer shots get none) |
 | `killCam.killOnly` | `true` | only a round whose damage reaches the NPC's health, or that hits at head height |

@@ -8,6 +8,18 @@ local log, try, vadd, vsub, vscale, vlen, vnorm, vdot, vcross, coneDir = U.log, 
 local surfaceName, SURFACES = U.surfaceName, Deagle.surfaces
 local PATH_FLY, PATH_ON, PATH_IN = U.PATH.fly, U.PATH.on, U.PATH.inside
 
+-- What a burst may cost (the user's stress test, 75 rounds/s at the ground: a round did 2-6 impacts, ~290 a second, the
+-- frame rate fell to 8). Effects and sounds of world impacts only; damage, penetration and ricochets are never capped.
+local IMPACT_CAP = { perRound = 2,    -- effects a round makes (its first hit and its first skips)
+	perFrame = 6,                     -- effects all rounds together make in one frame
+	mergeDist = 0.3, mergeTime = 0.1, -- m, s: a second effect on the same surface this close to the last one looks the same: skipped
+	maxHops = 4,                      -- hits a round survives (ricochets, wallbangs)
+	maxRounds = 64 }                  -- rounds in flight: the oldest is dropped past this (the native round sim lifts it)
+local function copyTable(t) local o = {} for k, v in pairs(t) do o[k] = v end return o end
+Deagle.cfgDefaults = Deagle.cfgDefaults or {}
+Deagle.cfgDefaults.impactCap = copyTable(IMPACT_CAP)   -- deagle_reset keeps these
+Deagle.cfg.impactCap = Deagle.cfg.impactCap or copyTable(IMPACT_CAP)
+
 -- ---------------------------------------------------------------------------
 -- energy, armour, ricochets
 -- ---------------------------------------------------------------------------
@@ -216,7 +228,7 @@ function Deagle:Impact(hit, dir, phys, r)
 	local graze = math.deg(math.asin(math.min(1, cosI)))     -- between the shot and the surface
 	local tag = r and r.logId and ("shot " .. r.logId .. " ") or ""   -- traced shots (cfg.debugShotLog) log every hit
 	if r and pen and math.random() < self:RicochetChance(pen.crit, graze) then
-		self:Mark(s, hit, dir, scale * 0.6)
+		self:MarkCapped(s, hit, dir, scale * 0.6, r, name)
 		local out = self:Deflect(r, hit.pos, hit.normal, dir, pen.keep or c.ricochetKeep, c.ricochetScatter, nil,
 			pen.lift or (not pen.hard and 1 or nil), pen.exit, pen.exitMax, pen.exitAdd)
 		-- sparks and Ready or Not's ricochet sound (a metallic spang and whine) off hard surfaces only: off water, ground,
@@ -230,7 +242,7 @@ function Deagle:Impact(hit, dir, phys, r)
 		end
 		return true
 	end
-	self:Mark(s, hit, dir, scale)
+	self:MarkCapped(s, hit, dir, scale, r, name)
 	if self.state.logActions or tag ~= "" then
 		log(string.format("%simpact %s at %.0f deg -> %s x%.2f hole %s", tag, name, graze, s.fx, scale, tostring(s.hole)))
 	end
@@ -295,6 +307,28 @@ function Deagle:Impact(hit, dir, phys, r)
 	return true
 end
 
+-- a world impact's effect, decal and sound, within the budget (IMPACT_CAP); hits on bodies always show
+local lastMark = { name = false, x = 0, y = 0, z = 0, t = -1e9 }
+function Deagle:MarkCapped(s, hit, dir, scale, r, name)
+	local c = self.cfg.impactCap
+	if hit.entity or not c then return self:Mark(s, hit, dir, scale) end
+	local now = System.GetCurrTime()
+	if now ~= self.capT then self.capT, self.capN = now, 0 end
+	local pos = hit.pos
+	if lastMark.name == name and now - lastMark.t < c.mergeTime and now >= lastMark.t then
+		local dx, dy, dz = pos.x - lastMark.x, pos.y - lastMark.y, pos.z - lastMark.z
+		if dx * dx + dy * dy + dz * dz < c.mergeDist * c.mergeDist then return end
+	end
+	if r then
+		if (r.marks or 0) >= c.perRound then return end
+		r.marks = (r.marks or 0) + 1
+	end
+	if self.capN >= c.perFrame then return end
+	self.capN = self.capN + 1
+	lastMark.name, lastMark.x, lastMark.y, lastMark.z, lastMark.t = name, pos.x, pos.y, pos.z, now
+	return self:Mark(s, hit, dir, scale)
+end
+
 -- ---------------------------------------------------------------------------
 -- rounds in flight (BALLISTICS.md phase 1): a shot is a round with the cartridge's muzzle speed, gravity and air drag,
 -- moved every frame and checked against the world along the stretch it covered (a ray per step, so nothing is
@@ -312,7 +346,6 @@ local ROUND_STEP = 0.05          -- s: a longer frame is cut into equal steps no
                                  -- gravity and drag are taken at the chord: ~3 mm and ~3 % at 0.05 s; 0.02 doubled the rays
                                  -- exactly when the frame rate was low)
 local ROUND_TICK_MAX = 0.1       -- s: most game time one tick advances a round (after a hitch it doesn't catch up in one frame)
-local ROUNDS_MAX = 64            -- rounds in flight: the oldest is dropped past this
 local ROUND_LIFE = 6             -- s: a round that hit nothing is dropped after this, or past cfg.range (a Deagle round
                                  -- takes ~5 s to fly 1000 m)
 
@@ -421,7 +454,7 @@ function Deagle:MoveRound(r, h)
 		if self.cfg.debugPaths and vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(cp(hit.pos), cp(r.pos), PATH_IN) end   -- through a wall / body
 		-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
 		r.hops = (r.hops or 0) + 1
-		if r.hops > 8 or vlen(r.vel) < 30 then return true end
+		if r.hops > self.cfg.impactCap.maxHops or vlen(r.vel) < 30 then return true end
 		return self:MoveRound(r, h * (1 - frac))
 	end
 	if self.cfg.debugPaths then self:PathAdd(cp(pos), { x = tx, y = ty, z = tz }, (r.hops or 0) > 0 and PATH_ON or PATH_FLY) end
@@ -464,7 +497,8 @@ function Deagle:LaunchRound(pos, dir, phys, trail)
 	if self:StepRound(r, self.frameDt or 1 / 30) then return r end   -- landed in this frame
 	self.rounds = self.rounds or {}
 	table.insert(self.rounds, r)
-	while #self.rounds > ROUNDS_MAX do table.remove(self.rounds, 1) end
+	local cap = self.cfg.impactCap.maxRounds
+	while #self.rounds > cap do table.remove(self.rounds, 1) end
 	if not self.roundsToken or System.GetCurrTime() - (self.roundsTickT or -1e9) > 0.5 then   -- none, or a dead chain
 		local token = {}
 		self.roundsToken = token

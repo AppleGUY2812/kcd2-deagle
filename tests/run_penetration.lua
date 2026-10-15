@@ -569,6 +569,35 @@ check("every hittable surface has penetration data", #missing == 0, table.concat
 local function db(v) return 20 * math.log10(Deagle:HitLoudness(physD, 0.5 * physD.bullet * v * v)) end
 check(string.format("ricochet loudness: Deagle at 442 m/s %.1f dB, 129 m/s %.1f dB, 54 m/s %.1f dB", db(442), db(129), db(54)),
 	math.abs(db(442)) < 0.5 and math.abs(db(129) + 10.7) < 0.5 and math.abs(db(54) + 18.3) < 0.5, db(54))
+-- a burst at the ground costs a bounded number of impact effects: 2 a round, 6 a frame, none that look the same as the last
+do
+	local marks, perT = 0, {}
+	local mark = Deagle.Mark
+	function Deagle:Mark(...) marks = marks + 1; local t = string.format("%.4f", M.t); perT[t] = (perT[t] or 0) + 1; return mark(self, ...) end
+	local function burst(n, pitch, spread)
+		reset()
+		world.ground = { z = 31.0, surface = 1 }
+		marks, perT = 0, {}
+		for i = 1, n do
+			Deagle.state.ammo, Deagle.state.lastShot = Deagle.gun.magSize, -100
+			Deagle.cfg.spreadHip, Deagle.cfg.spreadAim, Deagle.cfg.heatPerShot, Deagle.state.heat = 0, 0, 0, 0
+			Deagle.cfg.physics.barrelAim, Deagle.cfg.accuracy.scale = 0, 0
+			M.view.pitch, M.view.yaw = pitch, spread * (i - n / 2)
+			Deagle:Shoot(true)       -- no time between them: one frame
+		end
+		M.advance(1.5, 60)
+		local worst = 0
+		for _, v in pairs(perT) do worst = math.max(worst, v) end
+		return marks, worst
+	end
+	math.randomseed(11)
+	local one = burst(1, math.rad(-2), 0)
+	local total, frame = burst(12, math.rad(-2), 0.01)
+	Deagle.Mark = mark
+	local c = Deagle.cfg.impactCap
+	check(string.format("a round at the ground makes at most %d effects (%d); 12 rounds at once make at most %d in any one frame (%d; %d in all)", c.perRound, one, c.perFrame, frame, total),
+		one <= c.perRound and frame <= c.perFrame and total <= 12 * c.perRound, frame)
+end
 -- a traced shot (cfg.debugShotLog) says why a wall stopped it, or how much it went through
 do
 	reset()
