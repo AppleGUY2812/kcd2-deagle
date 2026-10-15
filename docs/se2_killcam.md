@@ -158,3 +158,17 @@ eyeball with eyeball_d. The OBJ files (E:\Tools\deagle-work\se2\organs) carry `v
 Texture per model: heart, lungs, windpipe = heartlungs; kidneys, liver, intestines = gutsliverkidneys; bones = bones_colspec
 (+ bone_detail_nd); eyeball = eyeball_d; testicles = testes_col; wound models = wounds_colspec / heartsplat / teeth.
 Next: the KCD2 import (OBJ -> model with these textures) and the `deagle_organ <name>` test command.
+
+### Round 16: the cam in KCD2, what's built and what isn't (2026-10-15)
+Built: camera on the bullet, three speeds, the organs at the hit (organs.lua: body hidden, organs placed by zone, restored
+at the end), `deagle_organ`. Not installed at the time of writing (the organ assets wait for the user's next game close).
+- **Bone shards (head hit):** the HSKN sub-meshes of BCV_Skull / Jaw / Arm / Leg have no UVs. After the faces they hold a
+  2700-byte block that starts `2, 15, 5` then floats of ~1 cm (about 15 points x 3): collision hull data, not mapping. The
+  shapes are exact (hskn.py OBJs); their texture mapping isn't stored per vertex, so the shards aren't shown yet rather than
+  guessing a mapping: a head hit shows the eyeballs.
+- **X-ray look:** `Bullet\Bullet_KillCamera_FSFX` is an `FSX2` chunk (356 B at 0x17b76e0d in Common.asr, 'FSX2' size 356):
+  a full-screen effect that reads `specialfx\pfx\hud\killcam_dof_mask.tga` (a depth-of-field mask, extracted to
+  E:\Tools\deagle-work\se2\fsx) plus ten or so tint / blur parameters (0.1, 0.1, 0.1, 0.4, 0.3, 0.1, 0.7, 0.5 ...; the
+  field layout isn't decoded). `Bullet_Camera_FSFX` (384 B) is the in-flight counterpart. KCD2 has no equivalent we can
+  drive from Lua yet: a post effect or a DOF cvar would be the way (ask Claude 4 / the plugin).
+- **Normal maps:** their `*_norms.tga` are not converted (the materials are diffuse only).
