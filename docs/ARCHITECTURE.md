@@ -41,6 +41,11 @@ from here. Keep it current: what's decided, what's measured, what's next.
    through one budgeted manager: effect, decal, sound, light, emitter. Each manager has pools, priority by distance
    and importance, and merges events that look the same. Every cap hit is logged. Studios do this for miniguns;
    real belts carry a tracer every 4-5 rounds.
+1b. **High fire rates are weapons of their own, not many single shots.** At 1000 rounds/s (the user's test,
+   2026-10-15) the impacts stayed capped, but the shot itself (gunshot sound, flash cards, 2 flash lights, casing, a
+   new tracer emitter, the gun animation) ran 1000 times a second: Lua 29 ms + engine 220 ms a frame, 4 fps. A
+   minigun / CIWS needs a looping firing sound, one continuous muzzle flame and light, a tracer every Nth round (real
+   belts: 1 in 4-5), casings as a stream effect, while each round stays a real round in the native simulation.
 2. **Hot paths native, decisions in Lua.**
    - Native: the round simulation (all rounds in arrays; rays batched, queued to the physics thread if KCD2's
      physics allows), tracers, effect and sound dispatch.
