@@ -177,25 +177,28 @@ static bool LocFromDir(const float* pos, const float* dir, float scale, float* l
 }
 
 static bool g_fxsSeed = false;   // fxsseed 1: write the box at spawn too (with it, 0.4 s pieces didn't show either)
-// pieces spawned by fxs (tracers, impacts): held 2 s of game time, then let go (oldest first; a full ring lets the
-// oldest go early). Game time so F9 slow motion (x0.1) keeps them 20 s: 2 s real cut a 0.75 s splash at 0.2 s.
-struct HeldPiece { uintptr_t em; double born; float loc[8]; int touches; };
-static HeldPiece g_held[1024]; static int g_heldHead = 0, g_heldN = 0;
+// pieces spawned by fxs (impacts): held for their own time (fxs' optional last field, default 2 s of game time), then
+// let go (oldest first; a full ring lets the oldest go early). Game time so F9 slow motion (x0.1) keeps them 10x
+// longer: 2 s real cut a 0.75 s splash at 0.2 s. HELD_MAX 256: 1024 alive was the count that ran KCD2's DX12
+// descriptor heap out (2026-10-15).
+#define HELD_MAX 256
+struct HeldPiece { uintptr_t em; double born, hold; float loc[8]; int touches; };
+static HeldPiece g_held[HELD_MAX]; static int g_heldHead = 0, g_heldN = 0;
 static float g_gameSpeed = 1.0f;   // speed <x>: the game's speed (t_Scale)
 static double g_pieceClock = 0;    // game seconds: wall time x g_gameSpeed, advanced every camera step (steps cut at 0.1 s)
-static void HoldPiece(uintptr_t em, const float* loc) {
-	if (g_heldN == 1024) { SafeRelease(g_held[g_heldHead].em); g_heldHead = (g_heldHead + 1) % 1024; g_heldN--; }
-	int i = (g_heldHead + g_heldN) % 1024;
-	g_held[i].em = em; g_held[i].born = g_pieceClock; memcpy(g_held[i].loc, loc, sizeof(g_held[i].loc));
+static void HoldPiece(uintptr_t em, const float* loc, float hold) {
+	if (g_heldN == HELD_MAX) { SafeRelease(g_held[g_heldHead].em); g_heldHead = (g_heldHead + 1) % HELD_MAX; g_heldN--; }
+	int i = (g_heldHead + g_heldN) % HELD_MAX;
+	g_held[i].em = em; g_held[i].born = g_pieceClock; g_held[i].hold = hold; memcpy(g_held[i].loc, loc, sizeof(g_held[i].loc));
 	g_held[i].touches = 3; g_heldN++;
 }
 // every camera step: set each new piece's location again (the same place) for its first frames, the way a flash is
 // moved onto the muzzle every frame; a moved emitter is drawn a frame after its spawn (the flash), a new one left alone
 // isn't drawn for ~0.3 s (pieces living under 0.4 s never showed, in game 2026-10-12)
 static void TouchPieces() {
-	for (int j = 0; j < g_heldN; j++) {
-		HeldPiece& h = g_held[(g_heldHead + j) % 1024];
-		if (h.touches <= 0) continue;
+	for (int j = g_heldN - 1; j >= 0; j--) {   // touches only count down, newest last: the first done one ends it
+		HeldPiece& h = g_held[(g_heldHead + j) % HELD_MAX];
+		if (h.touches <= 0) break;
 		h.touches--;
 		float box[6]; bool had = BoxValid(h.em) && ReadBox(h.em, box);
 		SafeSetLocation(h.em, h.loc);
@@ -207,9 +210,10 @@ static void ReleaseOldPieces(bool all) {
 	LARGE_INTEGER now, f; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&f);
 	if (last.QuadPart) { double dt = double(now.QuadPart - last.QuadPart) / f.QuadPart; g_pieceClock += (dt < 0.1 ? dt : 0.1) * g_gameSpeed; }
 	last = now;
-	while (g_heldN > 0 && (all || g_pieceClock - g_held[g_heldHead].born > 2.0)) {
+	// in birth order; a piece held shorter than an older one waits for it (a few tenths of a second at most)
+	while (g_heldN > 0 && (all || g_pieceClock - g_held[g_heldHead].born > g_held[g_heldHead].hold)) {
 		SafeRelease(g_held[g_heldHead].em);
-		g_heldHead = (g_heldHead + 1) % 1024; g_heldN--;
+		g_heldHead = (g_heldHead + 1) % HELD_MAX; g_heldN--;
 	}
 }
 
@@ -223,7 +227,8 @@ static void ReleaseOldPieces(bool all) {
 // 0.25 s of game time is let go: its round is done.
 using RestartFn = void(__fastcall*)(uintptr_t emitter);
 struct TraceSlot { int id; uintptr_t em; double used; int touches; float loc[8]; char effect[64]; };
-static TraceSlot g_traces[64]; static int g_nTraces = 0;
+#define TRACE_MAX 128   // rounds with a tracer at once (deagle_stress into the sky keeps 40-90 in the air)
+static TraceSlot g_traces[TRACE_MAX]; static int g_nTraces = 0;
 static uint64_t g_traceSpawns = 0, g_traceRestarts = 0;
 static void SafeRestart(uintptr_t em) { __try { if (auto f = (RestartFn)VFn(em, 0x268)) f(em); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
 static void MoveKeepBox(uintptr_t em, const float* loc) {
@@ -247,10 +252,10 @@ static void TraceRound(int id, const char* effect, const float* loc) {
 		SafeRelease(t.em); g_traces[i] = g_traces[--g_nTraces];   // another piece effect (the frame rate moved): a new emitter
 		break;
 	}
-	if (g_nTraces == (int)(sizeof(g_traces) / sizeof(g_traces[0]))) {   // full: the least recently used goes
-		int lru = 0;
-		for (int i = 1; i < g_nTraces; i++) if (g_traces[i].used < g_traces[lru].used) lru = i;
-		SafeRelease(g_traces[lru].em); g_traces[lru] = g_traces[--g_nTraces];
+	if (g_nTraces == TRACE_MAX) {   // full: this round goes without (evicting one made a spawn + delete per surplus round
+		// per frame, every slot refreshed that frame being equally recent: the churn that crashed, Claude 3's audit)
+		static int said = 0; if (said++ < 3) Log("fxr: %d rounds traced already, round %d gets no tracer", TRACE_MAX, id);
+		return;
 	}
 	uintptr_t em = SafeSpawnFlash(effect, loc);
 	if (!em || em == (uintptr_t)-1) { static int said = 0; if (said++ < 5) Log("fxr: %s didn't spawn", effect); return; }
@@ -265,9 +270,20 @@ static void TraceStep() {
 		TraceSlot& t = g_traces[i];
 		if (g_pieceClock - t.used > 0.25) { SafeRelease(t.em); continue; }
 		if (t.touches > 0) { t.touches--; MoveKeepBox(t.em, t.loc); }
-		g_traces[keep++] = t;
+		if (keep != i) g_traces[keep] = t;
+		keep++;
 	}
 	g_nTraces = keep;
+}
+
+// the tracer pieces loaded at the handshake, not by the first shot (FindEffect with load = true can hitch mid-fight)
+static void PreloadTracers() {
+	static const char* names[] = { "deagle_tracers.trail_025", "deagle_tracers.trail_040", "deagle_tracers.trail_060" };
+	uintptr_t pm; if (!g_env || !ReadPtr(g_env + 0x68, pm) || !pm) return;
+	__try {
+		auto find = (FindEffectFn)VFn(pm, 0x30);
+		for (const char* n : names) if (find && !find(pm, n, "deagle_native", true)) Log("preload: no effect %s", n);
+	} __except (EXCEPTION_EXECUTE_HANDLER) { Log("preload: crashed (caught)"); }
 }
 
 static void ReleaseFlashes() {
@@ -330,14 +346,17 @@ static void LivePlace(float size) {
 		WriteBox(g_live, box);
 	}
 }
-// every camera step, after the gun: the frame's size, then the next frame
-static void LiveStep() {
+// every drawn frame, after the gun: the frame's size, then the next frame; a repeat call within the frame (newFrame
+// false) places it again at the same size
+static float g_liveNow = 0;
+static void LiveStep(bool newFrame) {
 	if (!g_live) return;
-	if (g_liveFrame >= 0 && g_liveFrame < g_liveN) { LivePlace(g_liveSizes[g_liveFrame]); g_liveFrame++; }
-	else { g_liveFrame = -1; LivePlace(0); }
+	if (!newFrame) { LivePlace(g_liveNow); return; }
+	if (g_liveFrame >= 0 && g_liveFrame < g_liveN) { g_liveNow = g_liveSizes[g_liveFrame]; LivePlace(g_liveNow); g_liveFrame++; }
+	else { g_liveFrame = -1; g_liveNow = 0; LivePlace(0); }
 }
 
-static bool PlaceViewmodel(const float* cam) {
+static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
 	auto getEntity = (GetEntityFn)VFn(es, 0x70);
 	if (!getEntity) return false;
@@ -362,12 +381,12 @@ static bool PlaceViewmodel(const float* cam) {
 	setTM(e, tm, 0);
 	memcpy(g_vmTM, tm, sizeof(tm)); g_haveVmTM = true;
 	if (g_nFlashes) MoveFlashes();
-	LiveStep();
+	LiveStep(newFrame);
 	return true;
 }
 
-static bool SafePlace(const float* cam) {
-	__try { return PlaceViewmodel(cam); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+static bool SafePlace(const float* cam, bool newFrame) {
+	__try { return PlaceViewmodel(cam, newFrame); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
 static void RunConsole(const char* cmd) {
@@ -698,7 +717,7 @@ static void HitReact(const char* rest) {
 	*(uint32_t*)(e + 0x78) = flags & 0xFF;
 	int r = SafeProcessHit(comp, e);
 	g_hitReacts++;
-	Log("hitreact #%llu victim %08X attacker %08X actor %p comp %p type %d strength %d part %s (id %d -> %d) pos %.2f %.2f %.2f "
+	if (g_hitReacts <= 20 || g_hitReacts % 100 == 0) Log("hitreact #%llu victim %08X attacker %08X actor %p comp %p type %d strength %d part %s (id %d -> %d) pos %.2f %.2f %.2f "
 		"dir world %.2f %.2f %.2f -> %s %.2f %.2f %.2f flags %02X -> %s",
 		g_hitReacts, victim, attacker, (void*)actor, (void*)comp, hitType, strength, part, partId, partField, pos[0], pos[1], pos[2],
 		dir[0], dir[1], dir[2], local ? "local" : "as given", ld[0], ld[1], ld[2], flags & 0xFF,
@@ -780,6 +799,8 @@ static void Command(const char* line) {
 		for (auto& f : g_filters) f.want = 0;   // a load holsters the gun and ends the freecam: let our references go
 		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
 		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1;
+		g_heldN = 0; g_heldHead = 0; g_nTraces = 0;   // the same for impact pieces and tracer emitters (Claude 3's audit)
+		PreloadTracers();
 		// the handshake, then the player's saved settings (settings.cpp)
 		std::vector<std::string> saved = SettingsReplay();
 		{
@@ -839,9 +860,11 @@ static void Command(const char* line) {
 		// one, which a 0.12 s piece may never get (Lua-spawned single pieces never showed, 2026-10-12): it gets the box
 		// from pos to pos + dir x len (+ 0.15 m) at once. Our reference is kept 2 s of game time (HoldPiece): letting it go at once
 		// showed one tracer, then none (the manager holds none of its own: the release deleted them).
-		char effect[96] = {}; float scale = 1, len = 1, p[3] = {}, d[3] = {}, loc[8];
-		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &len, &p[0], &p[1], &p[2], &d[0], &d[1], &d[2]);
-		if (n == 9 && Finite(p, 3) && Finite(d, 3) && Finite(&len, 1) && LocFromDir(p, d, scale, loc)) {
+		// [<hold s>]: how long the plugin keeps it (game time; default 2 s): the effect's own life, not 2 s for all
+		char effect[96] = {}; float scale = 1, len = 1, p[3] = {}, d[3] = {}, loc[8], hold = 2.0f;
+		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &len, &p[0], &p[1], &p[2], &d[0], &d[1], &d[2], &hold);
+		if (n < 10 || !Finite(&hold, 1) || hold <= 0 || hold > 10) hold = 2.0f;
+		if (n >= 9 && Finite(p, 3) && Finite(d, 3) && Finite(&len, 1) && LocFromDir(p, d, scale, loc)) {
 			uintptr_t em = SafeSpawnFlash(effect, loc);
 			if (em && em != (uintptr_t)-1) {
 				float dl = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]), box[6];
@@ -850,15 +873,25 @@ static void Command(const char* line) {
 					box[k] = (p[k] < e ? p[k] : e) - 0.15f; box[3 + k] = (p[k] > e ? p[k] : e) + 0.15f;
 				}
 				if (g_fxsSeed) WriteBox(em, box);
-				HoldPiece(em, loc);
+				HoldPiece(em, loc, hold);
 			}
 			else { static int said = 0; if (said++ < 5) Log("fxs: %s didn't spawn", effect); }
 		}
 	}
 	else if (!strcmp(cmd, "fxr")) {   // fxr <round id> <effect> <scale> <len m> <pos xyz> <dir xyz>: a round's tracer piece, on its own emitter
-		int id = 0; char effect[64] = {}; float scale = 1, len = 1, p[3] = {}, d[3] = {}, loc[8];
-		int n = sscanf_s(rest, "%d %63s %f %f %f %f %f %f %f %f", &id, effect, (unsigned)sizeof(effect), &scale, &len, &p[0], &p[1], &p[2], &d[0], &d[1], &d[2]);
-		if (n == 10 && Finite(p, 3) && Finite(d, 3) && LocFromDir(p, d, scale, loc)) TraceRound(id, effect, loc);
+		char effect[64] = {}; float f[8], loc[8];
+		char* q = nullptr;
+		int id = (int)strtol(rest, &q, 10), n = 0;
+		while (*q == ' ') q++;
+		const char* e0 = q;
+		while (*q && *q != ' ') q++;
+		size_t el = (size_t)(q - e0);
+		if (el > 0 && el < sizeof(effect)) {
+			memcpy(effect, e0, el);
+			for (; n < 8; n++) { char* nx; f[n] = strtof(q, &nx); if (nx == q) break; q = nx; }
+		}
+		// f: scale, len, pos xyz, dir xyz
+		if (n == 8 && Finite(f, 8) && LocFromDir(f + 2, f + 5, f[0], loc)) TraceRound(id, effect, loc);
 		else { static int said = 0; if (said++ < 5) Log("bad fxr command: %s", rest); }
 	}
 	else if (!strcmp(cmd, "fxrstat")) Log("fxr: %d rounds traced now, %llu emitters made, %llu restarts; fxs pieces held %d", g_nTraces,
@@ -976,7 +1009,7 @@ static void Command(const char* line) {
 		char id[32] = {}; float w = 0; unsigned long long v = 0; uintptr_t es = 0, e = 0;
 		if (sscanf_s(rest, "%31s %f", id, (unsigned)sizeof(id), &w) != 2 || !Finite(&w, 1) || w <= 0) Log("casespin: bad command: %s", rest);
 		else if (sscanf_s(strncmp(id, "0x", 2) ? id : id + 2, "%llx", &v) != 1 || !g_env || !ReadPtr(g_env + 0xA0, es) || !es
-			|| !(e = SafeGetEntity(es, (uint32_t)v)) || !SafeSetMaxSpin(e, w)) Log("casespin %s: no physical entity", id);
+			|| !(e = SafeGetEntity(es, (uint32_t)v)) || !SafeSetMaxSpin(e, w)) { static int bad = 0; if (bad++ < 5) Log("casespin %s: no physical entity", id); }
 		else if (logged++ < 3) Log("casespin %s: cap %.0f rad/s", id, w);
 	}
 	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
@@ -1015,24 +1048,31 @@ static bool CopyCamera(uintptr_t camera, float* out12, float* fov) {
 	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
-// The game asks for the main view's camera 2-3 times per drawn frame (~176 calls/s at 60-80 fps, deagle_native.log).
-// A call with the same camera under 1 ms after the last one is a repeat within the frame: skip the per-frame work
-// (placing the gun, motion springs, FMOD update) instead of doing it 2-3 times. A different camera is always processed.
+// The game asks for the main view's camera 2-3 times per drawn frame (~176 calls/s at 60-80 fps, deagle_native.log),
+// each with its own shake, so the old "same camera under 1 ms" test never matched ("repeats skipped 0"): the motion
+// springs, the pieces, the tracer slots and the live flash's frames all ran 2-3x per frame (Claude 3's audit
+// 2026-10-15). A call starting under 2 ms after the previous one ENDED is a repeat within the frame: the gun and the
+// flash are placed again on its camera (the last one is drawn), the per-frame work is not done again.
 static void OnCamera(uintptr_t camera) {
 	uintptr_t vt;
 	if (!ReadPtr(camera - 0xE8, vt) || !IsCView(vt)) return;
 	float fov = 0, cam[12];
 	if (!CopyCamera(camera, cam, &fov)) return;
-	static LARGE_INTEGER last{}, freq{};
+	static LARGE_INTEGER lastEnd{}, freq{};
 	LARGE_INTEGER now; QueryPerformanceCounter(&now);
 	if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
-	double ms = last.QuadPart ? (now.QuadPart - last.QuadPart) * 1000.0 / (double)freq.QuadPart : 1e9;
-	if (ms < 1.0 && memcmp(cam, g_cam, sizeof(cam)) == 0) { g_repeats++; return; }
-	last = now;
+	double gap = lastEnd.QuadPart ? (now.QuadPart - lastEnd.QuadPart) * 1000.0 / (double)freq.QuadPart : 1e9;
+	bool newFrame = gap >= 2.0;
 	memcpy(g_cam, cam, sizeof(cam));
+	if (!newFrame) {
+		g_repeats++;
+		if (g_follow && g_vmId && g_env) SafePlace(g_cam, false);
+		QueryPerformanceCounter(&lastEnd);
+		return;
+	}
 	uint64_t n = ++g_viewFrames;
 	UpdateMotion(g_cam);
-	if (g_follow && g_vmId && g_env && SafePlace(g_cam)) g_placed++;
+	if (g_follow && g_vmId && g_env && SafePlace(g_cam, true)) g_placed++;
 	{   // our sounds are heard from where the view is: the free camera while it's on, else Henry's eye
 		float fc[12];
 		const float* ear = Freecam_Matrix(fc) ? fc : g_cam;
@@ -1062,6 +1102,7 @@ static void OnCamera(uintptr_t camera) {
 	if (n == 1 || n % 600 == 0)
 		Log("view frame %llu cam pos %.3f %.3f %.3f fwd %.3f %.3f %.3f fov %.3f", n, g_cam[3], g_cam[7], g_cam[11],
 			g_cam[1], g_cam[5], g_cam[9], fov);
+	QueryPerformanceCounter(&lastEnd);
 }
 
 static uintptr_t __fastcall HkFrustum(uintptr_t camera) {

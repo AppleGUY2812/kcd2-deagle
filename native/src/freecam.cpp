@@ -265,6 +265,7 @@ void Freecam_Command(const char* args) {
 	else if (!strcmp(w, "rotoff")) { g_rotOn = false; return; }
 	else if (!strcmp(w, "nudge")) {   // nudge <x> <y> <z>: move the camera by metres (world), for tests without keys
 		float d[3] = {}; if (sscanf_s(rest, "%f %f %f", &d[0], &d[1], &d[2]) == 3 && g_on) for (int k = 0; k < 3; k++) g_pos[k] += d[k];
+		return;   // every kill-cam frame: no log
 	}
 	else if (!strcmp(w, "max")) { float v = (float)atof(rest); if (v >= 1 && v < 100000) g_maxDist = v; }
 	else if (!strcmp(w, "keys")) {

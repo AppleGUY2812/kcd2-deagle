@@ -769,4 +769,9 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   cheap: `Physics.SamplePhysEnvironment(pos, r, ent_living)` ~0 ms at 3 m, 0.12 ms at 30 m, 1.9 ms at 300 m; it returns
   entity, part id, physics id per body. Worn items (PickableItem on Henry) have no physics: the grid can't find them.
   Near miss now asks the grid per step; worn gear is searched at first person and once 1 s later, not every second.
+- 2026-10-15 plugin (Claude 3's audit batch 2): OnCamera runs 2-3x per drawn frame with different shake, so the old
+  "same camera < 1 ms" repeat test never matched; now a call starting < 2 ms after the previous one ENDED is a repeat:
+  gun + flash placed again, per-frame work (motion, pieces, tracer slots, live flash frame, sounds, console) once.
+  Held fxs pieces: ring 256, each held its own time (`fxs ... [hold s]`). Tracer slots 128, full = no tracer for the
+  new round (eviction was spawn + delete per frame). A hello forgets pieces and slots; tracer effects preloaded there.
 
