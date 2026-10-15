@@ -61,6 +61,11 @@ from here. Keep it current: what's decided, what's measured, what's next.
 ## Questions to answer first (research and reverse engineering)
 - Does KCD2 still contain CryEngine's newer particle system (pfx2 / "wavicle": GPU particles, curves)? It's much
   closer to RoN's Niagara than the legacy pfx1 we bake into.
+- Bullet holes without a limit: can we spawn CryEngine's projected (deferred) decals at run time in WHGame, or keep a
+  pool of decal render nodes that are moved rather than created? Each `Particle.CreateMatDecal` clips the surface's
+  mesh and allocates a new render mesh; ~200 a second took the frame to 250 ms, recovering within ~1 s of stopping, so
+  creating them costs and drawing them doesn't (the user's A/B run 2026-10-15). It is capped for now
+  (`cfg.holeBudget`); the user asked why drawing an image should need a limit at all.
 - Can native code use queued or batched ray casts (CryEngine `rwi_queue`) in WHGame?
 - Where are IScriptSystem's function-registration entry points in WHGame 1.5.6 (for the typed binding)?
 - The loader/core split with MinHook: the loader owns the hooks, the core gets callbacks. How to hand state over on
