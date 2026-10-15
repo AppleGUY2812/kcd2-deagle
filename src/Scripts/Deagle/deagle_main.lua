@@ -1351,9 +1351,10 @@ function Deagle:PainVoice(e)
 	pcall(function() hp = e.actor:GetHealth() end)
 	if not hp or hp <= 0 then return end
 	local now, key = System.GetCurrTime(), tostring(e.id)
-	self.painT = self.painT or {}
+	if not self.painT or (self.painN or 0) > 64 then self.painT, self.painN = {}, 0 end   -- forget old NPCs now and then
 	local last = self.painT[key]
 	if last and now >= last and now - last < PAIN_GAP then return end   -- now < last: a save load set the clock back
+	if not last then self.painN = (self.painN or 0) + 1 end
 	self.painT[key] = now
 	try("pain voice", function()
 		XGenAIModule.SendMessageToEntityData(e.this.id, "dialog:monologRequest",
@@ -1398,7 +1399,15 @@ function Deagle:HitSound(what, pos, scale, vol)
 		else ev, params = RON_HIT[what], prop end
 		if ev then self:Native(string.format("ron3 %.3f %.2f %.2f %.2f %s|%s", c.impactVolume * (vol or 1), pos.x, pos.y, pos.z, ev, params)) end
 	end
-	if c.hearing.on then try("AI hears the hit", XGenAIModule.ProduceSound, enum_sound.bullet_hit, pos, c.hearing.hit * (scale or 1)) end
+	-- one AI sound per hit: an NPC hit plays armour + flesh (+ a ricochet) at one spot in one frame, each re-running the
+	-- AI's hearing (performance audit 2026-10-15)
+	if c.hearing.on then
+		local f, last = System.GetFrameID(), self.aiHeard
+		if not (last and last.f == f and (last.x - pos.x) ^ 2 + (last.y - pos.y) ^ 2 + (last.z - pos.z) ^ 2 < 1) then
+			self.aiHeard = { f = f, x = pos.x, y = pos.y, z = pos.z }
+			try("AI hears the hit", XGenAIModule.ProduceSound, enum_sound.bullet_hit, pos, c.hearing.hit * (scale or 1))
+		end
+	end
 end
 
 -- deagle_testnpc: the NPC you aim at (within 60 m) takes no damage from our rounds (so no crime either) and a message
@@ -1747,9 +1756,14 @@ function Deagle:TracerBullet(r, from)
 	local p0 = turned and vsub(r.pos, vscale(u, l)) or self:TrailPoint(trail, vsub(r.pos, vscale(u, l)), r.dist - l)
 	local dir = vnorm(vsub(p1, p0))
 	local fx = c.fx
-	if fx == "auto" then   -- glows about a frame: never shorter than the frame, or it's never drawn
-		local dt = self.frameDt or 1 / 60
-		fx = dt <= 1 / 50 and "deagle_tracers.trail_025" or dt <= 1 / 30 and "deagle_tracers.trail_040" or "deagle_tracers.trail_060"
+	if fx == "auto" then   -- glows about a frame: never shorter than the frame, or it's never drawn. Picked once per round:
+		-- a new effect name makes the plugin replace the round's emitter (fxr), and a frame rate near 50 / 30 fps flipped
+		-- it every frame (Claude 3's audit 2026-10-15)
+		if not r.traceFx then
+			local dt = self.frameDt or 1 / 60
+			r.traceFx = dt <= 1 / 50 and "deagle_tracers.trail_025" or dt <= 1 / 30 and "deagle_tracers.trail_040" or "deagle_tracers.trail_060"
+		end
+		fx = r.traceFx
 	end
 	local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2   -- where the effect sits; the end is p1
 	local at = vsub(p1, vscale(dir, back))
