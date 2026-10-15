@@ -136,6 +136,9 @@ Deagle.cfg = {
 	-- water and metal hit looks: "ron" = Ready or Not's; "new" = the test looks water_v3 / metal_v2 (deagle_impacts.xml:
 	-- a fast jet whose spray splashes where it lands; a fast flat spark fan that differs every hit)
 	impactLook = "ron",
+	-- light from sparky hits (effects.lua ImpactLight): a pool of max world lights, each burning time s (game time),
+	-- radius m (far past where it fades, so no ring), off m out from the surface; brightness x the impact scale
+	impactLight = { on = true, max = 6, time = 0.05, intensity = 0.3, radius = 15, bulb = 0.3, off = 0.15 },
 	headFx = "deagle_blood.head",             -- burst out of the back of a head
 	holeSize = 0.035,         -- m, a 9 mm's bullet hole (Ready or Not's pistol holes: 3-4 cm); x the impact scale
 	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)

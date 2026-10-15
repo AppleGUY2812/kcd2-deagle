@@ -52,6 +52,7 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 		local dx, dy, dz = pos.x - cp.x, pos.y - cp.y, pos.z - cp.z
 		if dx * dx + dy * dy + dz * dz > (FX_FAR * (self.zoom or 1)) ^ 2 then return end
 	end
+	self:ImpactLight(name, pos, normal, scale)
 	local vary = FX_VARY[name]
 	if vary and pos and normal then
 		local a = math.abs(normal.z) < 0.9 and { x = 0, y = 0, z = 1 } or { x = 1, y = 0, z = 0 }
@@ -71,6 +72,61 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 		return
 	end
 	try("fx " .. name, Particle.SpawnEffect, name, pos, normal, scale or 1.0)
+end
+
+-- Impact lights (the user 2026-10-15, for a CIWS: "impacts allow me to light up the entire environment"): sparks and
+-- flashes light what's around them. A fixed pool of cfg.impactLight.max world lights (a BasicEntity each, its light in
+-- slot 0, reused), never a light per hit: at 75 rounds/s with 0.05 s each about 4 burn at once. A hit while every
+-- light burns gets none (counted; logged at most every 2 s). Sparks only (soil, wood, water, cloth give no light), x
+-- the impact scale (energy). Game time, so F9 stretches them. Off: deagle_set impactLight.on 0
+local IMPACT_LIGHT = { ["deagle_impacts.metal"] = 1, ["deagle_impacts.metal_v2"] = 1, ["deagle_impacts.metal_exit"] = 0.8,
+	["deagle_impacts.ricochet_metal"] = 0.7, ["deagle_impacts.ricochet_stone"] = 0.35, ["deagle_impacts.stone"] = 0.25 }
+local IMPACT_LIGHT_HUE = { 1.0, 0.55, 0.25 }   -- hot steel sparks: yellow-orange
+function Deagle:ImpactLight(name, pos, normal, scale)
+	local L, k = self.cfg.impactLight, IMPACT_LIGHT[name]
+	if not (L and L.on and k and pos) then return end
+	local now = System.GetCurrTime()
+	self.impactLights = self.impactLights or {}
+	local pool, slot = self.impactLights, nil
+	for i = 1, L.max do
+		if not pool[i] or now >= pool[i].till then slot = i break end
+	end
+	if not slot then
+		self.impactLightSkips = (self.impactLightSkips or 0) + 1
+		if now >= (self.impactLightSaid or 0) then
+			self.impactLightSaid = now + 2
+			log(string.format("impact lights: all %d burning, %d hits got none so far", L.max, self.impactLightSkips))
+		end
+		return
+	end
+	local s = pool[slot] or { till = 0 }
+	pool[slot] = s
+	local e = s.id and System.GetEntity(s.id)
+	if not e then
+		local ok, ne = pcall(System.SpawnEntity, { class = "BasicEntity", name = "deagle_impact_light_" .. slot, position = pos,
+			flags = ENTITY_FLAG_NO_SAVE })
+		if not (ok and ne) then return end
+		e = ne
+		e:SetFlags(ENTITY_FLAG_NO_SAVE, 0)   -- never into a save
+		s.id = e.id
+	end
+	local i = L.intensity * k * (scale or 1)
+	local col = { x = i * IMPACT_LIGHT_HUE[1], y = i * IMPACT_LIGHT_HUE[2], z = i * IMPACT_LIGHT_HUE[3] }
+	e:SetWorldPos(normal and vadd(pos, vscale(normal, L.off)) or pos)   -- off the surface, so it lights it
+	local ok = pcall(e.LoadLight, e, 0, {
+		style = 0, deferred_light = 1, radius = L.radius, diffuse_color = col, specular_color = col,
+		hdrdyn = 0, lifetime = 0, realtime = 1, dot3 = 1, cast_shadow = 0, attenuation_bulbsize = L.bulb,
+		volumetric_fog = false, volumetric_multiplier_wh = 0,
+		corona_scale = 0, corona_dist_size_factor = 1, corona_dist_intensity_factor = 1 })
+	if not ok then return end
+	s.till = now + L.time
+	local id = e.id
+	Script.SetTimer(math.max(1, L.time * 1000), function()   -- game time; a light lit again meanwhile keeps burning
+		if System.GetCurrTime() >= s.till - 0.001 then
+			local le = System.GetEntity(id)
+			if le then pcall(le.FreeSlot, le, 0) end
+		end
+	end)
 end
 
 function Deagle:FxTest(name)
