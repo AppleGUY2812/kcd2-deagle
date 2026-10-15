@@ -142,9 +142,13 @@ Deagle.cfg = {
 	-- impact / blood effects under heavy fire (effects.lua FxBudget): none within near m (x impact scale) of a fresh one
 	-- (nearTime s) of the same kind; bursts of burst, then rate a second
 	fxBudget = { on = true, rate = 30, burst = 15, near = 0.5, nearTime = 0.15 },
-	-- hit sounds under heavy fire (sound.lua HitBudget): none within near m of a fresh one of the same surface (nearTime
-	-- s); bursts of burst, then rate a second
-	hitSoundBudget = { on = true, rate = 30, burst = 15, near = 0.5, nearTime = 0.12 },
+	-- sounds under heavy fire (sound.lua SoundBudget), per category: none within near m of a fresh one of the same kind
+	-- (nearTime s); bursts of burst, then rate a second; sounds farther than closeM from the listener leave reserve tokens
+	-- for close ones. Your own gunshot, handling sounds and hits on people are never dropped
+	soundBudget = { on = true, closeM = 10,
+		hit = { rate = 30, burst = 15, near = 0.5, nearTime = 0.12, reserve = 5 },
+		ricochet = { rate = 10, burst = 5, near = 1, nearTime = 0.25, reserve = 2 },
+		casing = { rate = 12, burst = 6, near = 0.3, nearTime = 0.1, reserve = 2 } },
 	headFx = "deagle_blood.head",             -- burst out of the back of a head
 	holeSize = 0.035,         -- m, a 9 mm's bullet hole (Ready or Not's pistol holes: 3-4 cm); x the impact scale
 	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)

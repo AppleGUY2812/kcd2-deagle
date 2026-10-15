@@ -113,12 +113,12 @@ check("every hit surface has an audible RoN Surface: missing " .. table.concat(m
 -- steel plays the real plate files once the plugin says it can ("deagle_native_caps files"), RoN's Steel before that
 local hit = { x = 1, y = 2, z = 3 }
 Deagle.nativeCaps = nil
-Deagle.hitBudgetState = nil; Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
+Deagle.soundBudgetState = nil; Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
 check("an older plugin: steel stays RoN's Steel: " .. M.native[#M.native], M.native[#M.native]:find("|Surface=44 ", 1, true) ~= nil, nil)
 local nLoad = #M.native
 Deagle:NativeCaps('"files"')
 check("the plugin can play files: the plate takes load at once", #M.native == nLoad + 3 and M.native[#M.native]:find("^%[DN%] ronload file:steel/plate_0%d%.wav$") ~= nil, M.native[#M.native])
-Deagle.hitBudgetState = nil; Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
+Deagle.soundBudgetState = nil; Deagle:HitSound(Deagle.surfaces.mat_metal.ron, hit, 1)
 check("then steel plays a plate take with the distance law, full level within 6 m: " .. M.native[#M.native],
 	M.native[#M.native]:find("^%[DN%] ron3 3%.370 1%.00 2%.00 3%.00 file:steel/plate_0%d%.wav|Falloff=6$") ~= nil, nil)
 local notPlate = {}
@@ -126,10 +126,10 @@ for _, n in ipairs({ "mat_door_metal", "mat_plate", "mat_chainmail", "mat_fabric
 	if Deagle.surfaces[n].ron ~= Deagle.surfaces.mat_metal.ron then notPlate[#notPlate + 1] = n end
 end
 check("every metal that played RoN's Steel plays the plate: not " .. table.concat(notPlate, " "), #notPlate == 0, #notPlate)
-Deagle.hitBudgetState = nil; Deagle:HitSound("armor_body_block", hit, 1)
+Deagle.soundBudgetState = nil; Deagle:HitSound("armor_body_block", hit, 1)
 check("armour that stops a round rings like the plate: " .. M.native[#M.native], M.native[#M.native]:find("file:steel/plate_0%d%.wav|") ~= nil, nil)
 n0 = #M.native
-Deagle.hitBudgetState = nil; Deagle:HitSound("armor_helmet", hit, 1)
+Deagle.soundBudgetState = nil; Deagle:HitSound("armor_helmet", hit, 1)
 check("a round through armour: no ring (the flesh hit follows)", #M.native == n0, M.native[#M.native])
 Deagle.nativeCaps = nil
 -- the empty click and aiming play the gun's RoN events
@@ -172,7 +172,7 @@ check("every RoN handling event has a measured click: " .. table.concat(unknown,
 -- an impact: RoN's event, its distance left to the plugin (from the listener, the free camera too) as PropagateDistance=@
 n0 = #M.native
 local cp = System.GetViewCameraPos()
-Deagle.hitBudgetState = nil; Deagle:HitSound(8, { x = cp.x, y = cp.y + 12, z = cp.z }, 1)
+Deagle.soundBudgetState = nil; Deagle:HitSound(8, { x = cp.x, y = cp.y + 12, z = cp.z }, 1)
 local imp = M.native[#M.native]
 check("impact: " .. tostring(imp), #M.native == n0 + 1 and imp:find("^%[DN%] ron3 2%.000 [%-%d%.]+ [%-%d%.]+ [%-%d%.]+ event:/Surfaces/Impacts/Bullet Impacts/Bullet Impact Surfaces|Surface=8 Occlusion=0 PropagateDistance=@ Falloff=3$") ~= nil, imp)
 -- ... with our distance law (Falloff=<m>: full level within it, -6 dB per doubling) instead of RoN's own, which fades

@@ -100,17 +100,35 @@ end
 local near, far = fxsAt(20), fxsAt(600)
 check(string.format("an impact 600 m away spawns no effect (%d), one 20 m away does (%d)", far, near), far == 0 and near >= 1, far)
 
--- hit sounds under heavy fire (sound.lua HitBudget): 75 rounds/s made 150-290 a second and 8-12 fps in game
-Deagle.hitBudgetState = nil
+-- sounds under heavy fire (sound.lua SoundBudget): 75 rounds/s made 150-290 hit sounds a second and 8-12 fps in game
+local function ron3(from) return native(from, "^%[DN%] ron3 ") end
+Deagle.soundBudgetState = nil
+local cp = System.GetViewCameraPos()
 local k0 = #M.native
-for i = 1, 20 do Deagle:HitSound(8, { x = 50, y = 60, z = 1 + i * 0.001 }, 1) end   -- one spot, one frame
-local same = native(k0, "^%[DN%] ron3 ")
+for i = 1, 20 do Deagle:HitSound(8, { x = cp.x, y = cp.y + 5, z = cp.z + i * 0.001 }, 1) end   -- one spot, one frame
+local same = ron3(k0)
 k0 = #M.native
-for i = 1, 300 do Deagle:HitSound(8, { x = 50 + i, y = 60, z = 1 }, 1); M.advance(1 / 300, 300) end   -- 300 spread over 1 s
-local spread = native(k0, "^%[DN%] ron3 ")
-local B = Deagle.cfg.hitSoundBudget
-check(string.format("hit sounds: 20 at one spot at once play 1 (%d); 300 spread over 1 s play at most burst + rate (%d of %d)", same, spread,
-	B.burst + B.rate), same == 1 and spread <= B.burst + B.rate + 1, spread)
+for i = 1, 300 do Deagle:HitSound(8, { x = cp.x + (i % 20) - 10, y = cp.y + 5, z = cp.z }, 1); M.advance(1 / 300, 300) end   -- near, 1 s
+local spread = ron3(k0)
+local H = Deagle.cfg.soundBudget.hit
+check(string.format("hit sounds: 20 at one spot at once play 1 (%d); 300 near you over 1 s play at most burst + rate (%d of %d)",
+	same, spread, H.burst + H.rate), same == 1 and spread <= H.burst + H.rate + 1, spread)
+-- far hits leave the reserve to close ones; hits on people always play
+Deagle.soundBudgetState = nil
+for i = 1, 40 do Deagle:HitSound(8, { x = cp.x + i, y = cp.y + 200, z = cp.z }, 1) end      -- far: drain to the reserve
+k0 = #M.native
+for i = 1, 3 do Deagle:HitSound(8, { x = cp.x + i, y = cp.y + 4, z = cp.z }, 1) end        -- close: the reserve plays them
+local close = ron3(k0)
+k0 = #M.native
+for i = 1, 30 do Deagle:HitSound(16, { x = cp.x, y = cp.y + 4, z = cp.z }, 1) end           -- flesh, all at one spot
+check(string.format("after far hits drained the budget, close hits still play (%d of 3); 30 flesh hits at one spot all play (%d)", close, ron3(k0)),
+	close == 3 and ron3(k0) == 30, close)
+-- ricochets have their own, smaller budget
+Deagle.soundBudgetState = nil
+k0 = #M.native
+for i = 1, 100 do Deagle:HitSound("ricochet", { x = cp.x + i * 2, y = cp.y + 5, z = cp.z }, 1, 1); M.advance(1 / 100, 100) end
+local R = Deagle.cfg.soundBudget.ricochet
+check(string.format("ricochets: 100 over 1 s play at most burst + rate (%d of %d)", ron3(k0), R.burst + R.rate), ron3(k0) <= R.burst + R.rate + 1, ron3(k0))
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("perf: %d/%d checks pass", n - fails, n))

@@ -107,52 +107,70 @@ local RON_HIT = {
 local ARMOR_HIT = { armor_helmet_block = PLATE, armor_body_block = PLATE, armor_helmet = false, armor_body = false }
 Deagle.ronHitEvents = { RON_IMPACT }
 for _, ev in pairs(RON_HIT) do Deagle.ronHitEvents[#Deagle.ronHitEvents + 1] = ev end
--- Hit sound budget. A CIWS at 75 rounds/s made 150-290 hit sounds a second and the game fell to 8-12 fps (engine 76-120
--- ms a frame), while the same fire with hit sounds off held 41-61 fps (deagle_stress 75 aim ab, 2026-10-15): every one
--- is a Ready or Not event living 1-3 s, and its engine updates on the game's main thread. At that rate single hits
--- can't be told apart, so: (1) a hit within cfg.hitSoundBudget.near m of a fresh one (younger than nearTime s) of the
--- same surface plays nothing, and neither does its AI sound; (2) a token bucket: bursts up to burst, then rate a second.
--- Skips are counted and logged at most every 2 s. Like effects.lua's FxBudget (Claude 2). A/B: deagle_set
--- hitSoundBudget.on 0
-local HIT_RECENT = 16
-function Deagle:HitBudget(what, pos)
-	local B = self.cfg.hitSoundBudget
-	if not (B and B.on and pos) then return true end
+-- The sound budget (docs/ARCHITECTURE.md step 4). A CIWS at 75 rounds/s made 150-290 hit sounds a second and the game
+-- fell to 8-12 fps (engine 76-120 ms a frame), while the same fire with hit sounds off held 41-61 fps (deagle_stress 75
+-- aim ab, 2026-10-15): every one is a Ready or Not event living 1-3 s, and its engine updates on the game's main thread.
+-- At that rate single hits can't be told apart. Per category (cfg.soundBudget: hit, ricochet, casing):
+-- (1) merge: a sound within near m of a fresh one (younger than nearTime s) of the same kind plays nothing;
+-- (2) a token bucket: bursts up to burst, then rate a second;
+-- (3) priority by distance: a sound farther than closeM from the listener needs reserve tokens to spare, so far hits
+--     can't starve the ones next to you.
+-- prio "keep" always plays (hits on people; your own gunshot and handling sounds don't come here at all). Skips are
+-- counted per category and logged at most every 2 s. Like effects.lua's FxBudget (Claude 2). A/B: deagle_set
+-- soundBudget.on 0. Returns true when the sound may play.
+local SOUND_RECENT = 16
+local SOUND_CATS = { "hit", "ricochet", "casing" }
+function Deagle:SoundBudget(cat, kind, pos, prio)
+	local B = self.cfg.soundBudget
+	local C = B and B.on and B[cat]
+	if not C or not pos or prio == "keep" then return true end
 	local now = System.GetCurrTime()
-	local st = self.hitBudgetState
-	if not st or now < st.t then   -- first use, or the clock went back (a save load)
-		st = { tokens = B.burst, t = now, ring = {}, i = 0, skips = 0, said = 0 }
-		self.hitBudgetState = st
+	local all = self.soundBudgetState
+	if not all or now < all.t then   -- first use, or the clock went back (a save load)
+		all = { t = now, said = 0 }
+		self.soundBudgetState = all
 	end
-	st.tokens = math.min(B.burst, st.tokens + (now - st.t) * B.rate)
+	all.t = now
+	local st = all[cat]
+	if not st or now < st.t then st = { tokens = C.burst, t = now, ring = {}, i = 0, skips = 0 }; all[cat] = st end
+	st.tokens = math.min(C.burst, st.tokens + (now - st.t) * C.rate)
 	st.t = now
-	local skip = st.tokens < 1
+	local need = 1
+	if (C.reserve or 0) > 0 then
+		local cp = System.GetViewCameraPos()
+		if (pos.x - cp.x) ^ 2 + (pos.y - cp.y) ^ 2 + (pos.z - cp.z) ^ 2 > B.closeM * B.closeM then need = 1 + C.reserve end
+	end
+	local skip = st.tokens < need
 	if not skip then
-		for k = 1, HIT_RECENT do
+		for k = 1, SOUND_RECENT do
 			local r = st.ring[k]
-			if r and r.what == what and now - r.t < B.nearTime
-				and (pos.x - r.x) ^ 2 + (pos.y - r.y) ^ 2 + (pos.z - r.z) ^ 2 < B.near * B.near then skip = true break end
+			if r and r.kind == kind and now - r.t < C.nearTime
+				and (pos.x - r.x) ^ 2 + (pos.y - r.y) ^ 2 + (pos.z - r.z) ^ 2 < C.near * C.near then skip = true break end
 		end
 	end
 	if skip then
 		st.skips = st.skips + 1
-		if now >= st.said then
-			st.said = now + 2
-			log(string.format("hit sounds: %d skipped so far (budget %g a second, none within %g m of a fresh one)", st.skips, B.rate, B.near))
+		if now >= all.said then
+			all.said = now + 2
+			local parts = {}
+			for _, c in ipairs(SOUND_CATS) do if all[c] then parts[#parts + 1] = c .. " " .. all[c].skips end end
+			log("sounds skipped so far (budget, docs/PERFORMANCE.md #36): " .. table.concat(parts, ", "))
 		end
 		return false
 	end
 	st.tokens = st.tokens - 1
-	st.i = st.i % HIT_RECENT + 1
+	st.i = st.i % SOUND_RECENT + 1
 	local r = st.ring[st.i] or {}
-	r.what, r.t, r.x, r.y, r.z = what, now, pos.x, pos.y, pos.z
+	r.kind, r.t, r.x, r.y, r.z = kind, now, pos.x, pos.y, pos.z
 	st.ring[st.i] = r
 	return true
 end
 function Deagle:HitSound(what, pos, scale, vol)
 	local c = self.cfg
+	-- hits on people (flesh, worn armour) always play; ricochets and the rest share their category's budget
+	local keep = what == SURFACES.mat_flesh.ron or ARMOR_HIT[what] ~= nil
 	if ARMOR_HIT[what] ~= nil then what = ARMOR_HIT[what] end
-	if not self:HitBudget(what, pos) then return end
+	if not self:SoundBudget(what == "ricochet" and "ricochet" or "hit", what, pos, keep and "keep" or nil) then return end
 	if self.native and what then
 		local ev, params
 		-- Falloff: the plugin's distance law from the listener (the free camera too), instead of RoN's PropagateDistance
