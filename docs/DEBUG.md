@@ -67,6 +67,13 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `impactLook` | `ron` | water and metal hit looks: `ron` = Ready or Not's; `new` = the test looks (water: a fast jet whose spray splashes where it lands, KCD2's own water materials; metal: a fast flat spark fan that differs every hit) |
 | `slowmo` | `0.1` | game speed while F9 slow motion is on (0.01-1; changes at once if it's on) |
 | `debugShotLog` | `false` | every shot is traced in kcd.log: Henry's eye and aim, the free camera, the round's place each frame, and each hit's surface, angle and outcome (ricochet / impact), so Claude can check what a shot did |
+| `killCam.on` | `true` | Sniper Elite V2's kill cam: a long shot that will kill a living NPC slows the game to 3 %, the camera rides behind the bullet (1.1 m easing to 2 m, field of view 10 -> 30 degrees), the hit and the way out play at 10 %, then normal speed (numbers read from its data: docs/se2_killcam.md) |
+| `killCam.minDist` | `40` | metres the round must have flown for a kill cam (nearer shots get none) |
+| `killCam.killOnly` | `true` | only a round whose damage reaches the NPC's health, or that hits at head height |
+| `killCam.speed.pre` / `.internal` / `.post` | `0.03` / `0.03` / `0.1` | game speed before the hit, inside the body, after the way out (TimeScale.PreHit / Internal / PostExit) |
+| `killCam.lead` / `.after` / `.internalTime` | `1` / `1` / `0` | seconds of camera time before the impact, after the way out, and inside the body |
+| `killCam.offset.1` / `.2` | `-1.1` / `-2` | metres behind the bullet at the start / end (negative = behind) |
+| `killCam.fov.1` / `.2` | `10` / `30` | field of view in degrees at the start / end |
 | `fireRate` | `mod` | `mod` = each GameBanana mod's own speed, `cs2` = CS2's |
 | `cancelKeepsRounds` | `false` | `1` = arcade: a reload cancelled after the old mag is out keeps your rounds |
 | `recoil` | `1` | **master kick**: scales every recoil effect together (camera kick, sideways, gun model flip and push). `1.5` = 50 % harder for every gun |

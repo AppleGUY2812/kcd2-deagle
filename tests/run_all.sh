@@ -9,6 +9,7 @@ for g in deagle glock_17; do luajit tests/run_gun.lua "$g" >/dev/null || { echo 
 luajit tests/run_ballistics.lua >/dev/null || { echo "FAIL run_ballistics"; fail=1; }
 luajit tests/run_penetration.lua >/dev/null || { echo "FAIL run_penetration"; fail=1; }
 luajit tests/run_hits.lua >/dev/null || { echo "FAIL run_hits"; fail=1; }
+luajit tests/run_killcam.lua >/dev/null || { echo "FAIL run_killcam"; fail=1; }
 luajit tests/run_accuracy.lua >/dev/null || { echo "FAIL run_accuracy"; fail=1; }
 luajit tests/run_motion.lua >/dev/null || { echo "FAIL run_motion"; fail=1; }
 luajit tests/run_settings.lua >/dev/null || { echo "FAIL run_settings"; fail=1; }

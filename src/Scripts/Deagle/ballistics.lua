@@ -375,7 +375,9 @@ function Deagle:MoveRound(r, h)
 		self:PathAdd(r.pos, hit.pos, (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
 		self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
 		r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
-		if not self:ApplyHit(hit, vnorm(move), r.phys, r) then r.landed = true; return true end
+		local goesOn = self:ApplyHit(hit, vnorm(move), r.phys, r)
+		if self.KillCamHit then self:KillCamHit(hit, r) end   -- killcam.lua
+		if not goesOn then r.landed = true; return true end
 		if vlen(vsub(r.pos, hit.pos)) > 0.02 then self:PathAdd(hit.pos, r.pos, PATH_IN) end   -- through a wall / body
 		-- on through a wall / body, or off armour / stone: the rest of this step from where it goes on
 		r.hops = (r.hops or 0) + 1
@@ -395,6 +397,7 @@ function Deagle:StepRound(r, dt)
 		if self:MoveRound(r, h) then done = true; break end
 	end
 	self:TracerBullet(r, from)
+	if self.KillCamStep then self:KillCamStep(r, done) end   -- killcam.lua
 	self:FlyBy(r, from)   -- deagle_main.lua: NPCs it flew past hear the near miss
 	if r.logId and moved then   -- a paused game (unfocused, menu) still ticks with dt 0: nothing moved, nothing logged
 		log(string.format("shot %d t=%.4f pos %.2f %.2f %.2f speed %.1f dist %.1f%s", r.logId, System.GetCurrTime(), r.pos.x, r.pos.y,
@@ -438,3 +441,5 @@ function Deagle:RoundsTick(token)
 	if #keep > 0 then Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
 	else self.roundsToken = nil end
 end
+
+Deagle:LoadModule("Scripts/Deagle/killcam.lua")   -- the kill cam (docs/se2_killcam.md)
