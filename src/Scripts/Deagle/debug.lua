@@ -221,7 +221,8 @@ function Deagle:Stress(arg)
 	if self.stress then return end
 	local words = {}
 	for w in tostring(Deagle.Arg(arg) or ""):gmatch("%S+") do words[#words + 1] = w end
-	local rps = math.max(1, math.min(200, tonumber(words[1]) or 10))
+	local rps = math.max(1, math.min(2000, tonumber(words[1]) or 10))
+	local perFrame = math.max(8, math.ceil(rps / 30))   -- shots a frame at most (a long frame doesn't dump a burst)
 	local mode = words[2] == "aim" and "aim" or "sky"
 	local phases = words[3] == "ab" and STRESS_AB or STRESS
 	local clock = System.GetCurrAsyncTime
@@ -283,7 +284,7 @@ function Deagle:Stress(arg)
 			if not ph[3] then nextShot = g
 			elseif (mode == "sky" and System.GetViewCameraDir().z > 0.5) or (mode == "aim" and not aimsAtLife(s)) then
 				local n = 0
-				while g >= nextShot and n < 8 do   -- every shot due this frame (at most 8: a long frame doesn't dump a burst)
+				while g >= nextShot and n < perFrame do   -- every shot due this frame
 					s.state.ammo = 7
 					pcall(s.Fire, s, true)
 					nextShot, n = nextShot + 1 / rps, n + 1
