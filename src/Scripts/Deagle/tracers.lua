@@ -17,7 +17,7 @@ local TRACER_SPEEDS = { 250, 1000, 25 }   -- deagle_tracers.v<speed> (tools/gen_
 -- (cfg.tracer.fx, cfg.tracer.dash m each, living 0.12 s and fading: tools/gen_tracers.py), so the streak is exactly
 -- where the round went, ricochets and wallbangs included, and ends on what it hit. The round leaves the eye; the
 -- streak leaves the muzzle and joins the round's path by the point the shot is headed for (the first thing along it,
--- or 100 m out): Deagle:TrailPoint.
+-- or 100 m out): trailW in Deagle:TracerBullet.
 -- "flying": one particle that flies by itself with the round's speed, gravity and drag (deagle_tracers.v<speed>,
 -- nearest 25 m/s), aimed from the muzzle at that same point; dies on the first thing it touches.
 function Deagle:TracerFx(speed)
@@ -44,31 +44,52 @@ function Deagle:Tracer(from, dir, phys)
 end
 
 -- where the streak is drawn for a point d m along the round's path: the muzzle's offset from the eye, shrinking to
--- nothing at trail.reach
-function Deagle:TrailPoint(trail, p, d)
-	local w = math.max(0, 1 - d / trail.reach)
-	return w > 0 and vadd(p, vscale(trail.off, w)) or p
+-- nothing at trail.reach (the weight on trail.off)
+local function trailW(trail, d)
+	local w = 1 - d / trail.reach
+	return w > 0 and w or 0
 end
 
 -- The tracer is the round itself glowing: once a frame, a short streak (cfg.tracer.length m) ending where the round is,
 -- along the way it's going. Far away it's a dot, close by a short dash; it doesn't draw the whole stretch flown in the
 -- frame (that drew a laser line: a filmed tracer is a line only in the frames the camera's motion blur smears it, the
 -- user's reference clip). Pieces glow about one frame (fx "auto"), the plugin spawning them so they show at once.
+-- Plain numbers, no vector tables: per round per frame those were ~1.5 KB of garbage (44 KB a frame at 30 rounds,
+-- Claude 3's audit 2026-10-15); the command string is the one allocation.
 function Deagle:TracerBullet(r, from)
 	local trail, c = r.trail, self.cfg.tracer
 	if not trail or not self.cfg.tracers or r.dist < c.start then return end
+	local restart = c.spawn == "restart" and self.native and self.nativeCaps and self.nativeCaps.fxr
+	if c.spawn == "restart" and self.native and not restart then
+		-- a plugin from before fxr: no tracers rather than a new emitter per round per frame (the path that took 140 ->
+		-- 70 fps and crashed KCD2's DX12 descriptor heap). Without any plugin: Particle.SpawnEffect below.
+		if not self.fxrSaid then
+			self.fxrSaid = true
+			log("$4tracers: the running plugin has no fxr (one emitter per round): no tracers until the game is restarted")
+		end
+		return
+	end
 	-- turned off a surface (Deflect, a corner): this frame's streak starts at the turn, not back on the old line, never
 	-- reaches back past it, and the muzzle offset is over
 	local turned = r.turnDist
 	if r.turnPos then from, r.turnPos = r.turnPos, nil end
-	local move = vsub(r.pos, from)
-	local ml = vlen(move)
-	local u = ml > 1e-4 and vscale(move, 1 / ml) or vnorm(r.vel)
+	local px, py, pz = r.pos.x, r.pos.y, r.pos.z
+	local ux, uy, uz = px - from.x, py - from.y, pz - from.z
+	local ml = math.sqrt(ux * ux + uy * uy + uz * uz)
+	if ml <= 1e-4 then ux, uy, uz = r.vel.x, r.vel.y, r.vel.z; ml = math.sqrt(ux * ux + uy * uy + uz * uz) end
+	if ml <= 0 then return end
+	ux, uy, uz = ux / ml, uy / ml, uz / ml
 	local l = math.min(c.length, r.dist - c.start, turned and r.dist - turned or math.huge)
 	if l < 0.05 then return end
-	local p1 = turned and r.pos or self:TrailPoint(trail, r.pos, r.dist)
-	local p0 = turned and vsub(r.pos, vscale(u, l)) or self:TrailPoint(trail, vsub(r.pos, vscale(u, l)), r.dist - l)
-	local dir = vnorm(vsub(p1, p0))
+	local o = trail.off
+	local w1 = turned and 0 or trailW(trail, r.dist)
+	local w0 = turned and 0 or trailW(trail, r.dist - l)
+	local x1, y1, z1 = px + o.x * w1, py + o.y * w1, pz + o.z * w1
+	local x0, y0, z0 = px - ux * l + o.x * w0, py - uy * l + o.y * w0, pz - uz * l + o.z * w0
+	local dx, dy, dz = x1 - x0, y1 - y0, z1 - z0
+	local dl = math.sqrt(dx * dx + dy * dy + dz * dz)
+	if dl <= 0 then return end
+	dx, dy, dz = dx / dl, dy / dl, dz / dl
 	local fx = c.fx
 	if fx == "auto" then   -- glows about a frame: never shorter than the frame, or it's never drawn. Picked once per round:
 		-- a new effect name makes the plugin replace the round's emitter (fxr), and a frame rate near 50 / 30 fps flipped
@@ -80,18 +101,13 @@ function Deagle:TracerBullet(r, from)
 		fx = r.traceFx
 	end
 	local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2   -- where the effect sits; the end is p1
-	local at = vsub(p1, vscale(dir, back))
-	local restart = c.spawn == "restart" and self.native and self.nativeCaps and self.nativeCaps.fxr
-	if c.spawn == "restart" and self.native and not restart and not self.fxrSaid then   -- a plugin from before fxr
-		self.fxrSaid = true
-		log("$4tracers: the running plugin has no fxr (one emitter per round): restart the game to load the new one")
-	end
+	local ax, ay, az = x1 - dx * back, y1 - dy * back, z1 - dz * back
 	if restart then   -- the round's own emitter, restarted here (plugin fxr)
 		if not r.traceId then self.traceIds = (self.traceIds or 0) % 1000000 + 1; r.traceId = self.traceIds end
-		self:Native(string.format("fxr %d %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", r.traceId, fx, l / c.dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
-	elseif (c.spawn == "plugin" or c.spawn == "restart") and self.native then   -- seen from its first frame (plugin fxs)
-		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", fx, l / c.dash, l, at.x, at.y, at.z, dir.x, dir.y, dir.z))
-	else self:SpawnFx(fx, at, dir, l / c.dash) end
+		self:Native(string.format("fxr %d %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", r.traceId, fx, l / c.dash, l, ax, ay, az, dx, dy, dz))
+	elseif c.spawn == "plugin" and self.native then   -- a new emitter per piece (the old way; seen from its first frame)
+		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", fx, l / c.dash, l, ax, ay, az, dx, dy, dz))
+	else self:SpawnFx(fx, { x = ax, y = ay, z = az }, { x = dx, y = dy, z = dz }, l / c.dash) end
 end
 
 function Deagle:MuzzlePos()
