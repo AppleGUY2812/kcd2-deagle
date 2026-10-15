@@ -20,6 +20,16 @@ the fast-fire mode for every shooter (looped distant sound, small flash, tracer 
 (AI, animation) are KCD2's cost and a project of their own. Benchmark: a `lobby` stress mode, 60 invisible gun spots
 around the player, full auto ~13 rounds/s each, across the map: same rounds, hits, sounds and tracers, no NPCs.
 
+## Milestone 2: 100,000 rounds/s (the user: "we can hit 100k a second, we just need more tricks")
+At 60 fps: ~1700 fired a frame, ~57,000 in flight. Moving them (SIMD) ~0.3 ms; KCD2's ray (~5-15 us) can't follow
+(57,000 rays a frame = ~285 ms). Plan: our own copy of the static collision within ~300 m (terrain heightfield + static
+meshes read from KCD2's physics once, kept in sync for doors / breakables) traced with Intel Embree (Apache 2.0,
+millions of incoherent rays/s per core) on worker threads; NPCs as bone capsules tested analytically; rounds of one gun
+traced in packets; tracers through `EmitParticle` on one emitter per type, every Nth round; hits merged per spot; one
+battle soundscape; hits applied in order per target, reported to Lua once a frame. Open: can native code read KCD2's
+collision geometry (IPhysicalEntity parts -> IGeometry -> mesh / primitive data), how many cores KCD2 leaves free, and
+the pfx1 cost per particle. Milestone 1 (1000 rounds/s) is on the way and reused.
+
 ## Where we are (measured in game 2026-10-15; details in docs/PERFORMANCE.md and MODLOG.md)
 - **Lua** (KCD2's official mod scripting, patch-stable, hot-reloadable with `tools/live.sh reload`): 14 modules in
   `src/Scripts/Deagle/` plus `ballistics.lua`, `killcam.lua`, `guns/`. Owners are listed in CLAUDE.md "Who edits what".
