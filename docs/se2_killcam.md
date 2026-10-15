@@ -118,3 +118,13 @@ Skull picture: Desktop\Deagle Progress\24 Sniper Elite organs\skull model BCV_Sk
 of ~2.5 cm, the pieces a head shot throws apart (SE2's "shatter" rig).
 Not parsed yet (0 meshes in their node list): Heart_Solid, destroyed_heart, Lung_Left_Collapse / Lung_Right_Coll,
 Windpipe, BCV_Eyeball, Clavicle: their meshes sit behind another record type (to find next).
+
+### Round 12: why the organs read as empty
+Heart_Solid, Lung_*, BCV_Eyeball, Windpipe, ... are **rigs** in their `HSKN` chunk: flags 0xc9 has 0x40 set, so the nA
+vertices (228 for the heart, 81 for the left lung) are not in the chunk: a bone chain (Heart: Dummy01, Bone60-63; lung:
+Root, Bone01-13) and no sub-meshes. The geometry sits in the **`RSCF` resource named after the model, right after its
+`HSKN` + `HSBB` (bounding box)**: `heart_solid` (19.4 KB), `lung_left_collapse` (5.3 KB). Such a resource is a packed stream,
+not a plain float array: it starts `u32 461, u32 1356, u32 452, 0` (vertices?, indices = 3 x 452 triangles, triangles) then
+records of `[float, hash, u32, u32, u32, 0]`. `rscf.py --list heart_solid` finds it. Next: the reader of that stream
+(the code that fills the HSKN's nA vertex array, called from 0x8f070 / 0x8fc50 at the model's resource load) to get
+positions, normals and UVs; the shards (BCV_*) already parse because their geometry is inside the chunk.
