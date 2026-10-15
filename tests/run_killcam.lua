@@ -18,6 +18,8 @@ end
 local npc = { id = "npc1", soul = {}, actor = {}, health = 100 }
 function npc:GetName() return "npc1" end
 function npc:GetWorldPos() return vec(100, self.y, 30.3) end
+function npc:GetDirectionVector() return vec(0, -1, 0) end
+function npc:Hide(v) self.hidden = v end
 function npc.actor:IsDead() return npc.health <= 0 end
 function npc.actor:GetHealth() return npc.health end
 local landed, cam
@@ -102,6 +104,27 @@ for i = 1, #fovs - 1 do fmin, fmax = math.min(fmin, fovs[i]), math.max(fmax, fov
 check(string.format("field of view eased %.1f -> %.1f degrees, then back to the game's (%.1f)", math.deg(fmin), math.deg(fmax), math.deg(fovs[#fovs] or 0)),
 	math.abs(math.deg(fmin) - 10) < 0.5 and math.abs(math.deg(fmax) - 30) < 5 and math.abs(fovs[#fovs] - 1.1011) < 1e-3, fovs[#fovs])
 
+-- the organs: at the hit the body is hidden and the organs are there; at the end both are back as they were
+do
+	local spawned = {}
+	local spawn = System.SpawnEntity
+	System.SpawnEntity = function(t)
+		if t.name and t.name:find("^deagle_organ_") then spawned[#spawned + 1] = t.name end
+		return spawn(t)
+	end
+	local ids0 = Deagle.organIds
+	shoot(120, 5)
+	local hiddenAtHit, nAtHit
+	for _ = 1, 900 do
+		frames(1)
+		if landed and not hiddenAtHit then hiddenAtHit, nAtHit = npc.hidden, #spawned end
+		if not Deagle.kc and landed then break end
+	end
+	System.SpawnEntity = spawn
+	check(string.format("at the hit the body is hidden (%s) and %d organs are shown; at the end the body is back (%s) and they're removed (%s)",
+		tostring(hiddenAtHit), nAtHit or -1, tostring(npc.hidden), tostring(Deagle.organIds)),
+		hiddenAtHit == 1 and (nAtHit or 0) >= 6 and npc.hidden == 0 and Deagle.organIds == nil, npc.hidden)
+end
 -- 2. nothing for a near shot, a survivable hit, a dead target, or with the cam off
 local cases = {
 	{ "a 10 m shot", function() return shoot(10, 5) end },

@@ -77,6 +77,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `impactCap.maxHops` | `4` | hits a round survives (ricochets and wallbangs chain) |
 | `impactCap.maxRounds` | `64` | rounds in flight; past this the oldest is dropped (steady state at 75 rounds/s is about 43: a round lives 0.57 s at 250 m) |
 | `killCam.on` | `true` | Sniper Elite V2's kill cam: a long shot that will kill a living NPC slows the game to 3 %, the camera rides behind the bullet (1.1 m easing to 2 m, field of view 10 -> 30 degrees), the hit and the way out play at 10 %, then normal speed (numbers read from its data: docs/se2_killcam.md) |
+| `killCam.organs` | `true` | at the hit the NPC's body is hidden and its real organs (Sniper Elite V2's models: heart, lungs, liver, kidneys, windpipe; the eyeballs on a head hit) are shown in its place until the cam ends, then the body comes back. Needs the organ assets in the install |
 | `killCam.minDist` | `40` | metres the round must have flown for a kill cam (nearer shots get none) |
 | `killCam.killOnly` | `true` | only a round whose damage reaches the NPC's health, or that hits at head height |
 | `killCam.speed.pre` / `.internal` / `.post` | `0.03` / `0.03` / `0.1` | game speed before the hit, inside the body, after the way out (TimeScale.PreHit / Internal / PostExit) |

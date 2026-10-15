@@ -20,6 +20,7 @@ local DEFAULTS = {
 	speed = { pre = 0.03, internal = 0.03, post = 0.1 },   -- TimeScale.PreHit / Internal / PostExit
 	offset = { -1.1, -2 },        -- m along the bullet's path (negative = behind it), start -> end
 	fov = { 10, 30 },             -- degrees, start -> end
+	organs = true,                -- at the hit: the NPC's body is hidden and its organs shown (Sniper Elite's X-ray, as models)
 }
 local function copy(v)
 	if type(v) ~= "table" then return v end
@@ -47,6 +48,10 @@ function Deagle:KillCamEnd(why)
 		self:Native(string.format("freecam max %d", kc.max0))
 	end
 	if kc.fov0 then pcall(System.SetViewCameraFov, kc.fov0) end
+	if kc.organs then
+		if self.RemoveOrgans then self:RemoveOrgans() end
+		if kc.target then pcall(kc.target.Hide, kc.target, 0) end   -- the body back
+	end
 	self:SlowMo(self.slowOn)   -- t_Scale and the plugin's clock back to the player's own speed
 	log(string.format("kill cam end (%s) after %.2f s", tostring(why), kc.t))
 end
@@ -145,6 +150,13 @@ function Deagle:KillCamHit(hit, r)
 	local c = self.cfg.killCam
 	kc.hit, kc.hitT, kc.phase, kc.speed = true, kc.t, "internal", c.speed.internal
 	self:KillCamSpeed(kc.speed)
+	if c.organs and self.ShowOrgans and kc.target and hit.entity == kc.target then
+		local n = self:ShowOrgans(kc.target, hit.bodyPart or "torso")
+		if n > 0 then
+			kc.organs = true
+			pcall(kc.target.Hide, kc.target, 1)   -- the body away, the organs in its place
+		end
+	end
 end
 
 -- Two of deagle_main's functions are wrapped (no edit of that file). Wrapped at load and again at the first round's step,

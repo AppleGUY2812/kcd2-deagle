@@ -62,3 +62,44 @@ end
 
 System.AddCCommand("deagle_organ", "Deagle:OrganCmd([[%line]])",
 	"deagle_organ <heart | lung_left | lung_right | liver_upper | kidney_left | eyeball | ... | all | clear>: Sniper Elite V2's organs, 0.8 m ahead")
+
+-- Where the organs sit on a standing person (m): up from the feet, forward from the chest, right of the body's centre line.
+-- Real human proportions (the models are at real size). The kill cam hides the NPC's body and shows these instead.
+local LAYOUT = {
+	windpipe = { 1.52, 0.00, 0.00 }, windpipe_lower = { 1.40, 0.00, 0.00 },
+	lung_left = { 1.33, 0.00, -0.085 }, lung_right = { 1.33, 0.00, 0.085 },
+	heart = { 1.30, 0.03, -0.04 },
+	liver_upper = { 1.19, 0.02, 0.08 }, liver_lower = { 1.14, 0.02, 0.08 },
+	kidney_left = { 1.08, -0.06, -0.07 }, kidney_right = { 1.08, -0.06, 0.07 },
+}
+local HEAD = { eyeball = { 1.66, 0.09, -0.032 } }   -- one each side (the second is mirrored)
+
+-- the organs of the zone a round hit, placed in e's body; returns how many were spawned
+function Deagle:ShowOrgans(e, zone)
+	self:RemoveOrgans()
+	local ok, p = pcall(e.GetWorldPos, e)
+	if not (ok and p) then return 0 end
+	local okd, d = pcall(e.GetDirectionVector, e)
+	local fx, fy = 0, 1
+	if okd and d and (d.x ~= 0 or d.y ~= 0) then
+		local l = math.sqrt(d.x * d.x + d.y * d.y); fx, fy = d.x / l, d.y / l
+	end
+	local yaw = math.atan2(-fx, fy)
+	local ids = {}
+	local function put(model, lay, mirror)
+		local up, fwd, right = lay[1], lay[2], mirror and -lay[3] or lay[3]
+		local pos = { x = p.x + fx * fwd + fy * right, y = p.y + fy * fwd - fx * right, z = p.z + up }
+		local id = self:SpawnOrgan(model, pos, yaw)
+		if id then ids[#ids + 1] = id end
+	end
+	if zone == "head" then
+		put("bcv_eyeball", HEAD.eyeball, false); put("bcv_eyeball", HEAD.eyeball, true)
+	else
+		for _, o in ipairs(self.organList) do
+			local lay = LAYOUT[o[1]]
+			if lay then put(o[2], lay, false) end
+		end
+	end
+	self.organIds = ids
+	return #ids
+end
