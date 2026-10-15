@@ -100,6 +100,18 @@ end
 local near, far = fxsAt(20), fxsAt(600)
 check(string.format("an impact 600 m away spawns no effect (%d), one 20 m away does (%d)", far, near), far == 0 and near >= 1, far)
 
+-- hit sounds under heavy fire (sound.lua HitBudget): 75 rounds/s made 150-290 a second and 8-12 fps in game
+Deagle.hitBudgetState = nil
+local k0 = #M.native
+for i = 1, 20 do Deagle:HitSound(8, { x = 50, y = 60, z = 1 + i * 0.001 }, 1) end   -- one spot, one frame
+local same = native(k0, "^%[DN%] ron3 ")
+k0 = #M.native
+for i = 1, 300 do Deagle:HitSound(8, { x = 50 + i, y = 60, z = 1 }, 1); M.advance(1 / 300, 300) end   -- 300 spread over 1 s
+local spread = native(k0, "^%[DN%] ron3 ")
+local B = Deagle.cfg.hitSoundBudget
+check(string.format("hit sounds: 20 at one spot at once play 1 (%d); 300 spread over 1 s play at most burst + rate (%d of %d)", same, spread,
+	B.burst + B.rate), same == 1 and spread <= B.burst + B.rate + 1, spread)
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("perf: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
