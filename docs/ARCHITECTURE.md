@@ -29,6 +29,12 @@ traced in packets; tracers through `EmitParticle` on one emitter per type, every
 battle soundscape; hits applied in order per target, reported to Lua once a frame. Open: can native code read KCD2's
 collision geometry (IPhysicalEntity parts -> IGeometry -> mesh / primitive data), how many cores KCD2 leaves free, and
 the pfx1 cost per particle. Milestone 1 (1000 rounds/s) is on the way and reused.
+Collision copy check (static RE, docs/whgame_re/collision_copy.md): **amber-green**. KCD2's RayWorldIntersection is
+CryEngine's rwi.cpp nearly byte for byte; static entities via GetEntitiesInBox (own buffer, main thread, triggers
+on-demand physics like a real ray), parts / trimesh / heightfield readable, surface mapping known; terrain holes and
+two-sided triangles to replicate; no creation event (re-check areas every 1-2 s, entity-deleted event id 14);
+entity-owned statics (doors) count as dynamic; NPC rays hit per-bone parts, never the living capsule. Next: a probe
+comparing our triangle / heightfield test with KCD2's ray on the same hit.
 
 ## The GPU (decided 2026-10-15)
 Not for bullet hits first. GPU results come back 1-3 frames late (a round flies ~7 m a frame, so close shots would land
