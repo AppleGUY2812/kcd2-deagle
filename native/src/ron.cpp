@@ -90,6 +90,14 @@ static void* g_hitsBus = nullptr; static void* g_roomBus = nullptr;
 static void* g_hitsSend = nullptr;                          // RoN's send on the hits bus: the level we copy
 static void* g_filesGroup = nullptr; static void* g_filesSend = nullptr;
 static int g_echoTries = 0;
+static bool g_offline = false;                            // RonInit with a wav file: every RonUpdate mixes one block
+static double g_lastUpdate = 0;                           // live: the engine's update runs once per drawn frame
+// timing (performance audit 2026-10-15): the Studio update runs on the game's main thread (SYNCHRONOUS_UPDATE), so its
+// cost is frame time; logged every kStatEvery updates with the sounds skipped as inaudible and the travel queue's size
+static const int kStatEvery = 3000;
+static int g_statN = 0, g_statSkipped = 0, g_statQuiet = 0; static double g_statSum = 0, g_statMax = 0;
+static size_t g_statPendMax = 0;
+static const float kInaudible = 0.001f;                   // -60 dB under full level: not worth a voice
 static double Now() {
 	static LARGE_INTEGER f{}; LARGE_INTEGER c;
 	if (!f.QuadPart) QueryPerformanceFrequency(&f);
@@ -179,6 +187,7 @@ bool RonInit(const std::string& dir, const char* wavOut) {
 	// live: 256-sample mix blocks x 4 (~21 ms at 48 kHz) instead of FMOD's 1024 x 4 (~85 ms): the bang comes with the
 	// muzzle flash, not two frames after it
 	if (!wavOut) st.buffer(g_core, 256, 4);
+	g_offline = wavOut != nullptr;
 	if (wavOut) {
 		st.output(g_core, 5);                 // WAVWRITER_NRT
 		st.format(g_core, 48000, 3, 0);       // 48 kHz stereo, like the FmodRender renders
@@ -228,16 +237,28 @@ void RonUpdate(const float* cam) {
 		if (r && said++ < 3) Log("ron: listener rejected (%d): fwd %.3f %.3f %.3f up %.3f %.3f %.3f", r, g_listener.fwd.x, g_listener.fwd.y,
 			g_listener.fwd.z, g_listener.up.x, g_listener.up.y, g_listener.up.z);
 	}
-	if (!g_pending.empty()) {   // sounds whose travel time is up
-		double t = Now();
+	double t = Now();
+	if (!g_pending.empty()) {   // sounds whose travel time is up (swap-remove: the order doesn't matter)
+		if (g_pending.size() > g_statPendMax) g_statPendMax = g_pending.size();
 		std::vector<Pending> due;
 		for (size_t i = 0; i < g_pending.size();) {
-			if (g_pending[i].due <= t) { due.push_back(std::move(g_pending[i])); g_pending.erase(g_pending.begin() + i); }
+			if (g_pending[i].due <= t) { due.push_back(std::move(g_pending[i])); g_pending[i] = std::move(g_pending.back()); g_pending.pop_back(); }
 			else i++;
 		}
 		for (auto& p : due) PlayLocked(p.ev.c_str(), p.params.c_str(), p.at, p.vol);
 	}
+	// the game steps the camera about twice per drawn frame: one Studio update a frame is enough (the listener set above
+	// is used by the next one)
+	if (!g_offline && t - g_lastUpdate < 0.002) { g_statSkipped++; return; }
 	st.update(g_sys);
+	double t1 = Now(), us = (t1 - t) * 1e6;
+	g_lastUpdate = t1;
+	g_statSum += us; if (us > g_statMax) g_statMax = us;
+	if (++g_statN >= kStatEvery) {
+		Log("ron: update %.0f us avg, %.0f max over %d (%d repeat camera steps skipped); %d inaudible sounds dropped; travel queue up to %zu",
+			g_statSum / g_statN, g_statMax, g_statN, g_statSkipped, g_statQuiet, g_statPendMax);
+		g_statN = g_statSkipped = g_statQuiet = 0; g_statSum = g_statMax = 0; g_statPendMax = 0;
+	}
 	if (!g_filesGroup && g_hitsBus && g_echoTries < 50) { g_echoTries++; FilesEcho(); }
 	if (g_filesSend && g_hitsSend) { float v = 0; if (st.dspGetF(g_hitsSend, 1, &v, nullptr, 0) == 0) st.dspSetF(g_filesSend, 1, v); }
 }
@@ -293,6 +314,11 @@ bool RonPlayAt(const char* event, const char* params, const float* at, float vol
 	std::lock_guard<std::mutex> lk(g_mu);
 	if (!g_sys || !at) return false;
 	float d = EarDistance(at);
+	// too far to hear by our distance law (Falloff=<m>: full within m, then m/d): no voice, no queue entry
+	if (const char* f = params ? strstr(params, "Falloff=") : nullptr) {
+		float ref = (float)atof(f + 8);
+		if (ref > 0 && vol * ref / (d > ref ? d : ref) < kInaudible) { g_statQuiet++; return true; }
+	}
 	double delay = d / 343.0 / (g_speed > 0.01f ? g_speed : 0.01f);   // slow motion stretches it like the sound itself
 	if (delay < 0.01) return PlayLocked(event, params, at, vol);
 	Pending p{ Now() + delay, event, params ? params : "", { at[0], at[1], at[2] }, vol };
