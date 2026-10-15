@@ -128,3 +128,15 @@ not a plain float array: it starts `u32 461, u32 1356, u32 452, 0` (vertices?, i
 records of `[float, hash, u32, u32, u32, 0]`. `rscf.py --list heart_solid` finds it. Next: the reader of that stream
 (the code that fills the HSKN's nA vertex array, called from 0x8f070 / 0x8fc50 at the model's resource load) to get
 positions, normals and UVs; the shards (BCV_*) already parse because their geometry is inside the chunk.
+
+### Round 13: the organs read (`tools/se2/organ.py`)
+The rigged models (flags 0x40: geometry outside the chunk) keep it in the `RSCF` named after them (lower case), payload:
+`u32 nverts, u32 nidx, u32 ntris, 0`, then **36-byte vertices: position = 3 half floats (+ w) at payload offset
+28 + 36 * i, in metres**; then `nidx` u16 triangle indices (a few bytes after the vertices: 60 + 36 * nverts, give or take
+a footer of 8 or 32 B: found as the offset whose indices are in range with the shortest edges). Other fields of the 36
+bytes: a duplicated u32 (UVs?), flags `00ff0000 00030000`, 6 u16 (normal / tangent / weights).
+Heart_Solid 105 x 135 x 105 mm, lungs 127 x 240 x 186 mm, kidneys 64 x 97 x 61 mm, liver upper / lower 221 x 77 x 146 and
+225 x 105 x 147 mm, windpipe upper 36 x 121 x 52 mm: real organ sizes. OBJ in E:\Tools\deagle-work\se2\organs; picture:
+Desktop\Deagle Progress\24 Sniper Elite organs\organ models from their data.png.
+Not through the index search yet: destroyed_heart, Windpipe_Lower_Section, BCV_Eyeball, Testicle_*, wounds (a different
+footer). The same layout holds for all 158 models (weapons, helmets, soldiers: first test only on edge lengths).
