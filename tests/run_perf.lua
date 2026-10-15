@@ -91,6 +91,15 @@ local at = { x = 1, y = 2, z = 3 }
 Deagle:HitSound("armor_body_block", at, 1); Deagle:HitSound(16, at, 1); Deagle:HitSound("ricochet", at, 1, 1)
 check("one AI sound per hit, not one per layer", (counts.ProduceSound or 0) <= 1 or not Deagle.cfg.hearing.on, counts.ProduceSound)
 
+-- an impact too far to see spawns no effect (Claude 2, a34cb45): a 600 m hit sends nothing to the plugin, a 20 m one does
+local function fxsAt(dy)
+	local k = #M.native
+	Deagle:SpawnFx("deagle_impacts.stone", { x = 100, y = 200 + dy, z = 31 }, { x = 0, y = -1, z = 0 }, 1)
+	return native(k, "^%[DN%] fxs ")
+end
+local near, far = fxsAt(20), fxsAt(600)
+check(string.format("an impact 600 m away spawns no effect (%d), one 20 m away does (%d)", far, near), far == 0 and near >= 1, far)
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("perf: %d/%d checks pass", n - fails, n))
 os.exit(fails == 0 and 0 or 1)

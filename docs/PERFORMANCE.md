@@ -126,7 +126,7 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 5 | "auto" tracer effect picked from raw frame time: crossing 20 / 33 ms replaced every round's emitter | emitter churn near 50 fps | tracer | 🟪 | ✅ 412a9c5 |
 | 6 | Plugin tracer slots (64): over 64 rounds the evicted round took a slot back each frame | emitter churn at > 11 rounds/s | plugin | 🟪 | ✅ 0e756ab (128, no eviction), install |
 | 7 | Camera step runs 2-3x per drawn frame: all per-frame plugin work doubled (motion dt spike, flash frames at half length) | 2x plugin cost, sway jitter | plugin | 🟪 | ✅ 0e756ab, install; ❓ check sway and live-flash length after install |
-| 8 | Held impact effects: ring of 1024 (the crash count), a flat 2 s each | up to several hundred alive in slow motion | plugin / effects | 🟪🟦 | ✅ 0e756ab (ring 256, `fxs ... [hold s]`); 🔧 Claude 2: send each effect's own lifetime |
+| 8 | Held impact effects: ring of 1024 (the crash count), a flat 2 s each | up to several hundred alive in slow motion | plugin / effects | 🟪🟦 | ✅ 0e756ab (ring 256, `fxs ... [hold s]`), a34cb45 (each effect's own longest layer + 0.15 s, 0.40-2.15 s; tools/fx_hold.py, kept current by run_all) |
 | 9 | A save load kept held effects and tracer slots that the load may have freed | crash risk | plugin | 🟪 | ✅ 0e756ab, install |
 | 10 | Log lines (fprintf + fflush, 10-50 µs) in hot paths: hitreact every hit, freecam nudge every killcam frame, casespin, "ron: didn't play" | 0.01-0.5 ms a frame | plugin | 🟪🟩 | ✅ 0e756ab, 61b73f7 |
 | 11 | Plugin command parsing (`sscanf_s` of 10 fields) | 6-10 µs a command | plugin | 🟪 | ✅ `fxr` with strtol/strtof (0e756ab); 🔧 batch the tracer lines |
@@ -147,7 +147,7 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 26 | `deagle_stress` double-counts EnvTick / MotionTick / DrawHud inside VmTick and misses VmPlace via OnUpdate | wrong numbers | stress | 🟪 | 🔧 |
 | 27 | Path drawing: shifts 600 entries per line, 600 pcall DrawLines a frame; PathMark builds 9 tables a hit even when off | 1-3 ms a frame while on | debug | 🟪 | 🔧 ring index |
 | 28 | Holes: life 300 s, one per ricochet skip; `CreateMatDecal` never timed; the pool fills in a minute at 15 rounds/s | ❓ | holes | 🟪 | ❓ time it at the test wall; then 60-120 s, no hole past ~80 m |
-| 29 | Far impacts (300-1000 m) get the full effect + hole + sound | wasted pool slots | effects / holes | 🟦🟪 | 🔧 no effect past ~250 m, no hole past ~80 m (sounds: ✅ #12) |
+| 29 | Far impacts (300-1000 m) get the full effect + hole + sound | wasted pool slots | effects / holes | 🟦🟪 | ✅ effects: none past 250 m x the debug zoom (a34cb45, gated in run_perf); 🔧 holes: none past ~80 m (sounds: ✅ #12) |
 | 30 | Muzzle flash lights: 2 per shot, 40 m radius (GPU) | est. 0.2-0.5 ms GPU per light | flash | 🟪 | ❓ compare the look at 20 m (the user approved 40) |
 | 31 | Casing bounce sounds: up to 3 per casing | 45-90 sound starts/s | shells | 🟪 | 🔧 1 bounce under sustained fire |
 | 32 | A plugin without `fxr` falls back to the crash path (an emitter per round per frame) | crash | tracer | 🟪 | 🔧 no tracers + a "restart the game" note |
