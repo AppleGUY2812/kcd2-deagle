@@ -71,3 +71,15 @@ Likely, not verified: 3 % speed before the hit, 10 % after the exit, FOV 46.7, t
 `TimeScale.Internal`, the angles, offsets and Look/Track flags aren't present for this group (inherited or another
 record type). Other seeds in the file (22.9/46.7, 180/12, -0.4/4, 1.5/1.5) show up under 2-3 names each: the same
 records read with a different name (names of different lengths alias by a factor of 31), so they are ambiguous.
+
+### Round 8: extracting the real assets (the user: "use their assets exactly")
+`tools/se2/rscf.py` lists / extracts the `RSCF` resources (textures as DDS, sounds as WAV) from any `.asr` / `.pc`:
+`rscf.py <archive> --extract <outdir> <substring>`. Outdir is private (E:\Tools\deagle-work\se2), never the repo.
+- Extracted from `Common.asr`: 21 textures, `graphics\characters\internal_skeleton\` (bones, heart and lungs, guts / liver /
+  kidneys, eyeball, testes, finger bones) and `graphics\characters\wounds\` (heart splat, teeth, wounds, blood drops),
+  each colour+spec and normal map. Contact sheet: Desktop\Deagle Progress\24 Sniper Elite organs.
+- The archive is a chunk stream of 5,647 chunks: `RSCF` 879 (files), `HCAN` 1144 (animations), `HSKN` 158, `HSKL` 203,
+  `HMPT` 59, `FXPT`/`FXST`/`FXET` (effects), `BLUE` 61, `CONA` 463. The `RSFL` directory (0x20) lists 1364 names.
+- Organ / bone animations are `HCAN` chunks: Heart_Death_Anim, destroyed_heart_anim, Lung_Left/Right_Coll(apse)_Anim,
+  Kidney, Liver, Windpipe, `Breakable_bones\*` (Skull, Jaw, Arm, Leg, Vertibrae_Shatter...), found by name and size.
+- Not yet: the organ / bone MESH chunks (none of the file names in the lists is a mesh; HSKN are 9 KB skins).
