@@ -140,3 +140,12 @@ Heart_Solid 105 x 135 x 105 mm, lungs 127 x 240 x 186 mm, kidneys 64 x 97 x 61 m
 Desktop\Deagle Progress\24 Sniper Elite organs\organ models from their data.png.
 Not through the index search yet: destroyed_heart, Windpipe_Lower_Section, BCV_Eyeball, Testicle_*, wounds (a different
 footer). The same layout holds for all 158 models (weapons, helmets, soldiers: first test only on edge lengths).
+
+### Round 14: more organs, the vertex block start varies
+The vertex block starts at a different byte per model (Heart / lungs / kidneys / liver / windpipe upper: position at
+28 + 36 k; the eyeball and lower windpipe at 88, destroyed_heart at 90). `organ.py` tries the usual phase first, then every
+even offset, keeping the shortest triangle edges among organ-sized (1-50 cm) shapes. Read and recognisable: heart, lungs
+(L / R), kidneys (with the ureter), liver (upper / lower), windpipe upper and lower (the trachea into the bronchi), eyeball
+with the optic nerve (28 x 31 x 125 mm), testicle and tube. destroyed_heart (the blast) isn't right yet (its vertices
+are probably morph / piece records). Picture: Desktop\Deagle Progress\24 Sniper Elite organs\organ models from their data.png.
+Next: UVs (the duplicated u32 at the start of each 36-byte record) and the KCD2 import.

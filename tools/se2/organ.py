@@ -25,6 +25,40 @@ def read_box(b, at, size):
     except Exception:
         return None
 
+
+def find_layout(raw, nv, nidx):
+    """The vertex block starts at a different byte in different models (Heart_Solid: position at 28, the eyeball at 88):
+    try every even offset for a half-float triple (+ w) at stride 36, with the index run that has its max at nv-1 (nv-3 at
+    least), and take the pair with the shortest triangle edges relative to the model size. Returns (pos offset, triangles,
+    edge / size, index offset) or None."""
+    buf = np.frombuffer(raw, dtype=np.uint8)
+    cands = []
+    for q in range(16 + 36 * (nv - 2), len(raw) - nidx * 2 + 1, 2):
+        a = np.frombuffer(raw, dtype="<u2", count=nidx, offset=q)
+        if nv - 3 <= a.max() < nv: cands.append((q, a.astype(np.int64).reshape(-1, 3)))
+    if not cands: return None
+    best = None
+    # the usual phase first (position at 28 + 36 k: Heart, lungs, kidneys, liver, windpipe upper), then any
+    for offs in (range(28, 28 + 36 * 4, 36), range(0, 160, 2)):
+        best = _scan(buf, raw, nv, cands, offs)
+        if best is not None and best[2] < 0.15: return best
+    return best
+
+
+def _scan(buf, raw, nv, cands, offs):
+    best = None
+    for off in offs:
+        if off + 36 * (nv - 1) + 8 > len(raw): break
+        pos = np.lib.stride_tricks.as_strided(buf[off:], shape=(nv, 8), strides=(36, 1)).copy().view("<f2").astype(np.float32).reshape(nv, 4)[:, :3]
+        if not np.isfinite(pos).all(): continue
+        ext = pos.max(0) - pos.min(0)
+        if ext.max() > 0.5 or ext.max() < 0.01 or ext.min() < 0.1 * ext.max(): continue   # an organ: 1 cm to 50 cm, 3-D
+        diag = float(np.linalg.norm(ext))
+        for q, t in cands:
+            e = float(np.linalg.norm(pos[t[:, 0]] - pos[t[:, 1]], axis=1).mean()) / diag
+            if best is None or e < best[2]: best = (off, t, e, q)
+    return best
+
 def organs(b):
     cs = list(chunks(b))
     rs = {c["name"]: c for c in containers(b)}
@@ -33,30 +67,21 @@ def organs(b):
         ver, flags, na, nb = struct.unpack_from("<4I", b, at + 8)
         name, _ = cstr(b, at + 0x18)
         r = rs.get(name.lower())
-        if not r or not flags & 0x40: continue
+        if not r: continue
         box = None
         for j in range(i + 1, min(i + 4, len(cs))):
             if cs[j][0] == b"HSBB": box = read_box(b, cs[j][1], cs[j][2]); break
         raw = b[r["start"]:r["end"]]
         nv, nidx, ntri = struct.unpack_from("<3I", raw, 0)
         if nidx != ntri * 3 or nv < 4: continue
-        buf = np.frombuffer(raw, dtype=np.uint8)
-        if 28 + 36 * (nv - 1) + 8 > len(raw): continue
-        pos = np.lib.stride_tricks.as_strided(buf[28:], shape=(nv, 8), strides=(36, 1)).copy()
+        lay = find_layout(raw, nv, nidx)
+        if lay is None: continue
+        pos_off, tri, edge, q = lay
+        pos = np.lib.stride_tricks.as_strided(np.frombuffer(raw, dtype=np.uint8)[pos_off:], shape=(nv, 8), strides=(36, 1)).copy()
         pos = pos.view("<f2").astype(np.float32).reshape(nv, 4)[:, :3]   # metres
-        if not np.isfinite(pos).all(): continue
-        # the index block follows the vertices after a few bytes whose count varies: take the offset whose triangles are
-        # in range and shortest (a wrong offset or a wrong vertex phase makes long, random edges)
-        best = None
-        for q in range(16 + 36 * (nv - 2), len(raw) - nidx * 2 + 1, 2):
-            a = np.frombuffer(raw, dtype="<u2", count=nidx, offset=q)
-            if a.max() >= nv or a.max() < nv - 3: continue
-            t = a.astype(np.int64).reshape(-1, 3)
-            e = float(np.linalg.norm(pos[t[:, 0]] - pos[t[:, 1]], axis=1).mean())
-            if best is None or e < best[0]: best = (e, q, t)
-        if best is None: continue
+        best = (edge, q, tri)
         tri = best[2]
-        yield {"name": name, "nv": nv, "ntri": ntri, "raw_pos": pos, "tri": tri, "box": box, "nA": na, "edge": best[0], "idx_at": best[1]}
+        yield {"name": name, "nv": nv, "ntri": ntri, "raw_pos": pos, "tri": tri, "box": box, "nA": na, "edge": edge, "idx_at": q, "flags": flags, "pos_off": pos_off}
 
 def write_obj(path, m, scale=None):
     p = m["raw_pos"]
