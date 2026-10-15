@@ -1284,18 +1284,12 @@ end
 -- flying by (weapon:onPlayerArrowFlyingBy {GUID, Position, Direction}; Scripts.pak AI/npc/basic/switch/switch.xml ->
 -- handleArrowFlyby -> handleStimulusShooter): it names the player if it has seen him, else looks and searches toward
 -- him. Once per NPC per round, never to one the round hit. Called for every flight step (ballistics.lua StepRound).
--- The NPCs come from Deagle:NearMissList, not a query per step: KCD2's GetEntitiesInSphere costs ~6 ms a call in a town
--- whatever its radius (measured live 2026-10-15: 3412 calls, 20 s; the frame rate fell while rounds flew, "when the
--- bullet falls out of range then it unlags")
--- The list keeps where each NPC's chest was; a step only asks the engine about an NPC within NEAR_CULL m of its path
--- there. Asking about every NPC in it for every step of every round (44 in town: IsDead + GetWorldPos, ~10 rounds in
--- the air) still took the frame rate from 93 to 55 (the user's test 2026-10-15: gone with nearMiss 0). The check is
--- plain numbers, no tables: building a few small tables per NPC per step still cost 2 ms a frame (every function in the
--- game timed live while the user shot into the sky: FlyBy 2.00 of the 2.31 ms the rounds added). A step whose path
--- is nowhere near the list's box (a round high in the sky) returns at once.
-local NEAR_LIST_R, NEAR_LIST_EVERY = 300, 2   -- m around the player, s of game time between queries
-local NEAR_CULL = 30                          -- m an NPC can move between queries (a galloping horse ~15 m/s)
-local CHEST = 1.25                            -- m above an NPC's feet
+-- Who is near a step comes from KCD2's physics grid (Physics.SamplePhysEnvironment, living entities, a sphere around
+-- the step): ~0 ms at 3 m, 0.12 ms at 30 m (measured live 2026-10-15). Any entity-system query (GetEntitiesInSphere,
+-- GetEntitiesByClass) costs 5-9 ms a call whatever its size: per step it dropped the frame rate while rounds flew
+-- ("when the bullet falls out of range then it unlags"), and a shared 300 m list every 2 s still hitched the frame of
+-- the shot. The check is plain numbers (tables per NPC per step cost 2 ms a frame in town).
+local CHEST = 1.25   -- m above an NPC's feet
 -- squared distance from (px, py, pz) to the segment from (fx, fy, fz) along (sx, sy, sz), and the closest point on it
 local function segDist2(px, py, pz, fx, fy, fz, sx, sy, sz, len2)
 	local t = ((px - fx) * sx + (py - fy) * sy + (pz - fz) * sz) / len2
@@ -1303,66 +1297,33 @@ local function segDist2(px, py, pz, fx, fy, fz, sx, sy, sz, len2)
 	local cx, cy, cz = fx + sx * t, fy + sy * t, fz + sz * t
 	return (px - cx) ^ 2 + (py - cy) ^ 2 + (pz - cz) ^ 2, cx, cy, cz
 end
-function Deagle:NearMissList()
-	local now = System.GetCurrTime()
-	local L = self.nearList
-	if L and now - L.t >= 0 and now - L.t < NEAR_LIST_EVERY then return L end
-	local p = self:Player()
-	L = { t = now, n = 0, x0 = math.huge, y0 = math.huge, z0 = math.huge, x1 = -math.huge, y1 = -math.huge, z1 = -math.huge }
-	local okP, at = pcall(p.GetWorldPos, p)
-	local ok, ents = false, nil
-	if okP and at then ok, ents = pcall(System.GetEntitiesInSphere, at, NEAR_LIST_R) end
-	if ok and type(ents) == "table" then
-		for _, e in ipairs(ents) do
-			if e ~= p and e.soul and e.actor and e.this then
-				local okW, w = pcall(e.GetWorldPos, e)
-				if okW and w then
-					local x, y, z = w.x, w.y, w.z + CHEST
-					L[#L + 1] = { e = e, x = x, y = y, z = z }
-					L.x0, L.y0, L.z0 = math.min(L.x0, x), math.min(L.y0, y), math.min(L.z0, z)
-					L.x1, L.y1, L.z1 = math.max(L.x1, x), math.max(L.y1, y), math.max(L.z1, z)
-				end
-			end
-		end
-	end
-	self.nearList = L
-	return L
-end
 function Deagle:FlyBy(r, from)
 	local near = self.cfg.nearMiss
 	if not near or near <= 0 then return end
-	local fx, fy, fz, tx, ty, tz = from.x, from.y, from.z, r.pos.x, r.pos.y, r.pos.z
-	local sx, sy, sz = tx - fx, ty - fy, tz - fz
+	local fx, fy, fz = from.x, from.y, from.z
+	local sx, sy, sz = r.pos.x - fx, r.pos.y - fy, r.pos.z - fz
 	local len2 = sx * sx + sy * sy + sz * sz
 	if len2 < 1e-6 then return end
-	local L = self:NearMissList()
-	local m = near + NEAR_CULL
-	local x0, x1 = math.min(fx, tx) - m, math.max(fx, tx) + m
-	local y0, y1 = math.min(fy, ty) - m, math.max(fy, ty) + m
-	local z0, z1 = math.min(fz, tz) - m, math.max(fz, tz) + m
-	if L.x1 < x0 or L.x0 > x1 or L.y1 < y0 or L.y0 > y1 or L.z1 < z0 or L.z0 > z1 then return end
-	local m2, near2 = m * m, near * near
-	for i = 1, #L do
-		local n = L[i]
-		local x, y, z = n.x, n.y, n.z
-		if x >= x0 and x <= x1 and y >= y0 and y <= y1 and z >= z0 and z <= z1
-			and segDist2(x, y, z, fx, fy, fz, sx, sy, sz, len2) <= m2 then
-			local e = n.e
-			r.flybys = r.flybys or {}
-			if not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id]) then
-				local okD, dead = pcall(e.actor.IsDead, e.actor)
-				local okP, at = pcall(e.GetWorldPos, e)
-				if not (okD and dead) and okP and at then
-					local d2, cx, cy, cz = segDist2(at.x, at.y, at.z + CHEST, fx, fy, fz, sx, sy, sz, len2)
-					if d2 <= near2 then
-						r.flybys[e.id] = true
-						local len = math.sqrt(len2)
-						try("near miss", function()
-							local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id,
-								Position = { x = cx, y = cy, z = cz }, Direction = { x = sx / len, y = sy / len, z = sz / len } })
-							XGenAIModule.SendMessageToEntityData(e.this.id, "weapon:onPlayerArrowFlyingBy", msg)
-						end)
-					end
+	local len = math.sqrt(len2)
+	local ok, found = pcall(Physics.SamplePhysEnvironment, { x = fx + sx / 2, y = fy + sy / 2, z = fz + sz / 2 }, len / 2 + near, ent_living)
+	if not ok or type(found) ~= "table" then return end
+	local p, near2 = self:Player(), near * near
+	for i = 1, #found do   -- entities, each followed by two numbers (its part and physics ids)
+		local e = found[i]
+		if type(e) == "table" and e ~= p and e.soul and e.actor and e.this
+			and not (r.flybys and r.flybys[e.id]) and not (r.hitIds and r.hitIds[e.id]) then
+			local okD, dead = pcall(e.actor.IsDead, e.actor)
+			local okP, at = pcall(e.GetWorldPos, e)
+			if not (okD and dead) and okP and at then
+				local d2, cx, cy, cz = segDist2(at.x, at.y, at.z + CHEST, fx, fy, fz, sx, sy, sz, len2)
+				if d2 <= near2 then
+					r.flybys = r.flybys or {}
+					r.flybys[e.id] = true
+					try("near miss", function()
+						local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id,
+							Position = { x = cx, y = cy, z = cz }, Direction = { x = sx / len, y = sy / len, z = sz / len } })
+						XGenAIModule.SendMessageToEntityData(e.this.id, "weapon:onPlayerArrowFlyingBy", msg)
+					end)
 				end
 			end
 		end
@@ -2365,6 +2326,7 @@ function Deagle:SetBodyHidden(hide)
 		log("body " .. (hide and "hidden" or "shown"))
 	end
 	self:HideGear(hide and self.cfg.vm.hideBody)
+	self.gearRescan = hide and System.GetCurrTime() + 1 or nil
 	if hide then
 		if self.savedDof == nil then
 			local ok, v = pcall(System.GetCVar, "r_DepthOfField")
@@ -2395,7 +2357,9 @@ function Deagle:VmFollow()
 		self:SetBodyHidden(fp and true or false)
 		log("first person " .. tostring(fp))
 	end
-	if fp and (now - (self.gearScan or 0)) > 1.0 then self.gearScan = now; self:HideGear(true) end
+	-- worn gear: found when first person starts (SetBodyHidden) and once more a second later (items attached late after
+	-- a load), not every second: each search is one 5-9 ms entity query (a stutter a second, Claude 3's audit 2026-10-15)
+	if fp and self.gearRescan and now >= self.gearRescan then self.gearRescan = nil; self:HideGear(self.cfg.vm.hideBody) end
 	-- the plugin places the viewmodel on the final camera; Lua only does it without the plugin (or the first frame)
 	if self.vmInFp and not (self.native and wasFp) then
 		local vm = self.vmId and System.GetEntity(self.vmId)
@@ -2948,7 +2912,7 @@ function Deagle:OnGameplayStarted()
 	self.fc, self.fcAim = nil, nil                          -- the plugin turns the free camera off at the hello
 	-- a load can set the game clock back, and times kept from before it then lie ahead: the gun's kicks grew without
 	-- bound and every shot left along NaN, hitting nothing for minutes (in game 2026-10-14, a save loaded in a house)
-	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights, self.nearList = nil, nil, nil, nil, nil, nil
+	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights = nil, nil, nil, nil, nil
 	s.heat, s.accFire, s.accT, s.burstReady = 0, 0, nil, nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view

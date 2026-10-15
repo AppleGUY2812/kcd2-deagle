@@ -764,4 +764,9 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - 2026-10-15: `deagle_native_caps files fxr` was refused by KCD2 ("[Warning] Too many arguments for:
   deagle_native_caps"): a console command written with `%1` takes ONE word. No capability was set (fxr tracers and the
   steel plate files both off). Now `%line`; the mock refuses `%1` commands given several words, like KCD2.
+- 2026-10-15 (Claude 3's audit): EVERY entity-system query from Lua costs 5-9 ms whatever its size
+  (GetEntitiesInSphere 3 m 5.4 ms, 300 m 8.8 ms; GetEntitiesByClass "NPC" 6.9 ms, "Player" 6.6 ms). The physics grid is
+  cheap: `Physics.SamplePhysEnvironment(pos, r, ent_living)` ~0 ms at 3 m, 0.12 ms at 30 m, 1.9 ms at 300 m; it returns
+  entity, part id, physics id per body. Worn items (PickableItem on Henry) have no physics: the grid can't find them.
+  Near miss now asks the grid per step; worn gear is searched at first person and once 1 s later, not every second.
 

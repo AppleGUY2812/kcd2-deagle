@@ -338,6 +338,18 @@ if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
 		cueCheck.heard == cueCheck.n and cueCheck.worst <= 1 / 60 + 1e-3, cueCheck.worst)
 end
+-- worn gear is looked for when first person starts and once a second later, not every second: each search is a
+-- 5-9 ms entity query (a stutter a second, the audit 2026-10-15)
+do
+	if not Deagle.vmShown then act("deagle_toggle"); M.advance(2.0) end
+	local getEnts, n = System.GetEntitiesInSphere, 0
+	System.GetEntitiesInSphere = function(...) n = n + 1 return getEnts(...) end
+	M.advance(10, 60)
+	System.GetEntitiesInSphere = getEnts
+	check(string.format("worn gear: %d entity queries in 10 s with the gun up in first person (%s)", n, tostring(Deagle.vmInFp)),
+		Deagle.vmInFp and n <= 1, n)
+end
+
 -- deagle_stress: 21 s of game time, fires only while looking up, logs every 0.5 s, puts everything back
 do
 	local pitch, tracers, fireWas = M.view.pitch, Deagle.cfg.tracers, Deagle.Fire

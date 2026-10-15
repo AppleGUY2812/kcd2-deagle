@@ -160,56 +160,42 @@ check(string.format("marksmanship XP: %d for a hit, %d after the killing head sh
 -- the chicken's kill names the shooter (KCD2's animal-kill crime checks the killer)
 check("a chicken's hit names the shooter", boidHits[1] and boidHits[1].hit.shooterId == Deagle:Player().id, boidHits[1] and boidHits[1].hit.shooterId)
 -- near misses: a round flying past an NPC within 2.5 m of its chest sends KCD2's arrow fly-by message, once; not to one
--- it hit, nor to one 4 m away
-local near, far, hitOne = newNpc(), newNpc(), newNpc()
+-- it hit, nor to one 4 m away. Who is near comes from the physics grid around each step (Physics.SamplePhysEnvironment,
+-- living entities), never from an entity-system query (5-9 ms a call in town, timed live 2026-10-15).
+local near, far, hitOne, distant = newNpc(), newNpc(), newNpc(), newNpc()
 near.id, near.this = "near", { id = "nearWUID" }; far.id, far.this = "far", { id = "farWUID" }; hitOne.id, hitOne.this = "hit", { id = "hitWUID" }
+distant.id, distant.this = "distant", { id = "distantWUID" }
 function near:GetWorldPos() return vec(101.5, 150, 30) end   -- chest 1.5 m right of a round along y at z 31.25
 function far:GetWorldPos() return vec(104, 150, 30) end
 function hitOne:GetWorldPos() return vec(100, 160, 30) end
-local distant = newNpc()   -- 200 m off the path: asked where it is once, for the list, never per step
-distant.id, distant.this = "distant", { id = "distantWUID" }
 local distantAsked = 0
 function distant:GetWorldPos() distantAsked = distantAsked + 1; return vec(300, 150, 30) end
-local getEnts = System.GetEntitiesInSphere
-local queries = 0
-System.GetEntitiesInSphere = function() queries = queries + 1; return { near, far, hitOne, distant, Deagle:Player() } end
-Deagle.nearList = nil
+local people = { near, far, hitOne, distant, Deagle:Player() }
+local getEnts, sample = System.GetEntitiesInSphere, Physics.SamplePhysEnvironment
+local entQueries, gridQueries, widest = 0, 0, 0
+System.GetEntitiesInSphere = function() entQueries = entQueries + 1; return {} end
+Physics.SamplePhysEnvironment = function(c, rad, types)   -- like KCD2: entity, part id, physics id per body in the sphere
+	gridQueries, widest = gridQueries + 1, math.max(widest, rad)
+	local out = {}
+	if types ~= ent_living then return out end
+	for _, e in ipairs(people) do
+		local w = e == distant and vec(300, 150, 30) or e:GetWorldPos()   -- (the grid knows where bodies are; not a Lua call)
+		local d = math.sqrt((w.x - c.x) ^ 2 + (w.y - c.y) ^ 2 + (w.z + 0.9 - c.z) ^ 2)
+		if d <= rad + 1 then out[#out + 1] = e; out[#out + 1] = 0; out[#out + 1] = 1 end   -- a body ~1 m around its middle
+	end
+	return out
+end
 M.aiMessages = {}
 local round = { pos = vec(100, 140, 31.25), hitIds = { hit = true } }
 local from = vec(100, 140, 31.25); round.pos = vec(100, 146, 31.25); Deagle:FlyBy(round, from)
 from = round.pos; round.pos = vec(100, 156, 31.25); Deagle:FlyBy(round, from)
 from = round.pos; round.pos = vec(100, 166, 31.25); Deagle:FlyBy(round, from)
-System.GetEntitiesInSphere = getEnts
 local to = {}
 for _, m in ipairs(M.aiMessages) do if m.kind == "weapon:onPlayerArrowFlyingBy" then to[#to + 1] = m.id end end
-check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off, once); %d entity query for 3 steps (it cost ~6 ms a call in town)",
-	table.concat(to, ","), queries), #to == 1 and to[1] == "nearWUID" and queries == 1, queries)
-check(string.format("near miss: an NPC 200 m off the path is asked where it is %d time for 3 steps (only for the list)", distantAsked),
-	distantAsked == 1, distantAsked)
--- the check makes no garbage for NPCs away from the path: 44 of them 40 m either side (the crowd's box takes in the path,
--- so each one is checked), 1000 steps (tables per NPC per step cost 2 ms a frame in town, timed live 2026-10-15)
-local crowd = {}
-for i = 1, 44 do
-	local c = newNpc()
-	c.id, c.this = "crowd" .. i, { id = "crowdWUID" .. i }
-	function c:GetWorldPos() return vec(i % 2 == 0 and 60 or 140, 140 + i, 30) end
-	crowd[i] = c
-end
-System.GetEntitiesInSphere = function() return crowd end
-Deagle.nearList = nil
-local jitWas = jit and jit.status()
-if jit then jit.off() end
-local sky = { pos = vec(100, 140, 31.25) }
-local from2 = vec(100, 140, 31.25)
-Deagle:FlyBy(sky, from2)   -- builds the list
-collectgarbage("collect"); collectgarbage("stop")
-local kb = collectgarbage("count")
-for i = 1, 1000 do sky.pos.z = 31.25 + i * 0.01; Deagle:FlyBy(sky, from2) end
-local grew = collectgarbage("count") - kb
-collectgarbage("restart")
-if jit and jitWas then jit.on() end
-System.GetEntitiesInSphere = getEnts
-check(string.format("near miss: 1000 steps past 44 NPCs 40 m off make %.1f KB of garbage (one table per NPC per step would be 1700)", grew), grew < 20, grew)
+check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off, once)", table.concat(to, ",")), #to == 1 and to[1] == "nearWUID", #to)
+check(string.format("near miss: %d grid queries for 3 steps (widest %.1f m: half a 10 m step + 2.5), %d entity-system queries, the NPC 200 m off asked where it is %d times",
+	gridQueries, widest, entQueries, distantAsked), gridQueries == 3 and widest <= 7.5 + 1e-6 and entQueries == 0 and distantAsked == 0, entQueries)
+System.GetEntitiesInSphere, Physics.SamplePhysEnvironment = getEnts, sample
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))
