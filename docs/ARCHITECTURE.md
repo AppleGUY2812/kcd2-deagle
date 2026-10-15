@@ -30,7 +30,9 @@ from here. Keep it current: what's decided, what's measured, what's next.
   - At 75 rounds/s into the ground: 2-4 impacts a round (~290 a second). Frame time falls off a cliff (8 fps, engine
     120-250 ms) past ~180 impacts a second. Hit sounds are suspect #1 (A/B: it held 41-61 fps with hit sounds off).
 - **Caps now**:
-  - `ROUNDS_MAX` 64: the oldest round in flight is dropped. This contradicts the user's goal.
+  - `cfg.impactCap.maxRounds` 64: the oldest round in flight is dropped. This contradicts the user's goal.
+  - `cfg.impactCap`: at most 2 impact effects per round and 6 per frame (a round at the ground made 2.7-5.9 impacts
+    through ricochet and penetration chains); damage, penetration and ricochets themselves aren't capped.
   - Tracer emitters 128, held impact pieces 256.
   - Impact lights 6, impact effects 30 a second.
 
@@ -69,8 +71,10 @@ from here. Keep it current: what's decided, what's measured, what's next.
    is moved and measured.
 2. Loader / core split plus a reload command.
 3. Spawn managers with budgets: sounds (Claude 3), effects and lights (Claude 2), decals and tracers (Claude 4).
-4. Native round simulation behind a setting. Claude 1's ballistics tests define correctness. A/B against Lua, then
-   `ROUNDS_MAX` goes.
+4. Native round simulation behind a setting. Claude 1's ballistics tests (run_ballistics, run_penetration,
+   run_killcam) are the contract; `Deagle:StepRound` / `MoveRound` / `Impact` / `ApplyHit` are the semantic references.
+   A/B against Lua, then the round cap goes (now `cfg.impactCap.maxRounds`, default 64; at 75 rounds/s ~43 are alive
+   with `range` 250 m, so it bites from ~110 rounds/s).
 5. Effects fidelity: pfx2 if it exists.
 
 ## How to work here
