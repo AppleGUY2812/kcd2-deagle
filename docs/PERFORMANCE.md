@@ -125,7 +125,7 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 4 | `NearMissList`: a 300 m sphere query every 2 s while rounds fly, on the trigger frame | 6-10 ms hitch every 2 s | near miss | 🟪 | ✅ 243820f |
 | 5 | "auto" tracer effect picked from raw frame time: crossing 20 / 33 ms replaced every round's emitter | emitter churn near 50 fps | tracer | 🟪 | ✅ 412a9c5 |
 | 6 | Plugin tracer slots (64): over 64 rounds the evicted round took a slot back each frame | emitter churn at > 11 rounds/s | plugin | 🟪 | ✅ 0e756ab (128, no eviction), install |
-| 7 | Camera step runs 2-3x per drawn frame: all per-frame plugin work doubled (motion dt spike, flash frames at half length) | 2x plugin cost, sway jitter | plugin | 🟪 | ✅ 0e756ab, install; ❓ check sway and live-flash length after install |
+| 7 | Camera step runs 2-3x per drawn frame: all per-frame plugin work doubled (motion dt spike, flash frames at half length) | 2x plugin cost, sway jitter | plugin | 🟪 | ✅ 0e756ab; the user after the install: "the gun feels the same which is good" |
 | 8 | Held impact effects: ring of 1024 (the crash count), a flat 2 s each | up to several hundred alive in slow motion | plugin / effects | 🟪🟦 | ✅ 0e756ab (ring 256, `fxs ... [hold s]`), a34cb45 (each effect's own longest layer + 0.15 s, 0.40-2.15 s; tools/fx_hold.py, kept current by run_all) |
 | 9 | A save load kept held effects and tracer slots that the load may have freed | crash risk | plugin | 🟪 | ✅ 0e756ab, install |
 | 10 | Log lines (fprintf + fflush, 10-50 µs) in hot paths: hitreact every hit, freecam nudge every killcam frame, casespin, "ron: didn't play" | 0.01-0.5 ms a frame | plugin | 🟪🟩 | ✅ 0e756ab, 61b73f7 |
@@ -160,6 +160,7 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | Date | Build | Scenario | Frame | Mod | Garbage | Peaks |
 |---|---|---|---|---|---|---|
 | 2026-10-15 | fdb7ed9 + fxr working | `deagle_stress` (sky fire, 45 rounds + tracers) | engine 6.6-8 ms flat (was rising to 11.4) | Lua ~0.06 ms per round in the air | | 45 rounds |
+| 2026-10-15 | plugin 0e756ab + 84d806e installed | `deagle_stress` (10 rounds/s, tracers) | 128-140 fps, engine 5.9-6.8 ms flat | Lua 0.6-1.0 ms; 1.6 ms at 46 rounds (over the 1.0 average) | | 49 emitters for 49 rounds |
 | 2026-10-15 | d46d1ff (mock) | `tests/run_perf.lua` | | idle 0 entity queries, 0 rays; shooting 0 queries | idle 3.97 KB, shooting 74.9 KB a frame (TracerBullet 44) | 30 rounds |
 
 ## Sources
