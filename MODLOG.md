@@ -744,4 +744,8 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - Chickens: `Boids.OnBoidHit` gets `shooterId` / `shooter` (AI/animal/animals.xml checks the killer for the crime).
 - Still open: morale `near_gunshot` -0.3 (no Lua setter found), the player counting as armed (MiscItem), per-part injury
   buffs, small-game pulp. Armour wear is Claude 1's.
+- 2026-10-15: the near-miss scan dropped the frame rate while rounds flew ("when the bullet falls out of range then it
+  unlags"). Timed live (wrapped functions, System.GetCurrAsyncTime): `System.GetEntitiesInSphere` costs ~6 ms a call in a
+  town whatever the radius (3412 calls, 20.3 s), against rays 0.02 ms, CryAction.GetWaterInfo 0.009 ms. Now one query of
+  300 m around the player at most every 2 s of game time (`Deagle:NearMissList`), shared by every round.
 

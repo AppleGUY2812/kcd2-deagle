@@ -167,7 +167,9 @@ function near:GetWorldPos() return vec(101.5, 150, 30) end   -- chest 1.5 m righ
 function far:GetWorldPos() return vec(104, 150, 30) end
 function hitOne:GetWorldPos() return vec(100, 160, 30) end
 local getEnts = System.GetEntitiesInSphere
-System.GetEntitiesInSphere = function() return { near, far, hitOne, Deagle:Player() } end
+local queries = 0
+System.GetEntitiesInSphere = function() queries = queries + 1; return { near, far, hitOne, Deagle:Player() } end
+Deagle.nearList = nil
 M.aiMessages = {}
 local round = { pos = vec(100, 140, 31.25), hitIds = { hit = true } }
 local from = vec(100, 140, 31.25); round.pos = vec(100, 146, 31.25); Deagle:FlyBy(round, from)
@@ -176,7 +178,8 @@ from = round.pos; round.pos = vec(100, 166, 31.25); Deagle:FlyBy(round, from)
 System.GetEntitiesInSphere = getEnts
 local to = {}
 for _, m in ipairs(M.aiMessages) do if m.kind == "weapon:onPlayerArrowFlyingBy" then to[#to + 1] = m.id end end
-check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off, once)", table.concat(to, ",")), #to == 1 and to[1] == "nearWUID", #to)
+check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off, once); %d entity query for 3 steps (it cost ~6 ms a call in town)",
+	table.concat(to, ","), queries), #to == 1 and to[1] == "nearWUID" and queries == 1, queries)
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))

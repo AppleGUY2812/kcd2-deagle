@@ -1281,18 +1281,36 @@ end
 -- flying by (weapon:onPlayerArrowFlyingBy {GUID, Position, Direction}; Scripts.pak AI/npc/basic/switch/switch.xml ->
 -- handleArrowFlyby -> handleStimulusShooter): it names the player if it has seen him, else looks and searches toward
 -- him. Once per NPC per round, never to one the round hit. Called for every flight step (ballistics.lua StepRound).
+-- The NPCs come from Deagle:NearMissList, not a query per step: KCD2's GetEntitiesInSphere costs ~6 ms a call in a town
+-- whatever its radius (measured live 2026-10-15: 3412 calls, 20 s; the frame rate fell while rounds flew, "when the
+-- bullet falls out of range then it unlags")
+local NEAR_LIST_R, NEAR_LIST_EVERY = 300, 2   -- m around the player, s of game time between queries
+function Deagle:NearMissList()
+	local now = System.GetCurrTime()
+	local L = self.nearList
+	if L and now - L.t >= 0 and now - L.t < NEAR_LIST_EVERY then return L.npcs end
+	local p = self:Player()
+	local npcs = {}
+	local okP, at = pcall(p.GetWorldPos, p)
+	local ok, ents = false, nil
+	if okP and at then ok, ents = pcall(System.GetEntitiesInSphere, at, NEAR_LIST_R) end
+	if ok and type(ents) == "table" then
+		for _, e in ipairs(ents) do
+			if e ~= p and e.soul and e.actor and e.this then npcs[#npcs + 1] = e end
+		end
+	end
+	self.nearList = { t = now, npcs = npcs }
+	return npcs
+end
 function Deagle:FlyBy(r, from)
 	local near = self.cfg.nearMiss
 	if not near or near <= 0 then return end
 	local seg = vsub(r.pos, from)
 	local len = vlen(seg)
 	if len < 1e-3 then return end
-	local ok, ents = pcall(System.GetEntitiesInSphere, vadd(from, vscale(seg, 0.5)), len / 2 + near)
-	if not ok or type(ents) ~= "table" then return end
-	local p = self:Player()
 	r.flybys = r.flybys or {}
-	for _, e in ipairs(ents) do
-		if e ~= p and e.soul and e.actor and e.this and not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id]) then
+	for _, e in ipairs(self:NearMissList()) do
+		if not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id]) then
 			local dead = false
 			pcall(function() dead = e.actor:IsDead() end)
 			local okP, at = pcall(e.GetWorldPos, e)
@@ -2884,7 +2902,7 @@ function Deagle:OnGameplayStarted()
 	self.fc, self.fcAim = nil, nil                          -- the plugin turns the free camera off at the hello
 	-- a load can set the game clock back, and times kept from before it then lie ahead: the gun's kicks grew without
 	-- bound and every shot left along NaN, hitting nothing for minutes (in game 2026-10-14, a save loaded in a house)
-	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights = nil, nil, nil, nil, nil
+	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights, self.nearList = nil, nil, nil, nil, nil, nil
 	s.heat, s.accFire, s.accT, s.burstReady = 0, 0, nil, nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
