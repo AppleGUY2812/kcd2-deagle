@@ -24,10 +24,23 @@ Full-screen effects `Bullet\Bullet_Camera_FSFX` and `Bullet\Bullet_KillCamera_FS
 So the look = slow motion + the camera on the bullet + an X-ray sphere + one effect per organ the bullet crosses, in
 order (entry, bones or not, heart or lung, intestines, exit), blood and teeth trails on a head shot.
 
-## Not found yet: the numbers
-The values (angles, offsets, FOV, the three time scales, durations) aren't plain text in any archive (75 scanned).
-They are binary properties. Two ways: measure them from a recorded kill cam (cheap), or read them out of the
-program's data tables with the reverse-engineering tools (expensive). The user will send a video.
+## The numbers
+Property records in the `.asr` / `.pc` archives are `[hash u32][3][0][0][1][float]`, hash = seed*31^n + H0(name) over the
+lowercased name (the program: 0x3f1000 in bin/SEV2_Remastered.exe; `tools/se2/propfind.py`, `killcams.py`, `xref.py`).
+Found, in `misc/Common.asr` at seed 0 (the default cam):
+
+| property | value |
+|---|---|
+| Camera.Offset.Initial / Final | -1.1 / -2 (m, behind the bullet) |
+| Camera.FieldOfView.Initial / Final | 10 / 30 |
+| Duration | 2 s |
+| Duration.ImpactTime / ExitTime | 1 s / 1 s |
+
+Not found in any of the 97 `.asr` and 83 `.pc` archives, under seed 0 or any seed with a matching pair record: the
+three `TimeScale.*`, `Camera.Angle.*`, `Camera.LookAtBullet`, `Camera.TrackBullet`. The program's default for a missing
+property is 0 (xorps xmm2), so they are either set by code (constants in the exe) or by a record type this search
+doesn't match. Next: read the exe code that applies `TimeScale.PreHit` (0x3f1159 onwards, caller of the cam setup) for
+immediate constants, or measure from the user's recorded kill cam. Four search rounds spent; stop here.
 
 ## Plan for KCD2
 1. Slow motion + camera on the round (`deagle_slowmo`, the free camera and the round's path exist): three time scales
