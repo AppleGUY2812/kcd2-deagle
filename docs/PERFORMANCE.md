@@ -150,7 +150,7 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 28 | Holes: life 300 s, one per ricochet skip; `CreateMatDecal` never timed; the pool fills in a minute at 15 rounds/s | ❓ | holes | 🟪 | ❓ time it at the test wall; then 60-120 s, no hole past ~80 m |
 | 29 | Far impacts (300-1000 m) get the full effect + hole + sound | wasted pool slots | effects / holes | 🟦🟪 | ✅ effects: none past 250 m x the debug zoom (a34cb45, gated in run_perf); 🔧 holes: none past ~80 m (sounds: ✅ #12) |
 | 30 | Muzzle flash lights: 2 per shot, 40 m radius (GPU) | est. 0.2-0.5 ms GPU per light | flash | 🟪 | ❓ compare the look at 20 m (the user approved 40) |
-| 31 | Casing bounce sounds: up to 3 per casing | 45-90 sound starts/s | shells | 🟪 | 🔧 1 bounce under sustained fire |
+| 31 | Casing bounce sounds: up to 3 per casing | 45-90 sound starts/s | shells | 🟪🟩 | ✅ 38ad0fb (clinks through `soundBudget.casing`: 12 a second, burst 6, merged within 0.3 m / 0.1 s) |
 | 32 | A plugin without `fxr` falls back to the crash path (an emitter per round per frame) | crash | tracer | 🟪 | 🔧 no tracers + a "restart the game" note |
 | 33 | Ready or Not's banks load on the first command (531 ms, main thread); `ronload` sample data loads inside the next update | one-time hitches | ron.cpp | 🟩 | ❓ load on a worker thread at plugin start |
 | 34 | RoN mixer blocks 256 x 4 (~188 wake-ups/s, the full bus graph each) | a core share, off the main thread | ron.cpp | 🟩 | ❓ measure; 512 x 4 if it matters (it was set so the bang lands with the flash) |
