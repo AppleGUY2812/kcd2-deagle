@@ -141,6 +141,33 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    TracePendingRays), hit position error vs synchronous rays.
 8. **Drawn-material hits** for suspicious surfaces. Measure: µs per test, first-test stall, the cauldron A/B.
 
+## Throughput model (estimate, 2026-10-15; replaced by measurements as steps land)
+Frame ms = (T0 + c x life x R) / (1 - s x R / 1000). R rounds/s; T0 6.5 ms (the sky scene without the gun); s = per-shot
+cost (1 ms now: 1000 rounds/s = 250 shots a frame at 4 fps, 249 ms); c = per bullet in flight per frame (0.03 ms now);
+life 0.57 s (range 250 m). Check: 75 rounds/s gives 119 fps, measured 88-124. Sky fire only: impacts are under their
+own budgets (75 rounds/s at a wall: worst frame 24 ms, measured).
+
+| Rounds/s at | 60 fps | 90 fps | 120 fps |
+|---|---|---|---|
+| now (cap 64 drops rounds past ~112/s) | 301 | 163 | 72 |
+| plan, c 0.01 ms, s 0.02 ms (fast-fire mode, native, static/dynamic split) | ~1700 | ~780 | ~310 |
+| plan, c 0.005 ms | ~3200 | ~1500 | ~610 |
+
+s and c after the plan are guesses; step 1 measures the native ray, steps 5-7 measure s and c.
+
+## How each step is built and proven
+- Durable state lives in files (this doc, the step's spec, tests), not in a session's chat. Each step starts from a
+  fresh session or subagent with a short brief: the step text, the files it touches, the contract tests, the
+  measurement. Long contexts get compacted and lose detail; the brief is what survives.
+- Owners keep their files. Opus for native, reverse engineering and the hot-reload core (crash-prone, hard to
+  test); a cheaper model for mechanical work (Lua wrappers, test cases, docs). High effort for native and RE.
+- Every idea ships behind a setting (on / off in the same session) and gets: mock tests + run_perf gates; an
+  independent review; the in-game A/B/A/B (deagle_stress sky 75 / 300 / 1000, wall 75, the subsystem spawners)
+  with frame p50 / p99, Lua ms, engine ms and native counters (rays a frame, bullets alive); for bullets, the hit
+  points against the Lua version. The before / after row goes into docs/PERFORMANCE.md section 6.
+- The user: one in-game session per batch, the Claudes drive it over rcon, the user keeps the game in front and
+  judges only what needs eyes or ears.
+
 ## How to work here
 - Read CLAUDE.md, README.md, TODO.md, MODLOG.md, docs/PERFORMANCE.md, docs/code_navigation.md first.
 - Owners still edit their own files (CLAUDE.md "Who edits what"). The lead writes the new native core and the
