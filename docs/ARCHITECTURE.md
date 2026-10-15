@@ -133,7 +133,11 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    removes it) or hand those rounds to Lua. Gravity / drag in double inside the integrator (float32 positions are
    fine: run_ballistics tolerates ~1 cm at 100 m). Randomness from a seed Lua sets, so the tests stay deterministic.
    Static brushes give entity nil / partid nil in Lua; `hit.renderNode` is the brush (Claude 4, live).
-7. **Ray LOD + `rwi_queue`** for far / unseen rounds. Measure: main-thread ray ms, physics step ms (QPC around
+7. **Static / dynamic split (the user's idea, 2026-10-15), ray LOD + `rwi_queue`.** The static world (terrain, brushes)
+   never moves: at the shot (and after each bounce or exit) cast its whole path once as ~50 m chords (chord sag at
+   440 m/s ~2 cm) against static + terrain only, and store "first static hit at time t". Per frame, only a ray limited to
+   moving types (living, rigid, sleeping rigid), and none when no moving body is near the path (physics grid). Misses:
+   static geometry that changes later (doors, breakables). Then far / unseen rounds on `rwi_queue`. Measure: main-thread ray ms, physics step ms (QPC around
    TracePendingRays), hit position error vs synchronous rays.
 8. **Drawn-material hits** for suspicious surfaces. Measure: µs per test, first-test stall, the cauldron A/B.
 
