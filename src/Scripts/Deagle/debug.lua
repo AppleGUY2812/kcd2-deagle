@@ -155,25 +155,32 @@ end
 -- deagle_stress: a frame-rate test anyone can run. Infinite ammo, 10 rounds a second while the view looks at the sky
 -- (no one gets hit), in phases: fire with tracers, stop with tracers off (the pieces still held age out), fire
 -- without. Every 0.5 s of game time the log gets the frame time split into our Lua (the per-frame functions and Fire)
--- and the rest (the engine: rendering, particles, physics), with the rounds in the air and the tracer commands sent.
--- Made after the user's "spammed 3 clips, 140 to 70 fps" (2026-10-15).
+-- and the rest (the engine: rendering, particles, physics), with the rounds in the air and the tracer commands sent;
+-- after each phase its frame time p50 / p95 / p99 / max and the mod's Lua per frame (average, p99) against the
+-- budget in docs/PERFORMANCE.md (1.0 ms average, 2.0 ms p99). Functions called inside each other are counted once
+-- (only the outermost). Made after the user's "spammed 3 clips, 140 to 70 fps" (2026-10-15).
 local STRESS = {
 	{ "idle", 2, false, true }, { "FIRE tracers on", 5, true, true }, { "stop, tracers off", 3, false, false },
 	{ "idle again", 3, false, false }, { "FIRE tracers off", 5, true, false }, { "stop", 3, false, false },
 }
-local STRESS_LUA = { "VmTick", "RoundsTick", "Fire", "EnvTick", "MotionTick", "DrawHud" }
+local STRESS_LUA = { "VmTick", "VmPlace", "RoundsTick", "Fire", "EnvTick", "MotionTick", "DrawHud" }
+local MOD_AVG, MOD_P99 = 1.0, 2.0   -- ms of our Lua a frame (docs/PERFORMANCE.md)
+local function pct(sorted, q) return sorted[math.max(1, math.min(#sorted, math.ceil(#sorted * q)))] or 0 end
 function Deagle:Stress()
 	if self.stress then return end
 	local clock = System.GetCurrAsyncTime
-	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, pieces = 0, orig = {} }
+	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, orig = {},
+		frames = {}, luas = {} }
 	self.stress = X
 	for _, k in ipairs(STRESS_LUA) do
 		local f = self[k]
 		X.orig[k] = f
 		self[k] = function(...)
+			X.depth = X.depth + 1
 			local a = clock()
 			local r = { f(...) }
-			X.lua = X.lua + clock() - a
+			X.depth = X.depth - 1
+			if X.depth == 0 then local d = clock() - a; X.lua = X.lua + d; X.frameLua = X.frameLua + d end
 			return unpack(r)
 		end
 	end
@@ -184,6 +191,16 @@ function Deagle:Stress()
 	end
 	local vt = self.VmTick   -- the timed one: the frame clock goes around it
 	local lastA, lastG, nextShot
+	local function phaseEnd(s, ph)
+		table.sort(X.frames); table.sort(X.luas)
+		local sum = 0
+		for _, v in ipairs(X.luas) do sum = sum + v end
+		local avg, p99 = sum / math.max(1, #X.luas), pct(X.luas, 0.99)
+		log(string.format("STRESS == %-18s frames %d: p50 %.1f p95 %.1f p99 %.1f max %.1f ms | mod Lua avg %.2f p99 %.2f ms (budget %.1f / %.1f): %s",
+			ph[1], #X.frames, pct(X.frames, 0.5), pct(X.frames, 0.95), pct(X.frames, 0.99), X.frames[#X.frames] or 0, avg, p99,
+			MOD_AVG, MOD_P99, (avg <= MOD_AVG and p99 <= MOD_P99) and "PASS" or "OVER"))
+		X.frames, X.luas = {}, {}
+	end
 	self.VmTick = function(s, ...)
 		local a, g = clock(), System.GetCurrTime()
 		if lastA and lastG and g > lastG then   -- frames the game ran (not paused in the background)
@@ -192,6 +209,9 @@ function Deagle:Stress()
 			X.win = X.win or { t = g, n = 0, sum = 0, max = 0 }
 			local w, dt = X.win, a - lastA
 			w.n, w.sum, w.max = w.n + 1, w.sum + dt, math.max(w.max, dt)
+			X.frames[#X.frames + 1] = dt * 1000
+			X.luas[#X.luas + 1] = X.frameLua * 1000
+			X.frameLua = 0
 			s.cfg.tracers = ph[4]
 			if ph[3] and System.GetViewCameraDir().z > 0.5 and g >= (nextShot or 0) then
 				s.state.ammo = 7
@@ -207,6 +227,7 @@ function Deagle:Stress()
 				X.lua, X.pieces, X.win = 0, 0, nil
 			end
 			if g - X.t0 >= ph[2] then
+				phaseEnd(s, ph)
 				X.ph, X.t0 = X.ph + 1, g
 				if X.ph > #STRESS then
 					for k, f in pairs(X.orig) do s[k] = f end

@@ -361,14 +361,15 @@ do
 	local f = Deagle.Fire
 	Deagle.Fire = function(...) shots = shots + 1 return f(...) end
 	M.advance(22, 60)
-	local lines, done = 0, false
+	local lines, done, phases = 0, false, 0
 	for _, l in ipairs(M.logs) do
 		if l:find("STRESS%s+%d") then lines = lines + 1 end
 		if l:find("STRESS done") then done = true end
+		if l:find("STRESS == ") then phases = phases + 1 end
 	end
-	check(string.format("deagle_stress: %d shots, %d log lines, done %s, functions back %s, tracers back %s", shots, lines,
-		tostring(done), tostring(Deagle.stress == nil), tostring(Deagle.cfg.tracers == tracers)),
-		wrapped and shots >= 90 and shots <= 110 and lines >= 40 and done and Deagle.stress == nil and Deagle.cfg.tracers == tracers, shots)
+	check(string.format("deagle_stress: %d shots, %d log lines, %d phase summaries, done %s, functions back %s, tracers back %s", shots, lines,
+		phases, tostring(done), tostring(Deagle.stress == nil), tostring(Deagle.cfg.tracers == tracers)),
+		wrapped and shots >= 90 and shots <= 110 and lines >= 40 and phases == 6 and done and Deagle.stress == nil and Deagle.cfg.tracers == tracers, shots)
 	Deagle.Fire = fireWas
 	M.view.pitch = pitch
 end

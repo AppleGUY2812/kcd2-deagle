@@ -150,7 +150,9 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 - `deagle_fx <effect>` spawns a particle effect 3 m ahead (e.g. `deagle_fx deagle.muzzle`).
 - `deagle_stress`: frame-rate test. Look at the sky (it only fires while you do), type it, keep looking up for 21 s
   until "stress test done". Infinite ammo, 10 rounds a second: 5 s with tracers, a pause, 5 s without. kcd.log gets a
-  `STRESS` line every 0.5 s: frame time split into our Lua and the engine, rounds in the air, tracer commands sent.
+  `STRESS` line every 0.5 s: frame time split into our Lua and the engine, rounds in the air, tracer commands sent;
+  after each phase a `STRESS ==` line: frame time p50 / p95 / p99 / max and the mod's Lua per frame against the budget
+  (1.0 ms average, 2.0 ms p99, docs/PERFORMANCE.md): PASS or OVER.
 - Recording: OBS into `Desktop\Deagle Progress\test records`; Claude reads the clips frame by frame.
 
 ## Logs (for Claude)
