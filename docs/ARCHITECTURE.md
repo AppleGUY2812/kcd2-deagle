@@ -36,6 +36,23 @@ two-sided triangles to replicate; no creation event (re-check areas every 1-2 s,
 entity-owned statics (doors) count as dynamic; NPC rays hit per-bone parts, never the living capsule. Next: a probe
 comparing our triangle / heightfield test with KCD2's ray on the same hit.
 
+## Bullet design: work only when something happens (steps 6-7 and milestone 2)
+1. A round is a formula: origin, direction, fire time, cartridge (drag + gravity are fixed per cartridge), so its
+   position at any time is computed on demand (closed form or a per-cartridge table). Nothing per round per frame.
+2. Events in time order (a timing wheel / heap): at the shot the static path cast gives "static hit at t" or "expires
+   at t"; each frame pops only the events due. Cost follows hits per frame, not rounds alive.
+3. Movers ask, rounds don't: at the shot each path is written into a grid of cells with its time window per cell; each
+   frame each NPC / horse / rigid body looks up rounds passing its cells now and tests its bone shapes. A hit cancels
+   the round's static event. The same lookup gives near misses (FlyBy).
+4. Most rounds are decided at the shot: no mover near the whole path = a scheduled hit, never checked again.
+5. Static casts on worker threads, ahead of need (a round can't reach a wall before its first frame of flight);
+   rounds landing within the first frame (~7 m) are cast at once on the main thread.
+6. A burst from one gun traced as a thin cone, split into single rounds only where the cone touches an edge.
+7. Tracers every Nth round, drawn from the formula, only paths in the view frustum.
+8. Invalidation only on change: a door opens / something breaks -> re-cast the rounds whose cells overlap it.
+Frame cost = events due + movers x local rounds + visible tracers. Shot cost = one static cast per round (KCD2's ray up
+to ~1000 rounds/s, our tracer beyond). Each idea ships behind a setting and is measured on / off.
+
 ## The GPU (decided 2026-10-15)
 Not for bullet hits first. GPU results come back 1-3 frames late (a round flies ~7 m a frame, so close shots would land
 late), KCD2's GPU load is unmeasured (PresentMon), and hooking its DX12 is where today's descriptor crash came from.
