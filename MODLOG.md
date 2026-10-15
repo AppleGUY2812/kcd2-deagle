@@ -774,4 +774,7 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   gun + flash placed again, per-frame work (motion, pieces, tracer slots, live flash frame, sounds, console) once.
   Held fxs pieces: ring 256, each held its own time (`fxs ... [hold s]`). Tracer slots 128, full = no tracer for the
   new round (eviction was spawn + delete per frame). A hello forgets pieces and slots; tracer effects preloaded there.
+- 2026-10-15: a dev reload does NOT replace a console command's script: System.AddCCommand on an existing name keeps
+  the first one (deagle_stress changed from no argument to `[[%line]]`, reloaded twice, still "Too many arguments" in
+  game). A changed command line (arguments) needs a game restart; until then call the function through `deagle_lua`.
 
