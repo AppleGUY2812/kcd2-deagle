@@ -42,6 +42,53 @@ local FX_HOLD = {
 -- (1080p, 60 deg view), and rounds are dropped at 250 m anyway (cfg.range); far ricochets landed up to 1 km out
 local FX_FAR = 250
 local LOOK_NEW = { ["deagle_impacts.water"] = "deagle_impacts.water_v3", ["deagle_impacts.metal"] = "deagle_impacts.metal_v2" }
+-- Impact effect budget. A CIWS at 75 rounds/s spawned ~300 impact effects a second and the game fell to 4 fps (engine
+-- 200-250 ms a frame, back to normal within a second of stopping: their dust and smoke piling up in front of the
+-- camera; deagle_stress 75 aim, 2026-10-15). So: (1) a hit next to a fresh effect of the same kind gets none (within
+-- cfg.fxBudget.near m x the impact scale, younger than nearTime s of game time): at that rate it lands in the same
+-- cloud; (2) a token bucket: bursts up to burst effects, then rate a second. Skips are counted and logged at most every
+-- 2 s. Lights, holes and sounds aren't affected. A/B: deagle_set fxBudget.on 0
+local FX_RECENT = 24
+local FX_JET = {}
+for _, v in pairs(FX_VARY) do FX_JET[v.jet] = true end
+function Deagle:FxBudget(name, pos, scale)
+	local B = self.cfg.fxBudget
+	if not (B and B.on) then return true end
+	local now = System.GetCurrTime()
+	local st = self.fxBudgetState
+	if not st or now < st.t then   -- first use, or the clock went back (a save load)
+		st = { tokens = B.burst, t = now, ring = {}, i = 0, skips = 0, said = 0 }
+		self.fxBudgetState = st
+	end
+	st.tokens = math.min(B.burst, st.tokens + (now - st.t) * B.rate)
+	st.t = now
+	local skip = st.tokens < 1
+	if not skip and not FX_JET[name] then   -- a metal hit's own rays all start at its spot
+		local near = B.near * (scale or 1)
+		for k = 1, FX_RECENT do
+			local r = st.ring[k]
+			if r and r.name == name and now - r.t < B.nearTime then
+				local dx, dy, dz = pos.x - r.x, pos.y - r.y, pos.z - r.z
+				if dx * dx + dy * dy + dz * dz < near * near then skip = true break end
+			end
+		end
+	end
+	if skip then
+		st.skips = st.skips + 1
+		if now >= st.said then
+			st.said = now + 2
+			log(string.format("impact effects: %d skipped so far (budget %g a second, none within %g m of a fresh one)", st.skips, B.rate, B.near))
+		end
+		return false
+	end
+	st.tokens = st.tokens - 1
+	st.i = st.i % FX_RECENT + 1
+	local r = st.ring[st.i] or {}
+	r.name, r.x, r.y, r.z, r.t = name, pos.x, pos.y, pos.z, now
+	st.ring[st.i] = r
+	return true
+end
+
 function Deagle:SpawnFx(name, pos, normal, scale)
 	if not name then return end
 	if self.cfg.impactLook == "new" and LOOK_NEW[name] then name = LOOK_NEW[name] end
@@ -53,6 +100,7 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 		if dx * dx + dy * dy + dz * dz > (FX_FAR * (self.zoom or 1)) ^ 2 then return end
 	end
 	self:ImpactLight(name, pos, normal, scale)
+	if PLUGIN_FX[lib] and pos and not self:FxBudget(name, pos, scale) then return end
 	local vary = FX_VARY[name]
 	if vary and pos and normal then
 		local a = math.abs(normal.z) < 0.9 and { x = 0, y = 0, z = 1 } or { x = 1, y = 0, z = 0 }

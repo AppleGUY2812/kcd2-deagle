@@ -139,6 +139,9 @@ Deagle.cfg = {
 	-- light from sparky hits (effects.lua ImpactLight): a pool of max world lights, each burning time s (game time),
 	-- radius m (far past where it fades, so no ring), off m out from the surface; brightness x the impact scale
 	impactLight = { on = true, max = 6, time = 0.05, intensity = 0.3, radius = 15, bulb = 0.3, off = 0.15 },
+	-- impact / blood effects under heavy fire (effects.lua FxBudget): none within near m (x impact scale) of a fresh one
+	-- (nearTime s) of the same kind; bursts of burst, then rate a second
+	fxBudget = { on = true, rate = 30, burst = 15, near = 0.5, nearTime = 0.15 },
 	headFx = "deagle_blood.head",             -- burst out of the back of a head
 	holeSize = 0.035,         -- m, a 9 mm's bullet hole (Ready or Not's pistol holes: 3-4 cm); x the impact scale
 	holeExitSize = 0.09,      -- m, the hole a round leaves coming out the far side (Ready or Not's exits: 6-12 cm)
