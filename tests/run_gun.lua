@@ -389,6 +389,14 @@ do
 	check(string.format("deagle_stress 20 aim ab: %d fire-phase summaries (4), effects / holes / sounds put back %s %s %s", summaries,
 		tostring(Deagle.SpawnFx == fxWas), tostring(Particle.CreateMatDecal == decalWas), tostring(Deagle.HitSound == soundWas)),
 		summaries == 4 and Deagle.SpawnFx == fxWas and Particle.CreateMatDecal == decalWas and Deagle.HitSound == soundWas and Deagle.stress == nil, summaries)
+	-- deagle_stress stop ends a run at once and puts everything back
+	local vtWas = Deagle.VmTick
+	M.console("deagle_stress", "75")
+	local running = Deagle.stress ~= nil
+	M.advance(3, 60)
+	M.console("deagle_stress", "stop")
+	check(string.format("deagle_stress stop: was running %s, stopped %s, functions back %s", tostring(running), tostring(Deagle.stress == nil),
+		tostring(Deagle.VmTick == vtWas)), running and Deagle.stress == nil and Deagle.VmTick == vtWas, running)
 	Deagle.Fire = fireWas
 	M.view.pitch = pitch
 end

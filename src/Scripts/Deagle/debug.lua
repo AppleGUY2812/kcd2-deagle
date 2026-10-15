@@ -217,10 +217,21 @@ local function aimsAtLife(self)
 	end
 	return false
 end
+-- puts everything the run wrapped back (deagle_stress stop, a frame-time abort, the end of the run)
+function Deagle:StressStop(why)
+	local X = self.stress
+	if not X then return end
+	for k, f in pairs(X.orig) do self[k] = f end
+	stressOff(X, nil)
+	self.cfg.tracers, self.stress = X.tracersWas, nil
+	log("STRESS " .. why)
+	self:Notify("stress test " .. why)
+end
 function Deagle:Stress(arg)
-	if self.stress then return end
 	local words = {}
 	for w in tostring(Deagle.Arg(arg) or ""):gmatch("%S+") do words[#words + 1] = w end
+	if words[1] == "stop" then return self:StressStop("stopped") end
+	if self.stress then return end
 	local rps = math.max(1, math.min(2000, tonumber(words[1]) or 10))
 	local perFrame = math.max(8, math.ceil(rps / 30))   -- shots a frame at most (a long frame doesn't dump a burst)
 	local mode = words[2] == "aim" and "aim" or "sky"
@@ -298,17 +309,20 @@ function Deagle:Stress(arg)
 				log(string.format("STRESS %4.1fs %-18s %5.1f ms (%3.0f fps, worst %4.1f) = Lua %4.2f + engine %5.1f | rounds %2d, tracer cmds %4d, impacts %3d, impact fx %3d",
 					g - X.start, ph[1], fm, 1000 / fm, w.max * 1000, lm, fm - lm, rounds, X.pieces, X.impacts, X.fx))
 				X.lua, X.pieces, X.impacts, X.fx, X.win = 0, 0, 0, 0, nil
+				-- frames over 150 ms for a second: stop (1000 rounds a second sat at 4 fps until the user paused)
+				X.slow = fm > 150 and (X.slow or 0) + 1 or 0
+				if X.slow >= 2 then
+					local vtOrig = vt
+					s:StressStop("aborted: frames over 150 ms for a second")
+					return vtOrig(s, ...)
+				end
 			end
 			if g - X.t0 >= ph[2] then
 				phaseEnd(s, ph)
 				X.ph, X.t0 = X.ph + 1, g
 				if X.ph > #phases then
-					stressOff(X, nil)
-					for k, f in pairs(X.orig) do s[k] = f end
-					s.cfg.tracers, s.stress = X.tracersWas, nil
 					s:Native("fxrstat")
-					log("STRESS done")
-					s:Notify("stress test done")
+					s:StressStop("done")
 				end
 			end
 		end
