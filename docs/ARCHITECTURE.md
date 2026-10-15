@@ -114,6 +114,13 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
 5. **High fire-rate mode** (1b). Measure: `deagle_stress 1000` and `75` frame p99 and Lua ms (now 4 fps at 1000).
 6. **Native round simulation** behind a setting; Claude 1's suites are the contract; A/B against Lua; then
    `maxRounds` goes. Measure: µs per round, rays per frame, `deagle_stress 75 / 150 / 1000`, 1000 rounds alive.
+   Contract from Claude 1 (2026-10-15): Lua keeps `Impact` / `ApplyHit` / `ArmorHit` / `Deflect`; native hands them
+   the same hit table (pos, normal, entity, surface, dist, energy) and takes back goesOn + new r.pos / r.vel / r.skip /
+   r.tumble. killcam.lua gets r.pos / vel / dist / hops / tumble / skip once a frame per round plus `KillCamHit` and
+   done callbacks (its 16 m look-ahead ray stays Lua). Honour `impactCap.maxHops` (and `maxRounds` until step 6
+   removes it) or hand those rounds to Lua. Gravity / drag in double inside the integrator (float32 positions are
+   fine: run_ballistics tolerates ~1 cm at 100 m). Randomness from a seed Lua sets, so the tests stay deterministic.
+   Static brushes give entity nil / partid nil in Lua; `hit.renderNode` is the brush (Claude 4, live).
 7. **Ray LOD + `rwi_queue`** for far / unseen rounds. Measure: main-thread ray ms, physics step ms (QPC around
    TracePendingRays), hit position error vs synchronous rays.
 8. **Drawn-material hits** for suspicious surfaces. Measure: µs per test, first-test stall, the cauldron A/B.
