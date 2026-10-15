@@ -83,3 +83,14 @@ records read with a different name (names of different lengths alias by a factor
 - Organ / bone animations are `HCAN` chunks: Heart_Death_Anim, destroyed_heart_anim, Lung_Left/Right_Coll(apse)_Anim,
   Kidney, Liver, Windpipe, `Breakable_bones\*` (Skull, Jaw, Arm, Leg, Vertibrae_Shatter...), found by name and size.
 - Not yet: the organ / bone MESH chunks (none of the file names in the lists is a mesh; HSKN are 9 KB skins).
+
+### Round 9: the meshes are `HSKN` chunks
+`HSKN` = a whole model: `HSKN`, u32 size, u32 0x12, u32 0xc9, 0, u32 count, then the model's name at +0x18, a bone /
+control-point table (8-float records), the control point's name, then each sub-mesh named `<model>_01`... with its
+vertex data after (16-bit values, not float32). 158 models in `Common.asr`, among them the organ / bone ones (names
+as in the animations): BCV_Skull_04/05/06_Complete, Skull_fragments, BCV_Eyeball, BCV_eye_L/R_Complete, Jaw_01-03,
+Arm_R_L1/U1/U2/U3, Leg_R_L1/U1/U2/U3, Vertibrae_Shatter (top / bottom / Burst23), Pelvis / Scapula shatter, Thigh_test2,
+Clavicle L/R + Tube, Windpipe upper / lower, destroyed_heart, Lung left / right collapse, Extra_Bone_Detail, and
+`...EntryWound` / `...ExitWound` / `...nExitWound` (62-71 KB). Also the weapons and the soldiers' hats and heads.
+Next: the vertex / index layout (counts and stride after the sub-mesh name), then an OBJ exporter
+(tools/se2/hskn.py) to bring the real organs and bones into KCD2.
