@@ -748,4 +748,7 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   unlags"). Timed live (wrapped functions, System.GetCurrAsyncTime): `System.GetEntitiesInSphere` costs ~6 ms a call in a
   town whatever the radius (3412 calls, 20.3 s), against rays 0.02 ms, CryAction.GetWaterInfo 0.009 ms. Now one query of
   300 m around the player at most every 2 s of game time (`Deagle:NearMissList`), shared by every round.
+- 2026-10-15 (later): with the shared list the near miss still took 93 -> 55 fps (the user: gone with `nearMiss 0`):
+  every step of every round still asked the engine about all ~44 NPCs in it (`actor:IsDead` + `GetWorldPos`). The list
+  now keeps their positions; a step asks the engine only about an NPC within 30 m of its path.
 

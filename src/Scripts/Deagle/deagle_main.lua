@@ -1284,7 +1284,16 @@ end
 -- The NPCs come from Deagle:NearMissList, not a query per step: KCD2's GetEntitiesInSphere costs ~6 ms a call in a town
 -- whatever its radius (measured live 2026-10-15: 3412 calls, 20 s; the frame rate fell while rounds flew, "when the
 -- bullet falls out of range then it unlags")
+-- The list keeps where each NPC stood; a step only asks the engine about an NPC within NEAR_CULL m of its path there.
+-- Asking about every NPC in it for every step of every round (44 in town: IsDead + GetWorldPos, ~10 rounds in the air)
+-- still took the frame rate from 93 to 55 (the user's test 2026-10-15: gone with nearMiss 0).
 local NEAR_LIST_R, NEAR_LIST_EVERY = 300, 2   -- m around the player, s of game time between queries
+local NEAR_CULL = 30                          -- m an NPC can move between queries (a galloping horse ~15 m/s)
+local function segDist(pt, from, seg, len2)   -- distance from pt to the segment from .. from + seg; and where on it
+	local t = len2 > 0 and math.max(0, math.min(1, vdot(vsub(pt, from), seg) / len2)) or 0
+	local closest = vadd(from, vscale(seg, t))
+	return vlen(vsub(pt, closest)), closest
+end
 function Deagle:NearMissList()
 	local now = System.GetCurrTime()
 	local L = self.nearList
@@ -1296,7 +1305,10 @@ function Deagle:NearMissList()
 	if okP and at then ok, ents = pcall(System.GetEntitiesInSphere, at, NEAR_LIST_R) end
 	if ok and type(ents) == "table" then
 		for _, e in ipairs(ents) do
-			if e ~= p and e.soul and e.actor and e.this then npcs[#npcs + 1] = e end
+			if e ~= p and e.soul and e.actor and e.this then
+				local okW, w = pcall(e.GetWorldPos, e)
+				if okW and w then npcs[#npcs + 1] = { e = e, pos = { x = w.x, y = w.y, z = w.z } } end
+			end
 		end
 	end
 	self.nearList = { t = now, npcs = npcs }
@@ -1309,16 +1321,16 @@ function Deagle:FlyBy(r, from)
 	local len = vlen(seg)
 	if len < 1e-3 then return end
 	r.flybys = r.flybys or {}
-	for _, e in ipairs(self:NearMissList()) do
-		if not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id]) then
-			local dead = false
-			pcall(function() dead = e.actor:IsDead() end)
+	local len2 = len * len
+	for _, n in ipairs(self:NearMissList()) do
+		local e = n.e
+		if not r.flybys[e.id] and not (r.hitIds and r.hitIds[e.id])
+			and segDist({ x = n.pos.x, y = n.pos.y, z = n.pos.z + 1.25 }, from, seg, len2) <= near + NEAR_CULL then
+			local okD, dead = pcall(e.actor.IsDead, e.actor)
 			local okP, at = pcall(e.GetWorldPos, e)
-			if not dead and okP and at then
-				local chest = { x = at.x, y = at.y, z = at.z + 1.25 }
-				local t = math.max(0, math.min(1, vdot(vsub(chest, from), seg) / (len * len)))
-				local closest = vadd(from, vscale(seg, t))
-				if vlen(vsub(chest, closest)) <= near then
+			if not (okD and dead) and okP and at then
+				local d, closest = segDist({ x = at.x, y = at.y, z = at.z + 1.25 }, from, seg, len2)
+				if d <= near then
 					r.flybys[e.id] = true
 					local dirN = vscale(seg, 1 / len)
 					try("near miss", function()

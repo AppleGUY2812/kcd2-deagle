@@ -166,9 +166,13 @@ near.id, near.this = "near", { id = "nearWUID" }; far.id, far.this = "far", { id
 function near:GetWorldPos() return vec(101.5, 150, 30) end   -- chest 1.5 m right of a round along y at z 31.25
 function far:GetWorldPos() return vec(104, 150, 30) end
 function hitOne:GetWorldPos() return vec(100, 160, 30) end
+local distant = newNpc()   -- 200 m off the path: asked where it is once, for the list, never per step
+distant.id, distant.this = "distant", { id = "distantWUID" }
+local distantAsked = 0
+function distant:GetWorldPos() distantAsked = distantAsked + 1; return vec(300, 150, 30) end
 local getEnts = System.GetEntitiesInSphere
 local queries = 0
-System.GetEntitiesInSphere = function() queries = queries + 1; return { near, far, hitOne, Deagle:Player() } end
+System.GetEntitiesInSphere = function() queries = queries + 1; return { near, far, hitOne, distant, Deagle:Player() } end
 Deagle.nearList = nil
 M.aiMessages = {}
 local round = { pos = vec(100, 140, 31.25), hitIds = { hit = true } }
@@ -180,6 +184,8 @@ local to = {}
 for _, m in ipairs(M.aiMessages) do if m.kind == "weapon:onPlayerArrowFlyingBy" then to[#to + 1] = m.id end end
 check(string.format("near miss: the fly-by message to %s (only the NPC 1.5 m off, once); %d entity query for 3 steps (it cost ~6 ms a call in town)",
 	table.concat(to, ","), queries), #to == 1 and to[1] == "nearWUID" and queries == 1, queries)
+check(string.format("near miss: an NPC 200 m off the path is asked where it is %d time for 3 steps (only for the list)", distantAsked),
+	distantAsked == 1, distantAsked)
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("hits: %d/%d checks pass", n - fails, n))
