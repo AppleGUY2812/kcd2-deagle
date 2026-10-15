@@ -195,13 +195,27 @@ end
 local STRESS_LUA = { "VmTick", "VmPlace", "RoundsTick", "Fire", "EnvTick", "MotionTick", "DrawHud" }
 local MOD_AVG, MOD_P99 = 1.0, 2.0   -- ms of our Lua a frame (docs/PERFORMANCE.md)
 local function pct(sorted, q) return sorted[math.max(1, math.min(#sorted, math.ceil(#sorted * q)))] or 0 end
--- the view's first hit is a living thing (a person, an animal, chickens): "aim" holds fire
+-- "aim" holds fire while anything living is near the line of fire: the view's first hit is a person, an animal or
+-- chickens, or a living body is within 8 m of the player or 4 m of the aim point (rounds spread around the crosshair:
+-- one centre ray let a bandit at 1.4 m take five rounds, 2026-10-15)
 local function aimsAtLife(self)
 	local hits, p = {}, self:Player()
-	local ok, n = pcall(Physics.RayWorldIntersection, System.GetViewCameraPos(), vscale(System.GetViewCameraDir(), 300), 1, ent_all,
-		p and p.id, nil, hits)
-	local e = ok and n and n > 0 and hits[1] and hits[1].entity
-	return e and (e.actor or e.soul or e.OnBoidHit or (type(e.class) == "string" and e.class:find("Boid"))) and true or false
+	local eye, dir = System.GetViewCameraPos(), System.GetViewCameraDir()
+	local ok, n = pcall(Physics.RayWorldIntersection, eye, vscale(dir, 300), 1, ent_all, p and p.id, nil, hits)
+	local h = ok and n and n > 0 and hits[1]
+	local e = h and h.entity
+	if e and (e.actor or e.soul or e.OnBoidHit or (type(e.class) == "string" and e.class:find("Boid"))) then return true end
+	local aim = h and h.pos or vadd(eye, vscale(dir, 300))
+	for _, q in ipairs({ { eye, 8 }, { aim, 4 } }) do
+		local okS, found = pcall(Physics.SamplePhysEnvironment, q[1], q[2], ent_living)
+		if okS and type(found) == "table" then
+			for i = 1, #found do
+				local f = found[i]
+				if type(f) == "table" and f ~= p and (f.actor or f.soul) then return true end
+			end
+		end
+	end
+	return false
 end
 function Deagle:Stress(arg)
 	if self.stress then return end
