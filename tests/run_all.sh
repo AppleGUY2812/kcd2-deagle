@@ -19,5 +19,6 @@ python3 tests/test_profile_guess.py >/dev/null || { echo "FAIL test_profile_gues
 python3 tools/check_native.py . >/dev/null || { echo "FAIL check_native"; fail=1; }
 python3 tools/check_fx.py . >/dev/null || { echo "FAIL check_fx"; fail=1; }
 python3 tools/fx_hold.py --check >/dev/null || { echo "FAIL fx_hold"; fail=1; }
+python3 tools/check_ownership.py . || { echo "FAIL check_ownership"; fail=1; }
 [ $fail = 0 ] && echo "ALL SUITES PASS"
 exit $fail

@@ -20,18 +20,21 @@ Read `README.md` (layout, build, test), `TODO.md` (status) and `MODLOG.md` (engi
   artifact (https://claude.ai/artifact/2pJ2zJeNNAfxa5MD9VyitH; source `docs/DEBUG.md`) in the same session.
 
 ## Who edits what (four Claude sessions can run at once)
-- 🟥 `src/Scripts/Deagle/ballistics.lua` + `guns/penetration.lua`: rounds in flight, ricochets, corners, wallbangs,
-  armour (the "ricochet" session). It uses `deagle_main.lua`'s helpers through `Deagle.U`: keep that table in sync.
-- 🟩 Sound (the "sound" session): in `deagle_main.lua` only the sound functions (`vmSoundCues`, `ShotGain`,
-  `HitSound`, `RON_SURFACE` and the `snd` / `ron` fields of `SURFACES`, `RonSounds` to `DryGain`, `RonCues` to
-  `CueTick`, `Snd`, `Env*`, `RonWarm`, `RonState`, `ShotFile`); `guns/ron_handling.lua`, `guns/shot_gain.lua`;
-  `native/src/ron.cpp` and the sounds section of `native/src/main.cpp`; `tools/sound/`, `tools/ron/FmodRender`,
-  `tools/ron/FmodCoexist`, `tools/ron/fsb*.py`, `tools/ron/fmodbank.py`, `tools/impact_sounds.py`; the sound docs
-  (`docs/ron_fmod_events.md`, `mk5_sound_spec.md`, `sound_echo_plan.md`).
-- 🟦 Impact effects (the "effects" session): `deagle_impacts.xml` and its textures, the effects tools
-  (`tools/ron/mk_*fx*.py`, the fx converter), and in `deagle_main.lua` `SpawnFx` and the `fx` fields of `SURFACES`.
-- 🟪 `src/Scripts/Deagle/deagle_main.lua`: everything else (muzzle flash first, bullet holes, shells, recoil,
-  viewmodel, handling, NPC reactions and hearing, tracers, test wall) and the rest of `native/`.
+Scripts are one file per system in `src/Scripts/Deagle/` (README "Where things are"); `deagle_main.lua` loads them. A new
+script file needs an owner here: `tests/run_all.sh` fails otherwise, or when this list names a file that's gone.
+- 🟥 `ballistics.lua`, `killcam.lua` + `guns/penetration.lua`: rounds in flight, ricochets, corners, wallbangs,
+  armour (the "ricochet" session). They use the shared helpers through `Deagle.U` (set in `deagle_main.lua`): keep
+  that table in sync.
+- 🟩 Sound (the "sound" session): `sound.lua`, the `vmSoundCues` table at the top of `deagle_main.lua` and the `snd`
+  column of `surfaces.lua`; `guns/ron_handling.lua`, `guns/shot_gain.lua`; `native/src/ron.cpp` and the sounds
+  section of `native/src/main.cpp`; `tools/sound/`, `tools/ron/FmodRender`, `tools/ron/FmodCoexist`,
+  `tools/ron/fsb*.py`, `tools/ron/fmodbank.py`; the sound docs (`docs/ron_fmod_events.md`, `mk5_sound_spec.md`,
+  `sound_echo_plan.md`).
+- 🟦 Impact effects (the "effects" session): `effects.lua` and the `fx` column of `surfaces.lua`; `deagle_impacts.xml`
+  and its textures, the effects tools (`tools/ron/mk_*fx*.py`, `tools/ron/mk_water*_tex.py`, the fx converter).
+- 🟪 Everything else: `deagle_main.lua` (settings, `Deagle.U`, input, start-up, commands), `flash.lua`, `recoil.lua`,
+  `weapon.lua`, `viewmodel.lua`, `hits.lua` (and the `hole` column of `surfaces.lua`), `npc.lua`, `tracers.lua`,
+  `shells.lua`, `freecam.lua`, `physics.lua`, `debug.lua`, `motion.lua`, and the rest of `native/`.
 - Commit only your own hunks (never `git commit -a`, check `git diff --cached --stat` first), keep
   `bash tests/run_all.sh` passing after every edit (a hot reload loads every session's work), and tell the owner before
   touching their file or functions.
