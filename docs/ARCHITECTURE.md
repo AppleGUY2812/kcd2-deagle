@@ -104,6 +104,8 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
 1. **Probe build** (one plugin install, one restart): each probe a console command, read-only or self-cleaning.
    Probes: hook thread ids; `DN.add` via AddFunction; a queued ray; an entity-free light; the drawn material on
    the cauldron; 1000 native rays timed. Measure: each probe's log line, plus µs per call / per ray (QPC).
+   Status: built (bd8a983, native/src/probe.cpp mine by agreement with Claude 4; snippets tools/probe/basic.lua,
+   light.lua, mat.lua run over rcon). Waiting for an install while the game is closed.
 2. **Typed binding** for `fxr`, `snd` / `ron3`, `kick`; `[DN]` kept until each moves. Measure: µs per call
    vs `[DN]`'s 6-10; `deagle_stress` Lua ms; run_perf gate "0 `[DN]` lines for moved commands".
 3. **Loader / core split** + `deagle_native_reload`. Measure: reload ms; held emitters / tracer slots equal before
