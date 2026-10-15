@@ -53,6 +53,7 @@ Video checks: drag an OBS clip onto `Desktop\Make Scrubbable.bat`, then step wit
 | `assets/` | build inputs that aren't committed (MWII sounds, the game's Animations.img) |
 | `MODLOG.md` | journal: how the engine really behaves, what failed and why. Read before changing anything |
 | `TODO.md` | status and next steps |
+| `docs/code_navigation.md` | how Claude finds code here (grep / ast-grep, the ownership map in CLAUDE.md); why no code index |
 | `E:\Tools\deagle-work\blend\` | source Blender files: `mwii_vm.blend` (SourceIO import) -> `_filled` -> `_extra` |
 | `E:\Tools\deagle-work\downloads\` | the original downloads (GameBanana mod zip, MW19 muzzle pack, SourceIO) |
 | `E:\Tools\deagle-work\{vm,animroot,out}` | export work, rc animation root (SkeletonList), compiled image, renders, audit data |
