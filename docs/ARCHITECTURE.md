@@ -30,6 +30,30 @@ battle soundscape; hits applied in order per target, reported to Lua once a fram
 collision geometry (IPhysicalEntity parts -> IGeometry -> mesh / primitive data), how many cores KCD2 leaves free, and
 the pfx1 cost per particle. Milestone 1 (1000 rounds/s) is on the way and reused.
 
+## The GPU (decided 2026-10-15)
+Not for bullet hits first. GPU results come back 1-3 frames late (a round flies ~7 m a frame, so close shots would land
+late), KCD2's GPU load is unmeasured (PresentMon), and hooking its DX12 is where today's descriptor crash came from.
+The CPU tracer (Embree, 1-2 cores for 100k rounds/s) answers in the same frame. The GPU comes in where a measurement
+says the CPU ran out: far path segments traced ahead (a round's path is known at the shot), and drawing tracers
+instanced at 100k rounds/s (needs a renderer hook: the riskiest part, last).
+
+## Team and assignments (2026-10-15)
+Models read from the session logs (`~/.claude/projects/*/*.jsonl`, the last assistant message's model and token usage);
+effort isn't recorded reliably there (Claude 1's log shows a switch to xhigh).
+
+| Claude | Session | Model | Context now | Owns / first job |
+|---|---|---|---|---|
+| 1 manager, ballistics | deagle-game-todo-notion | Sonnet 5.5 | ~136k | Notion; contract tests for the native sim: golden Lua traces, hit order per target, seeded randomness, sub-frame spawn offsets |
+| 2 effects | niagara-metal-impact-emulator | Opus 5.5 | ~767k | impact budgets by priority (near / on screen full, far merged, unseen none) for 2000-4000 hits/s |
+| 3 sound | kcd2-deagle-9b | Opus 5.5 | ~735k | fast-fire loop + tail (candidate real recordings for the user to judge), sound priority at lobby scale |
+| 4 flash, viewmodel, native | kcd2-deagle-4a | Opus 5.5 | ~628k | `lobby` stress mode (baseline now), fast-fire visuals (continuous flash, tracer every Nth, casing stream) |
+| 5 architecture | kcd2-deagle-54 | Opus 5.5 | ~400k | probes (installed at next close), typed binding, loader / core split, native sim, collision copy |
+
+Contexts of 600-770k tokens: each compacts at its next clean point (`/compact keep: my files and ownership, open
+tasks, docs/ARCHITECTURE.md`); big jobs run in fresh helper agents with a written brief. Effort: xhigh for native,
+reverse engineering and the reload core (Claudes 4, 5); high for Claudes 2, 3; Claude 1 as is (Sonnet for managing;
+the native sim's C++ is Claude 5's, Claude 1 owns its tests).
+
 ## Where we are (measured in game 2026-10-15; details in docs/PERFORMANCE.md and MODLOG.md)
 - **Lua** (KCD2's official mod scripting, patch-stable, hot-reloadable with `tools/live.sh reload`): 14 modules in
   `src/Scripts/Deagle/` plus `ballistics.lua`, `killcam.lua`, `guns/`. Owners are listed in CLAUDE.md "Who edits what".
