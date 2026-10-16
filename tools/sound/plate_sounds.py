@@ -11,7 +11,7 @@ distance from 3 m), and HitSound sends impactVolume x the surface's vol: so
     vol = v_at_DIST x DIST / impactNear / impactVolume,   v_at_DIST = plate / file x scale / 0.5.
 Private use only: the WAVs never go into the repo.
 
-usage: plate_sounds.py <recording.wav> <hits.json> [outdir]"""
+usage: plate_sounds.py <recording.wav> <hits.json> [outdir]   (hits.json: page16_hits.json, the numbering of pack 16)"""
 import json, os, subprocess, sys, tempfile
 import numpy as np, soundfile as sf
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -35,12 +35,13 @@ def main():
     os.makedirs(out, exist_ok=True)
     sr = sf.info(src).samplerate
     hits = json.load(open(hits_json))
-    plates, ref = [], None
+    plates, ref, takes = [], None, []
     for k in HITS:
         h = hits[k - 1]
         x, _ = sf.read(src, start=int((h["shot"] - 1) * sr), stop=int((h["shot"] + h["onset"] + pr.RING_LEN + .5) * sr))
-        x = x.mean(1) if x.ndim > 1 else x
-        plate, _, at0 = pr.ring(x, sr, 1.0, h["onset"], pr.all_tones(x, sr, 1.0, h["onset"]))
+        takes.append((x.mean(1) if x.ndim > 1 else x, h["onset"]))
+    for (x, onset), fr in zip(takes, pr.plate_tones(takes, sr)):
+        plate, _, at0 = pr.ring(x, sr, 1.0, onset, fr)
         level = rms(hi(plate, sr)[: int(.3 * sr)])
         if ref is None:   # hit 1: the clip's balance and the plate's distance
             pk = int(.95 * sr) + int(np.argmax(np.abs(x[int(.95 * sr): int(1.05 * sr)])))
