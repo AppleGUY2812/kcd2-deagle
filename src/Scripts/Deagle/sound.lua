@@ -59,8 +59,8 @@ RON_SURFACE.mat_bells = "bell"                                                  
 -- plate we have for hickock's sample").
 -- near: full level within it (the plugin's Falloff), 6 m instead of impactNear: up close it was "a little too loud"
 -- (the user, 2026-10-14, at the test wall 4 m out); vol halved with it, so from 6 m out it's the level the user
--- approved (plate_sounds.py: 3.37 at 3 m), at 4 m -3.5 dB, at 3 m and closer -6 dB.
-local PLATE = { files = { "steel/plate_01.wav", "steel/plate_02.wav", "steel/plate_03.wav" }, vol = 1.685, near = 6, ron = 44 }
+-- approved (plate_sounds.py: 3.37 at 3 m; 3.414 since its 653 Hz hum is in, same level over 2 kHz), at 4 m -3.5 dB, at 3 m and closer -6 dB.
+local PLATE = { files = { "steel/plate_01.wav", "steel/plate_02.wav", "steel/plate_03.wav" }, vol = 1.707, near = 6, ron = 44 }
 for n, v in pairs(RON_SURFACE) do if v == 44 then RON_SURFACE[n] = PLATE end end
 for n, sf in pairs(SURFACES) do sf.ron = RON_SURFACE[n] end
 

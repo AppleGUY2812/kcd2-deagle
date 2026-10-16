@@ -33,11 +33,12 @@ def main():
             h = hits[k - 1]
             x, _ = sf.read(src, start=int((h["shot"] - 1) * sr), stop=int((h["shot"] + h["onset"] + pr.RING_LEN + .5) * sr))
             takes.append((x.mean(1) if x.ndim > 1 else x, h["onset"]))
-        for k, (x, onset), fr in zip(ks, takes, pr.plate_tones(takes, sr)):
-            plate, _, at0 = pr.ring(x, sr, 1.0, onset, fr)
-            pr.TAILS = False
+        for k, (x, onset), (fr, slow) in zip(ks, takes, pr.plate_tones(takes, sr)):
+            plate, _, at0 = pr.ring(x, sr, 1.0, onset, fr, slow)
+            pr.TAILS, keep = False, pr.RING_LEN
+            pr.RING_LEN = 1.6
             old, _, at1 = pr.ring(x, sr, 1.0, onset, pr.tones(x, sr, 1.0, onset))
-            pr.TAILS = True
+            pr.TAILS, pr.RING_LEN = True, keep
             a = int(.7 * sr)                                       # from 0.3 s before the shot
             orig = x[a: at0 + len(plate)]
             w = np.zeros(len(orig)); w[at0 - a:] = plate
@@ -46,8 +47,8 @@ def main():
             files = [f"hit_{k:02d}_{n}.wav" for n in ("original", WITH, WITHOUT, BEFORE)]
             for f, y in zip(files, (orig, w, orig - w, b)):
                 sf.write(os.path.join(out, f), np.clip(y * g, -1, 1), sr, subtype="PCM_16")
-            rows.append(f"<tr><td>hit {k:02d}<br><small>{len(fr)} tones</small></td>" + "".join(cell(f) for f in files) + "</tr>")
-            print(f"hit {k:02d}: {len(fr)} tones")
+            rows.append(f"<tr><td>hit {k:02d}<br><small>{len(fr) + len(slow)} tones</small></td>" + "".join(cell(f) for f in files) + "</tr>")
+            print(f"hit {k:02d}: {len(fr)} tones, slow {[round(v) for v in slow]}")
     page = f"""<!doctype html><html><head><meta charset="utf-8"><title>Plate extraction</title><style>
 body{{font:15px system-ui;margin:16px;background:#111;color:#eee;max-width:1250px}} table{{border-collapse:collapse;width:100%}}
 td,th{{border-bottom:1px solid #333;padding:6px 8px;text-align:left}} th{{padding-top:18px;color:#9cf}} audio{{height:30px;width:220px}}</style></head><body>

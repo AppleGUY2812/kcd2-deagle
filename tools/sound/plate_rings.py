@@ -27,7 +27,8 @@ from scipy.ndimage import median_filter
 OUT = "/mnt/e/Tools/deagle-work/sound/hickok/rings"
 LO, HI = 700, 16000        # Hz searched for the plate's tones
 MAX_TONES = 48
-RING_LEN = 1.6             # s kept after the onset
+RING_LEN = 2.3             # s kept after the onset: plate A's 653 Hz hum still rings at +2.2 s; its takes' next shots
+                          # come 2.53-3.62 s after the strike
 SIDE, GATE = 80.0, 6.0     # Hz to the bands a tone is compared with; dB it must stand over them
 TAILS, NB = True, 4.0       # follow each tone past its cut in a band NB Hz either side of its pitch (ring())
 # the strike's clank and the plate's early shimmer between its pitches, from the original: above SHIMMER_HZ (below
@@ -135,18 +136,34 @@ def rings_at(x, sr, shot, onset, freqs):
         if loc[j] >= 10 and A[j] - P[j] >= 10: out.append(fq)
     return out
 
+def late_tones(x, sr, shot, onset):
+    """Narrow peaks 80-1600 Hz at +0.5-1.4 s from the strike, >= 8 dB over a 60 Hz median: a low tone that decays slowly
+    stands out only once the gun's echo has died down, so tones() (from 700 Hz, in the first 0.45 s) can't see it.
+    Plate A's 653 Hz hum (the user heard it in "WITHOUT", 2026-10-16): on all 3 takes, on 1 of 8 shots with no plate
+    (one take alone isn't enough: plate_tones wants it on 2)."""
+    n = 16384
+    f, P = welch(x[int((shot + onset + .5) * sr): int((shot + onset + 1.4) * sr)], sr, nperseg=n, noverlap=n * 3 // 4)
+    P = 10 * np.log10(P + 1e-20)
+    loc = P - median_filter(P, size=21)
+    ok = (f > 80) & (f < 1600) & (loc >= 8)
+    return [float(f[i]) for i in np.nonzero(ok)[0] if P[i] == P[max(0, i - 2): i + 3].max()]
+
 def plate_tones(takes, sr):
     """Tones of each take of one plate [(x, onset), ...] (shot at 1.0 s): its own (all_tones) plus the plate's pitches
-    found on its other takes that ring in it too (rings_at)."""
+    found on its other takes that ring in it too (rings_at), and the slow ones (late_tones) found on 2 or more takes
+    that this take has too. Returns [(tones, slow tones), ...]."""
     own = [all_tones(x, sr, 1.0, o) for x, o in takes]
+    late = [late_tones(x, sr, 1.0, o) for x, o in takes]
     known = []
     for fr in own:
         for fq in fr:
             if all(abs(fq - g) > 25 for g in known): known.append(fq)
     out = []
-    for (x, o), fr in zip(takes, own):
+    for (x, o), fr, lt in zip(takes, own, late):
         add = [fq for fq in rings_at(x, sr, 1.0, o, known) if all(abs(fq - g) > 25 for g in fr)]
-        out.append(sorted(fr + add))
+        slow = [fq for fq in lt if sum(any(abs(fq - g) <= 5 for g in m) for m in late) >= 2
+                and all(abs(fq - g) > 25 for g in known + add)]
+        out.append((sorted(fr + add), slow))
     return out
 
 def clear(fq, freqs, sign):
@@ -155,19 +172,31 @@ def clear(fq, freqs, sign):
     while any(abs(fq + sign * d - g) < 40 for g in freqs): d += 20
     return fq + sign * d
 
-def ring(x, sr, shot, onset, freqs):
+def ring(x, sr, shot, onset, freqs, slow=()):
     """The plate's tones from the strike on. Each one is kept only while it stands GATE dB over what sits next to it
     (two bands SIDE Hz either side: the gun's echo, voice, music spread over every pitch), averaged over 150 ms,
     until the last time it does, so none of that leaks in after the ring has faded into it. Plus the strike's clank.
     Returns the plate and the rest (gun / echo / voice / music, to check by ear), both from 2 ms before the strike,
-    and where that is in x."""
+    and where that is in x. slow: tones that stand out only late (late_tones): kept in a band NB Hz either side of their
+    exact pitch from the strike on, so the gun's echo under them early on stays out."""
     a = int((shot + onset - .01) * sr)
     lead = int(.2 * sr)
     seg = x[a - lead: a + int(RING_LEN * sr)]
     y = np.zeros(len(seg))
+    every = list(freqs) + list(slow)
+    for fq in slow:
+        f1 = pitch(seg, sr, fq, lead + int(.5 * sr), lead + int(1.4 * sr))
+        b = narrow(seg, sr, f1)
+        side = np.maximum(env(narrow(seg, sr, clear(f1, every, -1)), sr), env(narrow(seg, sr, clear(f1, every, 1)), sr))
+        on = np.nonzero(over(env(b, sr), side, sr)[lead:] > GATE)[0]
+        if not len(on): continue
+        end = lead + on[-1]
+        g = np.zeros(len(seg)); g[:end] = 1
+        fo = int(.08 * sr); g[end: end + fo] = np.linspace(1, 0, len(g[end: end + fo]))
+        y += b * g
     for fq in freqs:
         b = band(seg, sr, fq)
-        side = np.maximum(env(band(seg, sr, clear(fq, freqs, -1)), sr), env(band(seg, sr, clear(fq, freqs, 1)), sr))
+        side = np.maximum(env(band(seg, sr, clear(fq, every, -1)), sr), env(band(seg, sr, clear(fq, every, 1)), sr))
         on = np.nonzero(over(env(b, sr), side, sr)[lead:] > GATE)[0]
         if not len(on): continue
         end = lead + on[-1]                                    # the last time it stood out: kept until then
@@ -180,7 +209,7 @@ def ring(x, sr, shot, onset, freqs):
         # over narrow bands beside it; faded in as the wide band fades out (one tone, so the two add up)
         f1 = pitch(seg, sr, fq, lead + int(.02 * sr), max(end, lead + int(.25 * sr)))
         nb = narrow(seg, sr, f1)
-        nside = np.maximum(env(narrow(seg, sr, clear(f1, freqs, -1)), sr), env(narrow(seg, sr, clear(f1, freqs, 1)), sr))
+        nside = np.maximum(env(narrow(seg, sr, clear(f1, every, -1)), sr), env(narrow(seg, sr, clear(f1, every, 1)), sr))
         on = np.nonzero(over(env(nb, sr), nside, sr)[end:] > GATE)[0]
         if not len(on) or on[-1] <= fo: continue
         e2 = end + on[-1]
