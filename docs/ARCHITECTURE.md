@@ -246,6 +246,10 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    not run): the world per docs/whgame_re/sim_binding.md + sim_world.md; first use of each engine call logged ok /
    FAILED; `[DN] rounds stats` = calls and us each. Open: knocked-down / mounted NPCs may not be ent_living (near misses
    and the kill cam's look-ahead would miss them; Lua's FlyBy has the same limit, its look-ahead ray didn't).
+   If stats put water above ~1 us a round: one water-area query a frame over the bounds of all live rounds plus a
+   step (rounds reach 1 km; a player-centred box drops far ponds, Claude 1), exact shape test per step (area shape
+   not yet RE'd, likely polygon prisms). The round contract can't catch a wrong box (the mock's water is a callback,
+   not the plugin's area list): the check is in game, a pond past 300 m.
 7. **Static / dynamic split (the user's idea, 2026-10-15), ray LOD + `rwi_queue`.** The static world (terrain, brushes)
    never moves: at the shot (and after each bounce or exit) cast its whole path once as ~50 m chords (chord sag at
    440 m/s ~2 cm) against static + terrain only, and store "first static hit at time t". Per frame, only a ray limited to
