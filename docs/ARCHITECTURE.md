@@ -183,7 +183,7 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    Plus a precise clock (Claude 4, MODLOG 1af7b4a: Lua numbers are float32, so `GetCurrTime` at 51602 s moves in
    3.9 ms steps and `GetCurrAsyncTime` in 0.24 ms after an hour). Never hand Lua an absolute time: `DN.dt()` is the
    frame step computed in double natively; `DN.now()` returns the 64-bit QPC tick as a lightuserdata (exact) and
-   `DN.since(t)` the seconds since it (a small float32, ~µs exact). Measure: 1000 frames of `DN.dt()` vs QPC in the
+   `DN.since(t)` the seconds since it (a small float32, ~µs exact) for timing a span once; round ages stay summed dts (360 float32 adds over 6 s drift < 0.1 ms; ~0.12 µs a call per round avoided). Measure: 1000 frames of `DN.dt()` vs QPC in the
    plugin log, max error < 1 µs; a 1 ms step added to a 10 s age is kept.
 3. **Loader / core split** + `deagle_native_reload`. Measure: reload ms; held emitters / tracer slots equal before
    and after; a 60 min soak (handles, private MB flat); 20 reloads in a row without a crash.
