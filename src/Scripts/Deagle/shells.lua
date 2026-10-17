@@ -10,13 +10,15 @@ local RON_SURFACE, camBasis, entityHex, surfaceName, try, vadd, vlen, vscale = U
 local CASE_POOL = 12
 -- Casings in flight pass through each other (cfg.eject.ghost). At 250 rounds a second ~4 are thrown from the same
 -- port spot in one frame, each inside the others: the rigid-body solver took the game from 60 to 5 fps within 2 s
--- (deagle_stress 250 sky shot casebody, 2026-10-17; the port smoke cost nothing). Each casing has its own collision
--- class bit and ignores that bit from its throw to its first bounce; on the ground they collide again, so they still
--- lie on each other. 2^30: KCD2's classes (g_PhysicsCollisionClass) use bits 0-27; Lua numbers are floats, exact here.
+-- (deagle_stress 250 sky shot casebody, 2026-10-17; the port smoke cost nothing). Casings in flight carry a class bit
+-- of their own (one bit, all casings) and ignore it; at the first bounce both go, so a landed casing collides with
+-- everything again, a falling one included (CryEngine skips a pair when either one's type is in the other's ignore:
+-- clearing only the ignore let a falling casing sink through a pile, Claude 5). 2^30: KCD2's classes
+-- (g_PhysicsCollisionClass) use bits 0-27; Lua numbers are floats, exact here.
 local CASE_CLASS = 1073741824
 local function caseGhost(e, on)
-	pcall(e.SetPhysicParams, e, PHYSICPARAM_COLLISION_CLASS,
-		on and { collisionClass = CASE_CLASS, collisionClassIgnore = CASE_CLASS } or { collisionClassIgnoreUNSET = CASE_CLASS })
+	pcall(e.SetPhysicParams, e, PHYSICPARAM_COLLISION_CLASS, on and { collisionClass = CASE_CLASS, collisionClassIgnore = CASE_CLASS }
+		or { collisionClassUNSET = CASE_CLASS, collisionClassIgnoreUNSET = CASE_CLASS })
 end
 function Deagle:CaseEntity()
 	self.casePool = self.casePool or {}
