@@ -584,6 +584,58 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 		tostring(out[1].dead), tostring(out[2].dead)), math.abs(out[1].dmg - out[2].dmg) < 1e-6 and out[1].dead == out[2].dead, out[2].dmg)
 end
 
+-- 2f. what Lua draws and drives from a round every frame it flies (a sim that skips the per-frame calls fails here):
+-- a round with a tracer gets a streak every frame (plugin fxr for its id), and a long shot at a living NPC it will kill
+-- starts the kill cam (slow motion, the free camera on)
+for _, gun in ipairs({ "deagle", "glock_17" }) do
+	setScene({ world = {} })
+	Deagle:UseGun(gun)
+	local phys = Deagle:ShotPhysics()
+	Deagle.rounds, Deagle.roundsToken, M.timers = {}, nil, {}
+	Deagle.frameDt = 1 / 60
+	rec = nil
+	local from, dir = System.GetViewCameraPos(), vec(0, 0.3, 1)
+	local trail = Deagle:Tracer(from, Deagle.U.vnorm(dir), phys)
+	local r = Deagle:LaunchRound(from, Deagle.U.vnorm(dir), phys, trail)
+	local framesWith, frames = 0, 30
+	for _ = 1, frames do
+		local n0 = #M.native
+		M.advance(1 / 60, 60)
+		local id = r.traceId
+		for i = n0 + 1, #M.native do
+			if id and M.native[i]:find("^%[DN%] fxr " .. id .. " ") then framesWith = framesWith + 1; break end
+		end
+	end
+	check(string.format("%s: a round with a tracer draws its streak every frame it flies (%d of %d frames)", gun, framesWith, frames),
+		trail ~= nil and framesWith == frames, trail and framesWith or "no trail")
+	Deagle.rounds, Deagle.roundsToken, M.timers = {}, nil, {}
+end
+do
+	local far = person("far", function() return vec(0, 120, 8.5) end)
+	far.damage = 95   -- 5 health left: the round will kill him
+	setScene({ world = { { p = vec(0, 119.85, 0), n = vec(0, -1, 0), entity = far, box = { -0.3, 0.3, 119, 121, 8.5, 11 } } } })
+	far.damage = 95
+	Deagle:UseGun("deagle")
+	local phys = Deagle:ShotPhysics()
+	Deagle.rounds, Deagle.roundsToken, M.timers, Deagle.kc = {}, nil, {}, nil
+	Deagle.frameDt = 1 / 60
+	rec = nil
+	local n0 = #M.native
+	Deagle:LaunchRound(vec(0, 0, 10), vec(0, 1, 0), phys, nil)
+	local started, slow = false, false
+	for _ = 1, 40 do
+		M.advance(1 / 60, 60)
+		started = started or Deagle.kc ~= nil
+		slow = slow or tonumber((M.cvars or {}).t_Scale) == Deagle.cfg.killCam.speed.pre
+	end
+	local camOn = false
+	for i = n0 + 1, #M.native do camOn = camOn or M.native[i] == "[DN] freecam on" end
+	check(string.format("a 120 m Deagle shot at a living NPC it will kill starts the kill cam (cam %s, slow motion %s, free camera %s)",
+		tostring(started), tostring(slow), tostring(camOn)), started and slow and camOn, started)
+	if Deagle.kc then Deagle:KillCamEnd("test over") end
+	Deagle.rounds, Deagle.roundsToken, M.timers = {}, nil, {}
+end
+
 -- 2d. 1024 rounds in the air at once, nothing dropped by the cap, none lost
 do
 	setScene({ world = {} })
