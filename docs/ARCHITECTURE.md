@@ -209,7 +209,13 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    done callbacks (its 16 m look-ahead ray stays Lua). Honour `impactCap.maxHops` (and `maxRounds` until step 6
    removes it) or hand those rounds to Lua. Gravity / drag in double inside the integrator (float32 positions are
    fine: run_ballistics tolerates ~1 cm at 100 m). Randomness from a seed Lua sets, so the tests stay deterministic.
-   Static brushes give entity nil / partid nil in Lua; `hit.renderNode` is the brush (Claude 4, live).
+   Static brushes give entity nil / partid nil in Lua; no `hit.renderNode` in this build (probe, 2026-10-17).
+   Status 2026-10-17 (user: go): `native/sim/` (fe8ae6d) passes Claude 1's round contract 34/34 through LuaJIT's FFI
+   (`native/sim/sim_ffi.lua` swaps StepRound), golden traces within 1e-12 m; 89 ns per round-step without rays, so
+   KCD2's 2.84 us ray is ~97 % of a native round: step 7 is the next gain. Next: the plugin binding (`DN.fire`,
+   `DN.rounds` pulling hit / flyby / done events, `DN.answer`, `DN.round` for the kill cam), the in-game world (the
+   ray with the player and r.skip as physical entities; the water lookup natively: RE), then tracers / FlyBy /
+   KillCamStep off the per-round Lua path (asked Claude 4).
 7. **Static / dynamic split (the user's idea, 2026-10-15), ray LOD + `rwi_queue`.** The static world (terrain, brushes)
    never moves: at the shot (and after each bounce or exit) cast its whole path once as ~50 m chords (chord sag at
    440 m/s ~2 cm) against static + terrain only, and store "first static hit at time t". Per frame, only a ray limited to
