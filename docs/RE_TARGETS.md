@@ -6,6 +6,7 @@ KCD2's (GetPhysics 0x2a8 vs ours 0x278, GetSlotWorldTM 0x350 vs 0x2D8, GetCharac
 
 | # | Target | Needs Ghidra? |
 |---|---|---|
+| 0 | **Exact Ready or Not muzzle flash (user, 2026-10-17: "no shortcuts, it must be exactly ready or not's").** RoN's flash is already decoded from its data (docs/muzzle_flash_research.md section 1: Cascade `WeaponFlash_Pistol_V2`, 0.035-0.04 s life, full size from frame 1). The blocker is KCD2's side: an emitter is first drawn 1-2 frames after it spawns and a particle is pre-aged a frame, so a 2-frame flash never shows. Decompile KCD2 for the emitter spawn / first-draw path and a way to draw a flash with no delay. RoN's own exe decompile only adds gameplay formulas (recoil, ballistics), not the look. | yes, KCD2 |
 | 1 | Why every Lua entity query costs 5-9 ms (GetEntitiesInSphere / ByClass) and a cheaper path. **User wants to discuss with the bullet-system / perf session (Claude 4 asked; Claude 3 owns docs/PERFORMANCE.md, Claude 5 the native round sim).** | yes |
 | 2 | `System.AddCCommand` on an existing name keeps the first: command lines can't change without a restart | yes |
 | 3 | Kill cam X-ray tint / depth-of-field hook (none found yet) | string search first |
