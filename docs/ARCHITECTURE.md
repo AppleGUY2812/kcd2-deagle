@@ -294,6 +294,15 @@ The number read (fixed before the native run): "Lua" on the last 0.5 s line of "
 "stop" (12.93 ms at 1236 alive; per round if counts differ > 5 %). It includes DN.advance (RoundsTick ->
 RoundsTickNative). Hit baseline: `Stress('250 aim')` from one save facing stone or ground ~100 m out, runs matched when
 the view hit is within 0.5 m; impact budgets (30/s) cut most effects there, so it measures hits under budget.
+Lua hit baseline (Claude 1, `Stress('250 aim')`, grass at 210.6 m on a shallow hillside, not the planned 100 m
+stone): 16.26 ms at 748 alive = 21.7 us a round a frame (sky 10.5), at ~31 fps against sky's ~40. Hits ~130/s
+(~4 a frame), so the extra 11 us a round is not per hit; it is per step of rounds skimming the ground. Per round per
+game second: sky 10.5 x 40 = 424 us, aim 21.7 x 31 = 673 us (1.6x), so part of the 2.07x is the lower fps (longer
+rays a frame), though raycmp says ray cost grows weakly with length (3 m 3.5-6 us, 100 m 8-13 us). Report both
+per frame and per game second; a native run that raises fps shortens its rays and must not count that as its win.
+Prediction (Claude 5): native at this spot 8-12 ms at ~748 alive. The leading suspect for the extra cost is
+ground-level rays crossing dense entity-grid cells (vegetation, terrain), which native keeps and step 7 removes.
+Native below 6 ms would mean the extra cost was Lua (ricochet, water, FlyBy glue), and this suspect is wrong.
 
 ## How each step is built and proven
 - Durable state lives in files (this doc, the step's spec, tests), not in a session's chat. Each step starts from a
