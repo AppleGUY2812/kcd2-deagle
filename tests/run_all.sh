@@ -11,6 +11,17 @@ luajit tests/run_penetration.lua >/dev/null || { echo "FAIL run_penetration"; fa
 luajit tests/run_hits.lua >/dev/null || { echo "FAIL run_hits"; fail=1; }
 luajit tests/run_killcam.lua >/dev/null || { echo "FAIL run_killcam"; fail=1; }
 luajit tests/run_round_contract.lua >/dev/null || { echo "FAIL run_round_contract"; fail=1; }
+# the same contract on the native sim (native/sim, Claude 5), built here when its sources changed (~1.5 s); without g++
+# it fails unless SKIP_NATIVE=1 says so on purpose: never a silent skip
+if command -v g++ >/dev/null; then
+  so=native/build/sim/libdeaglesim.so
+  mkdir -p native/build/sim
+  if [ ! -f "$so" ] || [ native/sim/sim.cpp -nt "$so" ] || [ native/sim/sim.h -nt "$so" ]; then
+    g++ -O2 -std=c++20 -Wall -Wextra -Werror -shared -fPIC native/sim/sim.cpp -o "$so" || { echo "FAIL native sim build"; fail=1; rm -f "$so"; }
+  fi
+  [ -f "$so" ] && { luajit tests/run_round_contract.lua --native "$so" >/dev/null || { echo "FAIL run_round_contract --native"; fail=1; }; }
+elif [ "${SKIP_NATIVE:-}" = 1 ]; then echo "SKIP run_round_contract --native (SKIP_NATIVE=1)"
+else echo "FAIL run_round_contract --native: no g++ (SKIP_NATIVE=1 skips it on purpose)"; fail=1; fi
 luajit tests/run_accuracy.lua >/dev/null || { echo "FAIL run_accuracy"; fail=1; }
 luajit tests/run_motion.lua >/dev/null || { echo "FAIL run_motion"; fail=1; }
 luajit tests/run_settings.lua >/dev/null || { echo "FAIL run_settings"; fail=1; }
