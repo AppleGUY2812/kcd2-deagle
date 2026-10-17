@@ -232,6 +232,14 @@ own budgets (75 rounds/s at a wall: worst frame 24 ms, measured).
 
 s and c after the plan are guesses; step 1 measures the native ray, steps 5-7 measure s and c.
 
+Measured 2026-10-17 (Claude 1, no profiler, "sky"; one run each): Lua 4.55 / 3.41 / 7.90 / 17.47 ms a frame at
+75 / 250 / 500 / 1000 rounds/s; frame p50 17.6 / 17.6 / 24.4 / 40.0 ms (1000 throttled: 4213 of 5031 fired). The knee
+for 60 fps is between 250 and 500. What is wrong in the model above: "life" is not a constant. Sky rounds lived
+~0.64 s in one run (something overhead: ~190 impacts/s) and 2.5 s+ in another (the view moved; rounds alive climbed to
+487), so "sky" depends on where the user looks, and the same command gave different scenes (idle 60 fps one run, 29 the
+next). No clean c until the stress fires from a fixed point and logs how rounds end (proposed to Claude 4). The profiler
+inflates Lua ~7x (75/s: 1.02 ms unprofiled in step 1 vs 7.21 profiled): its shares are usable, its absolute ms are not.
+
 ## How each step is built and proven
 - Durable state lives in files (this doc, the step's spec, tests), not in a session's chat. Each step starts from a
   fresh session or subagent with a short brief: the step text, the files it touches, the contract tests, the
