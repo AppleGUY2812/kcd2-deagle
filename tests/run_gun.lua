@@ -429,6 +429,37 @@ do
 	end
 	check(string.format("deagle_stress shot at 5 fps: cliff ends the phase %s, stuck rest stops the run %s, done %s", tostring(cliff), tostring(stuck), tostring(Deagle.stress == nil)),
 		cliff and stuck and Deagle.stress == nil and Deagle.MuzzleFlash == mf, 0)
+	-- a fourth word picks the parts: the casing's body and its port smoke on their own
+	local ejWas, fxWas2 = Deagle.EjectCase, Deagle.SpawnFx
+	local noBodySmokes, inBody = 0, false
+	local sf = Deagle.SpawnFx
+	Deagle.SpawnFx = function(s, name, ...)
+		if name == s.cfg.portFx and inBody then noBodySmokes = noBodySmokes + 1 end
+		return sf(s, name, ...)
+	end
+	local sfWrapped = Deagle.SpawnFx
+	local n0 = #M.logs
+	M.console("deagle_stress", "20 sky shot casebody,portsmoke,nope")
+	local smokeDuring = 0
+	for _ = 1, 30 * 60 do
+		M.advance(1 / 60)
+		inBody = Deagle.stress ~= nil and Deagle.EjectCase ~= ejWas
+		if Deagle.stress and Deagle.SpawnFx ~= sfWrapped then smokeDuring = smokeDuring + 1 end
+		if not Deagle.stress then break end
+	end
+	local named, badName = 0, false
+	for i = n0 + 1, #M.logs do
+		local l = M.logs[i]
+		if l:find("STRESS == FIRE no casebody") or l:find("STRESS == FIRE no portsmoke") then named = named + 1 end
+		if l:find("no part 'nope'") then badName = true end
+	end
+	local keep = {}
+	for _, e in ipairs(M.errors) do if not e:find("no part 'nope'") then keep[#keep + 1] = e end end
+	M.errors = keep   -- the wrong name's warning was the point
+	check(string.format("deagle_stress 20 sky shot casebody,portsmoke: %d named phases (2), smoke with no body %d, smoke filter on %d frames, wrong name said %s, back %s %s",
+		named, noBodySmokes, smokeDuring, tostring(badName), tostring(Deagle.EjectCase == ejWas), tostring(Deagle.SpawnFx == sfWrapped)),
+		named == 2 and noBodySmokes > 0 and smokeDuring > 100 and badName and Deagle.EjectCase == ejWas and Deagle.SpawnFx == sfWrapped and Deagle.stress == nil, named)
+	Deagle.SpawnFx = fxWas2
 	M.view.pitch = 1.2
 	-- spawn mode: a registered spawner N times a second at one spot, 10 s, no gun (Claude 5's plan step 4)
 	local calls, shotsBefore = 0, shots

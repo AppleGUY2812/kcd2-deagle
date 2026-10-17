@@ -167,7 +167,10 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   (`deagle_stress 250 sky shot`, ~45 s) does the same for the shot itself: everything, then no tracers, no flash, no
   casings, no gunshot sound, no AI hearing, no gun animation, then the bare rounds, 3 s each with a rest between. A
   fire phase that stays over 150 ms for a second ends early (a `STRESS cliff:` line) and the rest waits until frames
-  are back near idle (the run stops if they aren't after 10 s). `deagle_stress stop`
+  are back near idle (the run stops if they aren't after 10 s). A fourth word picks the parts instead
+  (`deagle_stress 250 sky shot casebody,portsmoke`): everything, then without each one. Parts: `tracers`, `flash`,
+  `casings`, `casebody` (the casing's physics body, its port smoke stays), `portsmoke` (the smoke, the body stays),
+  `gunsound`, `hearing`, `anim`, `shot` (all but the rounds). `deagle_stress stop`
   ends a run at once; any other run stops itself when frames stay over 150 ms for a second. Each `STRESS` line ends
   with the shots fired in it.
 - `deagle_lua Deagle:Stress('spawn <name> <per second>')`: one system's cost on its own. A registered spawner runs N

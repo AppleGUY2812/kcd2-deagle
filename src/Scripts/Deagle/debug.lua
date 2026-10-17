@@ -201,7 +201,7 @@ local STRESS_SHOT = {
 	{ "FIRE no gun anim", 3, true, true, "anim" }, { "rest", 2, false, true },
 	{ "FIRE rounds only", 3, true, false, "shot" }, { "rest", 2, false, true },
 }
--- what each name switches off: { global table, field, stand-in }. The gun anim's stand-ins still start the shot's sound cues
+-- what each name switches off: { global table, field, stand-in } ({ wrap = f }: f(the original) makes the stand-in). The gun anim's stand-ins still start the shot's sound cues
 -- (they come with the clip), so "no gun anim" keeps the gunshot.
 local STRESS_PARTS = {
 	fx = { { "Deagle", "SpawnFx", noop } },
@@ -216,6 +216,14 @@ local STRESS_PARTS = {
 		{ "Deagle", "VmRecoilAdd", function(s, empty) s:PlayCues(empty and "shootEmpty" or "shoot") end },
 		{ "Deagle", "VmRounds", noop },
 	},
+	-- a casing is a physics body (one of 12, thrown again) and a port smoke effect: each on its own
+	casebody = { { "Deagle", "EjectCase", function(s)
+		local port = s:VmBone(s.gun.bones.brass)
+		if port then s:SpawnFx(s.cfg.portFx, port, System.GetViewCameraUpDir(), 1.0) end
+	end } },
+	portsmoke = { { "Deagle", "SpawnFx", { wrap = function(orig)
+		return function(s, name, ...) if name ~= s.cfg.portFx then return orig(s, name, ...) end end
+	end } } },
 }
 STRESS_PARTS.shot = {}
 for _, k in ipairs({ "flash", "casings", "gunsound", "hearing", "anim" }) do
@@ -231,8 +239,10 @@ local function stressOff(X, what)
 	local o = {}
 	for _, e in ipairs(STRESS_PARTS[what]) do
 		local t = _G[e[1]]
-		o[#o + 1] = { e[1], e[2], t[e[2]] }
-		t[e[2]] = e[3]
+		local orig, f = t[e[2]], e[3]
+		if type(f) == "table" then f = f.wrap(orig) end
+		o[#o + 1] = { e[1], e[2], orig }
+		t[e[2]] = f
 	end
 	X.offOrig = o
 end
@@ -293,6 +303,18 @@ function Deagle:Stress(arg)
 	local perFrame = math.max(8, math.ceil(rps / 30))   -- shots a frame at most (a long frame doesn't dump a burst)
 	local mode = spawner and "spawn" or (words[2] == "aim" and "aim" or "sky")
 	local phases = spawner and STRESS_SPAWN or (words[3] == "ab" and STRESS_AB or words[3] == "shot" and STRESS_SHOT or STRESS)
+	-- a fourth word picks the shot A/B's parts: deagle_stress 250 sky shot casebody,portsmoke = everything, then
+	-- without each of those
+	local shotAB = phases == STRESS_SHOT
+	if shotAB and words[4] then
+		phases = { STRESS_SHOT[1], STRESS_SHOT[2], STRESS_SHOT[3] }
+		for name in words[4]:gmatch("[^,]+") do
+			if name == "tracers" or STRESS_PARTS[name] then
+				phases[#phases + 1] = { "FIRE no " .. name, 3, true, name ~= "tracers", name ~= "tracers" and name or nil }
+				phases[#phases + 1] = { "rest", 2, false, true }
+			else log("$4STRESS: no part '" .. name .. "' (tracers, flash, casings, casebody, portsmoke, gunsound, hearing, anim, shot)") end
+		end
+	end
 	local clock = System.GetCurrAsyncTime
 	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0, shots = 0, settleMs = 40,
 		orig = {}, frames = {}, luas = {} }
@@ -388,14 +410,14 @@ function Deagle:Stress(arg)
 				X.slow = fm > 150 and (X.slow or 0) + 1 or 0
 				X.lastFm = fm
 				local why = nil
-				if phases == STRESS_SHOT and ph[3] and X.slow >= 2 then
+				if shotAB and ph[3] and X.slow >= 2 then
 					log(string.format("STRESS cliff: %s at %.1f s into the phase, frames over 150 ms for a second", ph[1], g - X.t0))
 					X.slow, X.t0 = 0, g - ph[2]
-				elseif phases == STRESS_SHOT and ph[1] == "idle" then
+				elseif shotAB and ph[1] == "idle" then
 					X.baseSum, X.baseN = (X.baseSum or 0) + fm, (X.baseN or 0) + 1
-				elseif phases == STRESS_SHOT and ph[1] == "rest" and fm > X.settleMs and g - X.t0 >= 10 then
+				elseif shotAB and ph[1] == "rest" and fm > X.settleMs and g - X.t0 >= 10 then
 					why = string.format("aborted: frames still over %.0f ms after 10 s of rest", X.settleMs)
-				elseif phases ~= STRESS_SHOT and X.slow >= 2 then why = "aborted: frames over 150 ms for a second" end
+				elseif not shotAB and X.slow >= 2 then why = "aborted: frames over 150 ms for a second" end
 				if why then
 					local vtOrig = vt
 					s:StressStop(why)
@@ -404,7 +426,7 @@ function Deagle:Stress(arg)
 			end
 			-- a rest lasts until frames are back near the idle phase's (1.5 x, 40 ms at least)
 			X.settleMs = math.max(40, 1.5 * (X.baseSum or 0) / math.max(1, X.baseN or 0))
-			local settling = phases == STRESS_SHOT and ph[1] == "rest" and (X.lastFm or 0) > X.settleMs   -- (10 s: aborted above)
+			local settling = shotAB and ph[1] == "rest" and (X.lastFm or 0) > X.settleMs   -- (10 s: aborted above)
 			if g - X.t0 >= ph[2] and not settling then
 				phaseEnd(s, ph)
 				X.ph, X.t0 = X.ph + 1, g
@@ -420,7 +442,7 @@ function Deagle:Stress(arg)
 	if spawner then log(string.format("STRESS start: spawn %s, %d a second at one spot ahead, no gun", spawnName, rps))
 	else
 		log(string.format("STRESS start: %d rounds a second, %s%s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky",
-			phases == STRESS_AB and ", impact A/B" or phases == STRESS_SHOT and ", shot A/B" or ""))
+			phases == STRESS_AB and ", impact A/B" or shotAB and ", shot A/B" or ""))
 	end
 	local total = 0
 	for _, ph in ipairs(phases) do total = total + ph[2] end
