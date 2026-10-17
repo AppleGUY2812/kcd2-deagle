@@ -279,6 +279,18 @@ inflates Lua ~1.1-2.5x (Claude 1's same-rate pairs: 75/s 4.55 unprofiled vs 5.19
 profiled runs at the same rate differed by 1.4x, so every cross-run ratio here carries ~±40 % scene noise until the
 stress fires the same way every run.
 
+Lua baseline, uncapped (Claude 1, 2026-10-17, pak f8e674a5, `Stress('250 sky')`, cap lifted, 0 dropped, ~1230 rounds
+alive, all ended by range, HIT 0): tracers off Lua 12.9 ms (mod Lua 7.4), frame 24.8; tracers on Lua 26.7 (mod 13.2),
+frame 39.0. About 10.5 us of Lua per round per frame tracers off, 21.7 on. The game is held at 60 fps, so the engine
+column is an upper bound. This is the cheapest case: sky rays, no hits, no ricochets, no impacts.
+What the native run should show (prediction, Claude 5, to be checked against `[DN] rounds stats`): each round still
+pays one ray a frame (0.05 s step > a 60 fps frame, so ~7 m of travel, not the 100 m raycmp miss) and one
+living-box query a frame (FlyBy queries per round per frame in Lua too: npc.lua SamplePhysEnvironment). Native drops
+only the Lua around them (mock: FlyBy 4.2 + KillCamStep 1.1 + stepping ~2 us). Expected native Lua column at 1230
+rounds, tracers off: 4-7 ms (3.5-5.5 us a round of engine calls). Above 9 ms means the engine calls, not Lua, were most
+of the 10.5 us, and the next gain is fewer queries (one living query a frame for all rounds, step 7's ray split), not
+more native code. Tracers-on is not comparable: native draws at most 128 streaks (FX_TRACE_MAX).
+
 ## How each step is built and proven
 - Durable state lives in files (this doc, the step's spec, tests), not in a session's chat. Each step starts from a
   fresh session or subagent with a short brief: the step text, the files it touches, the contract tests, the
