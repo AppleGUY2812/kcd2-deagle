@@ -1,6 +1,6 @@
 // The native round sim's own cost, no engine: N rounds flown for F frames at 60 fps through a world whose ray finds
 // nothing (the integrator, the bookkeeping, one callback a step) and one with a ground plane at z = 0 (hits, answers).
-// usage: g++ -std=c++20 -O2 native/sim/sim.cpp native/sim/test/bench.cpp -o bench && ./bench [rounds] [frames]
+// usage: g++ -std=c++17 -O2 native/sim/sim.cpp native/sim/test/bench.cpp -o bench && ./bench [rounds] [frames]
 #include "../sim.h"
 
 #include <chrono>
