@@ -430,10 +430,19 @@ function Deagle:MoveRound(r, h)
 	if r.velOwn ~= vel then vel = cp(vel); r.vel, r.velOwn = vel, vel end
 	local vx, vy, vz = vel.x, vel.y, vel.z
 	local speed = sqrt(vx * vx + vy * vy + vz * vz)
-	local k = 1 / (1 + speed * h / (r.tumble and self:TumbleDragLength(r.phys) or r.phys.dragLength))
-	local v1x, v1y, v1z = vx * k, vy * k, vz * k - GRAVITY * h
-	local hh = 0.5 * h
-	local mx, my, mz = (vx + v1x) * hh, (vy + v1y) * hh, (vz + v1z) * hh
+	local L = r.tumble and self:TumbleDragLength(r.phys) or r.phys.dragLength
+	local x = speed * h / L
+	local k = 1 / (1 + x)
+	-- The step, so that where a round lands doesn't depend on the frame rate (tests/run_round_contract.lua): drag along
+	-- the line exactly (dv/dt = -v^2/L slows by 1 / (1 + x) and flies L ln(1 + x) / v per unit velocity, x = v h / L),
+	-- and the speed gravity adds during the step dragged from when it was added (its mean factor (1 + x/2) / (1 + x),
+	-- the drop's (1 + x/3) / (1 + x)). Against a 10 us reference at 300 m: within 1.1 mm from 20 to 240 fps. The old
+	-- trapezoid ((v0 + v1) / 2 x h, g undragged) was 7 cm off at 20 fps and 0.6 cm at 240: a Glock landed 5.9 cm higher
+	-- at 240 fps than at 20 (2026-10-17)
+	local gv, gp = GRAVITY * h * (1 + 0.5 * x) * k, 0.5 * GRAVITY * h * h * (1 + x / 3) * k
+	local v1x, v1y, v1z = vx * k, vy * k, vz * k - gv
+	local along = speed > 0 and L * math.log(1 + x) / speed or h
+	local mx, my, mz = vx * along, vy * along, vz * along - gp
 	MV.x, MV.y, MV.z = mx, my, mz
 	local mlen = sqrt(mx * mx + my * my + mz * mz)
 	local px, py, pz = pos.x, pos.y, pos.z
@@ -443,15 +452,27 @@ function Deagle:MoveRound(r, h)
 	if hit then tx, ty, tz = hit.pos.x, hit.pos.y, hit.pos.z end
 	hit = waterCross(self, px, py, pz, tx, ty, tz) or hit
 	if hit then
-		local frac = hit.dist / mlen          -- share of this step flown before the hit
-		hit.dist = r.dist + hit.dist          -- the ray's distance is from this step's start: the path flown so far
-		hit.energy = 0.5 * r.phys.bullet * speed * speed
-		local dirx, diry, dirz = mx / mlen, my / mlen, mz / mlen
+		-- the round as it reaches the hit, not as it started the step: drag slows it as e^(-d / L) over the d it flew,
+		-- in the time (L / v)(e^(d / L) - 1). Before, the hit got the step's starting speed: 4 % more energy at 300 m at
+		-- 20 fps than at 144, and a ricochet kept the starting speed too
+		local d = hit.dist
+		local th = speed > 0 and math.min(h, L / speed * (math.exp(d / L) - 1)) or h * d / mlen
+		local xh = speed * th / L
+		local kh = 1 / (1 + xh)
+		vel.x, vel.y, vel.z = vx * kh, vy * kh, vz * kh - GRAVITY * th * (1 + 0.5 * xh) * kh
+		local vh = speed * kh
+		hit.dist = r.dist + d                 -- the ray's distance is from this step's start: the path flown so far
+		hit.energy = 0.5 * r.phys.bullet * vh * vh
+		-- the way it's going at the hit (its velocity there), not the step's chord: on a long step the chord is tilted by
+		-- half the step's turn, and a wallbang or ricochet went on along it (1.4 cm at 30 m past a plank, 20 vs 144 fps)
+		local vhl = sqrt(vel.x * vel.x + vel.y * vel.y + vel.z * vel.z)
+		local dirx, diry, dirz = vel.x / vhl, vel.y / vhl, vel.z / vhl
 		if self.cfg.debugPaths then
 			self:PathAdd(cp(pos), cp(hit.pos), (r.hops or 0) > 0 and PATH_ON or PATH_FLY)
 			self:PathMark(hit.pos, hit.entity and hit.entity.soul and PATH_IN or { 1, 1, 1 })
 		end
-		r.dist, r.age, r.pos = hit.dist, r.age + h * frac, hit.pos
+		local frac = th / h                   -- share of this step's time flown before the hit
+		r.dist, r.age, r.pos = hit.dist, r.age + th, hit.pos
 		local goesOn = self:ApplyHit(hit, { x = dirx, y = diry, z = dirz }, r.phys, r)
 		if self.KillCamHit then self:KillCamHit(hit, r) end   -- killcam.lua
 		if not goesOn then r.landed = true; return true end
