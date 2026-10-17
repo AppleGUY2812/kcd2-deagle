@@ -175,8 +175,9 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    native ray 2.84 us vs a Lua ray 6.01 us (the Lua layer is ~half); `DN.add` 0.118 us vs a `[DN]` text line 0.587 us
    (5x); a queued ray delivered 12.29 ms later; entity-free light: create 18.9 us, move ~9 us; `deagle_stress 75` at
    60 fps: Lua 1.02 ms avg, 1.83 p99. The drawn-material probe failed (no renderNode on a rock, no hit on a wall at
-   30 m; surface name passed wrongly): mat.lua fixed to dump the whole hit table, rerun pending. Light visibility and
-   thread ids still to read from the logs.
+   30 m; surface name passed wrongly): mat.lua fixed to dump the whole hit table, rerun pending. Lua commands and the camera step run
+   on the same thread (26744): the core can reload at the start of a camera step with no Lua call in flight. Light
+   visibility still to confirm.
 2. **Typed binding** for `fxr`, `snd` / `ron3`, `kick`; `[DN]` kept until each moves. Measure: µs per call
    vs `[DN]`'s 6-10; `deagle_stress` Lua ms; run_perf gate "0 `[DN]` lines for moved commands".
 3. **Loader / core split** + `deagle_native_reload`. Measure: reload ms; held emitters / tracer slots equal before
