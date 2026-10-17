@@ -593,10 +593,13 @@ function Deagle:RoundSim()
 			if sf and sf.fx == "pass" then pass[#pass + 1] = id end
 		end
 		local okW, water = pcall(System.GetSurfaceTypeIdByName, "mat_water")
-		local fb = self.FLYBY or {}
+		local fb, kc = self.FLYBY, self.cfg.killCam
+		-- the kill cam's look-ahead, natively (KillCamStep's gates and reach: speed x aheadK + a frame's flight)
 		N.simInit({ step = ROUND_STEP, life = ROUND_LIFE, range = self.cfg.range, maxHops = self.cfg.impactCap.maxHops,
-			minSpeedOn = 30, nearMiss = self.cfg.nearMiss or 0, chest = fb.chest or 1.25, flybyGap = fb.gap or 0.75,
-			waterSurface = okW and type(water) == "number" and water or -1, pass = pass })
+			minSpeedOn = 30, nearMiss = self.cfg.nearMiss or 0, chest = fb.chest, flybyGap = fb.gap,
+			waterSurface = okW and type(water) == "number" and water or -1, pass = pass,
+			aheadK = kc.speed.pre * kc.lead * 1.25, aheadMinDist = kc.minDist })
+		self.roundAhead = nil
 		self.roundSimN, self.roundPhys, self.roundsById = N, setmetatable({}, { __mode = "k" }), {}
 	end
 	return N
@@ -654,8 +657,15 @@ function Deagle:RoundEvents(N)
 					if self.KillCamHit then self:KillCamHit(hit, r) end
 					local pos, vel = r.pos, r.vel
 					local marked = e and r.hitIds and r.hitIds[e.id] and 1 or 0
-					N.answer(ev.id, goesOn and true or false, pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, r.skip, r.tumble and true or false, marked)
+					local turned = rawget(r, "turnPos") ~= nil   -- off a surface: the plugin starts the streak again there
+					rawset(r, "turnPos", nil)
+					N.answer(ev.id, goesOn and true or false, pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, r.skip, r.tumble and true or false,
+						marked, turned)
 					clearFields(r)                  -- live from the plugin again
+				elseif ev.kind == "ahead" then    -- the kill cam's look-ahead met a body: will this round kill it?
+					if not self.kc and self.KillCamTry then
+						self:KillCamTry(r, ev.entity and System.GetEntity(ev.entity), { pos = ev.pos, normal = ev.normal, dist = ev.hitDist })
+					end
 				elseif ev.kind == "flyby" then    -- a near miss: npc.lua's message (the geometry and the throttle were native)
 					local e = ev.entity and System.GetEntity(ev.entity)
 					if e and self.FlyByMessage then self:FlyByMessage(e, ev.pos, ev.dir, r) end
@@ -700,8 +710,7 @@ function Deagle:LaunchRoundNative(N, pos, dir, phys, trail)
 	return r
 end
 
--- every frame while rounds fly: the plugin moves them all, Lua handles what happened. The kill cam still looks ahead
--- from each round in Lua (KillCamStep: a ray every other frame from rounds 40 m+ out, none once a cam runs)
+-- every frame while rounds fly: the plugin moves them all (and looks ahead for the kill cam), Lua handles what happened
 function Deagle:RoundsTickNative(token)
 	local N = self:RoundSim()
 	if not N then   -- the setting went back to Lua (or the plugin went): the plugin's rounds are gone with it
@@ -710,11 +719,11 @@ function Deagle:RoundsTickNative(token)
 	end
 	self.roundsTickT = System.GetCurrTime()
 	roundFrame = roundFrame + 1
+	local kc = self.cfg.killCam
+	local ahead = kc and kc.on and not self.kc and not self.slowOn and not self.fc and true or false   -- KillCamStep's gates
+	if ahead ~= self.roundAhead then N.ahead(ahead); self.roundAhead = ahead end
 	N.advance()
 	self:RoundEvents(N)
-	if self.KillCamStep then
-		for _, r in ipairs(self.rounds or {}) do self:KillCamStep(r, false) end
-	end
 	if #(self.rounds or {}) > 0 then Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
 	else self.roundsToken, self.roundsNative = nil, nil end
 end

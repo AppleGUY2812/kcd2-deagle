@@ -10,10 +10,11 @@
 --    frame rate must not change where a round goes); a long hitch can't push a round through a wall; a round fired in
 --    a frame that ends before its first hit lands in that frame (a close shot is instant); the sky round ends by range
 --    or life and never by anything else; every hit's path length grows along the path.
--- usage: luajit tests/run_round_contract.lua [--write | --native path/to/libdeaglesim.so]   (from the repo root)
-local WRITE, NATIVE = false, nil
+-- usage: luajit tests/run_round_contract.lua [--write | --native lib.so | --dn lib.so]   (from the repo root; --native:
+-- the sim's StepRound swapped in; --dn: the game's native path, ballistics.lua with cfg.roundSim "native")
+local WRITE, NATIVE, DNLIB = false, nil, nil
 for i = 1, #(arg or {}) do
-	if arg[i] == "--write" then WRITE = true elseif arg[i] == "--native" then NATIVE = arg[i + 1] end
+	if arg[i] == "--write" then WRITE = true elseif arg[i] == "--native" then NATIVE = arg[i + 1] elseif arg[i] == "--dn" then DNLIB = arg[i + 1] end
 end
 local GOLDEN = "tests/golden/round_contract.json"
 -- what a native sim may differ by from the golden traces (float32 positions, its own step split): agreed with Claude 5
@@ -27,6 +28,12 @@ M.surfaceNames[5], M.surfaceNames[6] = "mat_metal", "mat_water"
 -- the native sim (native/sim, Claude 5) in place of the Lua StepRound, through LuaJIT's FFI; it reads the water and pass
 -- surface ids, so it goes in after the names above. ApplyHit, tracers, the kill cam and FlyBy stay Lua
 if NATIVE then dofile("native/sim/sim_ffi.lua").install(Deagle, NATIVE); print("native sim: " .. NATIVE) end
+-- --dn: the game's path, ballistics.lua's cfg.roundSim "native", with the plugin's DN.* binding stood in by the FFI
+if DNLIB then
+	_G.DN = dofile("native/sim/sim_ffi.lua").dn(Deagle, DNLIB)
+	Deagle.cfg.roundSim = "native"
+	print("roundSim native, DN over the FFI: " .. DNLIB)
+end
 local function vec(x, y, z) return { x = x, y = y, z = z } end
 local function dot(a, b) return a.x * b.x + a.y * b.y + a.z * b.z end
 
@@ -601,7 +608,8 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 	for _ = 1, frames do
 		local n0 = #M.native
 		M.advance(1 / 60, 60)
-		local id = r.traceId
+		-- Lua's streak id, or the plugin's own (DN.tracer: TRACE_BASE + the round's id)
+		local id = r.traceId or (rawget(r, "nid") and _G.DN and DN.TRACE_BASE and DN.TRACE_BASE + rawget(r, "nid"))
 		for i = n0 + 1, #M.native do
 			if id and M.native[i]:find("^%[DN%] fxr " .. id .. " ") then framesWith = framesWith + 1; break end
 		end
@@ -613,7 +621,8 @@ end
 do
 	local far = person("far", function() return vec(0, 120, 8.5) end)
 	far.damage = 95   -- 5 health left: the round will kill him
-	setScene({ world = { { p = vec(0, 119.85, 0), n = vec(0, -1, 0), entity = far, box = { -0.3, 0.3, 119, 121, 8.5, 11 } } } })
+	-- he's living: the physics query near the path finds him (the native look-ahead asks it first, like FlyBy)
+	setScene({ world = { { p = vec(0, 119.85, 0), n = vec(0, -1, 0), entity = far, box = { -0.3, 0.3, 119, 121, 8.5, 11 } } }, living = { far } })
 	far.damage = 95
 	Deagle:UseGun("deagle")
 	local phys = Deagle:ShotPhysics()

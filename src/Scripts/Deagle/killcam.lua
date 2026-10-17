@@ -91,7 +91,14 @@ function Deagle:KillCamStep(r, done)
 	local p, hits = self:Player(), {}
 	local ok, n = pcall(Physics.RayWorldIntersection, r.pos, vscale(r.vel, reach / speed), 1, ent_all, p and p.id, r.skip, hits)
 	local h = ok and n and n > 0 and hits[1]
-	local e = h and h.entity
+	return self:KillCamTry(r, h and h.entity, h)
+end
+
+-- a round about to reach e (h: the look-ahead's hit, pos and dist from the round): the cam starts if e is a living
+-- NPC this round will kill. From KillCamStep's own ray (Lua rounds) or the plugin's "ahead" event (native rounds)
+function Deagle:KillCamTry(r, e, h)
+	local c = self.cfg.killCam
+	local p = self:Player()
 	if not (e and e.soul and e ~= p) then return end
 	local dead = false
 	pcall(function() dead = e.actor:IsDead() or e.actor:GetHealth() <= 0 end)
