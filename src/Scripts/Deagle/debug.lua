@@ -425,8 +425,7 @@ function Deagle:Stress(arg)
 	end
 	if mode == "sky" then
 		-- straight up within 5 deg, whatever the view: "sky" used to read the view, so it depended on the scene (Claude
-		-- 1, 2026-10-17: ~190 impacts a second from something overhead until the view moved). Built here: coneDir has
-		-- no "right" for a direction straight up.
+		-- 1, 2026-10-17: ~190 impacts a second from something overhead until the view moved). A cone around +Z.
 		local tan5 = math.tan(math.rad(5))
 		self.shotDirOverride = function()
 			local k, a = tan5 * math.sqrt(math.random()), math.random() * 2 * math.pi
