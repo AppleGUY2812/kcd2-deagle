@@ -96,7 +96,7 @@ local d = launched[1]
 local finite = d and d.x == d.x and d.y == d.y and d.z == d.z and math.abs(d.x) <= 1 and math.abs(d.y) <= 1 and math.abs(d.z) <= 1
 check(string.format("after a load that sets the clock back 322 s, a shot flies a real direction (%s)",
 	d and string.format("%.3f %.3f %.3f", d.x, d.y, d.z) or "none"), finite, d and d.x)
-Deagle.gunKicks = { { t = M.t + 300, pitch = 5, yaw = 1 } }
+Deagle.gunKick = { t = M.t + 300, pr = 5, pi = 1, yr = 1, yi = 1 }
 local kp, ky = Deagle:GunKickNow()
 check(string.format("a kick from ahead of the clock is dropped (%s, %s)", tostring(kp), tostring(ky)), kp == 0 and ky == 0, kp)
 Deagle.LaunchRound = launch

@@ -671,7 +671,7 @@ function Deagle:OnGameplayStarted()
 	self.fc, self.fcAim = nil, nil                          -- the plugin turns the free camera off at the hello
 	-- a load can set the game clock back, and times kept from before it then lie ahead: the gun's kicks grew without
 	-- bound and every shot left along NaN, hitting nothing for minutes (in game 2026-10-14, a save loaded in a house)
-	self.gunKicks, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights = nil, nil, nil, nil, nil
+	self.gunKick, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights = nil, nil, nil, nil, nil
 	s.heat, s.accFire, s.accT, s.burstReady = 0, 0, nil, nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view

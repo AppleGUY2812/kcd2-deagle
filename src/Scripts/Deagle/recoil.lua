@@ -29,6 +29,26 @@ function Deagle:Recoil()
 	end)
 end
 
+-- The gun-kick springs: each kick k at time ti holds k K e^(-zeta w (t - ti)) sin(wd (t - ti)) of it at t. Their sum is
+-- K times the imaginary part of one complex number S = sum of k e^((-zeta w + i wd)(t - ti)): a kick adds k, and time
+-- dt turns S by wd dt and shrinks it by e^(-zeta w dt). One number per axis instead of every kick of the last 0.6 s:
+-- at 1000 rounds a second the list held ~600 kicks and GunKickNow took 197 us a shot, 6.7 ms a frame (deagle_stress
+-- 1000 sky prof, 2026-10-17); the same values to 6e-5 deg over 20000 random kicks. Settled after 0.6 s (e^-15).
+local KICK_W, KICK_ZETA = 28, 50 / (2 * 28)
+local KICK_WD = KICK_W * math.sqrt(1 - KICK_ZETA * KICK_ZETA)
+local KICK_K = KICK_W * math.exp(1) / KICK_WD
+local function kickAdvance(g, now)
+	local dt = now - g.t
+	if dt < 0 or dt > 0.6 then g.pr, g.pi, g.yr, g.yi = 0, 0, 0, 0   -- ahead of the clock (kept over a load) / settled
+	elseif dt > 0 then
+		local d = math.exp(-KICK_ZETA * KICK_W * dt)
+		local c, s = d * math.cos(KICK_WD * dt), d * math.sin(KICK_WD * dt)
+		g.pr, g.pi = g.pr * c - g.pi * s, g.pr * s + g.pi * c
+		g.yr, g.yi = g.yr * c - g.yi * s, g.yr * s + g.yi * c
+	end
+	g.t = now
+end
+
 -- Kick from the physics. The camera climbs by the muzzle flip and kicks sideways by a share of it (a learnable
 -- pattern per gun, CS2-style: the same random numbers for the same shot of a string). The elastic hold takes back what
 -- fits in its range and keeps the rest; a shot fired while the last one is still springing back finds less room, so
@@ -58,8 +78,10 @@ function Deagle:PhysicsRecoil(phys)
 		local flip = m.gunFlipPerFlip * feltFlip * aim * self.cfg.recoil
 		local yaw = up > 0 and flip * side / up or 0
 		self:Native(string.format("kick %.4f %.3f %.3f %.3f", m.gunBackPerVel * feltVel * aim * self.cfg.recoil, flip, yaw, m.gunRollPerYaw * yaw))
-		self.gunKicks = self.gunKicks or {}
-		table.insert(self.gunKicks, { t = self.camRecoilT, pitch = flip, yaw = yaw })
+		local g = self.gunKick or { t = self.camRecoilT, pr = 0, pi = 0, yr = 0, yi = 0 }
+		self.gunKick = g
+		kickAdvance(g, self.camRecoilT)
+		g.pr, g.yr = g.pr + flip, g.yr + yaw
 	end
 end
 
@@ -85,23 +107,11 @@ end
 
 -- where the barrel points right now, relative to the camera (deg up, deg right): the plugin's gun-kick springs
 -- (w = 28 rad/s, damping 0.89) still hold part of each recent kick; the next bullet leaves along it
-local KICK_W, KICK_ZETA = 28, 50 / (2 * 28)
 function Deagle:GunKickNow()
-	local kicks = self.gunKicks
-	if not kicks then return 0, 0 end
-	local now = System.GetCurrTime()
-	local wd = KICK_W * math.sqrt(1 - KICK_ZETA * KICK_ZETA)
-	local p, y, keep = 0, 0, {}
-	for _, k in ipairs(kicks) do
-		local t = now - k.t
-		if t >= 0 and t < 0.6 then   -- a kick from ahead of the clock (kept over a load) is dropped
-			local f = KICK_W * math.exp(1) / wd * math.exp(-KICK_ZETA * KICK_W * t) * math.sin(wd * t)
-			p, y = p + k.pitch * f, y + k.yaw * f
-			keep[#keep + 1] = k
-		end
-	end
-	self.gunKicks = keep
-	return p, y
+	local g = self.gunKick
+	if not g then return 0, 0 end
+	kickAdvance(g, System.GetCurrTime())
+	return KICK_K * g.pi, KICK_K * g.yi
 end
 
 -- every frame: move the view by how much the recoil offset changed (never sets the aim outright)
