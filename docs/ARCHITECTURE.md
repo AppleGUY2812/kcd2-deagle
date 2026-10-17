@@ -171,7 +171,12 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    Probes: hook thread ids; `DN.add` via AddFunction; a queued ray; an entity-free light; the drawn material on
    the cauldron; 1000 native rays timed. Measure: each probe's log line, plus µs per call / per ray (QPC).
    Status: built (bd8a983, native/src/probe.cpp mine by agreement with Claude 4; snippets tools/probe/basic.lua,
-   light.lua, mat.lua run over rcon). Waiting for an install while the game is closed.
+   light.lua, mat.lua run over rcon). Installed (plugin 73be688c). **Measured 2026-10-17 (Claude 1 ran them):** a
+   native ray 2.84 us vs a Lua ray 6.01 us (the Lua layer is ~half); `DN.add` 0.118 us vs a `[DN]` text line 0.587 us
+   (5x); a queued ray delivered 12.29 ms later; entity-free light: create 18.9 us, move ~9 us; `deagle_stress 75` at
+   60 fps: Lua 1.02 ms avg, 1.83 p99. The drawn-material probe failed (no renderNode on a rock, no hit on a wall at
+   30 m; surface name passed wrongly): mat.lua fixed to dump the whole hit table, rerun pending. Light visibility and
+   thread ids still to read from the logs.
 2. **Typed binding** for `fxr`, `snd` / `ron3`, `kick`; `[DN]` kept until each moves. Measure: µs per call
    vs `[DN]`'s 6-10; `deagle_stress` Lua ms; run_perf gate "0 `[DN]` lines for moved commands".
 3. **Loader / core split** + `deagle_native_reload`. Measure: reload ms; held emitters / tracer slots equal before
