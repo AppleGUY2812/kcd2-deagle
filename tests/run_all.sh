@@ -20,6 +20,8 @@ if command -v g++ >/dev/null; then
     g++ -O2 -std=c++20 -Wall -Wextra -Werror -shared -fPIC native/sim/sim.cpp -o "$so" || { echo "FAIL native sim build"; fail=1; rm -f "$so"; }
   fi
   [ -f "$so" ] && { luajit tests/run_round_contract.lua --native "$so" >/dev/null || { echo "FAIL run_round_contract --native"; fail=1; }; }
+  # and ballistics.lua's native round path (cfg.roundSim "native", Claude 1) through the DN binding's stand-in
+  [ -f "$so" ] && { luajit tests/run_round_contract.lua --dn "$so" >/dev/null || { echo "FAIL run_round_contract --dn"; fail=1; }; }
 elif [ "${SKIP_NATIVE:-}" = 1 ]; then echo "SKIP run_round_contract --native (SKIP_NATIVE=1)"
 else echo "FAIL run_round_contract --native: no g++ (SKIP_NATIVE=1 skips it on purpose)"; fail=1; fi
 luajit tests/run_accuracy.lua >/dev/null || { echo "FAIL run_accuracy"; fail=1; }
