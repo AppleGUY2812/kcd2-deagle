@@ -348,6 +348,7 @@ local ROUND_STEP = 0.05          -- s: a longer frame is cut into equal steps no
 local ROUND_TICK_MAX = 0.1       -- s: most game time one tick advances a round (after a hitch it doesn't catch up in one frame)
 local ROUND_LIFE = 6             -- s: a round that hit nothing is dropped after this, or past cfg.range (a Deagle round
                                  -- takes ~5 s to fly 1000 m)
+Deagle.ROUND_LIFE = ROUND_LIFE   -- read by the stress's end tally (debug.lua): a round past it ended by "life"
 
 -- A tumbling round (after a ricochet or a corner) shows its side as often as its point: it drags like a tumbling
 -- fragment. Tumbling changes only the area it shows, on average a quarter of its surface, and the drag coefficient
