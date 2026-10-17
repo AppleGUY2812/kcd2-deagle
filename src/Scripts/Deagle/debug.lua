@@ -451,8 +451,9 @@ function Deagle:Stress(arg)
 		return X.orig.ApplyHit(s, hit, dir, phys, r, ...)
 	end
 	-- how rounds end, per phase (Claude 5's tools/probe/ends.lua tally, in the harness): HIT by the surface that stopped
-	-- it, END past the range, at the end of its life, or spent (too slow, too many hops); dropped by the round cap
-	X.ends = { n = 0, hit = {}, hits = 0, range = 0, life = 0, spent = 0, dropped = 0, alive = 0, frames = 0 }
+	-- it, HIT then stopped (on after a hit, then too slow or too many hops: MoveRound's hit branch), END past the range
+	-- or at the end of its life (Deagle.ROUND_LIFE), spent (anything else); dropped by the round cap
+	X.ends = { n = 0, hit = {}, hits = 0, stopped = 0, range = 0, life = 0, spent = 0, dropped = 0, alive = 0, frames = 0 }
 	X.orig.StepRound = self.StepRound
 	self.StepRound = function(s, r, dt)
 		local done = X.orig.StepRound(s, r, dt)
@@ -461,8 +462,9 @@ function Deagle:Stress(arg)
 			E.n = E.n + 1
 			if r.landed then E.hits = E.hits + 1; local k = r.stressSurf or "?"; E.hit[k] = (E.hit[k] or 0) + 1
 			elseif r.dist > s.cfg.range then E.range = E.range + 1
-			elseif r.age >= 5.9 then E.life = E.life + 1
-			else E.spent = E.spent + 1 end
+			elseif r.age > (s.ROUND_LIFE or 6) then E.life = E.life + 1
+			elseif r.stressSurf then E.stopped = E.stopped + 1   -- went on after a hit (ricochet, pass, wallbang), then too slow / too many hops
+			else E.spent = E.spent + 1 end   -- anything else (FlightHit's early stop)
 		end
 		return done
 	end
@@ -499,10 +501,10 @@ function Deagle:Stress(arg)
 			table.sort(surf, function(x, y) return x[2] > y[2] end)
 			local top = {}
 			for i = 1, math.min(4, #surf) do top[#top + 1] = surf[i][1] .. " " .. surf[i][2] end
-			log(string.format("STRESS ends %-18s HIT %d (%s), END range %d, life %d, spent %d, dropped by the cap %d | rounds alive %.0f on average",
-				ph[1], E.hits, table.concat(top, ", "), E.range, E.life, E.spent, E.dropped, E.alive / math.max(1, E.frames)))
+			log(string.format("STRESS ends %-18s HIT %d (%s), HIT then stopped %d, END range %d, life %d, spent %d, dropped by the cap %d | rounds alive %.0f on average",
+				ph[1], E.hits, table.concat(top, ", "), E.stopped, E.range, E.life, E.spent, E.dropped, E.alive / math.max(1, E.frames)))
 		end
-		X.ends = { n = 0, hit = {}, hits = 0, range = 0, life = 0, spent = 0, dropped = 0, alive = 0, frames = 0 }
+		X.ends = { n = 0, hit = {}, hits = 0, stopped = 0, range = 0, life = 0, spent = 0, dropped = 0, alive = 0, frames = 0 }
 		local sum = 0
 		for _, v in ipairs(X.luas) do sum = sum + v end
 		local avg, p99 = sum / math.max(1, #X.luas), pct(X.luas, 0.99)

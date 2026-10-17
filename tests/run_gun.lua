@@ -487,7 +487,7 @@ do
 	for i = n0 + 1, #M.logs do
 		local l = M.logs[i]
 		if l:find("STRESS clear above: ") then above = true end
-		if l:find("STRESS ends FIRE tracers on +HIT %d+ .*END range %d+, life %d+, spent %d+, dropped by the cap %d+ | rounds alive") then endsLine = true end
+		if l:find("STRESS ends FIRE tracers on +HIT %d+ .*HIT then stopped %d+, END range %d+, life %d+, spent %d+, dropped by the cap %d+ | rounds alive") then endsLine = true end
 		fired = fired or l:match("STRESS == FIRE tracers on .*shots (%d+) of")
 	end
 	check(string.format("deagle_stress 20 sky, view level: %s shots in the first fire phase (100), %d of %d rounds within 5 deg of straight up, what is above said %s, ends tallied %s",

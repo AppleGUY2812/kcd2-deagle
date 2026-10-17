@@ -165,7 +165,8 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   5 deg) whatever the view, and logs what is above Henry first (`STRESS clear above: yes`, or the first hit: a tree or
   a roof over him breaks it); `aim` fires where you look with no recoil, impacts included, and holds fire while you
   look at a person or an animal. At most 0.1 s worth of shots a frame (a hitch doesn't dump a burst). After each phase
-  a `STRESS ends` line: how rounds ended (HIT by surface, END past the range, at the end of their life, spent) and how
+  a `STRESS ends` line: how rounds ended (HIT by surface, HIT then stopped: on after a hit, then too slow or too many hops; END past
+  the range, at the end of their life; spent: anything else) and how
   many the round cap dropped, and the rounds alive on average.
   5 s with tracers, a pause, 5 s without. A third word `ab` (`deagle_stress 75 aim ab`, 30 s) fires with everything,
   then with the impact effects off, the holes off, the hit sounds off: which part of a hit costs. A third word `shot`
