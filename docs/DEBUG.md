@@ -164,7 +164,9 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   rounds a second by default (`deagle_stress 75` is a CIWS). `sky` (the default) fires every round straight up (within
   5 deg) whatever the view, and logs what is above Henry first (`STRESS clear above: yes`, or the first hit: a tree or
   a roof over him breaks it); `aim` fires where you look with no recoil, impacts included, and holds fire while you
-  look at a person or an animal. At most 0.1 s worth of shots a frame (a hitch doesn't dump a burst). After each phase
+  look at a person or an animal. At most 0.1 s worth of shots a frame (a hitch doesn't dump a burst). The round cap
+  (`impactCap.maxRounds`) is lifted for the run and put back after, so every round fired is simulated (the word `cap`
+  anywhere keeps it); a phase where the cap still dropped rounds is marked `CAPPED`. After each phase
   a `STRESS ends` line: how rounds ended (HIT by surface, HIT then stopped: on after a hit, then too slow or too many hops; END past
   the range, at the end of their life; spent: anything else) and how
   many the round cap dropped, and the rounds alive on average.

@@ -346,12 +346,23 @@ function Deagle:StressStop(why)
 	end
 	stressOff(X, nil)
 	self.cfg.tracers, self.stress, self.shotDirOverride = X.tracersWas, nil, nil
+	-- the cap back; the rounds still in the air past it go now, newest kept (LaunchRound would drop them one
+	-- table.remove at a time at the next shot)
+	local cap = X.capWas or 64
+	self.cfg.impactCap.maxRounds = cap
+	local list = self.rounds
+	if list and #list > cap then
+		local keep = {}
+		for i = #list - cap + 1, #list do keep[#keep + 1] = list[i] end
+		self.rounds = keep
+	end
 	log("STRESS " .. why)
 	self:Notify("stress test " .. why)
 end
 function Deagle:Stress(arg)
 	local words = {}
-	for w in tostring(Deagle.Arg(arg) or ""):gmatch("%S+") do words[#words + 1] = w end
+	local keepCap = false   -- the word "cap" anywhere: keep the round cap (to measure the shot alone at high rates)
+	for w in tostring(Deagle.Arg(arg) or ""):gmatch("%S+") do if w == "cap" then keepCap = true else words[#words + 1] = w end end
 	if words[1] == "stop" then return self:StressStop("stopped") end
 	if self.stress then return end
 	local spawner, spawnName
@@ -400,7 +411,12 @@ function Deagle:Stress(arg)
 		end
 	end
 	local clock = System.GetCurrAsyncTime
-	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0, shots = 0, launched = 0, held = 0, phShots = 0, phLaunched = 0, phHeld = 0, settleMs = 40,
+	-- The round cap (impactCap.maxRounds, 64) dropped rounds silently at 250 a second and up, so a run measured less work
+	-- than its rate (the user, 2026-10-17: 250 read cheaper than 75). Lifted for the run, put back at the end; a phase
+	-- where the cap still dropped any is marked CAPPED.
+	local capWas = self.cfg.impactCap.maxRounds
+	if not keepCap then self.cfg.impactCap.maxRounds = 1e6 end
+	local X = { ph = 1, capWas = capWas, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0, shots = 0, launched = 0, held = 0, phShots = 0, phLaunched = 0, phHeld = 0, settleMs = 40,
 		orig = {}, frames = {}, luas = {} }
 	self.stress = X
 	for _, k in ipairs(STRESS_LUA) do
@@ -493,6 +509,7 @@ function Deagle:Stress(arg)
 			fired = string.format(" | shots %d of %.0f due, %d rounds launched, %d frames held%s", X.phShots, due, X.phLaunched, X.phHeld,
 				X.phLaunched < 0.9 * due and " THROTTLED" or "")
 		end
+		if X.ends.dropped > 0 then fired = fired .. string.format(" CAPPED (%d rounds dropped by the round cap)", X.ends.dropped) end
 		X.phShots, X.phLaunched, X.phHeld = 0, 0, 0
 		local E = X.ends
 		if ph[3] or E.n > 0 then   -- how this phase's rounds ended (a round fired late in a phase ends in the next one)
@@ -611,8 +628,9 @@ function Deagle:Stress(arg)
 	for k in pairs(X.orig) do X.mine[k] = self[k] end
 	if spawner then log(string.format("STRESS start: spawn %s, %d a second at one spot ahead, no gun", spawnName, rps))
 	else
-		log(string.format("STRESS start: %d rounds a second, %s%s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky",
-			phases == STRESS_AB and ", impact A/B" or shotAB and ", shot A/B" or phases == STRESS_PROF and ", profiled" or ""))
+		log(string.format("STRESS start: %d rounds a second, %s%s; round cap %s", rps,
+			mode == "aim" and "where you look (not at people or animals)" or "into the sky",
+			phases == STRESS_AB and ", impact A/B" or shotAB and ", shot A/B" or phases == STRESS_PROF and ", profiled" or "", keepCap and "kept (" .. tostring(capWas) .. ")" or "lifted for the run (was " .. tostring(capWas) .. ")"))
 	end
 	local total = 0
 	for _, ph in ipairs(phases) do total = total + ph[2] end

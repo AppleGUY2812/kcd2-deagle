@@ -230,6 +230,14 @@ step("holster", function() act("deagle_toggle"); M.advance(2) end)
 for _, l in ipairs(log) do print("   " .. l) end
 
 local fails = 0
+-- runs that keep or lower the round cap drop rounds on purpose: ballistics logs each drop in red (7dadceb); not an error
+-- here. The rounds a high-rate run leaves in the air go too (the next runs would step ~1000 of them a frame).
+local function dropErrors()
+	local keep = {}
+	for _, e in ipairs(M.errors) do if not e:find("round cap %(impactCap.maxRounds") then keep[#keep + 1] = e end end
+	M.errors = keep
+	Deagle.rounds, Deagle.roundsDropped = {}, 0
+end
 local function check(label, ok, detail)
 	n = n + 1
 	if not ok then fails = fails + 1 end
@@ -382,12 +390,12 @@ do
 		wrapped and shots >= 90 and shots <= 110 and lines >= 40 and phases == 6 and done and Deagle.stress == nil and Deagle.cfg.tracers == tracers, shots)
 	-- a CIWS rate: 75 rounds a second, more than one shot in some frames, ~750 over the two 5 s fire phases
 	shots = 0
-	M.console("deagle_stress", "75")
+	M.console("deagle_stress", "75 cap")   -- (the cap kept: the mock would step thousands of rounds)
 	f = Deagle.Fire
 	Deagle.Fire = function(...) shots = shots + 1 return f(...) end
 	M.advance(22, 60)
 	local started = false
-	for _, l in ipairs(M.logs) do if l:find("STRESS start: 75 rounds a second") then started = true end end
+	for _, l in ipairs(M.logs) do if l:find("STRESS start: 75 rounds a second.*round cap kept") then started = true end end
 	check(string.format("deagle_stress 75: %d shots in two 5 s phases (750 due), started %s, done %s", shots, tostring(started), tostring(Deagle.stress == nil)),
 		started and shots >= 700 and shots <= 760 and Deagle.stress == nil, shots)
 	-- the impact A/B: 9 phases, each part of a hit off in its own phase and back afterwards
@@ -495,12 +503,34 @@ do
 		tonumber(fired) and math.abs(tonumber(fired) - 100) <= 3 and dirs > 0 and steep == dirs and above and endsLine and Deagle.shotDirOverride == nil, steep)
 	-- 250 a second at 20 fps: the frame cap is 0.1 s worth (25), so the rate holds (max(8, rps/30) = 9 fired ~180)
 	n0 = #M.logs
-	M.console("deagle_stress", "250")
+	M.console("deagle_stress", "250 sky cap")
 	M.advance(8, 20)
 	Deagle:StressStop("test")
+	dropErrors()
 	local at20 = nil
 	for i = n0 + 1, #M.logs do at20 = at20 or M.logs[i]:match("STRESS == FIRE tracers on .*shots (%d+) of") end
 	check(string.format("deagle_stress 250 at 20 fps: %s shots in the 5 s fire phase (1250)", tostring(at20)), tonumber(at20) and math.abs(tonumber(at20) - 1250) <= 30, tonumber(at20) or 0)
+	-- the round cap is lifted for a run and put back after (the rounds past it go at the stop, newest kept); a phase where
+	-- the cap still dropped rounds (here set back to 10 mid-run) is marked CAPPED
+	local capBefore = Deagle.cfg.impactCap.maxRounds
+	n0 = #M.logs
+	M.console("deagle_stress", "30")
+	M.advance(1)
+	local capDuring = Deagle.cfg.impactCap.maxRounds
+	M.advance(1.5)
+	local aliveLifted = #(Deagle.rounds or {})
+	Deagle.cfg.impactCap.maxRounds = 10
+	M.advance(5)   -- past the fire phase's end (7 s)
+	Deagle:StressStop("test")
+	dropErrors()
+	local capped, said = false, false
+	for i = n0 + 1, #M.logs do
+		if M.logs[i]:find("STRESS == FIRE tracers on .* CAPPED %(%d+ rounds dropped by the round cap%)") then capped = true end
+		if M.logs[i]:find("round cap lifted for the run %(was " .. capBefore .. "%)") then said = true end
+	end
+	check(string.format("deagle_stress: round cap %s during the run (lifted), %d alive past the old cap, start says so %s, CAPPED when it drops %s, back to %s, %d alive after",
+		tostring(capDuring), aliveLifted, tostring(said), tostring(capped), tostring(Deagle.cfg.impactCap.maxRounds), #(Deagle.rounds or {})),
+		capDuring >= 1e6 and said and capped and Deagle.cfg.impactCap.maxRounds == capBefore and #(Deagle.rounds or {}) <= capBefore, capDuring)
 	-- a gun that refuses its shots: the fire phase is marked THROTTLED (shots tried, no rounds)
 	local shootWas = Deagle.Shoot
 	Deagle.Shoot = function() return false end
@@ -516,10 +546,14 @@ do
 	-- run keeps firing, every due shot launched; and the view never ends below where it started
 	M.view.pitch = 1.2
 	n0 = #M.logs
-	M.console("deagle_stress", "1000")
+	local cap1000 = Deagle.cfg.impactCap.maxRounds
+	Deagle.cfg.impactCap.maxRounds = 64   -- (shots and the view only: the mock steps few rounds)
+	M.console("deagle_stress", "1000 sky cap")
 	local topPitch = 0
 	for _ = 1, 60 * 7.5 do M.advance(1 / 60); topPitch = math.max(topPitch, M.view.pitch) end
 	Deagle:StressStop("test")
+	dropErrors()
+	Deagle.cfg.impactCap.maxRounds = cap1000
 	M.advance(4)
 	local all = false
 	for i = n0 + 1, #M.logs do
@@ -565,21 +599,23 @@ do
 	local ffi = require("ffi")
 	local f32 = ffi.new("float[1]")
 	local function asFloat(x) f32[0] = x return f32[0] end
-	local getTime, tWas = System.GetCurrTime, M.t
+	local getTime, tWas, capT = System.GetCurrTime, M.t, Deagle.cfg.impactCap.maxRounds
+	Deagle.cfg.impactCap.maxRounds = 64   -- (the shot count only: the mock steps few rounds)
 	M.t = 51602.5
 	System.GetCurrTime = function() return asFloat(M.t) end
 	local got = {}
 	for _, rate in ipairs({ 500, 1000 }) do
 		n0 = #M.logs
-		M.console("deagle_stress", tostring(rate))
+		M.console("deagle_stress", rate .. " sky cap")
 		for _ = 1, 60 * 7.5 do M.view.pitch = 1.2; M.advance(1 / 60) end
 		Deagle:StressStop("test")
+		dropErrors()
 		for i = n0 + 1, #M.logs do
 			local sh = M.logs[i]:match("STRESS == FIRE tracers on .*shots (%d+) of")
 			if sh then got[rate] = tonumber(sh) end
 		end
 	end
-	System.GetCurrTime = getTime
+	System.GetCurrTime, Deagle.cfg.impactCap.maxRounds = getTime, capT
 	check(string.format("deagle_stress on a float32 clock at 51602 s: 500/s fired %s in 5 s (2500), 1000/s %s (5000)", tostring(got[500]), tostring(got[1000])),
 		got[500] and got[1000] and math.abs(got[500] - 2500) <= 75 and math.abs(got[1000] - 5000) <= 150, got[500] or 0)
 	M.view.pitch = 1.2
