@@ -17,7 +17,7 @@ if command -v g++ >/dev/null; then
   so=native/build/sim/libdeaglesim.so
   mkdir -p native/build/sim
   if [ ! -f "$so" ] || [ native/sim/sim.cpp -nt "$so" ] || [ native/sim/sim.h -nt "$so" ]; then
-    g++ -O2 -std=c++20 -Wall -Wextra -Werror -shared -fPIC native/sim/sim.cpp -o "$so" || { echo "FAIL native sim build"; fail=1; rm -f "$so"; }
+    g++ -O2 -std=c++17 -Wall -Wextra -Werror -shared -fPIC native/sim/sim.cpp -o "$so" || { echo "FAIL native sim build"; fail=1; rm -f "$so"; }
   fi
   [ -f "$so" ] && { luajit tests/run_round_contract.lua --native "$so" >/dev/null || { echo "FAIL run_round_contract --native"; fail=1; }; }
   # and ballistics.lua's native round path (cfg.roundSim "native", Claude 1) through the DN binding's stand-in
