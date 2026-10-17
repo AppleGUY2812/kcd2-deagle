@@ -61,18 +61,24 @@ function Deagle:FlyBy(r, from)
 			if not (okD and dead) and okP and at then
 				local d2, cx, cy, cz = segDist2(at.x, at.y, at.z + CHEST, fx, fy, fz, sx, sy, sz, len2)
 				if d2 <= near2 then
-					r.flybys = r.flybys or {}
-					r.flybys[e.id] = true
 					self.flybyNext[e.id] = now + FLYBY_GAP
-					try("near miss", function()
-						local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id,
-							Position = { x = cx, y = cy, z = cz }, Direction = { x = sx / len, y = sy / len, z = sz / len } })
-						XGenAIModule.SendMessageToEntityData(e.this.id, "weapon:onPlayerArrowFlyingBy", msg)
-					end)
+					self:FlyByMessage(e, { x = cx, y = cy, z = cz }, { x = sx / len, y = sy / len, z = sz / len }, r)
 				end
 			end
 		end
 	end
+end
+
+-- The near miss itself, for an NPC the round r passed: pos the closest point of its path, dir its direction (unit).
+-- FlyBy above finds them in the Lua flight; the native sim (native/sim, Claude 5) finds them itself (same geometry and
+-- throttle) and calls this. Marks the NPC on the round (never twice).
+function Deagle:FlyByMessage(e, pos, dir, r)
+	r.flybys = r.flybys or {}
+	r.flybys[e.id] = true
+	try("near miss", function()
+		local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = e.this.id, Position = pos, Direction = dir })
+		XGenAIModule.SendMessageToEntityData(e.this.id, "weapon:onPlayerArrowFlyingBy", msg)
+	end)
 end
 
 function Deagle:HitAI(e, dmg, stam)
