@@ -7,6 +7,12 @@
 - Log: <game>\kcd.log.
 - Hand cannon item: MissileWeapon Class 13 ("rifle", two-handed, powder flask + ramrod reload, combat_gun action map: gun_prepare/gun_abort/gun_execute). Model manmade/weapons/firearms/hand_cannon_b.cdf.
 - Lua binds present in WHGame.dll: Physics.RayWorldIntersection, Particle.SpawnEffect, entity LoadLight/FreeSlot/SetSlotPos, actor SetViewShake, System.Get/SetViewCameraFov, g_gameRules:CreateHit -> game:ServerHit, soul:DealDamage, AddImpulse, ActionMapManager.LoadFromXML/EnableActionMap/SetActionListener, PlayerStateHandler.PlayAnimationAction, CreateBoneAttachment/SetAttachmentObject, ExecuteAudioTrigger + AudioUtils.LookupTriggerID.
+- Lua time is coarse (measured live 2026-10-17): Lua numbers are float32, and `System.GetCurrTime()` is the save's game
+  clock (51602.5 s in the user's save, not time since launch), so it moves in 3.9 ms steps (`g + 0.002` gave
+  +0.003906, `g + 0.001` gave +0) and reaches 7.8 ms past 65536 s. Frame steps read 15.6 / 19.5 ms instead of 16.7.
+  `System.GetCurrAsyncTime()` is time since launch (3511 s then: 0.244 ms steps, coarser the longer the game runs).
+  Never add a small step to a clock value (it rounds or vanishes); take differences of two clock reads (exact) and keep
+  small sums (owed shots, ages) as their own numbers. A precise clock needs the plugin (ARCHITECTURE step 2).
 - Audio triggers that exist: c_f_firearm_shot, q_m32_pistala_shot, q_M09_pistala_shot.
 - Input: Player:OnAction -> g_gameRules.Client.OnActorAction (we wrap it). Free keys: h, u, y, mouse4/5. R = torch (conflict risk for reload).
 
