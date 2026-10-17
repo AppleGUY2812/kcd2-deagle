@@ -144,6 +144,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `eject.back` | `5,25` | degrees a casing goes back toward you |
 | `eject.spin` | `100,200` | end-over-end spin in rad/s (needs the plugin's `casespin`: the game caps spin at 20 rad/s without it) |
 | `eject.spinCap` | `300` | spin cap the plugin sets for a casing's flight, back to the game's 20 at its first bounce |
+| `eject.ghost` | `true` | casings in flight pass through each other until their first bounce, then collide again on the ground (at 250 rounds/s, ~4 thrown inside each other a frame took the physics from 60 to 5 fps); `0` = they collide all the way |
 | `caseBounce.volume` | `1` | shell clinks x Ready or Not's own level |
 
 Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `deagle_set flashMode world`,

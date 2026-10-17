@@ -8,6 +8,16 @@ local RON_SURFACE, camBasis, entityHex, surfaceName, try, vadd, vlen, vscale = U
 -- with ResetPhysics and thrown anew). Spawning a physics entity every shot made ~10 a second at 750 rpm and left up to
 -- 200 rigid bodies lying around for 20 s; now at most CASE_POOL exist.
 local CASE_POOL = 12
+-- Casings in flight pass through each other (cfg.eject.ghost). At 250 rounds a second ~4 are thrown from the same
+-- port spot in one frame, each inside the others: the rigid-body solver took the game from 60 to 5 fps within 2 s
+-- (deagle_stress 250 sky shot casebody, 2026-10-17; the port smoke cost nothing). Each casing has its own collision
+-- class bit and ignores that bit from its throw to its first bounce; on the ground they collide again, so they still
+-- lie on each other. 2^30: KCD2's classes (g_PhysicsCollisionClass) use bits 0-27; Lua numbers are floats, exact here.
+local CASE_CLASS = 1073741824
+local function caseGhost(e, on)
+	pcall(e.SetPhysicParams, e, PHYSICPARAM_COLLISION_CLASS,
+		on and { collisionClass = CASE_CLASS, collisionClassIgnore = CASE_CLASS } or { collisionClassIgnoreUNSET = CASE_CLASS })
+end
 function Deagle:CaseEntity()
 	self.casePool = self.casePool or {}
 	self.caseNext = (self.caseNext or 0) % CASE_POOL + 1
@@ -48,8 +58,10 @@ function Deagle:EjectCase()
 		local w = vadd(vscale(u, -inRange(E.spin)), vadd(vscale(r, (math.random() - 0.5) * 40), vscale(f, (math.random() - 0.5) * 40)))
 		if self.native then self:Native(string.format("casespin %s %.0f", entityHex(case.id), E.spinCap)) end
 		case:SetVelocityEx(v, w)
+		local ghost = c.eject.ghost and true or false
+		caseGhost(case, ghost)
 		self.casesFlying = self.casesFlying or {}
-		self.casesFlying[case.id] = { t = System.GetCurrTime(), bounces = 0, ev = self.gun.ron and self.gun.ron.shell }
+		self.casesFlying[case.id] = { t = System.GetCurrTime(), bounces = 0, ev = self.gun.ron and self.gun.ron.shell, ghost = ghost }
 	end)
 	self:SpawnFx(c.portFx, port, System.GetViewCameraUpDir(), 1.0)
 end
@@ -66,7 +78,9 @@ function Deagle:CaseTick()
 		local e = System.GetEntity(id)
 		local ok, v = false, nil
 		if e then ok, v = pcall(e.GetVelocity, e) end
-		if not ok or not v or now - f.t > c.life or f.bounces >= c.max then flying[id] = nil
+		if not ok or not v or now - f.t > c.life or f.bounces >= c.max then
+			if e and f.ghost then caseGhost(e, false) end   -- never left a ghost on the ground
+			flying[id] = nil
 		else
 			local speed = vlen(v)
 			local was = f.v
@@ -77,6 +91,7 @@ function Deagle:CaseTick()
 				if (landed or lost) and wasSpeed >= c.minSpeed then
 					f.bounces = f.bounces + 1
 					if f.bounces == 1 and self.native then self:Native(string.format("casespin %s 20", entityHex(id))) end   -- the physics' own cap on the ground
+					if f.bounces == 1 and f.ghost then caseGhost(e, false); f.ghost = false end   -- landed: collides with casings again
 					local pos = e:GetWorldPos()
 					local hits = {}
 					local okR, n = pcall(Physics.RayWorldIntersection, vadd(pos, { x = 0, y = 0, z = 0.05 }), { x = 0, y = 0, z = -0.3 }, 1,

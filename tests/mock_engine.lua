@@ -107,6 +107,15 @@ local function newEntity(name, props)
 	function e:GetBoneLocal(b, t) return vec(t.x, t.y, t.z) end   -- a world direction in the bone's axes (bone = world axes here)
 	function e:AddImpulse() return true end
 	function e:SetVelocityEx(v, w) M.velEx = { v = v, w = w, name = self.name, cam = System.GetViewCameraDir() } end   -- last velocity + spin set (casings), camera then
+	-- collision classes as CryEngine's SetPhysicParams sets them: the values are ORed in, the UNSET ones cleared
+	e.ccType, e.ccIgnore = 0, 0
+	function e:SetPhysicParams(kind, t)
+		if kind ~= PHYSICPARAM_COLLISION_CLASS or type(t) ~= "table" then return end
+		if t.collisionClass then self.ccType = bit.bor(self.ccType, t.collisionClass) end
+		if t.collisionClassIgnore then self.ccIgnore = bit.bor(self.ccIgnore, t.collisionClassIgnore) end
+		if t.collisionClassUNSET then self.ccType = bit.band(self.ccType, bit.bnot(t.collisionClassUNSET)) end
+		if t.collisionClassIgnoreUNSET then self.ccIgnore = bit.band(self.ccIgnore, bit.bnot(t.collisionClassIgnoreUNSET)) end
+	end
 	-- particle effects in entity slots. Like KCD2 (checked in game 2026-10-12): CryEngine's table form
 	-- (slot, effect, { Scale, bPrime, ... }) returns the slot; plain arguments create nothing and return nil
 	e.nslots = 1
@@ -177,6 +186,7 @@ function player.soul:AddSkillXP(skill, xp) M.xp[skill] = (M.xp[skill] or 0) + xp
 player.this = { id = player.id }
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }
+_G.PHYSICPARAM_COLLISION_CLASS = 21   -- KCD2's value (read live 2026-10-17)
 _G.ent_all = 287   -- KCD2's value (measured): static | sleeping | rigid | living | independent | terrain, no water
 _G.ent_static, _G.ent_terrain = 1, 0x100
 _G.ENTITY_FLAG_CASTSHADOW = 2

@@ -259,7 +259,8 @@ Deagle.cfg = {
 	-- rad/s end over end. Lands 1.7-2.7 m away standing (real pistols: 1-3 m). Was 1.75 m/s at ~52 deg up: 0.8 m, and a
 	-- slow-motion hang at the top. KCD2's physics caps a rigid body's spin at 20 rad/s (measured live): the plugin lifts
 	-- a casing's cap to spinCap for its flight (casespin), back to 20 at its first bounce
-	eject = { speed = { 2.8, 4.2 }, up = { 20, 40 }, back = { 5, 25 }, spin = { 100, 200 }, spinCap = 300 },
+	-- ghost: casings in flight pass through each other (until their first bounce); 0 = they collide all the way
+	eject = { speed = { 2.8, 4.2 }, up = { 20, 40 }, back = { 5, 25 }, spin = { 100, 200 }, spinCap = 300, ghost = true },
 }
 
 -- The viewmodel: its own character placed on the camera (its camera bone tag_view is the model origin, +Y forward),

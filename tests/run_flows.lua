@@ -95,6 +95,24 @@ step("casings come from a pool", function()   -- 20 shots, at most 12 casings ev
 	local capped = false   -- the physics' 20 rad/s spin cap lifted by the plugin before the throw
 	for _, l in ipairs(M.native) do if l:find("^%[DN%] casespin %x+ 300$") then capped = true end end
 	if not capped then error("casing spin cap not lifted (casespin)") end
+	-- in flight casings pass through each other (their own class bit, ignored), on the ground they collide again
+	local GHOST = 1073741824
+	Deagle.state.ammo = 7; Deagle:Fire(true)   -- a fresh one, before any frame reads it
+	local case = System.GetEntity(Deagle.casePool[Deagle.caseNext])
+	local flying = Deagle.casesFlying[case.id]
+	if not flying or bit.band(case.ccType, GHOST) == 0 or bit.band(case.ccIgnore, GHOST) == 0 then error("thrown casing doesn't ignore other casings") end
+	local vels = { { x = 1, y = 0, z = -3 }, { x = 0.5, y = 0, z = 0.4 } }   -- falling, then up off the ground: a bounce
+	local k = 0
+	case.GetVelocity = function() k = math.min(k + 1, #vels) return vels[k] end
+	Deagle:CaseTick(); Deagle:CaseTick()
+	print(string.format("   casing class %d, ignore %d after its first bounce (%d)", case.ccType, case.ccIgnore, flying.bounces))
+	if flying.bounces ~= 1 or bit.band(case.ccType, GHOST) == 0 or case.ccIgnore ~= 0 then error("landed casing still ignores casings") end
+	case.GetVelocity = nil
+	Deagle.cfg.eject.ghost = false
+	Deagle.state.ammo = 7; Deagle:Fire(true)
+	local case2 = System.GetEntity(Deagle.casePool[Deagle.caseNext])
+	if case2.ccIgnore ~= 0 then error("eject.ghost 0: a casing still ignores casings") end
+	Deagle.cfg.eject.ghost = true
 	Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
 end)
 step("empty idle", function() M.advance(1.0) end)
