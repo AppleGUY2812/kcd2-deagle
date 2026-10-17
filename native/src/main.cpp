@@ -15,6 +15,7 @@
 #include "freecam.h"
 #include "ron.h"
 #include "probe.h"
+#include "fx.h"
 #include <deque>
 #include <mutex>
 #include <string>
@@ -228,7 +229,7 @@ static void ReleaseOldPieces(bool all) {
 // 0.25 s of game time is let go: its round is done.
 using RestartFn = void(__fastcall*)(uintptr_t emitter);
 struct TraceSlot { int id; uintptr_t em; double used; int touches; float loc[8]; char effect[64]; };
-#define TRACE_MAX 128   // rounds with a tracer at once (deagle_stress into the sky keeps 40-90 in the air)
+#define TRACE_MAX FX_TRACE_MAX   // rounds with a tracer at once, Lua's and native's (fx.h)
 static TraceSlot g_traces[TRACE_MAX]; static int g_nTraces = 0;
 static uint64_t g_traceSpawns = 0, g_traceRestarts = 0;
 static void SafeRestart(uintptr_t em) { __try { if (auto f = (RestartFn)VFn(em, 0x268)) f(em); } __except (EXCEPTION_EXECUTE_HANDLER) {} }
@@ -241,14 +242,14 @@ static void MoveKeepBox(uintptr_t em, const float* loc) {
 		WriteBox(em, box);
 	}
 }
-static void TraceRound(int id, const char* effect, const float* loc) {
+static bool TraceRound(int id, const char* effect, const float* loc) {
 	for (int i = 0; i < g_nTraces; i++) {
 		TraceSlot& t = g_traces[i];
 		if (t.id != id) continue;
 		if (!strcmp(t.effect, effect)) {
 			MoveKeepBox(t.em, loc); SafeRestart(t.em);
 			memcpy(t.loc, loc, sizeof(t.loc)); t.used = g_pieceClock; g_traceRestarts++;
-			return;
+			return true;
 		}
 		SafeRelease(t.em); g_traces[i] = g_traces[--g_nTraces];   // another piece effect (the frame rate moved): a new emitter
 		break;
@@ -256,14 +257,23 @@ static void TraceRound(int id, const char* effect, const float* loc) {
 	if (g_nTraces == TRACE_MAX) {   // full: this round goes without (evicting one made a spawn + delete per surplus round
 		// per frame, every slot refreshed that frame being equally recent: the churn that crashed, Claude 3's audit)
 		static int said = 0; if (said++ < 3) Log("fxr: %d rounds traced already, round %d gets no tracer", TRACE_MAX, id);
-		return;
+		return false;
 	}
 	uintptr_t em = SafeSpawnFlash(effect, loc);
-	if (!em || em == (uintptr_t)-1) { static int said = 0; if (said++ < 5) Log("fxr: %s didn't spawn", effect); return; }
+	if (!em || em == (uintptr_t)-1) { static int said = 0; if (said++ < 5) Log("fxr: %s didn't spawn", effect); return false; }
 	TraceSlot& t = g_traces[g_nTraces++];
 	t.id = id; t.em = em; t.used = g_pieceClock; t.touches = 3; memcpy(t.loc, loc, sizeof(t.loc));
 	strcpy_s(t.effect, effect); g_traceSpawns++;
+	return true;
 }
+// fx.h: the same for native callers, from numbers instead of a command line
+bool Fx_TracerRestart(int id, const char* effect, float scale, const float pos[3], const float dir[3]) {
+	float loc[8];
+	if (!effect || !*effect || strlen(effect) >= sizeof(TraceSlot::effect) || !Finite(pos, 3) || !Finite(dir, 3) || !Finite(&scale, 1)
+		|| !LocFromDir(pos, dir, scale, loc)) return false;
+	return TraceRound(id, effect, loc);
+}
+int Fx_TracersInUse() { return g_nTraces; }
 // every camera step: new slots' places set again; done rounds' emitters let go
 static void TraceStep() {
 	int keep = 0;
