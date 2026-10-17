@@ -496,7 +496,7 @@ do
 		local l = M.logs[i]
 		if l:find("PROF on: %d+ functions timed") then profOn = true end
 		if l:find("PROF +%d+ ") then rows = rows + 1 end
-		local sh = l:match("PROF %d+ frames, (%d+) shots") if sh then shotsSeen = tonumber(sh) end
+		local sh = l:match("PROF [^:]*: %d+ frames, (%d+) shots") if sh then shotsSeen = tonumber(sh) end
 		if l:find("PROF +%d+ System%.") or l:find("PROF +%d+ Physics%.") then engineRow = true end
 	end
 	check(string.format("deagle_stress 20 sky prof: on %s, %d rows, %d shots profiled (80), an engine call listed %s, all put back %s %s %s, done %s",
@@ -504,6 +504,18 @@ do
 		tostring(Particle.SpawnEffect == spawnWas), tostring(Deagle.stress == nil)),
 		profOn and rows >= 10 and shotsSeen >= 75 and shotsSeen <= 85 and engineRow and Deagle.Fire == fireWas3 and System.GetEntity == getEntWas
 		and Particle.SpawnEffect == spawnWas and Deagle.stress == nil, rows)
+	-- several rates in one profile run: a profiled fire phase each, its own shots
+	n0 = #M.logs
+	M.console("deagle_stress", "20,40 sky prof")
+	if not Deagle.stress then Deagle:Stress("20,40 sky prof") end   -- (a mock %1 command takes one word)
+	for _ = 1, 60 * 15 do M.view.pitch = 1.2; M.advance(1 / 60) end
+	local per = {}
+	for i = n0 + 1, #M.logs do
+		local r, sh = M.logs[i]:match("PROF FIRE profiled (%d+): %d+ frames, (%d+) shots")
+		if r then per[tonumber(r)] = tonumber(sh) end
+	end
+	check(string.format("deagle_stress 20,40 sky prof: shots profiled at 20/s %s (80), at 40/s %s (160), done %s", tostring(per[20]), tostring(per[40]),
+		tostring(Deagle.stress == nil)), per[20] and per[40] and math.abs(per[20] - 80) <= 5 and math.abs(per[40] - 160) <= 8 and Deagle.stress == nil, per[20] or 0)
 	-- spawn mode: a registered spawner N times a second at one spot, 10 s, no gun (Claude 5's plan step 4)
 	local calls, shotsBefore = 0, shots
 	Deagle.StressSpawners.test = function(pos, normal, i) calls = calls + 1 end

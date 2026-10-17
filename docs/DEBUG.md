@@ -175,7 +175,10 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   (`deagle_lua Deagle:Stress('1000 sky prof')`, 8 s) times every function of the mod, and every engine function
   (`System.`, `Physics.`, `Particle.`, ...) they call, through a 4 s fire phase, then logs `PROF` lines: the top 30
   by self time per frame (without what they call), their total, calls per frame and microseconds a call. KCD2's Lua
-  clock moves in 0.244 ms steps, so these are averages over many calls, and the timing adds ~1-2 us a call. `deagle_stress stop`
+  clock moves in 0.244 ms steps, so these are averages over many calls, and the timing adds ~1-2 us a call (cheap,
+  often-called rows are mostly that). Several rates in one run: `deagle_lua Deagle:Stress('75,250,500 sky prof')`
+  profiles 4 s at each, so the cost per shot (grows with the rate) comes apart from the cost per round in flight
+  (~64 at any rate past ~20 a second: the round cap). `deagle_stress stop`
   ends a run at once; any other run stops itself when frames stay over 150 ms for a second. Each `STRESS` line ends
   with the shots fired in it, the rounds launched and the frames held (the view off the sky, or on a person); each
   fire phase's `STRESS ==` line adds "shots N of M due, R rounds launched, H frames held" and `THROTTLED` when

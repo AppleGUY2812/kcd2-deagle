@@ -239,7 +239,7 @@ local STRESS_PROF = { { "idle", 2, false, true }, { "FIRE profiled", 4, true, tr
 local PROF_ENGINE = { "System", "Physics", "Particle", "XGenAIModule", "AudioUtils", "Game", "Script", "Sound", "ItemUtils" }
 local PROF_SKIP = { Stress = true, StressStop = true, VmTick = true, GetCurrAsyncTime = true, GetCurrTime = true }
 local function profPack(...) return { n = select("#", ...), ... } end
-local function stressProf(X, on)
+local function stressProf(X, on, label)
 	local P = X.prof
 	if P and not on then
 		for i = #P.orig, 1, -1 do local o = P.orig[i]; o[1][o[2]] = o[3] end
@@ -248,8 +248,8 @@ local function stressProf(X, on)
 		for name, st in pairs(P.stats) do if st[3] > 0 then rows[#rows + 1] = { name, st[1], st[2], st[3] } end end
 		table.sort(rows, function(x, y) if x[2] ~= y[2] then return x[2] > y[2] end if x[3] ~= y[3] then return x[3] > y[3] end return x[4] > y[4] end)
 		local f = math.max(1, P.frames)
-		log(string.format("PROF %d frames, %d shots: %.2f ms a frame in the profiled functions (KCD2's clock steps 0.244 ms: averages)",
-			P.frames, P.shots, P.top / f * 1000))
+		log(string.format("PROF %s: %d frames, %d shots: %.2f ms a frame in the profiled functions (KCD2's clock steps 0.244 ms: averages)",
+			P.label or "", P.frames, P.shots, P.top / f * 1000))
 		for i = 1, math.min(30, #rows) do
 			local r = rows[i]
 			log(string.format("PROF %2d %-34s self %6.3f ms/frame, total %6.3f, %7.1f calls/frame, %6.1f us self a call", i, r[1],
@@ -258,7 +258,7 @@ local function stressProf(X, on)
 		return
 	end
 	if not on or P then return end
-	P = { stats = {}, orig = {}, frames = 0, shots = 0, depth = 0, child = {}, top = 0 }
+	P = { stats = {}, orig = {}, frames = 0, shots = 0, depth = 0, child = {}, top = 0, label = label }
 	X.prof = P
 	local clock = System.GetCurrAsyncTime
 	local function wrap(t, k, name, engine)
@@ -364,11 +364,23 @@ function Deagle:Stress(arg)
 		end
 		table.remove(words, 1); table.remove(words, 1)
 	end
-	local rps = math.max(1, math.min(2000, tonumber(words[1]) or (spawner and 30 or 10)))
+	-- several rates for the profile (deagle_lua Deagle:Stress('75,250,500 sky prof')): one profiled fire phase each, so
+	-- the cost per shot (grows with the rate) and per round in flight (~64 at any rate past ~20 a second: the round
+	-- cap) come apart in one run (Claude 5's ask, 2026-10-17)
+	local rates = {}
+	for r in tostring(words[1] or ""):gmatch("[^,]+") do if tonumber(r) then rates[#rates + 1] = math.max(1, math.min(2000, tonumber(r))) end end
+	local rps = rates[1] or (spawner and 30 or 10)
 	local perFrame = math.max(8, math.ceil(rps / 30))   -- shots a frame at most (a long frame doesn't dump a burst)
 	local mode = spawner and "spawn" or (words[2] == "aim" and "aim" or "sky")
 	local phases = spawner and STRESS_SPAWN or (words[3] == "ab" and STRESS_AB or words[3] == "shot" and STRESS_SHOT
 		or words[3] == "prof" and STRESS_PROF or STRESS)
+	if phases == STRESS_PROF and #rates > 1 then
+		phases = { STRESS_PROF[1] }
+		for _, r in ipairs(rates) do
+			phases[#phases + 1] = { "FIRE profiled " .. r, 4, true, true, prof = true, rate = r }
+			phases[#phases + 1] = { "rest", 2, false, true }
+		end
+	end
 	-- a fourth word picks the shot A/B's parts: deagle_stress 250 sky shot casebody,portsmoke = everything, then
 	-- without each of those
 	local shotAB = phases == STRESS_SHOT
@@ -421,7 +433,7 @@ function Deagle:Stress(arg)
 		-- a fire phase also says how many of the due shots became rounds: "THROTTLED" under 90 % (a held view, a refused shot)
 		local fired = ""
 		if ph[3] and mode ~= "spawn" then
-			local due = rps * secs
+			local due = (ph.rate or rps) * secs
 			fired = string.format(" | shots %d of %.0f due, %d rounds launched, %d frames held%s", X.phShots, due, X.phLaunched, X.phHeld,
 				X.phLaunched < 0.9 * due and " THROTTLED" or "")
 		end
@@ -438,7 +450,7 @@ function Deagle:Stress(arg)
 		local a, g = clock(), System.GetCurrTime()
 		if lastA and lastG and g > lastG then   -- frames the game ran (not paused in the background)
 			local ph = phases[X.ph]
-			if X.offFor ~= X.ph then X.offFor = X.ph; stressOff(X, ph[5]); stressProf(X, ph.prof) end
+			if X.offFor ~= X.ph then X.offFor = X.ph; stressOff(X, ph[5]); stressProf(X, ph.prof, ph[1]) end
 			if X.prof then X.prof.frames = X.prof.frames + 1 end
 			X.start, X.t0 = X.start or g, X.t0 or g
 			X.win = X.win or { t = g, n = 0, sum = 0, max = 0 }
@@ -469,10 +481,12 @@ function Deagle:Stress(arg)
 				if g >= nextShot then nextShot = g end
 			elseif (mode == "sky" and System.GetViewCameraDir().z > 0.5) or (mode == "aim" and not aimsAtLife(s)) then
 				local n = 0
-				while g >= nextShot and n < perFrame do   -- every shot due this frame
+				local rr = ph.rate or rps
+				local pf = ph.rate and math.max(8, math.ceil(rr / 30)) or perFrame
+				while g >= nextShot and n < pf do   -- every shot due this frame
 					s.state.ammo = 7
 					pcall(s.Fire, s, true)
-					nextShot, n, X.shots, X.phShots = nextShot + 1 / rps, n + 1, X.shots + 1, X.phShots + 1
+					nextShot, n, X.shots, X.phShots = nextShot + 1 / rr, n + 1, X.shots + 1, X.phShots + 1
 					if X.prof then X.prof.shots = X.prof.shots + 1 end
 				end
 				if g >= nextShot then nextShot = g end
