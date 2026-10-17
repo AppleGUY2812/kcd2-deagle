@@ -13,11 +13,23 @@ local WRIST_ARM, HAND_INERTIA = 0.10, 0.004    -- m from the wrist to the gun's 
 local POWDER_HEAT = 4.5e6                      -- J/kg released by double-base pistol powder (typical value)
 local AIR_RHO, AIR_CD = 1.2, 0.37              -- kg/m^3; drag coefficient fitted to factory tables (~8 % speed lost by 50 yd)
 local function muzzleGas(cal, v) return cal.powder * POWDER_HEAT - 0.5 * cal.bullet * v * v end
+-- One result per gun, made once: it depends only on the gun's and the cartridge's data, and nobody writes into it.
+-- A shot asked ~10 times (flash, sound, recoil, hearing, the round...): a new table each, 1.8 ms a frame at 1000
+-- rounds a second (deagle_stress 1000 sky prof, 2026-10-17). Keyed by the gun table (weakly), checked against the
+-- physics and cartridge tables it came from.
+local shotCache = setmetatable({}, { __mode = "k" })
 function Deagle:ShotPhysics(g)
 	g = g or self.gun
 	local ph = g.physics or (g.cs2 and self.gunPhysics and self.gunPhysics[g.cs2])
 	local cal = ph and self.calibers and self.calibers[ph.caliber]
 	if not cal then return nil end
+	local c = shotCache[g]
+	if c and c.ph == ph and c.cal == cal then return c.r end
+	local r = self:ShotPhysicsOf(ph, cal)
+	shotCache[g] = { ph = ph, cal = cal, r = r }
+	return r
+end
+function Deagle:ShotPhysicsOf(ph, cal)
 	local v = cal.velocity * (ph.barrel / cal.barrel) ^ 0.25          -- longer barrel, faster bullet (pistol rule of thumb)
 	local impulse = cal.bullet * v + cal.powder * (ph.hold == "rifle" and 1.75 or 1.5) * v
 	local vr = impulse / ph.mass

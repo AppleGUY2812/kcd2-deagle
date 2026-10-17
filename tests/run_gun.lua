@@ -86,6 +86,16 @@ end
 -- cartridge recoil: one shot climbs the view by the physics kick; the elastic hold takes back what fits in its range
 local recoil
 local phys = Deagle:ShotPhysics()
+-- made once per gun (it was a new table ~10 times a shot): the same table again, and a change of the gun's data gives a new one
+if phys then
+	local again = Deagle:ShotPhysics()
+	local copy = {}
+	for k, v in pairs(Deagle.gun) do copy[k] = v end
+	local other = Deagle:ShotPhysics(copy)
+	print(string.format("ShotPhysics: the same table on a second ask %s, a copy of the gun gets its own %s with the same speed %s", tostring(again == phys),
+		tostring(other ~= phys), tostring(other and other.velocity == phys.velocity)))
+	if not (again == phys and other ~= phys and other.velocity == phys.velocity) then error("ShotPhysics cache") end
+end
 if phys then
 	while Deagle:FireMode() ~= "semi" do act("deagle_firemode"); M.advance(0.1) end
 	Deagle.state.ammo = g.magSize; M.advance(1.5)

@@ -87,12 +87,13 @@ end
 -- KCD2's AI hears the shot: its own gun_fired sound (rpg_sound.xml, the loudest a person makes; guards look around,
 -- come to investigate, panic up close; docs/kcd2_ai_hearing.md), on the shooter, louder for a louder gun (x the blast
 -- loudness over a 9 mm's, the same blast level the gunshot plays at)
+local HEARING_REF = { physics = { caliber = "9x19", mass = 0.9, barrel = 0.102, bore = 0.03, hold = "pistol" } }   -- a 9 mm pistol
 function Deagle:ShotHeard(phys)
 	local h = self.cfg.hearing
 	if not h.on then return end
 	local mult = h.shot
 	if phys then
-		local ref = self:ShotPhysics({ physics = { caliber = "9x19", mass = 0.9, barrel = 0.102, bore = 0.03, hold = "pistol" } })
+		local ref = self:ShotPhysics(HEARING_REF)
 		mult = mult * 10 ^ ((20 / 3) * math.log10(phys.gasEnergy / ref.gasEnergy) / 20)
 	end
 	try("AI hears the shot", function() XGenAIModule.ProduceSoundWUID(enum_sound.gun_fired, self:Player().this.id, mult) end)
