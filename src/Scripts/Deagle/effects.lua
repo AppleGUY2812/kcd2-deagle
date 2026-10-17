@@ -177,9 +177,13 @@ function Deagle:ImpactLight(name, pos, normal, scale)
 		corona_scale = 0, corona_dist_size_factor = 1, corona_dist_intensity_factor = 1 })
 	if not ok then return end
 	s.till = now + L.time
-	local id = e.id
-	Script.SetTimer(math.max(1, L.time * 1000), function()   -- game time; a light lit again meanwhile keeps burning
-		if System.GetCurrTime() >= s.till - 0.001 then
+	-- off by its own timer (game time). Which lighting it ends is told by a count, not by the clock: in a long save
+	-- System.GetCurrTime() moves in 3.9 ms steps (float32 at ~51600 s, Claude 4 2026-10-17), so "clock >= till" could
+	-- read one step short at the timer and leave the light on until the next hit took it
+	s.gen = (s.gen or 0) + 1
+	local id, gen = e.id, s.gen
+	Script.SetTimer(math.max(1, L.time * 1000), function()   -- a light lit again meanwhile keeps burning
+		if s.gen == gen then
 			local le = System.GetEntity(id)
 			if le then pcall(le.FreeSlot, le, 0) end
 		end

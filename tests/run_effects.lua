@@ -34,6 +34,23 @@ local direct = 0
 for _, f in ipairs(M.fxLog or {}) do if f.n == "deagle_impacts.stone" then direct = direct + 1 end end
 local spawnedFx = math.max(fxs, direct)
 check("effect budget: 75 hits on one spot at once spawn at most the burst", spawnedFx >= 1 and spawnedFx <= D.cfg.fxBudget.burst, spawnedFx)
+-- a light goes out by its own timer even when the game clock reads coarse (a long save: 3.9 ms steps, 2026-10-17):
+-- clock frozen one step short of the light's end, timers still run
+local freed = 0
+local getTime = System.GetCurrTime
+local frozen = getTime()
+System.GetCurrTime = function() return frozen end
+Deagle.impactLights = nil
+local spawn2 = System.SpawnEntity
+System.SpawnEntity = function(p)
+	local e = spawn2(p)
+	rawset(e, "FreeSlot", function() freed = freed + 1 end)
+	return e
+end
+D:ImpactLight("deagle_impacts.metal", { x = 30, y = 0, z = 1 }, n, 1)
+M.advance(0.2)
+check("impact lights: off by their timer with a coarse game clock", freed >= 1, freed)
+System.GetCurrTime, System.SpawnEntity = getTime, spawn2
 -- the stress spawners: every impact effect raw (no budget), and the light pool
 local S = Deagle.StressSpawners or {}
 check("stress spawners: fx_metal, fx_soil, fx_water_v3 and light registered", S.fx_metal and S.fx_soil and S.fx_water_v3 and S.light, S.fx_metal)
