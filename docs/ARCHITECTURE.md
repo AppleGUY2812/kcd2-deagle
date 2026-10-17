@@ -290,6 +290,10 @@ only the Lua around them (mock: FlyBy 4.2 + KillCamStep 1.1 + stepping ~2 us). E
 rounds, tracers off: 4-7 ms (3.5-5.5 us a round of engine calls). Above 9 ms means the engine calls, not Lua, were most
 of the 10.5 us, and the next gain is fewer queries (one living query a frame for all rounds, step 7's ray split), not
 more native code. Tracers-on is not comparable: native draws at most 128 streaks (FX_TRACE_MAX).
+The number read (fixed before the native run): "Lua" on the last 0.5 s line of "FIRE tracers off", just before
+"stop" (12.93 ms at 1236 alive; per round if counts differ > 5 %). It includes DN.advance (RoundsTick ->
+RoundsTickNative). Hit baseline: `Stress('250 aim')` from one save facing stone or ground ~100 m out, runs matched when
+the view hit is within 0.5 m; impact budgets (30/s) cut most effects there, so it measures hits under budget.
 
 ## How each step is built and proven
 - Durable state lives in files (this doc, the step's spec, tests), not in a session's chat. Each step starts from a
