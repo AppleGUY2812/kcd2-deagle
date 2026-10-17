@@ -27,8 +27,10 @@ from scipy.ndimage import median_filter
 OUT = "/mnt/e/Tools/deagle-work/sound/hickok/rings"
 LO, HI = 700, 16000        # Hz searched for the plate's tones
 MAX_TONES = 48
-RING_LEN = 2.3             # s kept after the onset: plate A's 653 Hz hum still rings at +2.2 s; its takes' next shots
-                          # come 2.53-3.62 s after the strike
+RING_LEN = 3.6             # s kept at most after the onset: plate A's 653 Hz hum still stands 30 dB over its sides at
+                          # +3.0 s on hit 4; a take stops sooner, before its next loud sound (ring_end)
+NEXT_RISE, NEXT_GAP = 12.0, .06   # dB the level rises within 0.1 s at the next shot (or word); s the ring stops before it
+END_FADE = .3              # s the ring fades out over at its end
 SIDE, GATE = 80.0, 6.0     # Hz to the bands a tone is compared with; dB it must stand over them
 TAILS, NB = True, 4.0       # follow each tone past its cut in a band NB Hz either side of its pitch (ring())
 # the strike's clank and the plate's early shimmer between its pitches, from the original: above SHIMMER_HZ (below
@@ -172,6 +174,20 @@ def clear(fq, freqs, sign):
     while any(abs(fq + sign * d - g) < 40 for g in freqs): d += 20
     return fq + sign * d
 
+def ring_end(x, sr, shot, onset):
+    """s after the onset where the ring stops: NEXT_GAP before the next loud sound (the level over 10 ms rising
+    NEXT_RISE dB within 0.1 s, from 1 s after the strike), at most RING_LEN. The next bang must stay out of the cut:
+    the zero-phase narrow bands would spread it 0.1-0.3 s back. Plate A's next sounds: hit 1 +2.7 s, hit 4 +3.33 s (2.3 s
+    had cut its hum 31 dB over its sides: the user heard it in "WITHOUT", 2026-10-17), hit 6 +2.53 s."""
+    a = int((shot + onset) * sr)
+    y = x[a: a + int((RING_LEN + NEXT_GAP) * sr)]
+    m, w = int(.01 * sr), int(.1 * sr)
+    e = 10 * np.log10(np.convolve(y * y, np.ones(m) / m, "same") + 1e-20)
+    for i in range(int(1.0 * sr), len(e), m // 2):
+        if e[i] - e[max(0, i - w): i].min() >= NEXT_RISE:
+            return min(RING_LEN, i / sr - NEXT_GAP)
+    return min(RING_LEN, len(y) / sr)
+
 def ring(x, sr, shot, onset, freqs, slow=()):
     """The plate's tones from the strike on. Each one is kept only while it stands GATE dB over what sits next to it
     (two bands SIDE Hz either side: the gun's echo, voice, music spread over every pitch), averaged over 150 ms,
@@ -181,11 +197,11 @@ def ring(x, sr, shot, onset, freqs, slow=()):
     exact pitch from the strike on, so the gun's echo under them early on stays out."""
     a = int((shot + onset - .01) * sr)
     lead = int(.2 * sr)
-    seg = x[a - lead: a + int(RING_LEN * sr)]
+    seg = x[a - lead: a + int((ring_end(x, sr, shot, onset) + .01) * sr)]
     y = np.zeros(len(seg))
     every = list(freqs) + list(slow)
     for fq in slow:
-        f1 = pitch(seg, sr, fq, lead + int(.5 * sr), lead + int(1.4 * sr))
+        f1 = pitch(seg, sr, fq, lead + int(.5 * sr), min(len(seg), lead + int(1.4 * sr)))
         b = narrow(seg, sr, f1)
         side = np.maximum(env(narrow(seg, sr, clear(f1, every, -1)), sr), env(narrow(seg, sr, clear(f1, every, 1)), sr))
         on = np.nonzero(over(env(b, sr), side, sr)[lead:] > GATE)[0]
@@ -238,8 +254,13 @@ def ring(x, sr, shot, onset, freqs, slow=()):
         clank = clank * (1 - wf) + (seg - y) * wf
     out = st - 2 * r1
     plate = (y + clank)[out:]
-    tail = int(.3 * sr); plate[-tail:] *= np.linspace(1, 0, tail) ** 2
+    plate = fade_end(plate, sr)
     return plate, seg[out:] - plate, a - lead + out
+
+def fade_end(y, sr):
+    """The last END_FADE s faded out (the ring's end, before the take's next sound)."""
+    y = y.copy(); n = int(END_FADE * sr); y[-n:] *= np.linspace(1, 0, n) ** 2
+    return y
 
 def main():
     src, hits_json = sys.argv[1], sys.argv[2]

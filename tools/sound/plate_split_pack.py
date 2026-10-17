@@ -40,7 +40,7 @@ def main():
             old, _, at1 = pr.ring(x, sr, 1.0, onset, pr.tones(x, sr, 1.0, onset))
             pr.TAILS, pr.RING_LEN = True, keep
             a = int(.7 * sr)                                       # from 0.3 s before the shot
-            orig = x[a: at0 + len(plate)]
+            orig = pr.fade_end(x[a: at0 + len(plate)], sr)          # ends with the plate: the take's next sound is next
             w = np.zeros(len(orig)); w[at0 - a:] = plate
             b = np.zeros(len(orig)); b[at1 - a: at1 - a + len(old)] = old[: len(orig) - (at1 - a)]
             g = 0.89 / max(np.abs(orig).max(), 1e-9)               # one gain for all four
@@ -59,6 +59,11 @@ td,th{{border-bottom:1px solid #333;padding:6px 8px;text-align:left}} th{{paddin
 pitch, so the echo stays out), and tones of this plate that one take's search had missed are in. <b>WITH before the fix</b>
 = what your game played until now. Also fixed: hits 4 and 6 here were two shots on another plate; now they're the takes
 your game plays.</p>
+<p>Fixed 2026-10-17: the plate's low hum (653 Hz) is followed until Hickok's next sound (hit 4: 3.3 s; before, it stopped
+at 2.0 s and came back in WITHOUT). Each clip ends just before that next sound: all four fade out together there.</p>
+<p>The low thump right at the hit in WITHOUT is Hickok's gun, not the plate: every shot in the video has it 0.07-0.1 s
+after the bang. Listen to hit 02's original (plate C, 100 m away): the same thump, and that plate rings half a second
+later.</p>
 <table><tr><th></th><th>original</th><th>{WITH}</th><th>{WITHOUT}</th><th>{BEFORE}</th></tr>{''.join(rows)}</table></body></html>"""
     open(os.path.join(out, "index.html"), "w").write(page)
     print("->", os.path.join(out, "index.html"))
