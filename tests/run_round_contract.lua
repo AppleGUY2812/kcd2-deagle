@@ -154,6 +154,9 @@ local SCENES = {
 	{ name = "wood plank 2 cm at 30 m, stone wall at 60 m", dir = vec(0, 1, 0), secs = 2,
 		world = { wall(30, 3), { p = vec(0, 30.02, 0), n = vec(0, 1, 0), surface = 3 }, wall(60, 1) } },
 	{ name = "water skip at 4 deg", dir = vec(0, 1, -math.tan(math.rad(4))), secs = 3, water = { level = 0, x0 = -50, x1 = 50, y0 = 0, y1 = 2000 } },
+	-- an invisible window blocker and a map barrier (fx "pass": FlightHit flies on through them in the same step), then stone
+	{ name = "window blocker 20 m, map barrier 25 m, stone wall 40 m", dir = vec(0, 1, 0), secs = 1,
+		world = { wall(20, 2), wall(25, 4), wall(40, 1) } },
 	{ name = "NPC at 50 m", dir = vec(0, 1, 0), secs = 1,
 		world = { { p = vec(0, 49.85, 0), n = vec(0, -1, 0), entity = npc, box = { -0.3, 0.3, 49, 51, 8.5, 11 } }, wall(80, 1) } },
 }
@@ -326,6 +329,9 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 	local wa = T(gun .. " / water skip at 4 deg")
 	check(gun .. ": the 4 deg water hit skips (goes on)", wa.hits[1] and wa.hits[1].surface == "mat_water" and wa.hits[1].goesOn,
 		wa.hits[1] and wa.hits[1].surface)
+	local bl = T(gun .. " / window blocker 20 m, map barrier 25 m, stone wall 40 m")
+	check(gun .. ": flies through the blocker and the barrier, hits the 40 m wall", #bl.hits == 1 and bl.hits[1].surface == "mat_rock"
+		and math.abs(bl.hits[1].pos.y - 40) < 1e-6, #bl.hits)
 	local np = T(gun .. " / NPC at 50 m")
 	check(gun .. ": the NPC is hit first, at 49.85 m, once", np.hits[1] and np.hits[1].entity == "npc1" and math.abs(np.hits[1].dist - 49.85) < 0.01
 		and not (np.hits[2] and np.hits[2].entity == "npc1"),
