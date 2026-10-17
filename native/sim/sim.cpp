@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <new>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -23,6 +24,7 @@ struct sim {
 	sim_config cfg;
 	sim_ray_fn ray = nullptr;
 	sim_water_fn water = nullptr;
+	sim_living_fn living = nullptr;
 	void* ud = nullptr;
 	std::vector<sim_phys> phys;
 	std::vector<uint8_t> pass;        // by surface id: 1 = rays go on through it (no entity)
@@ -37,6 +39,17 @@ struct sim {
 	std::vector<uint64_t> skip;
 	std::vector<sim_hit> pending;
 	std::vector<uint32_t> freeList;
+	// the frame API: rounds it moves (in launch order), their last move's time, its events
+	std::vector<uint8_t> managed;
+	std::vector<double> lastT;
+	std::vector<uint32_t> active;
+	std::vector<sim_event> events;
+	// near misses: where each round's frame step began, whom it already passed or hit, each NPC's next allowed time
+	std::vector<V> frameFrom;
+	std::vector<std::vector<uint64_t>> passed, hitEnts;
+	std::unordered_map<uint64_t, double> flyNext;
+	double flyAt = -1e300;
+	std::vector<sim_living> near;
 	sim_stats stats{};
 };
 
@@ -167,6 +180,83 @@ int32_t run(sim* s, uint32_t i) {
 
 bool valid(const sim* s, uint32_t id) { return id < s->cap && s->alive[id]; }
 
+void fillRound(const sim* s, uint32_t id, sim_round* out) {
+	out->pos = toC(s->pos[id]);
+	out->vel = toC(s->vel[id]);
+	out->dist = s->dist[id];
+	out->age = s->age[id];
+	out->hops = s->hops[id];
+	out->tumble = s->tumble[id];
+	out->alive = s->alive[id];
+	out->skip = s->skip[id];
+}
+
+bool has(const std::vector<uint64_t>& v, uint64_t e) {
+	for (uint64_t x : v) if (x == e) return true;
+	return false;
+}
+
+// FlyBy: after a round's frame step, every living NPC whose chest is within nearMiss of the straight path from where
+// the frame began to where it ended: once per NPC per round, never one this round hit, each NPC once per flybyGap
+void flyBy(sim* s, uint32_t id) {
+	double nearM = s->cfg.nearMiss;
+	if (nearM <= 0 || !s->living) return;
+	V f = s->frameFrom[id], sv = s->pos[id] - f;
+	double len2 = sv.x * sv.x + sv.y * sv.y + sv.z * sv.z;
+	if (len2 < 1e-6) return;
+	double len = std::sqrt(len2), now = s->lastT[id];
+	if (s->near.size() < 256) s->near.resize(256);
+	sim_vec c = toC(f + sv * 0.5);
+	int n = s->living(s->ud, &c, len / 2 + nearM, s->near.data(), (int)s->near.size());
+	if (s->flyAt > now) s->flyNext.clear();   // the clock went back (a load)
+	s->flyAt = now;
+	for (int k = 0; k < n; k++) {
+		const sim_living& L = s->near[k];
+		if (has(s->passed[id], L.entity) || has(s->hitEnts[id], L.entity)) continue;
+		auto it = s->flyNext.find(L.entity);
+		if (it != s->flyNext.end() && now < it->second) continue;
+		V p = { L.feet.x, L.feet.y, L.feet.z + s->cfg.chest };
+		double t = ((p.x - f.x) * sv.x + (p.y - f.y) * sv.y + (p.z - f.z) * sv.z) / len2;
+		t = t < 0 ? 0 : (t > 1 ? 1 : t);
+		V cl = f + sv * t, d = p - cl;
+		if (d.x * d.x + d.y * d.y + d.z * d.z > nearM * nearM) continue;
+		s->passed[id].push_back(L.entity);
+		s->flyNext[L.entity] = now + s->cfg.flybyGap;
+		sim_event e{};
+		e.kind = SIM_EV_FLYBY;
+		e.round = id;
+		e.hit.entity = L.entity;
+		e.hit.pos = toC(cl);
+		e.hit.dir = toC(sv * (1.0 / len));
+		fillRound(s, id, &e.state);
+		s->events.push_back(e);
+	}
+}
+
+// a frame-API round's step result as events: a hit waits for its answer; otherwise its frame step is over (near
+// misses), and an ended round is freed (it leaves `active` at the next compaction)
+void emit(sim* s, uint32_t id, int32_t st) {
+	if (st != SIM_HIT) flyBy(s, id);
+	if (st == SIM_FLYING) return;
+	sim_event e{};
+	e.round = id;
+	fillRound(s, id, &e.state);
+	if (st == SIM_HIT) { e.kind = SIM_EV_HIT; e.hit = s->pending[id]; }
+	else {
+		e.kind = st == SIM_LANDED ? SIM_EV_LANDED : SIM_EV_DONE;
+		s->alive[id] = 0;
+		s->managed[id] = 0;
+		s->freeList.push_back(id);
+	}
+	s->events.push_back(e);
+}
+
+void compact(sim* s) {
+	size_t w = 0;
+	for (uint32_t id : s->active) if (s->alive[id] && s->managed[id]) s->active[w++] = id;
+	s->active.resize(w);
+}
+
 }  // namespace
 
 extern "C" {
@@ -181,6 +271,10 @@ sim* sim_create(uint32_t capacity, const sim_config* cfg) {
 	s->subLeft.resize(capacity); s->hasRest.resize(capacity); s->alive.resize(capacity); s->tumble.resize(capacity);
 	s->state.resize(capacity); s->hops.resize(capacity); s->physId.resize(capacity); s->skip.resize(capacity);
 	s->pending.resize(capacity);
+	s->managed.resize(capacity); s->lastT.resize(capacity);
+	s->frameFrom.resize(capacity); s->passed.resize(capacity); s->hitEnts.resize(capacity);
+	s->active.reserve(capacity);
+	s->events.reserve(1024);
 	s->freeList.reserve(capacity);
 	for (uint32_t i = capacity; i > 0; i--) s->freeList.push_back(i - 1);
 	return s;
@@ -189,6 +283,7 @@ sim* sim_create(uint32_t capacity, const sim_config* cfg) {
 void sim_destroy(sim* s) { delete s; }
 
 void sim_set_world(sim* s, sim_ray_fn ray, sim_water_fn water, void* ud) { s->ray = ray; s->water = water; s->ud = ud; }
+void sim_set_living(sim* s, sim_living_fn living) { s->living = living; }
 
 void sim_set_pass(sim* s, const int32_t* ids, int32_t n) {
 	s->pass.clear();
@@ -215,6 +310,9 @@ uint32_t sim_fire(sim* s, const sim_vec* pos, const sim_vec* dir, int32_t phys) 
 	s->hasRest[i] = s->tumble[i] = 0;
 	s->state[i] = SIM_FLYING;
 	s->alive[i] = 1;
+	s->managed[i] = 0;
+	s->passed[i].clear();
+	s->hitEnts[i].clear();
 	s->physId[i] = phys;
 	s->skip[i] = 0;
 	return i;
@@ -237,35 +335,73 @@ const sim_hit* sim_pending_hit(const sim* s, uint32_t id) {
 
 // MoveRound after ApplyHit: landed, or on with the new state; past maxHops or under minSpeedOn it's done; else the
 // rest of the cut step and the steps left
-int32_t sim_answer(sim* s, uint32_t id, int32_t goesOn, const sim_vec* pos, const sim_vec* vel, uint64_t skip, int32_t tumble) {
+int32_t sim_answer(sim* s, uint32_t id, int32_t goesOn, const sim_vec* pos, const sim_vec* vel, uint64_t skip, int32_t tumble,
+	int32_t markHit) {
 	if (!valid(s, id) || s->state[id] != SIM_HIT) return SIM_DONE;
+	if (markHit && s->pending[id].entity && !has(s->hitEnts[id], s->pending[id].entity)) s->hitEnts[id].push_back(s->pending[id].entity);
 	if (pos) s->pos[id] = fromC(*pos);
 	if (vel) s->vel[id] = fromC(*vel);
 	s->skip[id] = skip;
 	s->tumble[id] = tumble ? 1 : 0;
-	if (!goesOn) return s->state[id] = SIM_LANDED;
-	s->hops[id]++;
-	if (s->hops[id] > s->cfg.maxHops || len(s->vel[id]) < s->cfg.minSpeedOn) return s->state[id] = SIM_DONE;
-	return run(s, id);
+	int32_t st;
+	if (!goesOn) st = s->state[id] = SIM_LANDED;
+	else {
+		s->hops[id]++;
+		if (s->hops[id] > s->cfg.maxHops || len(s->vel[id]) < s->cfg.minSpeedOn) st = s->state[id] = SIM_DONE;
+		else st = run(s, id);
+	}
+	if (s->managed[id]) emit(s, id, st);
+	return st;
 }
 
 void sim_free(sim* s, uint32_t id) {
 	if (!valid(s, id)) return;
 	s->alive[id] = 0;
+	s->managed[id] = 0;
 	s->freeList.push_back(id);
 }
 
 int32_t sim_get(const sim* s, uint32_t id, sim_round* out) {
 	if (!valid(s, id)) return 0;
-	out->pos = toC(s->pos[id]);
-	out->vel = toC(s->vel[id]);
-	out->dist = s->dist[id];
-	out->age = s->age[id];
-	out->hops = s->hops[id];
-	out->tumble = s->tumble[id];
-	out->alive = s->alive[id];
-	out->skip = s->skip[id];
+	fillRound(s, id, out);
 	return 1;
+}
+
+uint32_t sim_launch(sim* s, const sim_vec* pos, const sim_vec* dir, int32_t phys, double now, double firstDt) {
+	uint32_t id = sim_fire(s, pos, dir, phys);
+	if (id == UINT32_MAX) return id;
+	s->managed[id] = 1;
+	s->lastT[id] = now;
+	s->active.push_back(id);
+	s->frameFrom[id] = s->pos[id];
+	emit(s, id, sim_step(s, id, firstDt));
+	return id;
+}
+
+// RoundsTick: every flying round moves by the time since its last move (a round launched this frame: 0)
+void sim_advance(sim* s, double now, double tickMax) {
+	compact(s);
+	for (size_t k = 0, n = s->active.size(); k < n; k++) {
+		uint32_t id = s->active[k];
+		if (!s->alive[id] || s->state[id] != SIM_FLYING) continue;   // ended, or a hit still unanswered
+		double dt = std::fmin(std::fmax(now - s->lastT[id], 0.0), tickMax);
+		s->lastT[id] = now;
+		s->frameFrom[id] = s->pos[id];
+		emit(s, id, sim_step(s, id, dt));
+	}
+}
+
+const sim_event* sim_events(const sim* s, uint32_t* n) {
+	*n = (uint32_t)s->events.size();
+	return s->events.data();
+}
+
+void sim_clear_events(sim* s) { s->events.clear(); }
+
+uint32_t sim_alive(const sim* s) {
+	uint32_t n = 0;
+	for (uint32_t id : s->active) n += s->alive[id] && s->managed[id];
+	return n;
 }
 
 void sim_get_stats(const sim* s, sim_stats* out) { *out = s->stats; }

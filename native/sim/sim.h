@@ -28,6 +28,10 @@ typedef struct {
 typedef int (*sim_ray_fn)(void* ud, const sim_vec* from, const sim_vec* move, uint64_t skip, sim_ray_hit* out);
 // returns 1 when `at` is in a water area (level and surface normal filled), 0 when dry
 typedef int (*sim_water_fn)(void* ud, const sim_vec* at, double* level, sim_vec* normal);
+// the living NPCs within radius of center that may hear a near miss (not the player, not the dead): up to max into
+// out, returns how many (npc.lua FlyBy: Physics.SamplePhysEnvironment, ent_living)
+typedef struct { uint64_t entity; sim_vec feet; } sim_living;
+typedef int (*sim_living_fn)(void* ud, const sim_vec* center, double radius, sim_living* out, int max);
 
 typedef struct {
 	double velocity;          // m/s at the muzzle
@@ -44,6 +48,9 @@ typedef struct {
 	int32_t maxHops;          // cfg.impactCap.maxHops (4)
 	int32_t waterSurface;     // id of mat_water (-1: none)
 	double minSpeedOn;        // m/s: a round that goes on slower than this is done (30)
+	double nearMiss;          // m: cfg.nearMiss, a living NPC's chest this close to a round's frame path hears it (0: off)
+	double chest;             // m above the feet (npc.lua CHEST 1.25)
+	double flybyGap;          // s: one near miss per NPC this often at most (npc.lua FLYBY_GAP 0.75)
 } sim_config;
 
 typedef struct {
@@ -63,6 +70,7 @@ typedef struct sim sim;
 sim* sim_create(uint32_t capacity, const sim_config* cfg);
 void sim_destroy(sim* s);
 void sim_set_world(sim* s, sim_ray_fn ray, sim_water_fn water, void* ud);
+void sim_set_living(sim* s, sim_living_fn living);
 // surfaces a ray passes on through when it hit no entity (foliage, invisible blockers: surfaces.lua fx = "pass")
 void sim_set_pass(sim* s, const int32_t* ids, int32_t n);
 int32_t sim_add_phys(sim* s, const sim_phys* p);
@@ -75,8 +83,11 @@ uint32_t sim_fire(sim* s, const sim_vec* pos, const sim_vec* dir, int32_t phys);
 int32_t sim_step(sim* s, uint32_t id, double dt);
 const sim_hit* sim_pending_hit(const sim* s, uint32_t id);
 // the answer to a pending hit (ApplyHit): goesOn 0 = landed; else the round's new state, and the step carries on.
-// Returns like sim_step (SIM_LANDED when it didn't go on)
-int32_t sim_answer(sim* s, uint32_t id, int32_t goesOn, const sim_vec* pos, const sim_vec* vel, uint64_t skip, int32_t tumble);
+// Returns like sim_step (SIM_LANDED when it didn't go on). A round of the frame API (sim_launch) reports what follows
+// as events
+// markHit: the hit's entity counts as hit by this round (hits.lua r.hitIds): no near miss to it from this round
+int32_t sim_answer(sim* s, uint32_t id, int32_t goesOn, const sim_vec* pos, const sim_vec* vel, uint64_t skip, int32_t tumble,
+	int32_t markHit);
 void sim_free(sim* s, uint32_t id);
 
 typedef struct {
@@ -86,6 +97,26 @@ typedef struct {
 	uint64_t skip;
 } sim_round;
 int32_t sim_get(const sim* s, uint32_t id, sim_round* out);
+
+// The frame API: the game's path, where Lua touches no round per frame, only events. Rounds launched here are moved
+// by sim_advance and freed by the sim when they end; each hit, end and landing is an event. A hit waits for
+// sim_answer, whose carrying on can add events (fetch sim_events again after each answer: the list may move).
+// Time is the caller's clock (s): a round moves by now - its last move (at most tickMax), as RoundsTick does.
+// SIM_EV_FLYBY: a near miss after the round's frame step (npc.lua FlyBy): hit.entity who, hit.pos the closest point of
+// the frame's path, hit.dir its direction
+enum { SIM_EV_HIT = 1, SIM_EV_DONE = 2, SIM_EV_LANDED = 3, SIM_EV_FLYBY = 4 };
+typedef struct {
+	int32_t kind;
+	uint32_t round;
+	sim_hit hit;              // SIM_EV_HIT
+	sim_round state;          // the round after the event (at the hit: pos / vel / dist / age there)
+} sim_event;
+// LaunchRound: fire and move by firstDt at once (a close shot lands in the frame it's fired)
+uint32_t sim_launch(sim* s, const sim_vec* pos, const sim_vec* dir, int32_t phys, double now, double firstDt);
+void sim_advance(sim* s, double now, double tickMax);
+const sim_event* sim_events(const sim* s, uint32_t* n);
+void sim_clear_events(sim* s);
+uint32_t sim_alive(const sim* s);
 
 typedef struct { uint64_t rays, steps, hits; } sim_stats;
 void sim_get_stats(const sim* s, sim_stats* out);

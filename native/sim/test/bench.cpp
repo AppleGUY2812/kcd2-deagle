@@ -23,7 +23,7 @@ static int rayGround(void*, const sim_vec* f, const sim_vec* m, uint64_t, sim_ra
 }
 
 static void run(const char* name, sim_ray_fn ray, uint32_t n, int frames) {
-	sim_config cfg{ 0.05, 6, 1000, 9.81, 4, -1, 30 };
+	sim_config cfg{ 0.05, 6, 1000, 9.81, 4, -1, 30, 0, 1.25, 0.75 };
 	sim* s = sim_create(n, &cfg);
 	sim_set_world(s, ray, nullptr, nullptr);
 	sim_phys ph{ 470, 600, 240, 0.0195 };   // ~.50 AE
@@ -41,7 +41,7 @@ static void run(const char* name, sim_ray_fn ray, uint32_t n, int frames) {
 		for (uint32_t i = 0; i < n; i++) {
 			if (ids[i] == UINT32_MAX) continue;
 			int32_t st = sim_step(s, ids[i], 1.0 / 60);
-			while (st == SIM_HIT) st = sim_answer(s, ids[i], 0, nullptr, nullptr, 0, 0);   // every hit lands
+			while (st == SIM_HIT) st = sim_answer(s, ids[i], 0, nullptr, nullptr, 0, 0, 0);   // every hit lands
 			if (st != SIM_FLYING) { sim_free(s, ids[i]); ids[i] = UINT32_MAX; } else alive++;
 		}
 	}
