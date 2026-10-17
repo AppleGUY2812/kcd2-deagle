@@ -217,16 +217,7 @@ function NS.installFrame(D, libPath, headerPath)
 					L.sim_answer(S, id, goesOn and 1 or 0, V1, V2, skip, tumble, marked)
 				elseif e.kind == 4 then   -- a near miss: npc.lua FlyBy's message (geometry and throttle were native)
 					local npc = NS.handles[tonumber(e.hit.entity)]
-					if npc then
-						r.flybys = r.flybys or {}
-						r.flybys[npc.id] = true
-						local h = e.hit
-						pcall(function()
-							local msg = table.MakeFromType("weapon:onPlayerArrowFlyingBy", { GUID = npc.this.id, Position = cp(h.pos),
-								Direction = cp(h.dir) })
-							XGenAIModule.SendMessageToEntityData(npc.this.id, "weapon:onPlayerArrowFlyingBy", msg)
-						end)
-					end
+					if npc then D:FlyByMessage(npc, cp(e.hit.pos), cp(e.hit.dir), r) end
 				else                  -- its end: landed (a hit stopped it) or done (range, life, hops)
 					keepFinal(r, e.state)
 					if e.kind == 3 then r.landed = true end
