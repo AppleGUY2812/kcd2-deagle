@@ -172,7 +172,8 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    the cauldron; 1000 native rays timed. Measure: each probe's log line, plus µs per call / per ray (QPC).
    Status: built (bd8a983, native/src/probe.cpp mine by agreement with Claude 4; snippets tools/probe/basic.lua,
    light.lua, mat.lua run over rcon). Installed (plugin 73be688c). **Measured 2026-10-17 (Claude 1 ran them):** a
-   native ray 2.84 us vs a Lua ray 6.01 us (the Lua layer is ~half); `DN.add` 0.118 us vs a `[DN]` text line 0.587 us
+   native ray 2.84 us vs a Lua ray 6.01 us (the Lua layer is ~half; but the probe's flags were 0xF, the ray-only proxies,
+   not Lua's 0x1000F: see the raycmp line below); `DN.add` 0.118 us vs a `[DN]` text line 0.587 us
    (5x); a queued ray delivered 12.29 ms later; entity-free light: create 18.9 us, move ~9 us; `deagle_stress 75` at
    60 fps: Lua 1.02 ms avg, 1.83 p99. The drawn-material probe failed (no renderNode on a rock, no hit on a wall at
    30 m; surface name passed wrongly): mat.lua fixed to dump the whole hit table, rerun pending. Lua commands and the camera step run
@@ -212,7 +213,11 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    Static brushes give entity nil / partid nil in Lua; no `hit.renderNode` in this build (probe, 2026-10-17).
    Status 2026-10-17 (user: go): `native/sim/` (fe8ae6d) passes Claude 1's round contract 34/34 through LuaJIT's FFI
    (`native/sim/sim_ffi.lua` swaps StepRound), golden traces within 1e-12 m; 89 ns per round-step without rays, so
-   KCD2's 2.84 us ray is ~97 % of a native round: step 7 is the next gain. Next: the plugin binding (`DN.fire`,
+   KCD2's ray (3.5-13 us, raycmp below) is ~98 % of a native round: step 7 is the next gain.
+   raycmp (2026-10-17, d845bd90, Claude 1): the plugin's 0x1000F ray and Lua's agree on all 24 rows (surface, dist to the
+   logs' 1 mm rounding); native cost grows with the ray's travel: 3.5-6 us for a 3 m hit, 8-13 us for a 100 m miss. A
+   1000-round sky stream at ~5-10 us a round-step is 5-10 ms a frame in rays alone: casting each static path once
+   (step 7) and off the main thread is the gain, not the integrator. Not covered: entity hits, partid, the skips. Next: the plugin binding (`DN.fire`,
    `DN.rounds` pulling hit / flyby / done events, `DN.answer`, `DN.round` for the kill cam), the in-game world (the
    ray with the player and r.skip as physical entities; the water lookup natively: RE), then tracers / FlyBy /
    KillCamStep off the per-round Lua path (asked Claude 4).
