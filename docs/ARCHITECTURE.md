@@ -232,9 +232,15 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
      `DN.ahead(on)` while no cam / slow motion / free camera runs).
    - `DN.answer(id, goesOn, px, py, pz, vx, vy, vz, skip, tumble, markHit, turned)`: ApplyHit's verdict; markHit =
      r.hitIds; turned = r.turnPos was set (Deflect, a corner).
-   - `DN.round(id)` -> px, py, pz, vx, vy, vz, dist, age, hops (no table): the kill cam's one followed round a frame.
+   - `DN.round(id, t)` fills t.px py pz vx vy vz dist age hops (true; nil when gone): a Lua C function returns at most
+     3 values through IFunctionHandler. Reuse one table.
+   - The round functions exist after `[DN] rounds bind` (synchronous); simInit's table also carries `player` (its id: the
+     plugin's rays skip Henry).
    Offline: `NS.dn` (native/sim/sim_ffi.lua) is this binding over LuaJIT's FFI; with ballistics.lua's native path and
-   TracerNative the round contract passes 64/64 (d0979ea). Next: the plugin side (native/src/rounds.cpp).
+   TracerNative the round contract passes 64/64 (d0979ea). The plugin side: native/src/rounds.cpp (8a4d952, MSVC clean,
+   not run): the world per docs/whgame_re/sim_binding.md + sim_world.md; first use of each engine call logged ok /
+   FAILED; `[DN] rounds stats` = calls and us each. Open: knocked-down / mounted NPCs may not be ent_living (near misses
+   and the kill cam's look-ahead would miss them; Lua's FlyBy has the same limit, its look-ahead ray didn't).
 7. **Static / dynamic split (the user's idea, 2026-10-15), ray LOD + `rwi_queue`.** The static world (terrain, brushes)
    never moves: at the shot (and after each bounce or exit) cast its whole path once as ~50 m chords (chord sag at
    440 m/s ~2 cm) against static + terrain only, and store "first static hit at time t". Per frame, only a ray limited to
