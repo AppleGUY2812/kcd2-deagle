@@ -43,6 +43,12 @@ function Deagle:Tracer(from, dir, phys)
 	return { off = vsub(muzzle, from), reach = reach }
 end
 
+-- the "auto" tracer effect: one that glows about a frame at this frame time
+local function autoFx(dt)
+	dt = dt or 1 / 60
+	return dt <= 1 / 50 and "deagle_tracers.trail_025" or dt <= 1 / 30 and "deagle_tracers.trail_040" or "deagle_tracers.trail_060"
+end
+
 -- where the streak is drawn for a point d m along the round's path: the muzzle's offset from the eye, shrinking to
 -- nothing at trail.reach (the weight on trail.off)
 local function trailW(trail, d)
@@ -94,10 +100,7 @@ function Deagle:TracerBullet(r, from)
 	if fx == "auto" then   -- glows about a frame: never shorter than the frame, or it's never drawn. Picked once per round:
 		-- a new effect name makes the plugin replace the round's emitter (fxr), and a frame rate near 50 / 30 fps flipped
 		-- it every frame (Claude 3's audit 2026-10-15)
-		if not r.traceFx then
-			local dt = self.frameDt or 1 / 60
-			r.traceFx = dt <= 1 / 50 and "deagle_tracers.trail_025" or dt <= 1 / 30 and "deagle_tracers.trail_040" or "deagle_tracers.trail_060"
-		end
+		r.traceFx = r.traceFx or autoFx(self.frameDt)
 		fx = r.traceFx
 	end
 	local back = c.anchor == "start" and l or c.anchor == "end" and 0 or l / 2   -- where the effect sits; the end is p1
@@ -108,6 +111,20 @@ function Deagle:TracerBullet(r, from)
 	elseif c.spawn == "plugin" and self.native then   -- a new emitter per piece (the old way; seen from its first frame)
 		self:Native(string.format("fxs %s %.3f %.3f %.3f %.3f %.3f %.4f %.4f %.4f", fx, l / c.dash, l, ax, ay, az, dx, dy, dz))
 	else self:SpawnFx(fx, { x = ax, y = ay, z = az }, { x = dx, y = dy, z = dz }, l / c.dash) end
+end
+
+-- The native round path (cfg.roundSim "native", ballistics.lua): the plugin draws the streak every frame from the
+-- round's own path, so nothing per frame stays in Lua. This hands it, once per round at launch, what TracerBullet uses:
+-- the effect (picked once, as "auto" does), the streak length, the muzzle offset blending out by trail.reach (trailW),
+-- where it starts (cfg.tracer.start m flown), the piece length (dash) and where the effect sits on the streak (anchor:
+-- 1 = its start, 0 = its end, 0.5 = the middle). After a turn (Deflect) the plugin starts the streak at the turn point.
+function Deagle:TracerNative(N, id, r)
+	local trail, c = r.trail, self.cfg.tracer
+	if not trail or not self.cfg.tracers or not (N and N.tracer) then return end
+	local fx = c.fx == "auto" and autoFx(self.frameDt) or c.fx
+	r.traceFx = fx
+	local o = trail.off
+	N.tracer(id, fx, c.length, trail.reach, o.x, o.y, o.z, c.start, c.dash, c.anchor == "start" and 1 or c.anchor == "end" and 0 or 0.5)
 end
 
 function Deagle:MuzzlePos()

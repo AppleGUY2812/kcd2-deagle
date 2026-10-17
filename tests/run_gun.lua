@@ -642,6 +642,27 @@ do
 	M.view.pitch = pitch
 end
 
+-- the native round path's tracer: TracerNative hands the plugin, once per round, what TracerBullet draws each frame
+do
+	local got
+	local N = { tracer = function(...) got = { ... } end }
+	local r = { trail = { off = { x = 0.1, y = -0.2, z = 0.3 }, reach = 42 } }
+	Deagle.frameDt = 1 / 60
+	Deagle:TracerNative(N, 7, r)
+	local c = Deagle.cfg.tracer
+	local ok = got and got[1] == 7 and got[2] == "deagle_tracers.trail_025" and got[3] == c.length and got[4] == 42
+		and got[5] == 0.1 and got[6] == -0.2 and got[7] == 0.3 and got[8] == c.start and got[9] == c.dash and got[10] == 1 and r.traceFx == got[2]
+	local tracersWas = Deagle.cfg.tracers
+	Deagle.cfg.tracers, got = false, nil
+	Deagle:TracerNative(N, 8, r)
+	local offOk = got == nil
+	Deagle.cfg.tracers = tracersWas
+	check(string.format("TracerNative: id, the auto effect, length, reach, muzzle offset, start, dash, anchor handed over %s; none with tracers off %s",
+		tostring(ok), tostring(offOk)), ok and offOk, 0)
+	check(string.format("Deagle.FLYBY for the native near misses: chest %s m, gap %s s", tostring(Deagle.FLYBY and Deagle.FLYBY.chest),
+		tostring(Deagle.FLYBY and Deagle.FLYBY.gap)), Deagle.FLYBY and Deagle.FLYBY.chest == 1.25 and Deagle.FLYBY.gap == 0.75, 0)
+end
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))
 os.exit(fails == 0 and 0 or 1)

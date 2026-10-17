@@ -38,6 +38,7 @@ end
 -- One fly-by message per NPC per FLYBY_GAP s: KCD2's arrows come about one a second; a spray past someone sent ~15 a
 -- second (Claude 3's audit 2026-10-15). Game time; the table is cleared at a load.
 local FLYBY_GAP = 0.75
+Deagle.FLYBY = { chest = CHEST, gap = FLYBY_GAP }   -- the native round path's near misses use the same (ballistics.lua RoundSim)
 function Deagle:FlyBy(r, from)
 	local near = self.cfg.nearMiss
 	if not near or near <= 0 then return end
