@@ -30,6 +30,7 @@ if NATIVE then dofile("native/sim/sim_ffi.lua").install(Deagle, NATIVE); print("
 local function vec(x, y, z) return { x = x, y = y, z = z } end
 local function dot(a, b) return a.x * b.x + a.y * b.y + a.z * b.z end
 
+local sceneT0 = 0   -- when the scene's first round was fired (setScene): moving things go from there
 -- the world: planes { p = point, n = normal (unit), surface = id, entity, half = { u, v } extents or nil (endless) }
 local planes = {}
 local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0, this = { id = "npcWUID" }, id = "npc1" }
@@ -47,9 +48,50 @@ function npc.actor:GetArmor() return 0 end
 function npc.actor:GetMaxArmor() return 1 end
 function npc.actor:AddBlood() end
 function npc.soul:AddBuff() end
+-- a man walking across the shot at 3 m/s (+x), feet at z 8.5, 50 m out; his place follows the scene's clock
+local function person(id, at)
+	local e = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0, this = { id = id .. "WUID" }, id = id }
+	function e:GetName() return id end
+	function e:GetWorldPos() return at(M.t - sceneT0) end
+	e.GetBonePos = M.skeleton
+	function e.actor.RagDollize() end
+	function e.AddImpulse() end
+	function e.GetDirectionVector() return vec(-1, 0, 0) end
+	function e.soul.DealDamage(_, _, hp) e.damage = e.damage + hp end
+	function e.actor.IsDead() return e.damage >= 100 end
+	function e.actor.GetHealth() return 100 - e.damage end
+	function e.actor.GetMaxHealth() return 100 end
+	function e.actor.GetArmor() return 0 end
+	function e.actor.GetMaxArmor() return 1 end
+	function e.actor.AddBlood() end
+	function e.soul.AddBuff() end
+	return e
+end
+local WALK = 3
+local walkerA = person("walkerA", function(t) return vec(-0.5 + WALK * t, 50, 8.5) end)
+local walkerB = person("walkerB", function(t) return vec(-1.0 + WALK * t, 50, 8.5) end)
+-- bystanders for the near miss (FlyBy: within cfg.nearMiss 2.5 m of the chest, 1.25 m above the feet): one 2 m off the
+-- path, one 3 m off, both standing still; the physics query hands back the scene's living ones
+local by2 = person("by2m", function() return vec(2, 30, 10 - 1.25) end)
+local by3 = person("by3m", function() return vec(-3, 40, 10 - 1.25) end)
+local living = {}
+Physics.SamplePhysEnvironment = function()
+	local out = {}
+	for _, e in ipairs(living) do out[#out + 1] = e; out[#out + 1] = 0; out[#out + 1] = 0 end
+	return out
+end
+-- a plane that moves (an NPC walking) is at p + move x (the time since the scene's round was fired): the ray sees it
+-- where it is when the ray is cast
 Physics.RayWorldIntersection = function(pos, dir, _, _, skip1, skip2, hits)
 	local best
-	for _, pl in ipairs(planes) do
+	for _, pl0 in ipairs(planes) do
+		local pl = pl0
+		if pl0.move then
+			local dt = M.t - sceneT0
+			local o = vec(pl0.move.x * dt, pl0.move.y * dt, pl0.move.z * dt)
+			pl = { p = vec(pl0.p.x + o.x, pl0.p.y + o.y, pl0.p.z + o.z), n = pl0.n, surface = pl0.surface, entity = pl0.entity,
+				box = pl0.box and { pl0.box[1] + o.x, pl0.box[2] + o.x, pl0.box[3] + o.y, pl0.box[4] + o.y, pl0.box[5] + o.z, pl0.box[6] + o.z } }
+		end
 		local dn = dot(dir, pl.n)
 		local skipped = pl.entity and (pl.entity.id == skip1 or pl.entity.id == skip2)   -- like KCD2: the skip ids aren't hit
 		if dn ~= 0 and not skipped then
@@ -90,8 +132,9 @@ end
 local applyHit = Deagle.ApplyHit
 function Deagle:ApplyHit(hit, dir, phys, r)
 	local h
-	if rec and r == rec.r then
-		h = { frame = rec.frame, t = M.t - rec.t0, age = r.age, pos = vec(hit.pos.x, hit.pos.y, hit.pos.z),
+	local idx = rec and rec.ids and rec.ids[r]
+	if idx then
+		h = { round = idx, frame = rec.frame, t = M.t - rec.t0, age = r.age, pos = vec(hit.pos.x, hit.pos.y, hit.pos.z),
 			normal = vec(hit.normal.x, hit.normal.y, hit.normal.z), surface = surfaceName(hit) or tostring(hit.surface),
 			entity = hit.entity and (hit.entity.id or "entity") or false, partid = hit.partid or false,
 			dist = hit.dist, energy = hit.energy, dir = vec(dir.x, dir.y, dir.z) }
@@ -121,7 +164,7 @@ local function fly(gun, dir, fps, secs, seed)
 			caliber = phys.caliber }, range = Deagle.cfg.range, life = Deagle.ROUND_LIFE, maxHops = Deagle.cfg.impactCap.maxHops } }
 	-- frame 0: the step the round makes in the frame it's fired (LaunchRound: one frame's worth)
 	local r = Deagle:LaunchRound(vec(0, 0, 10), d, phys, nil)
-	rec.r = r
+	rec.r, rec.ids = r, { [r] = 1 }
 	rec.samples[1] = { frame = 0, t = 0, pos = vec(r.pos.x, r.pos.y, r.pos.z), done = r.landed and true or false }
 	local frames = math.floor(secs * fps + 0.5)
 	for f = 1, frames do
@@ -139,7 +182,62 @@ local function fly(gun, dir, fps, secs, seed)
 	rec.final = snap(r)
 	rec.landed = r.landed and true or false
 	rec.endT = rec.endT and round6(rec.endT) or false
-	rec.r, rec.t0, rec.frame = nil, nil, nil
+	rec.r, rec.t0, rec.frame, rec.ids = nil, nil, nil, nil
+	return rec
+end
+
+-- several rounds: shots = { { frame, dir }, ... } fired after their frame's step (frame 0: before any); records every hit (round = its index in shots), every near miss (frame, entity), every round's
+-- end frame, and the most alive at once
+local function burst(gun, shots, fps, secs, seed)
+	Deagle:UseGun(gun)
+	local phys = Deagle:ShotPhysics()
+	Deagle.rounds, Deagle.roundsToken, M.timers = {}, nil, {}
+	Deagle.flybyNext = nil
+	math.randomseed(seed)
+	Deagle.frameDt = 1 / fps
+	rec = { hits = {}, flybys = {}, ends = {}, fires = {}, ids = {}, t0 = M.t, frame = 0, maxAlive = 0,
+		fire = { gun = gun, seed = seed, fps = fps, range = Deagle.cfg.range, life = Deagle.ROUND_LIFE, maxHops = Deagle.cfg.impactCap.maxHops,
+			nearMiss = Deagle.cfg.nearMiss } }
+	local rs, msgs0 = {}, #M.aiMessages
+	local frames = math.floor(secs * fps + 0.5)
+	for f = 0, frames do
+		rec.frame = f
+		if f > 0 then M.advance(1 / fps, fps) end
+		for i, sh in ipairs(shots) do
+			if sh[1] == f then
+				local len = math.sqrt(dot(sh[2], sh[2]))
+				local d = vec(sh[2].x / len, sh[2].y / len, sh[2].z / len)
+				rec.fires[i] = { frame = f, pos = vec(0, 0, 10), dir = d }
+				-- LaunchRound steps the new round before it returns it: a hit in its first frame is matched to its index here
+				local launch, ids = Deagle.LaunchRound, rec.ids
+				local made
+				local applyNow = Deagle.ApplyHit
+				Deagle.ApplyHit = function(self, hit, dir2, ph, rr)
+					if not made then made = rr; ids[rr] = i end
+					return applyNow(self, hit, dir2, ph, rr)
+				end
+				local rr = launch(Deagle, vec(0, 0, 10), d, phys, nil)
+				Deagle.ApplyHit = applyNow
+				ids[rr] = i
+				rs[i] = rr
+			end
+		end
+		local alive = {}
+		for _, x in ipairs(Deagle.rounds or {}) do alive[x] = true end
+		local nAlive = 0
+		for i, rr in pairs(rs) do
+			if alive[rr] then nAlive = nAlive + 1 elseif not rec.ends[i] then rec.ends[i] = { frame = f, landed = rr.landed and true or false } end
+		end
+		rec.maxAlive = math.max(rec.maxAlive, nAlive)
+		for k = msgs0 + 1, #M.aiMessages do
+			local m = M.aiMessages[k]
+			if m.kind == "weapon:onPlayerArrowFlyingBy" then rec.flybys[#rec.flybys + 1] = { frame = f, entity = m.id } end
+		end
+		msgs0 = #M.aiMessages
+		if f > 0 and nAlive == 0 and #rec.fires == #shots then break end
+	end
+	for i in ipairs(shots) do rec.ends[i] = rec.ends[i] or false end
+	rec.r, rec.t0, rec.frame, rec.ids = nil, nil, nil, nil
 	return rec
 end
 
@@ -159,6 +257,19 @@ local SCENES = {
 		world = { wall(20, 2), wall(25, 4), wall(40, 1) } },
 	{ name = "NPC at 50 m", dir = vec(0, 1, 0), secs = 1,
 		world = { { p = vec(0, 49.85, 0), n = vec(0, -1, 0), entity = npc, box = { -0.3, 0.3, 49, 51, 8.5, 11 } }, wall(80, 1) } },
+	-- a man walking across the shot at 3 m/s: A is in the path when the round gets there, B (0.5 m further back) isn't
+	{ name = "walking NPC crosses the path in time", dir = vec(0, 1, 0), secs = 1,
+		world = { { p = vec(-0.5, 49.85, 0), n = vec(0, -1, 0), entity = walkerA, box = { -0.8, -0.2, 49, 51, 8.5, 10.5 }, move = vec(WALK, 0, 0) },
+			wall(80, 1) } },
+	{ name = "walking NPC too late, the wall behind", dir = vec(0, 1, 0), secs = 1,
+		world = { { p = vec(-1.0, 49.85, 0), n = vec(0, -1, 0), entity = walkerB, box = { -1.3, -0.7, 49, 51, 8.5, 10.5 }, move = vec(WALK, 0, 0) },
+			wall(80, 1) } },
+	-- straight up: up and back down, under 1000 m flown in 6 s, so it ends by its life
+	{ name = "straight up", world = {}, dir = vec(0, 0, 1), secs = 7 },
+	-- two steel walls 1 m apart along the shot, grazed at 3 deg: it skips from one to the other until maxHops ends it
+	{ name = "steel corridor (maxHops)", dir = vec(math.sin(math.rad(3)), math.cos(math.rad(3)), 0), secs = 3,
+		world = { { p = vec(0.5, 0, 0), n = vec(-1, 0, 0), surface = 5, box = { 0, 1, 0, 3000, 0, 20 } },
+			{ p = vec(-0.5, 0, 0), n = vec(1, 0, 0), surface = 5, box = { -1, 0, 0, 3000, 0, 20 } } } },
 }
 
 local n, fails = 0, 0
@@ -171,7 +282,9 @@ end
 local function setScene(sc)
 	planes = sc.world or {}
 	M.waters = sc.water and { sc.water } or {}
-	npc.damage = 0
+	living = sc.living or {}
+	npc.damage, walkerA.damage, walkerB.damage = 0, 0, 0
+	sceneT0 = M.t
 end
 
 -- the scene as data, for the native test to build the same world: planes (point, normal, surface name, entity id,
@@ -180,9 +293,11 @@ local function sceneData(sc)
 	local out = { planes = {}, waters = {} }
 	for _, pl in ipairs(sc.world or {}) do
 		out.planes[#out.planes + 1] = { p = pl.p, n = pl.n, surface = pl.surface and M.surfaceNames[pl.surface] or false,
-			entity = pl.entity and pl.entity.id or false, box = pl.box or false }
+			entity = pl.entity and pl.entity.id or false, box = pl.box or false, move = pl.move or false }
 	end
 	if sc.water then out.waters[1] = sc.water end
+	out.living = {}   -- the near-miss candidates: id and where their feet are (they stand still)
+	for _, e in ipairs(sc.living or {}) do out.living[#out.living + 1] = { id = e.id, wuid = e.this.id, feet = e:GetWorldPos() } end
 	return out
 end
 
@@ -196,6 +311,19 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 		tr.scene = sceneData(sc)
 		traces[gun .. " / " .. sc.name] = tr
 	end
+	-- a burst: 12 rounds, 3 a frame for 4 frames, spread over the 300 m wall and the sky, past two bystanders (2 m and
+	-- 3 m off the path): hit order across rounds within a frame (the order rounds were fired), and near misses
+	local BURST = { name = "burst of 12 past bystanders", world = { { p = vec(0, 300, 0), n = vec(0, -1, 0), surface = 1, box = { -50, 50, 299, 301, 0, 12 } } },
+		living = { by2, by3 } }
+	setScene(BURST)
+	local shots = {}
+	for k = 1, 12 do
+		local f, j = math.floor((k - 1) / 3), (k - 1) % 3
+		shots[k] = { f, vec(0.01 * (j - 1), 1, f == 3 and 0.03 or 0) }   -- the 4th frame's rounds aim over the wall's top (z 12)
+	end
+	local tr = burst(gun, shots, 60, 2, 77)
+	tr.scene = sceneData(BURST)
+	traces[gun .. " / " .. BURST.name] = tr
 end
 
 -- JSON both ways (the golden file is read by this test and by native/sim's C++ test): objects with sorted keys,
@@ -285,12 +413,23 @@ local function compare(a, b)
 		worst.pos = math.max(worst.pos, pd(x.pos, y.pos))
 		worst.t = math.max(worst.t, math.abs(x.t - y.t))
 		worst.energy = math.max(worst.energy, math.abs(x.energy - y.energy) / math.max(1e-9, y.energy))
-		if x.surface ~= y.surface or x.entity ~= y.entity or x.goesOn ~= y.goesOn then
+		if x.surface ~= y.surface or x.entity ~= y.entity or x.goesOn ~= y.goesOn or x.round ~= y.round or x.frame ~= y.frame then
 			why = why or string.format("hit %d: %s/%s/%s vs %s/%s/%s", i, x.surface, tostring(x.entity), tostring(x.goesOn), y.surface, tostring(y.entity), tostring(y.goesOn))
 		end
 	end
-	if #a.samples ~= #b.samples then why = why or string.format("%d frames vs %d", #a.samples, #b.samples) end
-	for i = 1, math.min(#a.samples, #b.samples) do worst.pos = math.max(worst.pos, pd(a.samples[i].pos, b.samples[i].pos)) end
+	local as, bs = a.samples or {}, b.samples or {}
+	if #as ~= #bs then why = why or string.format("%d frames vs %d", #as, #bs) end
+	for i = 1, math.min(#as, #bs) do worst.pos = math.max(worst.pos, pd(as[i].pos, bs[i].pos)) end
+	local af, bf = a.flybys or {}, b.flybys or {}   -- near misses: the same NPCs in the same frames, in order
+	if #af ~= #bf then why = why or string.format("%d near misses vs %d", #af, #bf) end
+	for i = 1, math.min(#af, #bf) do
+		if af[i].frame ~= bf[i].frame or af[i].entity ~= bf[i].entity then why = why or string.format("near miss %d: %s@%d vs %s@%d", i, af[i].entity, af[i].frame, bf[i].entity, bf[i].frame) end
+	end
+	for i, e in ipairs(a.ends or {}) do   -- bursts: each round ends in the same frame, the same way
+		local f = (b.ends or {})[i]
+		if (e == false) ~= (f == false) or (e and (e.frame ~= f.frame or e.landed ~= f.landed)) then why = why or "round " .. i .. " ends differently" end
+	end
+	if a.maxAlive ~= b.maxAlive then why = why or string.format("most alive %s vs %s", tostring(a.maxAlive), tostring(b.maxAlive)) end
 	if a.landed ~= b.landed then why = why or "landed " .. tostring(a.landed) .. " vs " .. tostring(b.landed) end
 	if (a.endT == false) ~= (b.endT == false) then why = why or "end " .. tostring(a.endT) .. " vs " .. tostring(b.endT)
 	elseif a.endT then worst.t = math.max(worst.t, math.abs(a.endT - b.endT)) end
@@ -332,14 +471,45 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 	local bl = T(gun .. " / window blocker 20 m, map barrier 25 m, stone wall 40 m")
 	check(gun .. ": flies through the blocker and the barrier, hits the 40 m wall", #bl.hits == 1 and bl.hits[1].surface == "mat_rock"
 		and math.abs(bl.hits[1].pos.y - 40) < 1e-6, #bl.hits)
+	local wA, wB = T(gun .. " / walking NPC crosses the path in time"), T(gun .. " / walking NPC too late, the wall behind")
+	check(gun .. ": the walking NPC is hit where he is when the round gets there; 0.5 m further back he's missed",
+		wA.hits[1] and wA.hits[1].entity == "walkerA" and wB.hits[1] and wB.hits[1].surface == "mat_rock" and wB.hits[1].entity == false,
+		tostring(wA.hits[1] and wA.hits[1].entity) .. " / " .. tostring(wB.hits[1] and wB.hits[1].surface))
+	local up = T(gun .. " / straight up")
+	-- the Glock's round comes back down before 1000 m of path: its life ends it; the Deagle's reaches the range first (5.95 s)
+	local byLife = up.final and up.final.age > Deagle.ROUND_LIFE and up.final.dist < Deagle.cfg.range
+	check(string.format("%s: straight up ends by its %s (%.2f s, %.0f m flown)", gun, gun == "glock_17" and "life" or "range",
+		up.final and up.final.age or -1, up.final and up.final.dist or -1),
+		#up.hits == 0 and up.endT and not up.landed and (gun == "glock_17" and byLife or (not byLife and up.final.dist > Deagle.cfg.range)),
+		up.final and up.final.age)
+	local co = T(gun .. " / steel corridor (maxHops)")
+	local mh = Deagle.cfg.impactCap.maxHops
+	check(string.format("%s: the steel corridor: %d skips, ended by maxHops %d (not landed)", gun, #co.hits, mh),
+		#co.hits == mh + 1 and co.hits[#co.hits].goesOn and not co.landed and co.final.hops == mh + 1, #co.hits)
+	local bu = T(gun .. " / burst of 12 past bystanders")
+	local wallHits, order = 0, true
+	for i, h in ipairs(bu.hits) do
+		if h.surface == "mat_rock" then wallHits = wallHits + 1 end
+		local p = bu.hits[i - 1]
+		if p and p.frame == h.frame and p.round > h.round then order = false end
+	end
+	local by = {}
+	for _, f in ipairs(bu.flybys or {}) do by[f.entity] = (by[f.entity] or 0) + 1 end
+	check(string.format("%s: burst: 9 rounds hit the wall, 3 fly over; within a frame in the order fired; most alive %s", gun, tostring(bu.maxAlive)),
+		wallHits == 9 and #bu.hits == 9 and order, wallHits .. " " .. tostring(order))
+	check(string.format("%s: near misses: the bystander 2 m off the path hears it (%d), the one 3 m off doesn't (%d)", gun, by.by2mWUID or 0, by.by3mWUID or 0),
+		(by.by2mWUID or 0) >= 1 and (by.by3mWUID or 0) == 0, by.by2mWUID)
 	local np = T(gun .. " / NPC at 50 m")
 	check(gun .. ": the NPC is hit first, at 49.85 m, once", np.hits[1] and np.hits[1].entity == "npc1" and math.abs(np.hits[1].dist - 49.85) < 0.01
 		and not (np.hits[2] and np.hits[2].entity == "npc1"),
 		np.hits[1] and np.hits[1].entity)
 	for k, tr in pairs(traces) do
 		if k:find("^" .. gun) then
-			local grows = true
-			for i = 2, #tr.hits do if tr.hits[i].dist < tr.hits[i - 1].dist - 1e-9 then grows = false end end
+			local grows, last = true, {}
+			for _, h in ipairs(tr.hits) do   -- per round (a burst's rounds each have their own path)
+				if h.dist < (last[h.round] or -1) - 1e-9 then grows = false end
+				last[h.round] = h.dist
+			end
 			if not grows then check(k .. ": hit path lengths grow along the path", false, "out of order") end
 		end
 	end
@@ -371,8 +541,9 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 	Deagle.rounds, Deagle.roundsToken, M.timers = {}, nil, {}
 	Deagle.frameDt = 1 / 60
 	rec = { hits = {}, samples = {}, t0 = M.t }
+	-- LaunchRound steps it once before returning it: no hit there (the wall is 100 m out), so its id is set in time
 	local r = Deagle:LaunchRound(vec(0, 0, 10), vec(0, 1, 0), phys, nil)
-	rec.r = r
+	rec.r, rec.ids = r, { [r] = 1 }
 	M.advance(0.5, 2)
 	M.advance(0.5, 60)
 	check(gun .. ": a 0.5 s hitch doesn't carry it through the 100 m wall", #rec.hits == 1 and math.abs(rec.hits[1].pos.y - 100) < 1e-6, #rec.hits)
@@ -387,6 +558,25 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 	rec = { hits = {}, samples = {}, t0 = M.t }
 	local r = Deagle:LaunchRound(vec(0, 0, 10), vec(0, 1, 0), Deagle:ShotPhysics(), nil)
 	check(gun .. ": a wall at 5 m is hit in the frame the round is fired (no frame advanced)", r.landed and #(Deagle.rounds or {}) == 0, r.landed)
+end
+
+-- 2d. 1024 rounds in the air at once, nothing dropped by the cap, none lost
+do
+	setScene({ world = {} })
+	Deagle:UseGun("deagle")
+	local phys = Deagle:ShotPhysics()
+	Deagle.rounds, Deagle.roundsToken, M.timers, Deagle.roundsDropped = {}, nil, {}, nil
+	Deagle.frameDt = 1 / 60
+	rec = nil
+	local most = 0
+	for _ = 1, 64 do   -- 16 a frame for 64 frames: 1024 rounds within 1.07 s, all still climbing
+		for k = 1, 16 do Deagle:LaunchRound(vec(0, 0, 10), vec(0.001 * k, 0.3, 1), phys, nil) end
+		M.advance(1 / 60, 60)
+		most = math.max(most, #(Deagle.rounds or {}))
+	end
+	check(string.format("1024 rounds in the air at once (most %d), none dropped by the cap (cap %d)", most, Deagle.cfg.impactCap.maxRounds),
+		most == 1024 and not (Deagle.roundsDropped and Deagle.roundsDropped > 0), most)
+	Deagle.rounds, Deagle.roundsToken, M.timers = {}, nil, {}
 end
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
