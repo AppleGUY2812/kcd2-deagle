@@ -163,8 +163,13 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   keep looking up for 21 s until "stress test done". Infinite ammo, 10 rounds a second by default (`deagle_stress 75`
   is a CIWS); `aim` fires where you look with no recoil, impacts included, and holds fire while you look at a person or an animal.
   5 s with tracers, a pause, 5 s without. A third word `ab` (`deagle_stress 75 aim ab`, 30 s) fires with everything,
-  then with the impact effects off, the holes off, the hit sounds off: which part of a hit costs. `deagle_stress stop`
-  ends a run at once; a run also stops itself when frames stay over 150 ms for a second.
+  then with the impact effects off, the holes off, the hit sounds off: which part of a hit costs. A third word `shot`
+  (`deagle_stress 250 sky shot`, ~45 s) does the same for the shot itself: everything, then no tracers, no flash, no
+  casings, no gunshot sound, no AI hearing, no gun animation, then the bare rounds, 3 s each with a rest between. A
+  fire phase that stays over 150 ms for a second ends early (a `STRESS cliff:` line) and the rest waits until frames
+  are back near idle (the run stops if they aren't after 10 s). `deagle_stress stop`
+  ends a run at once; any other run stops itself when frames stay over 150 ms for a second. Each `STRESS` line ends
+  with the shots fired in it.
 - `deagle_lua Deagle:Stress('spawn <name> <per second>')`: one system's cost on its own. A registered spawner runs N
   times a second at the spot you look at (10 m ahead if nothing), 10 s, no gun, same `STRESS` lines. `hole` = bullet
   holes as the game makes them (no budget); `fx_<effect>` = one impact effect raw, no budget, light or extra rays

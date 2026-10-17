@@ -389,6 +389,47 @@ do
 	check(string.format("deagle_stress 20 aim ab: %d fire-phase summaries (4), effects / holes / sounds put back %s %s %s", summaries,
 		tostring(Deagle.SpawnFx == fxWas), tostring(Particle.CreateMatDecal == decalWas), tostring(Deagle.HitSound == soundWas)),
 		summaries == 4 and Deagle.SpawnFx == fxWas and Particle.CreateMatDecal == decalWas and Deagle.HitSound == soundWas and Deagle.stress == nil, summaries)
+	-- the shot A/B: 8 fire phases, each part of the shot off in its own phase, everything back afterwards
+	local names = { "MuzzleFlash", "EjectCase", "CueFire", "RonHere", "ShotHeard", "VmPlay", "VmRecoilAdd", "VmRounds" }
+	local was = {}
+	for _, k in ipairs(names) do was[k] = Deagle[k] end
+	local flashes, flashOff = 0, nil
+	local mf = Deagle.MuzzleFlash
+	Deagle.MuzzleFlash = function(...) flashes = flashes + 1 return mf(...) end
+	was.MuzzleFlash = Deagle.MuzzleFlash
+	M.view.pitch = 1.2
+	M.console("deagle_stress", "20 sky shot")
+	local inNoFlash = 0
+	for _ = 1, 50 * 60 do
+		M.advance(1 / 60)
+		if Deagle.stress and Deagle.MuzzleFlash ~= was.MuzzleFlash then inNoFlash = inNoFlash + 1 end
+		if not Deagle.stress then break end
+	end
+	summaries = 0
+	local shotStart = false
+	for _, l in ipairs(M.logs) do
+		if l:find("STRESS == FIRE ") then summaries = summaries + 1 end
+		if l:find("STRESS start: 20 rounds a second, into the sky, shot A/B") then shotStart = true end
+	end
+	local back = true
+	for _, k in ipairs(names) do if Deagle[k] ~= was[k] then back = false end end
+	check(string.format("deagle_stress 20 sky shot: started %s, %d fire-phase summaries (8 + the 8 above), flash off for %d frames, %d flashes, parts back %s, done %s",
+		tostring(shotStart), summaries, inNoFlash, flashes, tostring(back), tostring(Deagle.stress == nil)),
+		shotStart and summaries == 16 and inNoFlash > 300 and flashes > 0 and back and Deagle.stress == nil, summaries)
+	Deagle.MuzzleFlash = mf
+	-- at 5 fps (from the first fire phase on) a fire phase ends at the 150 ms guard ("cliff") instead of the run, and a rest that never gets back under
+	-- 40 ms stops the run after 10 s
+	M.console("deagle_stress", "20 sky shot")
+	M.advance(2.5)
+	M.advance(14, 5)
+	local cliff, stuck = false, false
+	for _, l in ipairs(M.logs) do
+		if l:find("STRESS cliff: FIRE all") then cliff = true end
+		if l:find("STRESS aborted: frames still over 40 ms after 10 s of rest") then stuck = true end
+	end
+	check(string.format("deagle_stress shot at 5 fps: cliff ends the phase %s, stuck rest stops the run %s, done %s", tostring(cliff), tostring(stuck), tostring(Deagle.stress == nil)),
+		cliff and stuck and Deagle.stress == nil and Deagle.MuzzleFlash == mf, 0)
+	M.view.pitch = 1.2
 	-- spawn mode: a registered spawner N times a second at one spot, 10 s, no gun (Claude 5's plan step 4)
 	local calls, shotsBefore = 0, shots
 	Deagle.StressSpawners.test = function(pos, normal, i) calls = calls + 1 end
