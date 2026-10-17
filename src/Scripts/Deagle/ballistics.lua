@@ -14,7 +14,10 @@ local IMPACT_CAP = { perRound = 2,    -- effects a round makes (its first hit an
 	perFrame = 6,                     -- effects all rounds together make in one frame
 	mergeDist = 0.3, mergeTime = 0.1, -- m, s: a second effect on the same surface this close to the last one looks the same: skipped
 	maxHops = 4,                      -- hits a round survives (ricochets, wallbangs)
-	maxRounds = 64 }                  -- rounds in flight: the oldest is dropped past this (the native round sim lifts it)
+	maxRounds = 1024 }                -- rounds in flight: past this the oldest is dropped, and logged (the native round sim
+	                                  -- lifts it). Was 64: a 75 rounds/s CIWS lost its rounds 0.85 s out (~300 m) in the
+	                                  -- air; 1024 at 75/s measured 4.6 ms Lua, ~57 fps (2026-10-17, sky). The user: drops
+	                                  -- mid-air are not acceptable
 local function copyTable(t) local o = {} for k, v in pairs(t) do o[k] = v end return o end
 Deagle.cfgDefaults = Deagle.cfgDefaults or {}
 Deagle.cfgDefaults.impactCap = copyTable(IMPACT_CAP)   -- deagle_reset keeps these
@@ -499,7 +502,15 @@ function Deagle:LaunchRound(pos, dir, phys, trail)
 	self.rounds = self.rounds or {}
 	table.insert(self.rounds, r)
 	local cap = self.cfg.impactCap.maxRounds
-	while #self.rounds > cap do table.remove(self.rounds, 1) end
+	while #self.rounds > cap do
+		table.remove(self.rounds, 1)
+		self.roundsDropped = (self.roundsDropped or 0) + 1
+	end
+	if (self.roundsDropped or 0) > 0 and System.GetCurrAsyncTime() - (self.roundsDropLogT or -1e9) > 1 then   -- never silent
+		self.roundsDropLogT = System.GetCurrAsyncTime()
+		log(string.format("$4round cap (impactCap.maxRounds %d): %d rounds in flight dropped", cap, self.roundsDropped))
+		self.roundsDropped = 0
+	end
 	if not self.roundsToken or System.GetCurrTime() - (self.roundsTickT or -1e9) > 0.5 then   -- none, or a dead chain
 		local token = {}
 		self.roundsToken = token

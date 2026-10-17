@@ -75,7 +75,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `impactCap.perFrame` | `6` | impact effects all rounds together make in one frame |
 | `impactCap.mergeDist` / `.mergeTime` | `0.3` / `0.1` | metres and seconds: a second effect on the same surface this close to the last one looks the same and is skipped |
 | `impactCap.maxHops` | `4` | hits a round survives (ricochets and wallbangs chain) |
-| `impactCap.maxRounds` | `64` | rounds in flight; past this the oldest is dropped (steady state at 75 rounds/s is about 43: a round lives 0.57 s at 250 m) |
+| `impactCap.maxRounds` | `1024` | rounds in flight; past this the oldest is dropped and the log says how many ("round cap", at most once a second). Was 64: a 75 rounds/s CIWS lost its rounds ~300 m out in the air. Goes when rounds move into the plugin |
 | `killCam.on` | `true` | Sniper Elite V2's kill cam: a long shot that will kill a living NPC slows the game to 3 %, the camera rides behind the bullet (1.1 m easing to 2 m, field of view 10 -> 30 degrees), the hit and the way out play at 10 %, then normal speed (numbers read from its data: docs/se2_killcam.md) |
 | `killCam.organs` | `true` | at the hit the NPC's body is hidden and its real organs (Sniper Elite V2's models: heart, lungs, liver, kidneys, windpipe; the eyeballs on a head hit) are shown in its place until the cam ends, then the body comes back. Needs the organ assets in the install |
 | `killCam.minDist` | `40` | metres the round must have flown for a kill cam (nearer shots get none) |
