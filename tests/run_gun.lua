@@ -486,6 +486,24 @@ do
 		math.deg(topPitch), math.deg(M.view.pitch), tostring(all)),
 		topPitch <= math.rad(88) + 1e-4 and M.view.pitch >= 1.2 - 1e-3 and all, topPitch)
 	M.view.pitch = 1.2
+	-- the profile: every Deagle function and the engine ones it calls timed through the fire phase, then all put back
+	local fireWas3, getEntWas, spawnWas = Deagle.Fire, System.GetEntity, Particle.SpawnEffect
+	n0 = #M.logs
+	M.console("deagle_stress", "20 sky prof")
+	for _ = 1, 60 * 9 do M.view.pitch = 1.2; M.advance(1 / 60) end
+	local profOn, rows, shotsSeen, engineRow = false, 0, 0, false
+	for i = n0 + 1, #M.logs do
+		local l = M.logs[i]
+		if l:find("PROF on: %d+ functions timed") then profOn = true end
+		if l:find("PROF +%d+ ") then rows = rows + 1 end
+		local sh = l:match("PROF %d+ frames, (%d+) shots") if sh then shotsSeen = tonumber(sh) end
+		if l:find("PROF +%d+ System%.") or l:find("PROF +%d+ Physics%.") then engineRow = true end
+	end
+	check(string.format("deagle_stress 20 sky prof: on %s, %d rows, %d shots profiled (80), an engine call listed %s, all put back %s %s %s, done %s",
+		tostring(profOn), rows, shotsSeen, tostring(engineRow), tostring(Deagle.Fire == fireWas3), tostring(System.GetEntity == getEntWas),
+		tostring(Particle.SpawnEffect == spawnWas), tostring(Deagle.stress == nil)),
+		profOn and rows >= 10 and shotsSeen >= 75 and shotsSeen <= 85 and engineRow and Deagle.Fire == fireWas3 and System.GetEntity == getEntWas
+		and Particle.SpawnEffect == spawnWas and Deagle.stress == nil, rows)
 	-- spawn mode: a registered spawner N times a second at one spot, 10 s, no gun (Claude 5's plan step 4)
 	local calls, shotsBefore = 0, shots
 	Deagle.StressSpawners.test = function(pos, normal, i) calls = calls + 1 end

@@ -171,7 +171,11 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   are back near idle (the run stops if they aren't after 10 s). A fourth word picks the parts instead
   (`deagle_stress 250 sky shot casebody,portsmoke`): everything, then without each one. Parts: `tracers`, `flash`,
   `casings`, `casebody` (the casing's physics body, its port smoke stays), `portsmoke` (the smoke, the body stays),
-  `gunsound`, `hearing`, `anim`, `shot` (all but the rounds). `deagle_stress stop`
+  `gunsound`, `hearing`, `anim`, `shot` (all but the rounds). A third word `prof`
+  (`deagle_lua Deagle:Stress('1000 sky prof')`, 8 s) times every function of the mod, and every engine function
+  (`System.`, `Physics.`, `Particle.`, ...) they call, through a 4 s fire phase, then logs `PROF` lines: the top 30
+  by self time per frame (without what they call), their total, calls per frame and microseconds a call. KCD2's Lua
+  clock moves in 0.244 ms steps, so these are averages over many calls, and the timing adds ~1-2 us a call. `deagle_stress stop`
   ends a run at once; any other run stops itself when frames stay over 150 ms for a second. Each `STRESS` line ends
   with the shots fired in it, the rounds launched and the frames held (the view off the sky, or on a person); each
   fire phase's `STRESS ==` line adds "shots N of M due, R rounds launched, H frames held" and `THROTTLED` when

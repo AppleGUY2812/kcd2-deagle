@@ -229,6 +229,70 @@ STRESS_PARTS.shot = {}
 for _, k in ipairs({ "flash", "casings", "gunsound", "hearing", "anim" }) do
 	for _, e in ipairs(STRESS_PARTS[k]) do STRESS_PARTS.shot[#STRESS_PARTS.shot + 1] = e end
 end
+-- The profile (third word "prof": deagle_lua Deagle:Stress('1000 sky prof')): through its fire phase every function of
+-- Deagle, and every engine function in PROF_ENGINE called from them, is timed: self time (without the Deagle /
+-- engine functions it calls) and total, per frame, and the calls. At 1000 rounds a second our Lua took 24.9 ms a frame,
+-- ~0.73 ms a shot (Claude 1's run, 2026-10-17): which functions? KCD2's Lua clock moves in 0.244 ms steps (float32
+-- seconds), so a call's time is 0 or a step: the numbers are averages over many calls, and the timing itself adds ~1-2
+-- us a call (pcall and a table per call).
+local STRESS_PROF = { { "idle", 2, false, true }, { "FIRE profiled", 4, true, true, prof = true }, { "rest", 2, false, true } }
+local PROF_ENGINE = { "System", "Physics", "Particle", "XGenAIModule", "AudioUtils", "Game", "Script", "Sound", "ItemUtils" }
+local PROF_SKIP = { Stress = true, StressStop = true, VmTick = true, GetCurrAsyncTime = true, GetCurrTime = true }
+local function profPack(...) return { n = select("#", ...), ... } end
+local function stressProf(X, on)
+	local P = X.prof
+	if P and not on then
+		for i = #P.orig, 1, -1 do local o = P.orig[i]; o[1][o[2]] = o[3] end
+		X.prof = nil
+		local rows = {}
+		for name, st in pairs(P.stats) do if st[3] > 0 then rows[#rows + 1] = { name, st[1], st[2], st[3] } end end
+		table.sort(rows, function(x, y) if x[2] ~= y[2] then return x[2] > y[2] end if x[3] ~= y[3] then return x[3] > y[3] end return x[4] > y[4] end)
+		local f = math.max(1, P.frames)
+		log(string.format("PROF %d frames, %d shots: %.2f ms a frame in the profiled functions (KCD2's clock steps 0.244 ms: averages)",
+			P.frames, P.shots, P.top / f * 1000))
+		for i = 1, math.min(30, #rows) do
+			local r = rows[i]
+			log(string.format("PROF %2d %-34s self %6.3f ms/frame, total %6.3f, %7.1f calls/frame, %6.1f us self a call", i, r[1],
+				r[2] / f * 1000, r[3] / f * 1000, r[4] / f, r[2] / r[4] * 1e6))
+		end
+		return
+	end
+	if not on or P then return end
+	P = { stats = {}, orig = {}, frames = 0, shots = 0, depth = 0, child = {}, top = 0 }
+	X.prof = P
+	local clock = System.GetCurrAsyncTime
+	local function wrap(t, k, name, engine)
+		local f = t[k]
+		local st = P.stats[name] or { 0, 0, 0 }
+		P.stats[name] = st
+		P.orig[#P.orig + 1] = { t, k, f }
+		t[k] = function(...)
+			if engine and P.depth == 0 then return f(...) end   -- the game's own scripts calling it: not ours
+			local d = P.depth + 1
+			P.depth, P.child[d] = d, 0
+			local a = clock()
+			local r = profPack(pcall(f, ...))
+			local el = clock() - a
+			P.depth = d - 1
+			st[1], st[2], st[3] = st[1] + el - P.child[d], st[2] + el, st[3] + 1
+			if d > 1 then P.child[d - 1] = P.child[d - 1] + el else P.top = P.top + el end
+			if not r[1] then error(r[2], 0) end
+			return unpack(r, 2, r.n)
+		end
+	end
+	local names = {}
+	for k, v in pairs(Deagle) do if type(v) == "function" and not PROF_SKIP[k] then names[#names + 1] = k end end
+	for _, k in ipairs(names) do wrap(Deagle, k, k, false) end
+	for _, tn in ipairs(PROF_ENGINE) do
+		local t = _G[tn]
+		if type(t) == "table" then
+			local fns = {}
+			for k, v in pairs(t) do if type(v) == "function" and not PROF_SKIP[k] then fns[#fns + 1] = k end end
+			for _, k in ipairs(fns) do wrap(t, k, tn .. "." .. k, true) end
+		end
+	end
+	log(string.format("PROF on: %d functions timed", #P.orig))
+end
 -- switch one part of a hit or a shot off for a phase (X.offOrig keeps what to put back)
 local function stressOff(X, what)
 	if X.offOrig then
@@ -275,6 +339,7 @@ end
 function Deagle:StressStop(why)
 	local X = self.stress
 	if not X then return end
+	stressProf(X, false)   -- first: it puts back the stress's own wrappers, which X.orig then replaces
 	for k, f in pairs(X.orig) do self[k] = f end
 	stressOff(X, nil)
 	self.cfg.tracers, self.stress = X.tracersWas, nil
@@ -302,7 +367,8 @@ function Deagle:Stress(arg)
 	local rps = math.max(1, math.min(2000, tonumber(words[1]) or (spawner and 30 or 10)))
 	local perFrame = math.max(8, math.ceil(rps / 30))   -- shots a frame at most (a long frame doesn't dump a burst)
 	local mode = spawner and "spawn" or (words[2] == "aim" and "aim" or "sky")
-	local phases = spawner and STRESS_SPAWN or (words[3] == "ab" and STRESS_AB or words[3] == "shot" and STRESS_SHOT or STRESS)
+	local phases = spawner and STRESS_SPAWN or (words[3] == "ab" and STRESS_AB or words[3] == "shot" and STRESS_SHOT
+		or words[3] == "prof" and STRESS_PROF or STRESS)
 	-- a fourth word picks the shot A/B's parts: deagle_stress 250 sky shot casebody,portsmoke = everything, then
 	-- without each of those
 	local shotAB = phases == STRESS_SHOT
@@ -372,7 +438,8 @@ function Deagle:Stress(arg)
 		local a, g = clock(), System.GetCurrTime()
 		if lastA and lastG and g > lastG then   -- frames the game ran (not paused in the background)
 			local ph = phases[X.ph]
-			if X.offFor ~= X.ph then X.offFor = X.ph; stressOff(X, ph[5]) end
+			if X.offFor ~= X.ph then X.offFor = X.ph; stressOff(X, ph[5]); stressProf(X, ph.prof) end
+			if X.prof then X.prof.frames = X.prof.frames + 1 end
 			X.start, X.t0 = X.start or g, X.t0 or g
 			X.win = X.win or { t = g, n = 0, sum = 0, max = 0 }
 			local w, dt = X.win, a - lastA
@@ -406,6 +473,7 @@ function Deagle:Stress(arg)
 					s.state.ammo = 7
 					pcall(s.Fire, s, true)
 					nextShot, n, X.shots, X.phShots = nextShot + 1 / rps, n + 1, X.shots + 1, X.phShots + 1
+					if X.prof then X.prof.shots = X.prof.shots + 1 end
 				end
 				if g >= nextShot then nextShot = g end
 			elseif ph[3] and mode ~= "spawn" then nextShot, X.held, X.phHeld = g, X.held + 1, X.phHeld + 1   -- a fire phase, the view off the sky / on life
@@ -455,7 +523,7 @@ function Deagle:Stress(arg)
 	if spawner then log(string.format("STRESS start: spawn %s, %d a second at one spot ahead, no gun", spawnName, rps))
 	else
 		log(string.format("STRESS start: %d rounds a second, %s%s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky",
-			phases == STRESS_AB and ", impact A/B" or shotAB and ", shot A/B" or ""))
+			phases == STRESS_AB and ", impact A/B" or shotAB and ", shot A/B" or phases == STRESS_PROF and ", profiled" or ""))
 	end
 	local total = 0
 	for _, ph in ipairs(phases) do total = total + ph[2] end
