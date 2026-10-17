@@ -254,9 +254,11 @@ function NS.dn(D, libPath, headerPath)
 		L.sim_answer(S, id, goesOn and 1 or 0, V1, V2, skipHandle(skip), tumble and 1 or 0,
 			(markHit == true or markHit == 1) and 1 or 0, turned and 1 or 0)
 	end
-	function DN.round(id)
+	function DN.round(id, t)   -- as the plugin: fills t (px .. hops), true; nil when the round is gone
 		if L.sim_get(S, id, RS) == 0 then return nil end
-		return RS.pos.x, RS.pos.y, RS.pos.z, RS.vel.x, RS.vel.y, RS.vel.z, RS.dist, RS.age, RS.hops
+		t.px, t.py, t.pz, t.vx, t.vy, t.vz = RS.pos.x, RS.pos.y, RS.pos.z, RS.vel.x, RS.vel.y, RS.vel.z
+		t.dist, t.age, t.hops = RS.dist, RS.age, RS.hops
+		return true
 	end
 	return DN
 end

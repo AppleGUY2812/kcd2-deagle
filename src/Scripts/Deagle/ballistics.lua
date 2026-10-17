@@ -579,6 +579,11 @@ Deagle.cfg.roundSim = Deagle.cfg.roundSim or "lua"
 function Deagle:RoundSim()
 	if self.cfg.roundSim ~= "native" then return nil end
 	local N = rawget(_G, "DN")
+	if not (N and N.fire) and not self.roundBindAsked then   -- the plugin makes DN's round functions when asked (synchronous)
+		self.roundBindAsked = true
+		self:Native("rounds bind")
+		N = rawget(_G, "DN")
+	end
 	if not (N and N.fire and N.simInit) then
 		if not self.roundSimSaid then
 			self.roundSimSaid = true
@@ -593,12 +598,15 @@ function Deagle:RoundSim()
 			if sf and sf.fx == "pass" then pass[#pass + 1] = id end
 		end
 		local okW, water = pcall(System.GetSurfaceTypeIdByName, "mat_water")
-		local fb, kc = self.FLYBY, self.cfg.killCam
+		local fb, kc, p = self.FLYBY, self.cfg.killCam, self:Player()
 		-- the kill cam's look-ahead, natively (KillCamStep's gates and reach: speed x aheadK + a frame's flight)
 		N.simInit({ step = ROUND_STEP, life = ROUND_LIFE, range = self.cfg.range, maxHops = self.cfg.impactCap.maxHops,
 			minSpeedOn = 30, nearMiss = self.cfg.nearMiss or 0, chest = fb.chest, flybyGap = fb.gap,
 			waterSurface = okW and type(water) == "number" and water or -1, pass = pass,
-			aheadK = kc.speed.pre * kc.lead * 1.25, aheadMinDist = kc.minDist })
+			aheadK = kc.speed.pre * kc.lead * 1.25, aheadMinDist = kc.minDist,
+			player = p and p.id })   -- the plugin's rays skip Henry by it
+		-- the plugin logs its own count ("simInit: N pass-through surfaces"): the two must agree
+		log(string.format("roundSim native: %d pass-through surfaces, water %s", #pass, tostring(okW and water)))
 		self.roundAhead = nil
 		self.roundSimN, self.roundPhys, self.roundsById = N, setmetatable({}, { __mode = "k" }), {}
 	end
@@ -608,14 +616,15 @@ end
 -- a round's live fields, read from the plugin (DN.round: 9 numbers) once a frame when asked
 local LIVE = { pos = true, vel = true, dist = true, age = true, hops = true }
 local roundFrame = 0
+local ROUND_T = {}
 local liveMeta = { __index = function(r, k)
 	if not LIVE[k] then return nil end
 	local id = rawget(r, "nid")
 	if not id then return nil end
 	if rawget(r, "liveF") ~= roundFrame then
-		local px, py, pz, vx, vy, vz, dist, age, hops = Deagle.roundSimN.round(id)
-		if not px then return nil end
-		rawset(r, "live", { pos = { x = px, y = py, z = pz }, vel = { x = vx, y = vy, z = vz }, dist = dist, age = age, hops = hops })
+		local t = ROUND_T   -- DN.round fills it (a C function returns at most 3 values): one scratch table
+		if not Deagle.roundSimN.round(id, t) then return nil end
+		rawset(r, "live", { pos = { x = t.px, y = t.py, z = t.pz }, vel = { x = t.vx, y = t.vy, z = t.vz }, dist = t.dist, age = t.age, hops = t.hops })
 		rawset(r, "liveF", roundFrame)
 	end
 	return rawget(r, "live")[k]
