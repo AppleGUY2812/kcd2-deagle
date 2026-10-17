@@ -526,6 +526,29 @@ do
 	end
 	check(string.format("deagle_stress 20,40 sky prof: shots profiled at 20/s %s (80), at 40/s %s (160), done %s", tostring(per[20]), tostring(per[40]),
 		tostring(Deagle.stress == nil)), per[20] and per[40] and math.abs(per[20] - 80) <= 5 and math.abs(per[40] - 160) <= 8 and Deagle.stress == nil, per[20] or 0)
+	-- KCD2's Lua numbers are float32 and the game clock is the save's (51602 s in the user's): 3.9 ms steps. Shots are
+	-- owed as a small number, so 500 a second fires ~500, not 256 (1/500 s rounded to a step) and 1000 not only the cap
+	local ffi = require("ffi")
+	local f32 = ffi.new("float[1]")
+	local function asFloat(x) f32[0] = x return f32[0] end
+	local getTime, tWas = System.GetCurrTime, M.t
+	M.t = 51602.5
+	System.GetCurrTime = function() return asFloat(M.t) end
+	local got = {}
+	for _, rate in ipairs({ 500, 1000 }) do
+		n0 = #M.logs
+		M.console("deagle_stress", tostring(rate))
+		for _ = 1, 60 * 7.5 do M.view.pitch = 1.2; M.advance(1 / 60) end
+		Deagle:StressStop("test")
+		for i = n0 + 1, #M.logs do
+			local sh = M.logs[i]:match("STRESS == FIRE tracers on .*shots (%d+) of")
+			if sh then got[rate] = tonumber(sh) end
+		end
+	end
+	System.GetCurrTime = getTime
+	check(string.format("deagle_stress on a float32 clock at 51602 s: 500/s fired %s in 5 s (2500), 1000/s %s (5000)", tostring(got[500]), tostring(got[1000])),
+		got[500] and got[1000] and math.abs(got[500] - 2500) <= 75 and math.abs(got[1000] - 5000) <= 150, got[500] or 0)
+	M.view.pitch = 1.2
 	-- spawn mode: a registered spawner N times a second at one spot, 10 s, no gun (Claude 5's plan step 4)
 	local calls, shotsBefore = 0, shots
 	Deagle.StressSpawners.test = function(pos, normal, i) calls = calls + 1 end

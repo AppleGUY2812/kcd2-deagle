@@ -427,7 +427,11 @@ function Deagle:Stress(arg)
 	X.orig.LaunchRound = self.LaunchRound
 	self.LaunchRound = function(...) X.launched, X.phLaunched = X.launched + 1, X.phLaunched + 1 return X.orig.LaunchRound(...) end
 	local vt = self.VmTick   -- the timed one: the frame clock goes around it
-	local lastA, lastG, nextShot
+	-- Shots owed, a small number: rate x the game time of each frame. Not a next-shot time added to the game clock: KCD2's
+	-- Lua numbers are float32 and the clock is the save's game time (51602 s in the user's, 2026-10-17), where a float
+	-- moves in 3.9 ms steps; 1/500 s rounded to one step (256 a second), 1/1000 s to nothing (only the per-frame cap
+	-- stopped it). The frame steps themselves add up to the true time.
+	local lastA, lastG, owed = nil, nil, 0
 	local function phaseEnd(s, ph, secs)
 		table.sort(X.frames); table.sort(X.luas)
 		-- a fire phase also says how many of the due shots became rounds: "THROTTLED" under 90 % (a held view, a refused shot)
@@ -460,8 +464,8 @@ function Deagle:Stress(arg)
 			X.luas[#X.luas + 1] = X.frameLua * 1000
 			X.frameLua = 0
 			s.cfg.tracers = ph[4]
-			nextShot = nextShot or g
-			if not ph[3] then nextShot = g
+			local gdt = g - lastG
+			if not ph[3] then owed = 0
 			elseif mode == "spawn" then
 				if not X.spot then   -- where the view hits now (10 m out if nothing), for the whole run
 					local eye, dir, hits = System.GetViewCameraPos(), System.GetViewCameraDir(), {}
@@ -469,29 +473,32 @@ function Deagle:Stress(arg)
 					local h = okR and nR and nR > 0 and hits[1]
 					X.spot = h and { pos = h.pos, normal = h.normal } or { pos = vadd(eye, vscale(dir, 10)), normal = vscale(dir, -1) }
 				end
-				local n = 0
+				owed = owed + rps * gdt
+				local n = math.min(math.floor(owed), perFrame)
 				local a0 = clock()
-				while g >= nextShot and n < perFrame do
+				for _ = 1, n do
 					X.spawned = (X.spawned or 0) + 1
 					pcall(spawner, X.spot.pos, X.spot.normal, X.spawned)
-					nextShot, n = nextShot + 1 / rps, n + 1
 				end
+				owed = owed - n
+				owed = owed - math.floor(owed)   -- past the cap: the backlog goes (a long frame doesn't dump a burst)
 				local d = clock() - a0
 				X.lua, X.frameLua = X.lua + d, X.frameLua + d
-				if g >= nextShot then nextShot = g end
 			elseif (mode == "sky" and System.GetViewCameraDir().z > 0.5) or (mode == "aim" and not aimsAtLife(s)) then
-				local n = 0
 				local rr = ph.rate or rps
 				local pf = ph.rate and math.max(8, math.ceil(rr / 30)) or perFrame
-				while g >= nextShot and n < pf do   -- every shot due this frame
+				owed = owed + rr * gdt
+				local n = math.min(math.floor(owed), pf)   -- every shot due this frame
+				for _ = 1, n do
 					s.state.ammo = 7
 					pcall(s.Fire, s, true)
-					nextShot, n, X.shots, X.phShots = nextShot + 1 / rr, n + 1, X.shots + 1, X.phShots + 1
-					if X.prof then X.prof.shots = X.prof.shots + 1 end
 				end
-				if g >= nextShot then nextShot = g end
-			elseif ph[3] and mode ~= "spawn" then nextShot, X.held, X.phHeld = g, X.held + 1, X.phHeld + 1   -- a fire phase, the view off the sky / on life
-			else nextShot = g end
+				X.shots, X.phShots = X.shots + n, X.phShots + n
+				if X.prof then X.prof.shots = X.prof.shots + n end
+				owed = owed - n
+				owed = owed - math.floor(owed)   -- past the cap: the backlog goes
+			elseif ph[3] and mode ~= "spawn" then owed, X.held, X.phHeld = 0, X.held + 1, X.phHeld + 1   -- a fire phase, the view off the sky / on life
+			else owed = 0 end
 			if g - w.t >= 0.5 then
 				local rounds = 0
 				for _ in pairs(s.rounds or {}) do rounds = rounds + 1 end
