@@ -18,5 +18,9 @@ System.LogAlways("[Deagle] probe mat: hit " .. table.concat(fields, " "))
 System.LogAlways(string.format("[Deagle] probe mat: physics surface %s at %.2f m, entity %s, renderNode %s",
 	Deagle.U.surfaceName(h), h.dist or -1, tostring(h.entity and h.entity:GetName()), tostring(h.renderNode)))
 local node = h.renderNode and ("0x" .. tostring(h.renderNode):match("(%x+)$"))   -- "userdata: 0000020A..." (%p, no 0x on Windows)
-if not node then return end
+if not node then   -- this build's hit table has no renderNode: the plugin casts its own ray (from 0.6 m ahead: clear of Henry)
+	System.LogAlways(string.format("[DN] probe matray %.3f %.3f %.3f %.4f %.4f %.4f 200", eye.x + dir.x * 0.6,
+		eye.y + dir.y * 0.6, eye.z + dir.z * 0.6, dir.x, dir.y, dir.z))
+	return
+end
 System.LogAlways(string.format("[DN] probe mat %s %.3f %.3f %.3f %.4f %.4f %.4f", node, h.pos.x, h.pos.y, h.pos.z, dir.x, dir.y, dir.z))

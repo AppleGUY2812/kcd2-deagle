@@ -9,6 +9,7 @@
 //                                        m 1 = unregister, SetMatrix, register again)
 //   lightoff                             deletes it (do it before loading a save)
 //   mat <node> <x y z> <dx dy dz>        the drawn sub-material at a hit on a static brush (hit.renderNode)
+//   matray <x y z> <dx dy dz> <len>      the same, the brush found by our own ray (Lua gives no renderNode)
 // No per-frame work, no hooks. Every engine call runs under SEH; strings from the engine are copied under SEH too.
 #include "probe.h"
 #include "log.h"
@@ -315,6 +316,39 @@ static void Mat(const char* args) {
 		rc, (void*)rn, r.node, r.ok, r.dist, r.matId, r.sub, r.surfId, r.surf, r.tri, r.us[0], r.us[1]);
 }
 
+// matray <x y z> <dx dy dz> <len>: the same as mat, but the brush comes from our own ray: ray_hit pCollider (+0x08) ->
+// IPhysicalEntity +0x58 GetiForeignData (1 = a static brush) and +0x50 GetForeignData(1) = the CBrush (its render
+// node). Lua's hit table has no renderNode in this build (2026-10-17: dist, normal, pos, surface only).
+static int SafeCollider(const uint8_t* hit, uintptr_t& rn, int& foreignType) {
+	__try {
+		uintptr_t coll = *(const uintptr_t*)(hit + 0x08);
+		auto itype = (int(__fastcall*)(uintptr_t))VF(coll, 0x58);
+		auto data = (uintptr_t(__fastcall*)(uintptr_t, int))VF(coll, 0x50);
+		if (!coll || !itype || !data) return -1;
+		foreignType = itype(coll);
+		rn = foreignType == 1 ? data(coll, 1) : 0;
+		return 1;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return -100; }
+}
+static void MatRay(const char* args) {
+	float a[7] = {};
+	if (ParseFloats(args, a, 7) < 7) { Log("probe matray: want x y z dx dy dz len"); return; }
+	alignas(16) uint8_t p[0x70]; alignas(16) uint8_t hit[0x50] = {};
+	FillRay(p, a, a + 3, a[6], hit, 0xF);
+	int n = SafeRwi(Env(0x30), p);
+	if (n <= 0) { Log("probe matray: no hit (%d)", n); return; }
+	uintptr_t rn = 0; int ftype = -1;
+	int c = SafeCollider(hit, rn, ftype);
+	float pos[3]; memcpy(pos, hit + 0x24, 12);
+	Log("probe matray: hit at %.2f m, surface_idx %d, collider %d, foreign type %d, brush %p", *(float*)hit,
+		(int)*(short*)(hit + 0x18), c, ftype, (void*)rn);
+	if (!rn) return;
+	MatResult r{};
+	int rc = SafeMat(rn, pos, a + 3, r);
+	Log("probe mat: %d node %p '%s': hit %d at %.3f m, sub-material %d '%s', surface %d '%s', tri %d; %.1f us first, %.1f us again",
+		rc, (void*)rn, r.node, r.ok, r.dist, r.matId, r.sub, r.surfId, r.surf, r.tri, r.us[0], r.us[1]);
+}
+
 void Probe_Command(const char* rest) {
 	char name[16] = {};
 	if (sscanf_s(rest, "%15s", name, (unsigned)sizeof(name)) != 1) { Log("probe: no name"); return; }
@@ -328,5 +362,6 @@ void Probe_Command(const char* rest) {
 	else if (!strcmp(name, "light")) Light(args);
 	else if (!strcmp(name, "lightoff")) LightOff();
 	else if (!strcmp(name, "mat")) Mat(args);
-	else Log("probe: unknown '%s' (threads nop bind ray rayq light lightoff mat)", name);
+	else if (!strcmp(name, "matray")) MatRay(args);
+	else Log("probe: unknown '%s' (threads nop bind ray rayq light lightoff mat matray)", name);
 }
