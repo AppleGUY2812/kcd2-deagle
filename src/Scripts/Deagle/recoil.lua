@@ -2,6 +2,13 @@
 -- Split out of deagle_main.lua (2026-10-15), which loads it (Deagle:LoadModule); its helpers come from Deagle.U.
 local U = Deagle.U
 local try = U.try
+-- A kick never turns the view past straight up or down: at 1000 rounds a second ~34 Deagle kicks a frame (~240 deg)
+-- flipped it over the top to 17 deg up (deagle_stress 1000, 2026-10-17). 88 deg: just short of the pole, where yaw is lost.
+local PITCH_MAX = math.rad(88)
+-- (a view already past it, looking further up than that, isn't pulled back)
+local function clampPitch(x, from)
+	return math.max(math.min(-PITCH_MAX, from), math.min(math.max(PITCH_MAX, from), x))
+end
 
 function Deagle:Recoil()
 	local phys = self:ShotPhysics()
@@ -14,7 +21,7 @@ function Deagle:Recoil()
 		local yaw = math.atan2(-d.x, d.y)
 		local up = math.rad(self.cfg.kickPitch + self.cfg.kickPitchVar * (math.random() * 2 - 1)) * k * (self.state.aiming and 0.7 or 1)
 		local side = math.rad(self.cfg.kickYaw) * k * (math.random() * 2 - 1)
-		p.actor:PlayerSetViewAngles({ x = pitch + up, y = 0, z = yaw + side })
+		p.actor:PlayerSetViewAngles({ x = clampPitch(pitch + up, pitch), y = 0, z = yaw + side })
 	end)
 	try("recoil", function()
 		p.actor:SetViewShake({ x = math.rad(2.2) * k, y = math.rad(0.6) * k, z = math.rad(0.4) * k },
@@ -114,12 +121,14 @@ function Deagle:CamRecoilTick()
 		if math.abs(r.pitch) < 1e-3 and math.abs(r.yaw) < 1e-3 then self.camRecoil, self.sprayN = nil, 0 end   -- settled: a new string
 		return
 	end
-	r.applied.pitch, r.applied.yaw = r.applied.pitch + dp, r.applied.yaw + dy
 	local p = self:Player()
 	try("view kick", function()
 		local d = System.GetViewCameraDir()
 		local pitch = math.asin(math.max(-1, math.min(1, d.z)))
 		local yaw = math.atan2(-d.x, d.y)
-		p.actor:PlayerSetViewAngles({ x = pitch + math.rad(dp), y = 0, z = yaw + math.rad(dy) })
+		local np = clampPitch(pitch + math.rad(dp), pitch)
+		dp = math.deg(np - pitch)   -- only what the pole let through counts, or the return would take the view below its start
+		p.actor:PlayerSetViewAngles({ x = np, y = 0, z = yaw + math.rad(dy) })
 	end)
+	r.applied.pitch, r.applied.yaw = r.applied.pitch + dp, r.applied.yaw + dy
 end

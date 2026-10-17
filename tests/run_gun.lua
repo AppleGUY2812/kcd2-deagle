@@ -460,6 +460,31 @@ do
 		named, noBodySmokes, smokeDuring, tostring(badName), tostring(Deagle.EjectCase == ejWas), tostring(Deagle.SpawnFx == sfWrapped)),
 		named == 2 and noBodySmokes > 0 and smokeDuring > 100 and badName and Deagle.EjectCase == ejWas and Deagle.SpawnFx == sfWrapped and Deagle.stress == nil, named)
 	Deagle.SpawnFx = fxWas2
+	-- a fire phase that couldn't fire (the view off the sky) says so: THROTTLED, with the held frames
+	n0 = #M.logs
+	M.console("deagle_stress", "20")
+	for _ = 1, 8 * 60 do M.view.pitch = 0; M.advance(1 / 60) end   -- held level: no recoil left over lifts it
+	Deagle:StressStop("test")
+	local throttled = false
+	for i = n0 + 1, #M.logs do if M.logs[i]:find("STRESS == FIRE tracers on .* 0 rounds launched, %d+ frames held THROTTLED") then throttled = true end end
+	check("deagle_stress with the view off the sky: the fire phase is marked THROTTLED with its held frames " .. tostring(throttled), throttled, 0)
+	-- 1000 rounds a second: ~17 kicks a frame never turn the view past the pole (it flipped over to 17 deg up), so the
+	-- run keeps firing, every due shot launched; and the view never ends below where it started
+	M.view.pitch = 1.2
+	n0 = #M.logs
+	M.console("deagle_stress", "1000")
+	local topPitch = 0
+	for _ = 1, 60 * 7.5 do M.advance(1 / 60); topPitch = math.max(topPitch, M.view.pitch) end
+	Deagle:StressStop("test")
+	M.advance(4)
+	local all = false
+	for i = n0 + 1, #M.logs do
+		local sh, due, la = M.logs[i]:match("STRESS == FIRE tracers on .*shots (%d+) of (%d+) due, (%d+) rounds launched")
+		if sh and tonumber(la) >= 0.9 * tonumber(due) then all = true end
+	end
+	check(string.format("deagle_stress 1000 sky: view at most %.1f deg (88), after %.1f deg (from 68.8), every due shot launched %s",
+		math.deg(topPitch), math.deg(M.view.pitch), tostring(all)),
+		topPitch <= math.rad(88) + 1e-4 and M.view.pitch >= 1.2 - 1e-3 and all, topPitch)
 	M.view.pitch = 1.2
 	-- spawn mode: a registered spawner N times a second at one spot, 10 s, no gun (Claude 5's plan step 4)
 	local calls, shotsBefore = 0, shots

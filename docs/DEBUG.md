@@ -105,7 +105,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `tracer.spawn` | `restart` | `restart`: each round's tracer is one effect the plugin moves and restarts every frame (needs the plugin from 2026-10-15; an older one says so in the log); `plugin`: a new effect every frame per round (the old way: 140 -> 70 fps spraying, and a DX12 crash) |
 | `tracer.mode` | `trail` | `trail`: the round's real path drawn as it flies, muzzle to hit (ricochets and wallbangs too); `flying`: the old self-flying particle |
 | `tracer.scaled` | `false` | the last piece of a trail shortened to end exactly on the hit (only once the scale-length check passes in game) |
-| `range` | `250` | metres a round flies before it's dropped |
+| `range` | `1000` | metres a round flies before it's dropped (or after 6 s in the air) |
 | `holeSize` | `0.035` | bullet hole size in m for a 9 mm (bigger rounds scale it up) |
 | `holeLife` | `300` | seconds a bullet hole stays |
 | `holeBudget.on` | `true` | bullet hole budget: no hole within `holeBudget.near` (0.1 m) of one made in the last `holeBudget.nearTime` (0.5 s) on the same face, then at most `holeBudget.rate` (30) a second after a burst of `holeBudget.burst` (15); skips are logged. `0` = every hit a hole (at 75 rounds/s that took the frame to 250 ms) |
@@ -173,7 +173,9 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   `casings`, `casebody` (the casing's physics body, its port smoke stays), `portsmoke` (the smoke, the body stays),
   `gunsound`, `hearing`, `anim`, `shot` (all but the rounds). `deagle_stress stop`
   ends a run at once; any other run stops itself when frames stay over 150 ms for a second. Each `STRESS` line ends
-  with the shots fired in it.
+  with the shots fired in it, the rounds launched and the frames held (the view off the sky, or on a person); each
+  fire phase's `STRESS ==` line adds "shots N of M due, R rounds launched, H frames held" and `THROTTLED` when
+  under 90 % of the due shots became rounds, so a PASS can't hide a gun that didn't fire.
 - `deagle_lua Deagle:Stress('spawn <name> <per second>')`: one system's cost on its own. A registered spawner runs N
   times a second at the spot you look at (10 m ahead if nothing), 10 s, no gun, same `STRESS` lines. `hole` = bullet
   holes as the game makes them (no budget); `fx_<effect>` = one impact effect raw, no budget, light or extra rays

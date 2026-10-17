@@ -316,7 +316,7 @@ function Deagle:Stress(arg)
 		end
 	end
 	local clock = System.GetCurrAsyncTime
-	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0, shots = 0, settleMs = 40,
+	local X = { ph = 1, tracersWas = self.cfg.tracers, lua = 0, frameLua = 0, depth = 0, pieces = 0, impacts = 0, fx = 0, shots = 0, launched = 0, held = 0, phShots = 0, phLaunched = 0, phHeld = 0, settleMs = 40,
 		orig = {}, frames = {}, luas = {} }
 	self.stress = X
 	for _, k in ipairs(STRESS_LUA) do
@@ -345,16 +345,27 @@ function Deagle:Stress(arg)
 	end
 	X.orig.ApplyHit = self.ApplyHit
 	self.ApplyHit = function(...) X.impacts = X.impacts + 1 return X.orig.ApplyHit(...) end
+	-- shots that became rounds: a "pass" can't hide shots the gun refused (Claude 1: 1000 a second fired ~45)
+	X.orig.LaunchRound = self.LaunchRound
+	self.LaunchRound = function(...) X.launched, X.phLaunched = X.launched + 1, X.phLaunched + 1 return X.orig.LaunchRound(...) end
 	local vt = self.VmTick   -- the timed one: the frame clock goes around it
 	local lastA, lastG, nextShot
-	local function phaseEnd(s, ph)
+	local function phaseEnd(s, ph, secs)
 		table.sort(X.frames); table.sort(X.luas)
+		-- a fire phase also says how many of the due shots became rounds: "THROTTLED" under 90 % (a held view, a refused shot)
+		local fired = ""
+		if ph[3] and mode ~= "spawn" then
+			local due = rps * secs
+			fired = string.format(" | shots %d of %.0f due, %d rounds launched, %d frames held%s", X.phShots, due, X.phLaunched, X.phHeld,
+				X.phLaunched < 0.9 * due and " THROTTLED" or "")
+		end
+		X.phShots, X.phLaunched, X.phHeld = 0, 0, 0
 		local sum = 0
 		for _, v in ipairs(X.luas) do sum = sum + v end
 		local avg, p99 = sum / math.max(1, #X.luas), pct(X.luas, 0.99)
 		log(string.format("STRESS == %-18s frames %d: p50 %.1f p95 %.1f p99 %.1f max %.1f ms | mod Lua avg %.2f p99 %.2f ms (budget %.1f / %.1f): %s",
 			ph[1], #X.frames, pct(X.frames, 0.5), pct(X.frames, 0.95), pct(X.frames, 0.99), X.frames[#X.frames] or 0, avg, p99,
-			MOD_AVG, MOD_P99, (avg <= MOD_AVG and p99 <= MOD_P99) and "PASS" or "OVER"))
+			MOD_AVG, MOD_P99, (avg <= MOD_AVG and p99 <= MOD_P99) and "PASS" or "OVER") .. fired)
 		X.frames, X.luas = {}, {}
 	end
 	self.VmTick = function(s, ...)
@@ -394,17 +405,18 @@ function Deagle:Stress(arg)
 				while g >= nextShot and n < perFrame do   -- every shot due this frame
 					s.state.ammo = 7
 					pcall(s.Fire, s, true)
-					nextShot, n, X.shots = nextShot + 1 / rps, n + 1, X.shots + 1
+					nextShot, n, X.shots, X.phShots = nextShot + 1 / rps, n + 1, X.shots + 1, X.phShots + 1
 				end
 				if g >= nextShot then nextShot = g end
+			elseif ph[3] and mode ~= "spawn" then nextShot, X.held, X.phHeld = g, X.held + 1, X.phHeld + 1   -- a fire phase, the view off the sky / on life
 			else nextShot = g end
 			if g - w.t >= 0.5 then
 				local rounds = 0
 				for _ in pairs(s.rounds or {}) do rounds = rounds + 1 end
 				local fm, lm = w.sum / w.n * 1000, X.lua / w.n * 1000
-				log(string.format("STRESS %4.1fs %-18s %5.1f ms (%3.0f fps, worst %4.1f) = Lua %4.2f + engine %5.1f | rounds %2d, tracer cmds %4d, impacts %3d, impact fx %3d, shots %3d",
-					g - X.start, ph[1], fm, 1000 / fm, w.max * 1000, lm, fm - lm, rounds, X.pieces, X.impacts, X.fx, X.shots))
-				X.lua, X.pieces, X.impacts, X.fx, X.shots, X.win = 0, 0, 0, 0, 0, nil
+				log(string.format("STRESS %4.1fs %-18s %5.1f ms (%3.0f fps, worst %4.1f) = Lua %4.2f + engine %5.1f | rounds %2d, tracer cmds %4d, impacts %3d, impact fx %3d, shots %3d (rounds launched %3d), frames held %2d",
+					g - X.start, ph[1], fm, 1000 / fm, w.max * 1000, lm, fm - lm, rounds, X.pieces, X.impacts, X.fx, X.shots, X.launched, X.held))
+				X.lua, X.pieces, X.impacts, X.fx, X.shots, X.launched, X.held, X.win = 0, 0, 0, 0, 0, 0, 0, nil
 				-- frames over 150 ms for a second: stop (1000 rounds a second sat at 4 fps until the user paused); in the
 				-- shot A/B only that fire phase ends
 				X.slow = fm > 150 and (X.slow or 0) + 1 or 0
@@ -412,7 +424,7 @@ function Deagle:Stress(arg)
 				local why = nil
 				if shotAB and ph[3] and X.slow >= 2 then
 					log(string.format("STRESS cliff: %s at %.1f s into the phase, frames over 150 ms for a second", ph[1], g - X.t0))
-					X.slow, X.t0 = 0, g - ph[2]
+					X.slow, X.cutSecs, X.t0 = 0, g - X.t0, g - ph[2]
 				elseif shotAB and ph[1] == "idle" then
 					X.baseSum, X.baseN = (X.baseSum or 0) + fm, (X.baseN or 0) + 1
 				elseif shotAB and ph[1] == "rest" and fm > X.settleMs and g - X.t0 >= 10 then
@@ -428,7 +440,8 @@ function Deagle:Stress(arg)
 			X.settleMs = math.max(40, 1.5 * (X.baseSum or 0) / math.max(1, X.baseN or 0))
 			local settling = shotAB and ph[1] == "rest" and (X.lastFm or 0) > X.settleMs   -- (10 s: aborted above)
 			if g - X.t0 >= ph[2] and not settling then
-				phaseEnd(s, ph)
+				phaseEnd(s, ph, X.cutSecs or g - X.t0)
+				X.cutSecs = nil
 				X.ph, X.t0 = X.ph + 1, g
 				if X.ph > #phases then
 					s:Native("fxrstat")
