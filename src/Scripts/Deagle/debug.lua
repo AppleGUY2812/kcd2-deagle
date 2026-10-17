@@ -340,7 +340,10 @@ function Deagle:StressStop(why)
 	local X = self.stress
 	if not X then return end
 	stressProf(X, false)   -- first: it puts back the stress's own wrappers, which X.orig then replaces
-	for k, f in pairs(X.orig) do self[k] = f end
+	for k, f in pairs(X.orig) do
+		if X.mine and self[k] ~= X.mine[k] then log("STRESS: Deagle." .. k .. " was wrapped again during the run; put back to what it was before the run") end
+		self[k] = f
+	end
 	stressOff(X, nil)
 	self.cfg.tracers, self.stress = X.tracersWas, nil
 	log("STRESS " .. why)
@@ -541,6 +544,10 @@ function Deagle:Stress(arg)
 		lastA, lastG = a, g
 		return vt(s, ...)
 	end
+	-- what the run installed, to tell at the end whether another tool wrapped the same functions meanwhile (put back
+	-- anyway; the other tool's own unwrap may then reinstall a wrapper of this run: Claude 5's probe/ticks.lua)
+	X.mine = {}
+	for k in pairs(X.orig) do X.mine[k] = self[k] end
 	if spawner then log(string.format("STRESS start: spawn %s, %d a second at one spot ahead, no gun", spawnName, rps))
 	else
 		log(string.format("STRESS start: %d rounds a second, %s%s", rps, mode == "aim" and "where you look (not at people or animals)" or "into the sky",
