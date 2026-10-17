@@ -116,9 +116,13 @@ static void Bind() {
 
 // ---- rays (docs/whgame_re/rays.md). IPhysicalWorld = gEnv+0x30, +0x118 RayWorldIntersection(const SRWIParams&, tag,
 // iCaller 4). SRWIParams 0x70 bytes: pForeignData +0, iForeignData +8, OnEvent +0x10, org +0x18, dir +0x24 (full
-// length), objtypes +0x30 (0x11F), flags +0x34 (0xF; | 0x800 rwi_queue), hits +0x38, nMaxHits +0x40. ray_hit 0x50:
+// length), objtypes +0x30 (0x11F), flags +0x34 (0x1000F as Lua; | 0x800 rwi_queue), hits +0x38, nMaxHits +0x40. ray_hit 0x50:
 // dist +0, surface_idx (short) +0x18, pt +0x24. A queued ray's EventPhysRWIResult: pForeignData +0x18, pHits +0x30,
 // nHits +0x38; delivered on the main thread by PumpLoggedEvents; pHits only valid inside the callback.
+// Lua's flags are 0x1000F, not 0xF (docs/whgame_re/sim_binding.md): bits 16+ pick the colltypes tested; 0 there means
+// the ray-only proxies (0x8000), 1 = geom_colltype0, what Lua's rays (and so ballistics.lua) hit. Step 1's 2.84 us was
+// measured with 0xF: re-measure
+static const int RAY_FLAGS = 0x1000F;
 using RwiFn = int(__fastcall*)(uintptr_t world, const uint8_t* params, const char* tag, int iCaller);
 static void FillRay(uint8_t* p, const float* org, const float* dir, float len, void* hits, int flags) {
 	memset(p, 0, 0x70);
@@ -139,7 +143,7 @@ static void Ray(const char* args) {
 	int n = a[7] > 0 ? (int)a[7] : 1000; if (n > 100000) n = 100000;
 	uintptr_t w = Env(0x30);
 	alignas(16) uint8_t p[0x70]; alignas(16) uint8_t hit[0x50] = {};
-	FillRay(p, a, a + 3, a[6], hit, 0xF);
+	FillRay(p, a, a + 3, a[6], hit, RAY_FLAGS);
 	int first = SafeRwi(w, p);
 	float dist = *(float*)(hit + 0x00); short surf = *(short*)(hit + 0x18);
 	LARGE_INTEGER t0, t1; QueryPerformanceCounter(&t0);
@@ -170,10 +174,10 @@ static void RayQ(const char* args) {
 	if (ParseFloats(args, a, 7) < 7) { Log("probe rayq: want x y z dx dy dz len"); return; }
 	uintptr_t w = Env(0x30);
 	alignas(16) uint8_t p[0x70]; alignas(16) uint8_t hit[0x50] = {};
-	FillRay(p, a, a + 3, a[6], hit, 0xF);
+	FillRay(p, a, a + 3, a[6], hit, RAY_FLAGS);
 	int sync = SafeRwi(w, p);   // the same ray answered now, to compare with the queued one
 	int seq = ++g_rayqSeq;
-	FillRay(p, a, a + 3, a[6], nullptr, 0x80F);   // hits NULL: the engine's pool
+	FillRay(p, a, a + 3, a[6], nullptr, RAY_FLAGS | 0x800);   // hits NULL: the engine's pool
 	*(uintptr_t*)(p + 0x00) = (uintptr_t)seq;
 	*(void**)(p + 0x10) = (void*)&OnRwi;
 	QueryPerformanceCounter(&g_rayqAt[seq & 15]);
@@ -334,7 +338,7 @@ static void MatRay(const char* args) {
 	float a[7] = {};
 	if (ParseFloats(args, a, 7) < 7) { Log("probe matray: want x y z dx dy dz len"); return; }
 	alignas(16) uint8_t p[0x70]; alignas(16) uint8_t hit[0x50] = {};
-	FillRay(p, a, a + 3, a[6], hit, 0xF);
+	FillRay(p, a, a + 3, a[6], hit, RAY_FLAGS);
 	int n = SafeRwi(Env(0x30), p);
 	if (n <= 0) { Log("probe matray: no hit (%d)", n); return; }
 	uintptr_t rn = 0; int ftype = -1;
