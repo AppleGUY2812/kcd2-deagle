@@ -222,15 +222,19 @@ from the binary with capstone; every claim still needs its in-game probe (migrat
    - `DN.simInit{ step, life, range, maxHops, minSpeedOn, nearMiss, chest, flybyGap, waterSurface, pass = { ids } }`
      once at load; `DN.simPhys(velocity, dragLength, tumbleDragLength, bullet)` -> phys id, once per cartridge.
    - `DN.fire(px, py, pz, dx, dy, dz, phys, firstDt)` -> round id (moved by firstDt at once, like LaunchRound).
-   - `DN.tracer(id, fx, length, reach, ox, oy, oz)`: the round's streak, drawn by the plugin every frame from the path
-     (fx picked once by Lua; reach / offset = trail.reach and the muzzle offset blend; after a turn the streak starts
-     at the turn point). Nothing per frame from Lua.
+   - `DN.tracer(id, fx, length, reach, ox, oy, oz, start, dash, anchor)` (tracers.lua TracerNative): the round's
+     streak, drawn by the plugin every frame from the path (its fxr emitter, id `DN.TRACE_BASE` 2000000 + round id);
+     after a turn it starts at the turn point. Nothing per frame from Lua.
    - `DN.advance()`: from Lua's tick, every round by the time since its last move (RoundsTick).
-   - `DN.events()` -> array of { kind = "hit" | "flyby" | "done" | "landed", id, pos, normal, dir, surface, partid,
-     entity, dist, energy, vel, age, hops }; drained after fire / advance / answer (an answer can add events).
-   - `DN.answer(id, goesOn, px, py, pz, vx, vy, vz, skip, tumble, markHit)`: ApplyHit's verdict; markHit = r.hitIds.
+   - `DN.events()` -> array of { kind = "hit" | "flyby" | "ahead" | "done" | "landed", id, pos, normal, dir, surface,
+     partid, entity, dist, energy, hitDist, vel, age, hops }; drained after fire / advance / answer (an answer can add
+     events). "ahead": the kill cam's look-ahead hit a living NPC (KillCamStep's gates; simInit aheadK, aheadMinDist;
+     `DN.ahead(on)` while no cam / slow motion / free camera runs).
+   - `DN.answer(id, goesOn, px, py, pz, vx, vy, vz, skip, tumble, markHit, turned)`: ApplyHit's verdict; markHit =
+     r.hitIds; turned = r.turnPos was set (Deflect, a corner).
    - `DN.round(id)` -> px, py, pz, vx, vy, vz, dist, age, hops (no table): the kill cam's one followed round a frame.
-   Contract: the frame API through the FFI passes `DEAGLE_SIM=frame` except tracers and the kill cam (0ce3eb4).
+   Offline: `NS.dn` (native/sim/sim_ffi.lua) is this binding over LuaJIT's FFI; with ballistics.lua's native path and
+   TracerNative the round contract passes 64/64 (d0979ea). Next: the plugin side (native/src/rounds.cpp).
 7. **Static / dynamic split (the user's idea, 2026-10-15), ray LOD + `rwi_queue`.** The static world (terrain, brushes)
    never moves: at the shot (and after each bounce or exit) cast its whole path once as ~50 m chords (chord sag at
    440 m/s ~2 cm) against static + terrain only, and store "first static hit at time t". Per frame, only a ray limited to
