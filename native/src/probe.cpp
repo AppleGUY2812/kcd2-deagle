@@ -12,6 +12,7 @@
 //   matray <x y z> <dx dy dz> <len>      the same, the brush found by our own ray (Lua gives no renderNode)
 // No per-frame work, no hooks. Every engine call runs under SEH; strings from the engine are copied under SEH too.
 #include "probe.h"
+#include "rounds.h"
 #include "log.h"
 #include <windows.h>
 #include <cmath>
@@ -94,19 +95,9 @@ static bool AddFn(uintptr_t table, const char* name, void* fn) {
 }
 static int SafeBind() {
 	__try {
-		uintptr_t ss = Env(0x28);
-		auto create = (uintptr_t(__fastcall*)(uintptr_t, bool))VF(ss, 0x68);
-		if (!create) return -1;
-		uintptr_t t = create(ss, false);
-		auto addRef = (void(__fastcall*)(uintptr_t))VF(t, 0x18);
-		if (!t || !addRef) return -2;
-		addRef(t);   // kept for the session: the probe never releases it
-		int ok = AddFn(t, "add", (void*)&DnAdd) + AddFn(t, "nop", (void*)&DnNop) + AddFn(t, "tid", (void*)&DnTid);
-		auto setGlobal = (void(__fastcall*)(uintptr_t, const char*, const Any*))VF(ss, 0xF8);
-		if (!setGlobal) return -3;
-		Any g{}; g.type = 6; g.p = t;
-		setGlobal(ss, "DN", &g);
-		return ok;
+		uintptr_t t = Dn_Table();   // the one global DN (rounds.cpp makes it; the round sim's functions are in it too)
+		if (!t) return -1;
+		return AddFn(t, "add", (void*)&DnAdd) + AddFn(t, "nop", (void*)&DnNop) + AddFn(t, "tid", (void*)&DnTid);
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return -100; }
 }
 static void Bind() {

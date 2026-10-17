@@ -15,6 +15,7 @@
 #include "freecam.h"
 #include "ron.h"
 #include "probe.h"
+#include "rounds.h"
 #include "fx.h"
 #include <deque>
 #include <mutex>
@@ -1026,6 +1027,7 @@ static void Command(const char* line) {
 		else if (logged++ < 3) Log("casespin %s: cap %.0f rad/s", id, w);
 	}
 	else if (!strcmp(cmd, "probe")) Probe_Command(rest);   // probe <name> ...: architecture step 1 checks (probe.cpp, Claude 5)
+	else if (!strcmp(cmd, "rounds")) Rounds_Command(rest);   // rounds bind | stats: the native round sim (rounds.cpp, Claude 5)
 	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
 }
 
@@ -1194,6 +1196,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Freecam_Install(g_env, (void*)g_origFrustum);   // free camera (freecam.cpp, johnpork-18)
 	if (g_env) Probe_Install(g_env, g_game.base);   // architecture step 1 probes (probe.cpp, Claude 5)
+	if (g_env) Rounds_Install(g_env, g_game.base);   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
 	if (g_env) {
 		static const struct { int off; const char* what; } members[] = {
 			{ 0x08, "3DEngine" }, { 0x30, "PhysicalWorld" }, { 0x68, "ParticleManager" }, { 0x80, "Timer" },
