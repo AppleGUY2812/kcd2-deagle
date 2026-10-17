@@ -32,6 +32,10 @@ typedef int (*sim_water_fn)(void* ud, const sim_vec* at, double* level, sim_vec*
 // out, returns how many (npc.lua FlyBy: Physics.SamplePhysEnvironment, ent_living)
 typedef struct { uint64_t entity; sim_vec feet; } sim_living;
 typedef int (*sim_living_fn)(void* ud, const sim_vec* center, double radius, sim_living* out, int max);
+// a round's tracer streak this frame (tracers.lua TracerBullet): the effect fx (the caller's id), count pieces over
+// length m, the effect placed at `at` along `dir` (the plugin restarts the round's own emitter there: fxr)
+typedef void (*sim_draw_fn)(void* ud, uint32_t round, int32_t fx, double count, double length, const sim_vec* at,
+	const sim_vec* dir);
 
 typedef struct {
 	double velocity;          // m/s at the muzzle
@@ -51,6 +55,9 @@ typedef struct {
 	double nearMiss;          // m: cfg.nearMiss, a living NPC's chest this close to a round's frame path hears it (0: off)
 	double chest;             // m above the feet (npc.lua CHEST 1.25)
 	double flybyGap;          // s: one near miss per NPC this often at most (npc.lua FLYBY_GAP 0.75)
+	double aheadK;            // s: the kill cam's look-ahead, reach = speed x aheadK + speed / 60 (killcam.lua KillCamStep:
+	                          // c.speed.pre x c.lead x 1.25); 0: off
+	double aheadMinDist;      // m: only rounds this far along look ahead (killCam.minDist)
 } sim_config;
 
 typedef struct {
@@ -71,6 +78,14 @@ sim* sim_create(uint32_t capacity, const sim_config* cfg);
 void sim_destroy(sim* s);
 void sim_set_world(sim* s, sim_ray_fn ray, sim_water_fn water, void* ud);
 void sim_set_living(sim* s, sim_living_fn living);
+void sim_set_draw(sim* s, sim_draw_fn draw);
+// the kill cam may start (none running, no slow motion, no free camera): look-ahead events only while on
+void sim_set_ahead(sim* s, int32_t on);
+// the round's tracer (tracers.lua TracerNative: cfg.tracer length / start / dash; trail.off and trail.reach, the muzzle
+// offset that blends out by reach m along the path; anchor: where the effect sits, the share of the streak back from
+// its front end: 1 its start, 0 its end, 0.5 the middle)
+void sim_tracer(sim* s, uint32_t id, int32_t fx, double length, double reach, const sim_vec* off, double start, double dash,
+	double anchor);
 // surfaces a ray passes on through when it hit no entity (foliage, invisible blockers: surfaces.lua fx = "pass")
 void sim_set_pass(sim* s, const int32_t* ids, int32_t n);
 int32_t sim_add_phys(sim* s, const sim_phys* p);
@@ -85,9 +100,10 @@ const sim_hit* sim_pending_hit(const sim* s, uint32_t id);
 // the answer to a pending hit (ApplyHit): goesOn 0 = landed; else the round's new state, and the step carries on.
 // Returns like sim_step (SIM_LANDED when it didn't go on). A round of the frame API (sim_launch) reports what follows
 // as events
-// markHit: the hit's entity counts as hit by this round (hits.lua r.hitIds): no near miss to it from this round
+// markHit: the hit's entity counts as hit by this round (hits.lua r.hitIds): no near miss to it from this round.
+// turned: ApplyHit turned it (Deflect / a corner: r.turnPos): its tracer starts again at pos
 int32_t sim_answer(sim* s, uint32_t id, int32_t goesOn, const sim_vec* pos, const sim_vec* vel, uint64_t skip, int32_t tumble,
-	int32_t markHit);
+	int32_t markHit, int32_t turned);
 void sim_free(sim* s, uint32_t id);
 
 typedef struct {
@@ -104,7 +120,9 @@ int32_t sim_get(const sim* s, uint32_t id, sim_round* out);
 // Time is the caller's clock (s): a round moves by now - its last move (at most tickMax), as RoundsTick does.
 // SIM_EV_FLYBY: a near miss after the round's frame step (npc.lua FlyBy): hit.entity who, hit.pos the closest point of
 // the frame's path, hit.dir its direction
-enum { SIM_EV_HIT = 1, SIM_EV_DONE = 2, SIM_EV_LANDED = 3, SIM_EV_FLYBY = 4 };
+// SIM_EV_AHEAD: the kill cam's look-ahead ray from the round hit a living NPC (hit.entity, hit.pos, hit.dist from the
+// round): Lua decides (alive, lethal) and may start the cam. Once per round per NPC
+enum { SIM_EV_HIT = 1, SIM_EV_DONE = 2, SIM_EV_LANDED = 3, SIM_EV_FLYBY = 4, SIM_EV_AHEAD = 5 };
 typedef struct {
 	int32_t kind;
 	uint32_t round;

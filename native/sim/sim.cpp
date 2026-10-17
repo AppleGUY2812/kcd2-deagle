@@ -25,6 +25,8 @@ struct sim {
 	sim_ray_fn ray = nullptr;
 	sim_water_fn water = nullptr;
 	sim_living_fn living = nullptr;
+	sim_draw_fn draw = nullptr;
+	bool aheadOn = false;
 	void* ud = nullptr;
 	std::vector<sim_phys> phys;
 	std::vector<uint8_t> pass;        // by surface id: 1 = rays go on through it (no entity)
@@ -50,6 +52,17 @@ struct sim {
 	std::unordered_map<uint64_t, double> flyNext;
 	double flyAt = -1e300;
 	std::vector<sim_living> near;
+	// the kill cam's look-ahead: its frame count per round (every other frame), the NPCs already reported
+	std::vector<int32_t> kcFrame;
+	std::vector<std::vector<uint64_t>> aheadSeen;
+	// tracers
+	struct Trail {
+		bool on = false, hasTurnPos = false, hasTurnDist = false;
+		int32_t fx = 0;
+		double length = 0, start = 0, dash = 1, reach = 100, turnDist = 0, anchor = 0.5;
+		V off{ 0, 0, 0 }, turnPos{ 0, 0, 0 };
+	};
+	std::vector<Trail> trail;
 	sim_stats stats{};
 };
 
@@ -196,18 +209,111 @@ bool has(const std::vector<uint64_t>& v, uint64_t e) {
 	return false;
 }
 
-// FlyBy: after a round's frame step, every living NPC whose chest is within nearMiss of the straight path from where
-// the frame began to where it ended: once per NPC per round, never one this round hit, each NPC once per flybyGap
-void flyBy(sim* s, uint32_t id) {
-	double nearM = s->cfg.nearMiss;
-	if (nearM <= 0 || !s->living) return;
-	V f = s->frameFrom[id], sv = s->pos[id] - f;
-	double len2 = sv.x * sv.x + sv.y * sv.y + sv.z * sv.z;
-	if (len2 < 1e-6) return;
-	double len = std::sqrt(len2), now = s->lastT[id];
+// TracerBullet: a short streak ending where the round is, along the way it went this frame; after a turn it starts at
+// the turn point and never reaches back past it; the muzzle offset weighs 1 - d / reach at d m along the path
+void drawTracer(sim* s, uint32_t id, V from) {
+	sim::Trail& t = s->trail[id];
+	double dist = s->dist[id];
+	if (!t.on || !s->draw || dist < t.start) return;
+	bool turned = t.hasTurnDist;
+	if (t.hasTurnPos) { from = t.turnPos; t.hasTurnPos = false; }
+	V p = s->pos[id], u = p - from;
+	double ml = len(u);
+	if (ml <= 1e-4) { u = s->vel[id]; ml = len(u); }
+	if (ml <= 0) return;
+	u = u * (1.0 / ml);
+	double l = std::fmin(t.length, dist - t.start);
+	if (turned) l = std::fmin(l, dist - t.turnDist);
+	if (l < 0.05) return;
+	auto w = [&](double d) { double x = 1 - d / t.reach; return turned || x < 0 ? 0.0 : x; };
+	V p1 = p + t.off * w(dist), p0 = p - u * l + t.off * w(dist - l);
+	V d = p1 - p0;
+	double dl = len(d);
+	if (dl <= 0) return;
+	d = d * (1.0 / dl);
+	double back = l * t.anchor;
+	sim_vec at = toC(p1 - d * back), dir = toC(d);
+	s->draw(s->ud, id, t.fx, l / t.dash, l, &at, &dir);
+}
+
+// distance from point q to the segment a..b, and the closest point
+double segDist(V q, V a, V b, V& closest) {
+	V ab = b - a;
+	double l2 = ab.x * ab.x + ab.y * ab.y + ab.z * ab.z, t = 0;
+	if (l2 > 0) t = std::fmin(1.0, std::fmax(0.0, ((q.x - a.x) * ab.x + (q.y - a.y) * ab.y + (q.z - a.z) * ab.z) / l2));
+	closest = a + ab * t;
+	return len(q - closest);
+}
+
+// What StepRound does after a round's moves, in its order: the tracer (TracerBullet), the kill cam's look-ahead
+// (KillCamStep), near misses (FlyBy). One living query covers both of the last two.
+void frameEnd(sim* s, uint32_t id, bool done) {
+	V f = s->frameFrom[id], p = s->pos[id], sv = p - f, v = s->vel[id];
+	double now = s->lastT[id];
+	drawTracer(s, id, f);
+	// KillCamStep's gates, in its order: not done, no hops, not tumbling, far enough, fast enough, every other frame,
+	// not climbing; then reach = speed x aheadK + a frame of flight
+	bool ahead = false;
+	V aEnd = p;
+	double speed = len(v);
+	if (!done && s->aheadOn && s->cfg.aheadK > 0 && s->hops[id] == 0 && !s->tumble[id] && s->dist[id] >= s->cfg.aheadMinDist
+		&& speed >= 50) {
+		s->kcFrame[id]++;
+		if (s->kcFrame[id] % 2 == 1 && v.z <= 0.2 * speed) {
+			ahead = true;
+			aEnd = p + v * ((speed * s->cfg.aheadK + speed / 60) / speed);
+		}
+	}
+	double nearM = s->cfg.nearMiss, len2 = sv.x * sv.x + sv.y * sv.y + sv.z * sv.z;
+	bool fly = nearM > 0 && len2 >= 1e-6;
+	if (!s->living || !(fly || ahead)) return;
+	// one query round everything this frame touches: the frame's path and the look-ahead
+	V lo = { std::fmin(f.x, std::fmin(p.x, aEnd.x)), std::fmin(f.y, std::fmin(p.y, aEnd.y)), std::fmin(f.z, std::fmin(p.z, aEnd.z)) };
+	V hi = { std::fmax(f.x, std::fmax(p.x, aEnd.x)), std::fmax(f.y, std::fmax(p.y, aEnd.y)), std::fmax(f.z, std::fmax(p.z, aEnd.z)) };
+	const double pad = std::fmax(nearM, 2.5);   // the look-ahead's body column: 2 m tall, 1 m round
 	if (s->near.size() < 256) s->near.resize(256);
-	sim_vec c = toC(f + sv * 0.5);
-	int n = s->living(s->ud, &c, len / 2 + nearM, s->near.data(), (int)s->near.size());
+	sim_vec c = toC((lo + hi) * 0.5);
+	int n = s->living(s->ud, &c, len(hi - lo) / 2 + pad, s->near.data(), (int)s->near.size());
+
+	if (ahead) {   // a ray only when a living body stands near the look-ahead (KillCamStep casts one every other frame)
+		bool any = false;
+		for (int k = 0; k < n && !any; k++) {
+			const sim_living& L = s->near[k];
+			if (has(s->aheadSeen[id], L.entity)) continue;
+			V cl, feet = { L.feet.x, L.feet.y, L.feet.z };
+			for (double z = 0; z <= 2.0 && !any; z += 0.5) any = segDist(feet + V{ 0, 0, z }, p, aEnd, cl) <= 1.0;
+		}
+		if (any) {
+			sim_vec from = toC(p), move = toC(aEnd - p);
+			sim_ray_hit h{};
+			s->stats.rays++;
+			if (s->ray(s->ud, &from, &move, s->skip[id], &h) > 0 && h.entity) {
+				bool isLiving = false;
+				for (int k = 0; k < n && !isLiving; k++) isLiving = s->near[k].entity == h.entity;
+				if (isLiving && !has(s->aheadSeen[id], h.entity)) {
+					s->aheadSeen[id].push_back(h.entity);
+					sim_event e{};
+					e.kind = SIM_EV_AHEAD;
+					e.round = id;
+					e.hit.round = id;
+					e.hit.pos = h.pos;
+					e.hit.normal = h.normal;
+					e.hit.dir = toC(v * (1.0 / speed));
+					e.hit.surface = h.surface;
+					e.hit.partid = h.partid;
+					e.hit.entity = h.entity;
+					e.hit.dist = h.dist;
+					fillRound(s, id, &e.state);
+					s->events.push_back(e);
+				}
+			}
+		}
+	}
+
+	if (!fly) return;
+	// FlyBy: living NPCs whose chest is within nearMiss of the frame's straight path; once per NPC per round, never one
+	// this round hit, each NPC once per flybyGap
+	double flen = std::sqrt(len2);
 	if (s->flyAt > now) s->flyNext.clear();   // the clock went back (a load)
 	s->flyAt = now;
 	for (int k = 0; k < n; k++) {
@@ -215,11 +321,8 @@ void flyBy(sim* s, uint32_t id) {
 		if (has(s->passed[id], L.entity) || has(s->hitEnts[id], L.entity)) continue;
 		auto it = s->flyNext.find(L.entity);
 		if (it != s->flyNext.end() && now < it->second) continue;
-		V p = { L.feet.x, L.feet.y, L.feet.z + s->cfg.chest };
-		double t = ((p.x - f.x) * sv.x + (p.y - f.y) * sv.y + (p.z - f.z) * sv.z) / len2;
-		t = t < 0 ? 0 : (t > 1 ? 1 : t);
-		V cl = f + sv * t, d = p - cl;
-		if (d.x * d.x + d.y * d.y + d.z * d.z > nearM * nearM) continue;
+		V cl, chest = { L.feet.x, L.feet.y, L.feet.z + s->cfg.chest };
+		if (segDist(chest, f, p, cl) > nearM) continue;
 		s->passed[id].push_back(L.entity);
 		s->flyNext[L.entity] = now + s->cfg.flybyGap;
 		sim_event e{};
@@ -227,7 +330,7 @@ void flyBy(sim* s, uint32_t id) {
 		e.round = id;
 		e.hit.entity = L.entity;
 		e.hit.pos = toC(cl);
-		e.hit.dir = toC(sv * (1.0 / len));
+		e.hit.dir = toC(sv * (1.0 / flen));
 		fillRound(s, id, &e.state);
 		s->events.push_back(e);
 	}
@@ -236,7 +339,7 @@ void flyBy(sim* s, uint32_t id) {
 // a frame-API round's step result as events: a hit waits for its answer; otherwise its frame step is over (near
 // misses), and an ended round is freed (it leaves `active` at the next compaction)
 void emit(sim* s, uint32_t id, int32_t st) {
-	if (st != SIM_HIT) flyBy(s, id);
+	if (st != SIM_HIT) frameEnd(s, id, st != SIM_FLYING);
 	if (st == SIM_FLYING) return;
 	sim_event e{};
 	e.round = id;
@@ -273,6 +376,7 @@ sim* sim_create(uint32_t capacity, const sim_config* cfg) {
 	s->pending.resize(capacity);
 	s->managed.resize(capacity); s->lastT.resize(capacity);
 	s->frameFrom.resize(capacity); s->passed.resize(capacity); s->hitEnts.resize(capacity);
+	s->kcFrame.resize(capacity); s->aheadSeen.resize(capacity); s->trail.resize(capacity);
 	s->active.reserve(capacity);
 	s->events.reserve(1024);
 	s->freeList.reserve(capacity);
@@ -284,6 +388,22 @@ void sim_destroy(sim* s) { delete s; }
 
 void sim_set_world(sim* s, sim_ray_fn ray, sim_water_fn water, void* ud) { s->ray = ray; s->water = water; s->ud = ud; }
 void sim_set_living(sim* s, sim_living_fn living) { s->living = living; }
+void sim_set_draw(sim* s, sim_draw_fn draw) { s->draw = draw; }
+void sim_set_ahead(sim* s, int32_t on) { s->aheadOn = on != 0; }
+
+void sim_tracer(sim* s, uint32_t id, int32_t fx, double length, double reach, const sim_vec* off, double start, double dash,
+	double anchor) {
+	if (!valid(s, id)) return;
+	sim::Trail& t = s->trail[id];
+	t.on = true;
+	t.fx = fx;
+	t.length = length;
+	t.start = start;
+	t.dash = dash > 0 ? dash : 1;
+	t.anchor = anchor;
+	t.off = off ? fromC(*off) : V{ 0, 0, 0 };
+	t.reach = reach > 0 ? reach : 1;
+}
 
 void sim_set_pass(sim* s, const int32_t* ids, int32_t n) {
 	s->pass.clear();
@@ -313,6 +433,9 @@ uint32_t sim_fire(sim* s, const sim_vec* pos, const sim_vec* dir, int32_t phys) 
 	s->managed[i] = 0;
 	s->passed[i].clear();
 	s->hitEnts[i].clear();
+	s->kcFrame[i] = 0;
+	s->aheadSeen[i].clear();
+	s->trail[i] = sim::Trail{};
 	s->physId[i] = phys;
 	s->skip[i] = 0;
 	return i;
@@ -336,13 +459,18 @@ const sim_hit* sim_pending_hit(const sim* s, uint32_t id) {
 // MoveRound after ApplyHit: landed, or on with the new state; past maxHops or under minSpeedOn it's done; else the
 // rest of the cut step and the steps left
 int32_t sim_answer(sim* s, uint32_t id, int32_t goesOn, const sim_vec* pos, const sim_vec* vel, uint64_t skip, int32_t tumble,
-	int32_t markHit) {
+	int32_t markHit, int32_t turned) {
 	if (!valid(s, id) || s->state[id] != SIM_HIT) return SIM_DONE;
 	if (markHit && s->pending[id].entity && !has(s->hitEnts[id], s->pending[id].entity)) s->hitEnts[id].push_back(s->pending[id].entity);
 	if (pos) s->pos[id] = fromC(*pos);
 	if (vel) s->vel[id] = fromC(*vel);
 	s->skip[id] = skip;
 	s->tumble[id] = tumble ? 1 : 0;
+	if (turned && goesOn) {   // Deflect / a corner: the tracer starts again at the turn
+		s->trail[id].hasTurnPos = s->trail[id].hasTurnDist = true;
+		s->trail[id].turnPos = s->pos[id];
+		s->trail[id].turnDist = s->dist[id];
+	}
 	int32_t st;
 	if (!goesOn) st = s->state[id] = SIM_LANDED;
 	else {
