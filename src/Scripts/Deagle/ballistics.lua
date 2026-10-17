@@ -510,6 +510,8 @@ function Deagle:StepRound(r, dt)
 end
 
 function Deagle:LaunchRound(pos, dir, phys, trail)
+	local N = self:RoundSim()
+	if N then return self:LaunchRoundNative(N, pos, dir, phys, trail) end
 	local r = { pos = pos, vel = vscale(dir, phys.velocity), phys = phys, dist = 0, age = 0, t = System.GetCurrTime(), trail = trail }
 	if self.cfg.debugShotLog then
 		self.shotLogN = (self.shotLogN or 0) + 1
@@ -518,6 +520,9 @@ function Deagle:LaunchRound(pos, dir, phys, trail)
 			dir.x, dir.y, dir.z, phys.velocity, self.gun.id, System.GetViewCameraFov and System.GetViewCameraFov() or -1))
 		if self.fc then log(string.format("shot %d freecam aim pitch %.4f yaw %.4f", r.logId, self.fc.camP, self.fc.camY)) end
 		self:Native("freecam status")   -- the free camera's place, in the plugin log
+	end
+	if self.roundsNative then   -- the setting went back to Lua while the plugin flew rounds: those end here
+		self.rounds, self.roundsToken, self.roundsNative = {}, nil, nil
 	end
 	if self:StepRound(r, self.frameDt or 1 / 30) then return r end   -- landed in this frame
 	self.rounds = self.rounds or {}
@@ -543,6 +548,7 @@ end
 -- every frame while rounds fly: each moves by the game time since its last move (a round fired this frame waits)
 function Deagle:RoundsTick(token)
 	if token ~= self.roundsToken then return end
+	if self.roundsNative then return self:RoundsTickNative(token) end
 	self.roundsTickT = System.GetCurrTime()
 	local now, keep = System.GetCurrTime(), {}
 	for _, r in ipairs(self.rounds or {}) do
@@ -555,6 +561,162 @@ function Deagle:RoundsTick(token)
 	self.rounds = keep
 	if #keep > 0 then Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
 	else self.roundsToken = nil end
+end
+
+-- ---------------------------------------------------------------------------
+-- the native round sim (docs/ARCHITECTURE.md step 6; native/sim, Claude 5): cfg.roundSim "native" flies the rounds in
+-- the plugin, through its typed binding DN.*. Lua touches a round only at its events: a hit (ApplyHit decides, its
+-- answer goes back), a near miss (FlyByMessage), its end. The plugin draws the tracers (DN.tracer, once per round) and
+-- does the near-miss geometry; the plugin's own clock in double moves the rounds (Lua's float32 time never crosses).
+-- A round's pos / vel / dist / age / hops are read from the plugin when something asks (the kill cam), once a frame.
+-- tests/run_round_contract.lua --dn runs the same contract through this path (DN over LuaJIT's FFI).
+-- ---------------------------------------------------------------------------
+Deagle.cfgDefaults.roundSim = "lua"
+Deagle.cfg.roundSim = Deagle.cfg.roundSim or "lua"
+
+-- the binding, set up once (nil: Lua flies the rounds). Asked for native with a plugin that has no round sim: said
+-- once in red, and the rounds stay Lua's (the game must not lose its gun to an old plugin)
+function Deagle:RoundSim()
+	if self.cfg.roundSim ~= "native" then return nil end
+	local N = rawget(_G, "DN")
+	if not (N and N.fire and N.simInit) then
+		if not self.roundSimSaid then
+			self.roundSimSaid = true
+			log("$4roundSim native: the running plugin has no round sim (DN.fire): rounds stay Lua's until it's installed")
+		end
+		return nil
+	end
+	if self.roundSimN ~= N then   -- first use, or a reloaded plugin
+		local pass = {}
+		for id = 0, 1023 do
+			local sf = SURFACES[surfaceName({ surface = id })]
+			if sf and sf.fx == "pass" then pass[#pass + 1] = id end
+		end
+		local okW, water = pcall(System.GetSurfaceTypeIdByName, "mat_water")
+		local fb = self.FLYBY or {}
+		N.simInit({ step = ROUND_STEP, life = ROUND_LIFE, range = self.cfg.range, maxHops = self.cfg.impactCap.maxHops,
+			minSpeedOn = 30, nearMiss = self.cfg.nearMiss or 0, chest = fb.chest or 1.25, flybyGap = fb.gap or 0.75,
+			waterSurface = okW and type(water) == "number" and water or -1, pass = pass })
+		self.roundSimN, self.roundPhys, self.roundsById = N, setmetatable({}, { __mode = "k" }), {}
+	end
+	return N
+end
+
+-- a round's live fields, read from the plugin (DN.round: 9 numbers) once a frame when asked
+local LIVE = { pos = true, vel = true, dist = true, age = true, hops = true }
+local roundFrame = 0
+local liveMeta = { __index = function(r, k)
+	if not LIVE[k] then return nil end
+	local id = rawget(r, "nid")
+	if not id then return nil end
+	if rawget(r, "liveF") ~= roundFrame then
+		local px, py, pz, vx, vy, vz, dist, age, hops = Deagle.roundSimN.round(id)
+		if not px then return nil end
+		rawset(r, "live", { pos = { x = px, y = py, z = pz }, vel = { x = vx, y = vy, z = vz }, dist = dist, age = age, hops = hops })
+		rawset(r, "liveF", roundFrame)
+	end
+	return rawget(r, "live")[k]
+end }
+local function setFields(r, ev)   -- a round's state at an event, kept on the round (a hit, its end)
+	if ev.pos then rawset(r, "pos", { x = ev.pos.x, y = ev.pos.y, z = ev.pos.z }) end
+	if ev.vel then rawset(r, "vel", { x = ev.vel.x, y = ev.vel.y, z = ev.vel.z }) end
+	if ev.dist then rawset(r, "dist", ev.dist) end
+	if ev.age then rawset(r, "age", ev.age) end
+	if ev.hops then rawset(r, "hops", ev.hops) end
+end
+local function clearFields(r) for k in pairs(LIVE) do rawset(r, k, nil) end rawset(r, "liveF", nil) end
+
+function Deagle:RoundPhysId(N, phys)
+	local id = self.roundPhys[phys]
+	if not id then
+		id = N.simPhys(phys.velocity, phys.dragLength, self:TumbleDragLength(phys), phys.bullet)
+		self.roundPhys[phys] = id
+	end
+	return id
+end
+
+-- every event the plugin has (after a fire, an advance, an answer: an answer can make more)
+function Deagle:RoundEvents(N)
+	local ended = false
+	while true do
+		local evs = N.events()
+		if not evs or #evs == 0 then break end
+		for _, ev in ipairs(evs) do
+			local r = self.roundsById[ev.id]
+			if r then
+				if ev.kind == "hit" then          -- the round as it reaches the hit: ApplyHit decides
+					local e = ev.entity and System.GetEntity(ev.entity) or nil
+					local hit = { pos = { x = ev.pos.x, y = ev.pos.y, z = ev.pos.z }, normal = { x = ev.normal.x, y = ev.normal.y, z = ev.normal.z },
+						surface = ev.surface, partid = ev.partid, entity = e, dist = ev.dist, energy = ev.energy }
+					setFields(r, ev)
+					rawset(r, "pos", hit.pos)
+					local goesOn = self:ApplyHit(hit, { x = ev.dir.x, y = ev.dir.y, z = ev.dir.z }, r.phys, r)
+					if self.KillCamHit then self:KillCamHit(hit, r) end
+					local pos, vel = r.pos, r.vel
+					local marked = e and r.hitIds and r.hitIds[e.id] and 1 or 0
+					N.answer(ev.id, goesOn and true or false, pos.x, pos.y, pos.z, vel.x, vel.y, vel.z, r.skip, r.tumble and true or false, marked)
+					clearFields(r)                  -- live from the plugin again
+				elseif ev.kind == "flyby" then    -- a near miss: npc.lua's message (the geometry and the throttle were native)
+					local e = ev.entity and System.GetEntity(ev.entity)
+					if e and self.FlyByMessage then self:FlyByMessage(e, ev.pos, ev.dir, r) end
+				else                              -- its end: "landed" (a hit stopped it) or "done" (range, life, hops)
+					clearFields(r)
+					setFields(r, ev)
+					if ev.kind == "landed" then r.landed = true end
+					rawset(r, "nid", nil)
+					self.roundsById[ev.id] = nil
+					if self.KillCamStep then self:KillCamStep(r, true) end
+					ended = true
+				end
+			end
+		end
+	end
+	if ended then   -- self.rounds: the live rounds in launch order
+		local keep = {}
+		for _, r in ipairs(self.rounds or {}) do if rawget(r, "nid") then keep[#keep + 1] = r end end
+		self.rounds = keep
+	end
+end
+
+function Deagle:LaunchRoundNative(N, pos, dir, phys, trail)
+	if self.roundsToken and not self.roundsNative then   -- switched to native with Lua rounds in the air: those end here
+		self.rounds, self.roundsToken = {}, nil
+	end
+	local r = setmetatable({ phys = phys, trail = trail, t = System.GetCurrTime() }, liveMeta)
+	local id = N.fire(pos.x, pos.y, pos.z, dir.x, dir.y, dir.z, self:RoundPhysId(N, phys), self.frameDt or 1 / 30)
+	if not id then log("$4roundSim native: the plugin refused a round (full?)") return r end
+	rawset(r, "nid", id)
+	self.roundsById[id] = r
+	self.rounds = self.rounds or {}
+	self.rounds[#self.rounds + 1] = r
+	if trail and self.TracerNative then self:TracerNative(N, id, r) end   -- tracers.lua: the plugin draws its streak
+	roundFrame = roundFrame + 1
+	self:RoundEvents(N)
+	if rawget(r, "nid") and (not self.roundsToken or System.GetCurrTime() - (self.roundsTickT or -1e9) > 0.5) then
+		local token = {}
+		self.roundsToken, self.roundsNative = token, true
+		Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
+	end
+	return r
+end
+
+-- every frame while rounds fly: the plugin moves them all, Lua handles what happened. The kill cam still looks ahead
+-- from each round in Lua (KillCamStep: a ray every other frame from rounds 40 m+ out, none once a cam runs)
+function Deagle:RoundsTickNative(token)
+	local N = self:RoundSim()
+	if not N then   -- the setting went back to Lua (or the plugin went): the plugin's rounds are gone with it
+		self.rounds, self.roundsToken, self.roundsNative, self.roundsById = {}, nil, nil, {}
+		return
+	end
+	self.roundsTickT = System.GetCurrTime()
+	roundFrame = roundFrame + 1
+	N.advance()
+	self:RoundEvents(N)
+	if self.KillCamStep then
+		for _, r in ipairs(self.rounds or {}) do self:KillCamStep(r, false) end
+	end
+	if #(self.rounds or {}) > 0 then Script.SetTimer(0, function() Deagle:RoundsTick(token) end)
+	else self.roundsToken, self.roundsNative = nil, nil end
 end
 
 Deagle:LoadModule("Scripts/Deagle/killcam.lua")   -- the kill cam (docs/se2_killcam.md)
