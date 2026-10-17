@@ -470,14 +470,48 @@ do
 		named, noBodySmokes, smokeDuring, tostring(badName), tostring(Deagle.EjectCase == ejWas), tostring(Deagle.SpawnFx == sfWrapped)),
 		named == 2 and noBodySmokes > 0 and smokeDuring > 100 and badName and Deagle.EjectCase == ejWas and Deagle.SpawnFx == sfWrapped and Deagle.stress == nil, named)
 	Deagle.SpawnFx = fxWas2
-	-- a fire phase that couldn't fire (the view off the sky) says so: THROTTLED, with the held frames
+	-- "sky" fires straight up (within 5 deg) whatever the view, says what is above, and tallies how rounds end per phase
+	local dirs, steep = 0, 0
+	local lr = Deagle.LaunchRound
+	Deagle.LaunchRound = function(self, pos, dir, ...)
+		dirs = dirs + 1
+		if dir.z >= math.cos(math.rad(5)) - 1e-6 then steep = steep + 1 end
+		return lr(self, pos, dir, ...)
+	end
 	n0 = #M.logs
 	M.console("deagle_stress", "20")
-	for _ = 1, 8 * 60 do M.view.pitch = 0; M.advance(1 / 60) end   -- held level: no recoil left over lifts it
+	for _ = 1, 8 * 60 do M.view.pitch = 0; M.advance(1 / 60) end   -- the view level the whole time
 	Deagle:StressStop("test")
+	Deagle.LaunchRound = lr
+	local above, endsLine, fired = false, false, nil
+	for i = n0 + 1, #M.logs do
+		local l = M.logs[i]
+		if l:find("STRESS clear above: ") then above = true end
+		if l:find("STRESS ends FIRE tracers on +HIT %d+ .*END range %d+, life %d+, spent %d+, dropped by the cap %d+ | rounds alive") then endsLine = true end
+		fired = fired or l:match("STRESS == FIRE tracers on .*shots (%d+) of")
+	end
+	check(string.format("deagle_stress 20 sky, view level: %s shots in the first fire phase (100), %d of %d rounds within 5 deg of straight up, what is above said %s, ends tallied %s",
+		tostring(fired), steep, dirs, tostring(above), tostring(endsLine)),
+		tonumber(fired) and math.abs(tonumber(fired) - 100) <= 3 and dirs > 0 and steep == dirs and above and endsLine and Deagle.shotDirOverride == nil, steep)
+	-- 250 a second at 20 fps: the frame cap is 0.1 s worth (25), so the rate holds (max(8, rps/30) = 9 fired ~180)
+	n0 = #M.logs
+	M.console("deagle_stress", "250")
+	M.advance(8, 20)
+	Deagle:StressStop("test")
+	local at20 = nil
+	for i = n0 + 1, #M.logs do at20 = at20 or M.logs[i]:match("STRESS == FIRE tracers on .*shots (%d+) of") end
+	check(string.format("deagle_stress 250 at 20 fps: %s shots in the 5 s fire phase (1250)", tostring(at20)), tonumber(at20) and math.abs(tonumber(at20) - 1250) <= 30, tonumber(at20) or 0)
+	-- a gun that refuses its shots: the fire phase is marked THROTTLED (shots tried, no rounds)
+	local shootWas = Deagle.Shoot
+	Deagle.Shoot = function() return false end
+	n0 = #M.logs
+	M.console("deagle_stress", "20")
+	M.advance(8, 60)
+	Deagle:StressStop("test")
+	Deagle.Shoot = shootWas
 	local throttled = false
-	for i = n0 + 1, #M.logs do if M.logs[i]:find("STRESS == FIRE tracers on .* 0 rounds launched, %d+ frames held THROTTLED") then throttled = true end end
-	check("deagle_stress with the view off the sky: the fire phase is marked THROTTLED with its held frames " .. tostring(throttled), throttled, 0)
+	for i = n0 + 1, #M.logs do if M.logs[i]:find("STRESS == FIRE tracers on .* 0 rounds launched, 0 frames held THROTTLED") then throttled = true end end
+	check("deagle_stress with a gun that refuses its shots: the fire phase is marked THROTTLED " .. tostring(throttled), throttled, 0)
 	-- 1000 rounds a second: ~17 kicks a frame never turn the view past the pole (it flipped over to 17 deg up), so the
 	-- run keeps firing, every due shot launched; and the view never ends below where it started
 	M.view.pitch = 1.2

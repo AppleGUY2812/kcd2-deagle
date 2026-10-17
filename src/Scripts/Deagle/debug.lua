@@ -345,7 +345,7 @@ function Deagle:StressStop(why)
 		self[k] = f
 	end
 	stressOff(X, nil)
-	self.cfg.tracers, self.stress = X.tracersWas, nil
+	self.cfg.tracers, self.stress, self.shotDirOverride = X.tracersWas, nil, nil
 	log("STRESS " .. why)
 	self:Notify("stress test " .. why)
 end
@@ -373,7 +373,10 @@ function Deagle:Stress(arg)
 	local rates = {}
 	for r in tostring(words[1] or ""):gmatch("[^,]+") do if tonumber(r) then rates[#rates + 1] = math.max(1, math.min(2000, tonumber(r))) end end
 	local rps = rates[1] or (spawner and 30 or 10)
-	local perFrame = math.max(8, math.ceil(rps / 30))   -- shots a frame at most (a long frame doesn't dump a burst)
+	-- shots a frame at most: 0.1 s worth, so a hitch can't dump a burst (max(8, rps/30) set the rate itself under ~28 fps:
+	-- 250 a second at 22 fps fired ~200, Claude 1 / Claude 5 2026-10-17)
+	local function frameCap(rate) return math.max(1, math.ceil(rate * 0.1)) end
+	local perFrame = frameCap(rps)
 	local mode = spawner and "spawn" or (words[2] == "aim" and "aim" or "sky")
 	local phases = spawner and STRESS_SPAWN or (words[3] == "ab" and STRESS_AB or words[3] == "shot" and STRESS_SHOT
 		or words[3] == "prof" and STRESS_PROF or STRESS)
@@ -420,15 +423,60 @@ function Deagle:Stress(arg)
 		end
 		return X.orig.Native(s, cmd, ...)
 	end
+	if mode == "sky" then
+		-- straight up within 5 deg, whatever the view: "sky" used to read the view, so it depended on the scene (Claude
+		-- 1, 2026-10-17: ~190 impacts a second from something overhead until the view moved). Built here: coneDir has
+		-- no "right" for a direction straight up.
+		local tan5 = math.tan(math.rad(5))
+		self.shotDirOverride = function()
+			local k, a = tan5 * math.sqrt(math.random()), math.random() * 2 * math.pi
+			local x, y = k * math.cos(a), k * math.sin(a)
+			local l = math.sqrt(x * x + y * y + 1)
+			return { x = x / l, y = y / l, z = 1 / l }
+		end
+		-- a tree or a roof over Henry breaks straight up: say what is above
+		local p, hits = self:Player(), {}
+		local okR, nR = pcall(Physics.RayWorldIntersection, System.GetViewCameraPos(), { x = 0, y = 0, z = 1000 }, 1, ent_all, p and p.id, nil, hits)
+		local h = okR and nR and nR > 0 and hits[1]
+		log(h and string.format("STRESS clear above: no, first hit at %.1f m (%s%s)", h.dist or -1, tostring(U.surfaceName and U.surfaceName(h) or h.surface),
+			h.entity and (", " .. tostring(h.entity.class)) or ", static") or "STRESS clear above: yes (nothing within 1000 m straight up)")
+	end
 	if mode == "aim" then   -- no kick: at 75 rounds a second it climbed the view straight into the sky (the user)
 		X.orig.Recoil = self.Recoil
 		self.Recoil = function() end
 	end
 	X.orig.ApplyHit = self.ApplyHit
-	self.ApplyHit = function(...) X.impacts = X.impacts + 1 return X.orig.ApplyHit(...) end
+	self.ApplyHit = function(s, hit, dir, phys, r, ...)   -- (foliage passes too: impacts aren't ends)
+		X.impacts = X.impacts + 1
+		if r and hit then r.stressSurf = U.surfaceName and U.surfaceName(hit) or tostring(hit.surface) end
+		return X.orig.ApplyHit(s, hit, dir, phys, r, ...)
+	end
+	-- how rounds end, per phase (Claude 5's tools/probe/ends.lua tally, in the harness): HIT by the surface that stopped
+	-- it, END past the range, at the end of its life, or spent (too slow, too many hops); dropped by the round cap
+	X.ends = { n = 0, hit = {}, hits = 0, range = 0, life = 0, spent = 0, dropped = 0, alive = 0, frames = 0 }
+	X.orig.StepRound = self.StepRound
+	self.StepRound = function(s, r, dt)
+		local done = X.orig.StepRound(s, r, dt)
+		if done then
+			local E = X.ends
+			E.n = E.n + 1
+			if r.landed then E.hits = E.hits + 1; local k = r.stressSurf or "?"; E.hit[k] = (E.hit[k] or 0) + 1
+			elseif r.dist > s.cfg.range then E.range = E.range + 1
+			elseif r.age >= 5.9 then E.life = E.life + 1
+			else E.spent = E.spent + 1 end
+		end
+		return done
+	end
 	-- shots that became rounds: a "pass" can't hide shots the gun refused (Claude 1: 1000 a second fired ~45)
 	X.orig.LaunchRound = self.LaunchRound
-	self.LaunchRound = function(...) X.launched, X.phLaunched = X.launched + 1, X.phLaunched + 1 return X.orig.LaunchRound(...) end
+	self.LaunchRound = function(s, ...)
+		X.launched, X.phLaunched = X.launched + 1, X.phLaunched + 1
+		local before = s.rounds and #s.rounds or 0
+		local r = X.orig.LaunchRound(s, ...)
+		local list = s.rounds
+		if list and list[#list] == r then X.ends.dropped = X.ends.dropped + math.max(0, before + 1 - #list) end   -- the cap took the oldest
+		return r
+	end
 	local vt = self.VmTick   -- the timed one: the frame clock goes around it
 	-- Shots owed, a small number: rate x the game time of each frame. Not a next-shot time added to the game clock: KCD2's
 	-- Lua numbers are float32 and the clock is the save's game time (51602 s in the user's, 2026-10-17), where a float
@@ -445,6 +493,17 @@ function Deagle:Stress(arg)
 				X.phLaunched < 0.9 * due and " THROTTLED" or "")
 		end
 		X.phShots, X.phLaunched, X.phHeld = 0, 0, 0
+		local E = X.ends
+		if ph[3] or E.n > 0 then   -- how this phase's rounds ended (a round fired late in a phase ends in the next one)
+			local surf = {}
+			for k, v in pairs(E.hit) do surf[#surf + 1] = { k, v } end
+			table.sort(surf, function(x, y) return x[2] > y[2] end)
+			local top = {}
+			for i = 1, math.min(4, #surf) do top[#top + 1] = surf[i][1] .. " " .. surf[i][2] end
+			log(string.format("STRESS ends %-18s HIT %d (%s), END range %d, life %d, spent %d, dropped by the cap %d | rounds alive %.0f on average",
+				ph[1], E.hits, table.concat(top, ", "), E.range, E.life, E.spent, E.dropped, E.alive / math.max(1, E.frames)))
+		end
+		X.ends = { n = 0, hit = {}, hits = 0, range = 0, life = 0, spent = 0, dropped = 0, alive = 0, frames = 0 }
 		local sum = 0
 		for _, v in ipairs(X.luas) do sum = sum + v end
 		local avg, p99 = sum / math.max(1, #X.luas), pct(X.luas, 0.99)
@@ -459,6 +518,7 @@ function Deagle:Stress(arg)
 			local ph = phases[X.ph]
 			if X.offFor ~= X.ph then X.offFor = X.ph; stressOff(X, ph[5]); stressProf(X, ph.prof, ph[1]) end
 			if X.prof then X.prof.frames = X.prof.frames + 1 end
+			X.ends.alive, X.ends.frames = X.ends.alive + (s.rounds and #s.rounds or 0), X.ends.frames + 1
 			X.start, X.t0 = X.start or g, X.t0 or g
 			X.win = X.win or { t = g, n = 0, sum = 0, max = 0 }
 			local w, dt = X.win, a - lastA
@@ -487,9 +547,9 @@ function Deagle:Stress(arg)
 				owed = owed - math.floor(owed)   -- past the cap: the backlog goes (a long frame doesn't dump a burst)
 				local d = clock() - a0
 				X.lua, X.frameLua = X.lua + d, X.frameLua + d
-			elseif (mode == "sky" and System.GetViewCameraDir().z > 0.5) or (mode == "aim" and not aimsAtLife(s)) then
+			elseif mode == "sky" or (mode == "aim" and not aimsAtLife(s)) then
 				local rr = ph.rate or rps
-				local pf = ph.rate and math.max(8, math.ceil(rr / 30)) or perFrame
+				local pf = ph.rate and frameCap(rr) or perFrame
 				owed = owed + rr * gdt
 				local n = math.min(math.floor(owed), pf)   -- every shot due this frame
 				for _ = 1, n do

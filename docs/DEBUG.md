@@ -160,9 +160,13 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 ## Checking effects
 - F9 slow motion, then shoot: flash, smoke, casings, light at 1/10 speed. For the flash go slower: `deagle_slowmo 0.02` (1/50) or `0.01` (1/100).
 - `deagle_fx <effect>` spawns a particle effect 3 m ahead (e.g. `deagle_fx deagle.muzzle`).
-- `deagle_stress [rounds a second] [sky | aim]`: frame-rate test. Look at the sky (it only fires while you do), type it,
-  keep looking up for 21 s until "stress test done". Infinite ammo, 10 rounds a second by default (`deagle_stress 75`
-  is a CIWS); `aim` fires where you look with no recoil, impacts included, and holds fire while you look at a person or an animal.
+- `deagle_stress [rounds a second] [sky | aim]`: frame-rate test, 21 s until "stress test done". Infinite ammo, 10
+  rounds a second by default (`deagle_stress 75` is a CIWS). `sky` (the default) fires every round straight up (within
+  5 deg) whatever the view, and logs what is above Henry first (`STRESS clear above: yes`, or the first hit: a tree or
+  a roof over him breaks it); `aim` fires where you look with no recoil, impacts included, and holds fire while you
+  look at a person or an animal. At most 0.1 s worth of shots a frame (a hitch doesn't dump a burst). After each phase
+  a `STRESS ends` line: how rounds ended (HIT by surface, END past the range, at the end of their life, spent) and how
+  many the round cap dropped, and the rounds alive on average.
   5 s with tracers, a pause, 5 s without. A third word `ab` (`deagle_stress 75 aim ab`, 30 s) fires with everything,
   then with the impact effects off, the holes off, the hit sounds off: which part of a hit costs. A third word `shot`
   (`deagle_stress 250 sky shot`, ~45 s) does the same for the shot itself: everything, then no tracers, no flash, no

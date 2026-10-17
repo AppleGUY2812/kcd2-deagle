@@ -44,6 +44,7 @@ function Deagle:Shoot(force)
 		local k = c.physics.barrelAim
 		dir = vnorm(vadd(dir, vadd(vscale(upv, math.rad(kp) * k), vscale(right, math.rad(ky) * k))))
 	end
+	if self.shotDirOverride then dir = self.shotDirOverride(dir) end   -- deagle_stress sky: straight up, whatever the view
 	s.heat = s.heat + c.heatPerShot
 
 	if c.gunFx then self:PlayTrigger(c.shotTrigger) end
