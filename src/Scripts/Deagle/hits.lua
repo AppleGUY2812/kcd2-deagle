@@ -279,7 +279,9 @@ function Deagle:ApplyHit(hit, dir, phys, r)
 	elseif e and e.soul and e ~= p then
 		if c.hitMode == "hit" then
 			try("CreateHit", function()
-				g_gameRules:CreateHit(e.id, p.id, p.id, c.damage, 0, nil, hit.partid or -1, c.hitType, hit.pos, dir, hit.normal)
+				-- part -1 always: our bone zones and armour decide the damage; a real part (the native ray has one, KCD2's
+				-- Lua ray never does) could let KCD2 apply its own zone multipliers on top (unverified: A/B before changing)
+				g_gameRules:CreateHit(e.id, p.id, p.id, c.damage, 0, nil, -1, c.hitType, hit.pos, dir, hit.normal)
 			end)
 			self:Bleed(e, hit, dir)
 		else
