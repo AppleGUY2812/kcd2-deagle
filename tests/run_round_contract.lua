@@ -35,7 +35,7 @@ local sceneT0 = 0   -- when the scene's first round was fired (setScene): moving
 local planes = {}
 local npc = { soul = {}, actor = {}, human = {}, class = "NPC", damage = 0, this = { id = "npcWUID" }, id = "npc1" }
 function npc:GetName() return "target" end
-function npc:GetWorldPos() return vec(0, 50, 0) end
+function npc:GetWorldPos() return vec(0, 50, 8.5) end   -- feet 8.5: the shot at z 10 meets his chest bones
 npc.GetBonePos = M.skeleton
 function npc.actor:RagDollize() end
 function npc:AddImpulse() end
@@ -407,14 +407,28 @@ local function compare(a, b)
 	local worst = { pos = 0, energy = 0, t = 0 }
 	local why
 	local function pd(p, q) return math.sqrt((p.x - q.x) ^ 2 + (p.y - q.y) ^ 2 + (p.z - q.z) ^ 2) end
+	-- hits by (round, its nth hit): each round's own hits in time order; across rounds within a frame the order is left
+	-- open (Claude 5, agreed 2026-10-17: native emits by time, Lua by its rounds array). Where it matters, two rounds on one
+	-- NPC in one frame, the outcome is pinned instead (invariant 2e)
+	local function keyed(hits)
+		local out, nth = {}, {}
+		for _, h in ipairs(hits) do
+			local r = h.round or 1
+			nth[r] = (nth[r] or 0) + 1
+			out[r .. "/" .. nth[r]] = h
+		end
+		return out
+	end
 	if #a.hits ~= #b.hits then why = string.format("%d hits vs %d", #a.hits, #b.hits) end
-	for i = 1, math.min(#a.hits, #b.hits) do
-		local x, y = a.hits[i], b.hits[i]
+	local ka, kb = keyed(a.hits), keyed(b.hits)
+	for key, x in pairs(ka) do
+		local y = kb[key]
+		if not y then why = why or "hit " .. key .. " missing"; break end
 		worst.pos = math.max(worst.pos, pd(x.pos, y.pos))
 		worst.t = math.max(worst.t, math.abs(x.t - y.t))
 		worst.energy = math.max(worst.energy, math.abs(x.energy - y.energy) / math.max(1e-9, y.energy))
 		if x.surface ~= y.surface or x.entity ~= y.entity or x.goesOn ~= y.goesOn or x.round ~= y.round or x.frame ~= y.frame then
-			why = why or string.format("hit %d: %s/%s/%s vs %s/%s/%s", i, x.surface, tostring(x.entity), tostring(x.goesOn), y.surface, tostring(y.entity), tostring(y.goesOn))
+			why = why or string.format("hit %s: %s/%s/%s vs %s/%s/%s", key, x.surface, tostring(x.entity), tostring(x.goesOn), y.surface, tostring(y.entity), tostring(y.goesOn))
 		end
 	end
 	local as, bs = a.samples or {}, b.samples or {}
@@ -487,16 +501,12 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 	check(string.format("%s: the steel corridor: %d skips, ended by maxHops %d (not landed)", gun, #co.hits, mh),
 		#co.hits == mh + 1 and co.hits[#co.hits].goesOn and not co.landed and co.final.hops == mh + 1, #co.hits)
 	local bu = T(gun .. " / burst of 12 past bystanders")
-	local wallHits, order = 0, true
-	for i, h in ipairs(bu.hits) do
-		if h.surface == "mat_rock" then wallHits = wallHits + 1 end
-		local p = bu.hits[i - 1]
-		if p and p.frame == h.frame and p.round > h.round then order = false end
-	end
+	local wallHits = 0
+	for _, h in ipairs(bu.hits) do if h.surface == "mat_rock" then wallHits = wallHits + 1 end end
 	local by = {}
 	for _, f in ipairs(bu.flybys or {}) do by[f.entity] = (by[f.entity] or 0) + 1 end
-	check(string.format("%s: burst: 9 rounds hit the wall, 3 fly over; within a frame in the order fired; most alive %s", gun, tostring(bu.maxAlive)),
-		wallHits == 9 and #bu.hits == 9 and order, wallHits .. " " .. tostring(order))
+	check(string.format("%s: burst: 9 rounds hit the wall, 3 fly over; most alive %s", gun, tostring(bu.maxAlive)),
+		wallHits == 9 and #bu.hits == 9, wallHits)
 	check(string.format("%s: near misses: the bystander 2 m off the path hears it (%d), the one 3 m off doesn't (%d)", gun, by.by2mWUID or 0, by.by3mWUID or 0),
 		(by.by2mWUID or 0) >= 1 and (by.by3mWUID or 0) == 0, by.by2mWUID)
 	local np = T(gun .. " / NPC at 50 m")
@@ -558,6 +568,20 @@ for _, gun in ipairs({ "deagle", "glock_17" }) do
 	rec = { hits = {}, samples = {}, t0 = M.t }
 	local r = Deagle:LaunchRound(vec(0, 0, 10), vec(0, 1, 0), Deagle:ShotPhysics(), nil)
 	check(gun .. ": a wall at 5 m is hit in the frame the round is fired (no frame advanced)", r.landed and #(Deagle.rounds or {}) == 0, r.landed)
+end
+
+-- 2e. two rounds on one NPC in the same frame: the order they're handled in may differ between sims, the outcome may not
+-- (the NPC's damage and whether he's dead). Fired both ways round
+for _, gun in ipairs({ "deagle", "glock_17" }) do
+	local out = {}
+	for _, swap in ipairs({ false, true }) do
+		setScene({ world = { { p = vec(0, 49.85, 0), n = vec(0, -1, 0), entity = npc, box = { -0.3, 0.3, 49, 51, 8.5, 11 } }, wall(80, 1) } })
+		local a, b = { 0, vec(-0.001, 1, 0) }, { 0, vec(0.001, 1, 0) }
+		burst(gun, swap and { b, a } or { a, b }, 60, 1, 5)
+		out[#out + 1] = { dmg = npc.damage, dead = npc.actor:IsDead() }
+	end
+	check(string.format("%s: two rounds on one NPC in one frame, either order: damage %.1f / %.1f, dead %s / %s", gun, out[1].dmg, out[2].dmg,
+		tostring(out[1].dead), tostring(out[2].dead)), math.abs(out[1].dmg - out[2].dmg) < 1e-6 and out[1].dead == out[2].dead, out[2].dmg)
 end
 
 -- 2d. 1024 rounds in the air at once, nothing dropped by the cap, none lost
