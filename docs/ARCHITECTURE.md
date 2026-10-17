@@ -238,7 +238,8 @@ for 60 fps is between 250 and 500. What is wrong in the model above: "life" is n
 ~0.64 s in one run (something overhead: ~190 impacts/s) and 2.5 s+ in another (the view moved; rounds alive climbed to
 487), so "sky" depends on where the user looks, and the same command gave different scenes (idle 60 fps one run, 29 the
 next). No clean c until the stress fires from a fixed point and logs how rounds end (proposed to Claude 4). The profiler
-inflates Lua ~7x (75/s: 1.02 ms unprofiled in step 1 vs 7.21 profiled): its shares are usable, its absolute ms are not.
+inflates Lua ~1.6x (75/s tonight: 4.55 ms unprofiled vs 7.21 profiled; the "7x" from step 1's 1.02 ms compared two
+different scenes): its shares are usable, its absolute ms are not.
 
 ## How each step is built and proven
 - Durable state lives in files (this doc, the step's spec, tests), not in a session's chat. Each step starts from a
