@@ -563,7 +563,7 @@ end
 function Deagle:Native(cmd) System.LogAlways("[DN] " .. cmd) end
 
 function Deagle:NativeHello()
-	self.native = false
+	self.native, self.ronParamsFor = false, nil   -- the plugin forgets a Ready or Not gun's numbers at hello
 	self:Native("hello")
 end
 

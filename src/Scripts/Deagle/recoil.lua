@@ -163,6 +163,8 @@ end
 -- offset), the burst window, weapon_right in the viewmodel's own space (the recoil turns about it) and the camera
 -- shake's phases (random where the shake asks for it, else 0)
 function Deagle:RonFireNative(r, kp, ky, window)
+	if not (self.nativeCaps and self.nativeCaps.ronvm) then return self:RonParams(self.gun) end   -- says why, once
+	if self.ronParamsFor ~= self.gun.id then self:RonParams(self.gun) end   -- the handshake ran before the plugin said it can
 	local rnd = r.RecoilRandomness or 0
 	local rx, ry, rz = (math.random() * 2 - 1) * rnd, (math.random() - 0.5) * rnd, (math.random() * 2 - 1) * rnd
 	local pv = { x = 0, y = 0, z = 0 }
@@ -194,8 +196,16 @@ local function quatRot(q)   -- Unreal's FQuat::Rotator: (Pitch, Yaw, Roll) in de
 end
 function Deagle:RonParams(gun)
 	if not self.native then return end
-	self:Native("ronp reset")
 	local r = gun and gun.ronStats and self.ronStats and self.ronStats[gun.ronStats]
+	if not (self.nativeCaps and self.nativeCaps.ronvm) then   -- an older plugin: only the camera kick (Lua's)
+		if r and self.nativeCaps and not self.ronOldPlugin then
+			self.ronOldPlugin = true
+			U.log("$4Ready or Not recoil: the installed plugin is older than its recoil (no ronvm): only the camera kick, no gun recoil or shake")
+		end
+		return
+	end
+	self:Native("ronp reset")
+	self.ronParamsFor = gun and gun.id
 	if not r then return end
 	local P, S = self.ronPlayer, self.ronShakes[r.FireCameraShake or ""]
 	local function t3(tr) local t = tr and tr.Translation or {} return { t[1] or 0, t[2] or 0, t[3] or 0 } end

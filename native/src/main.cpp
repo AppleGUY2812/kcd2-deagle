@@ -858,13 +858,14 @@ static void Command(const char* line) {
 		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
 		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1; g_nSmokes = 0;
 		g_heldN = 0; g_heldHead = 0; g_nTraces = 0;   // the same for impact pieces and tracer emitters (Claude 3's audit)
+		RvmReset();   // a Ready or Not gun's recoil: Lua sends its numbers again (recoil.lua RonParams)
 		PreloadTracers();
 		// the handshake, then the player's saved settings (settings.cpp)
 		std::vector<std::string> saved = SettingsReplay();
 		{
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
-			g_console.push_back("deagle_native_caps files fxr smoke");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx
+			g_console.push_back("deagle_native_caps files fxr smoke ronvm");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp)
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
