@@ -8,9 +8,15 @@
 //   0xfc3ec0  the readiness wait is made (mask 0x81: graphics streaming + clothing)
 //   0x1f4dc00 the wait is over: fade in (wh_ui_ApseOpenFaderFadeInDuration)
 // Each step is logged with its time since the open. The per-frame gate logs only when its answer changes.
+// Decompiled since: the object is the actor's clothing attachment manager (+0x688, wh::entitymodule::clothing::
+// C_ComponentAttachmentManager, made by C_ClothingAttachmentManagerFactory); its vfunc +0x80 (0x181e96650) is
+// "state +0x38 == 1", reached once every clothing part in its list has loaded. "invtime 2" (skip): see HkGate.
 // Off by default: "invtime 1" checks every prologue byte for byte (all or none), then hooks; "invtime 0" unhooks.
+// "invtime 2": on, and the inventory gate is skipped (HkGate); "invtime 1" again turns the skip off.
 #include <windows.h>
+#include <intrin.h>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include "MinHook.h"
 #include "log.h"
@@ -67,13 +73,27 @@ void LogGate(uintptr_t screen) {
 		g.innerVt ? RttiName(game, g.innerVt).c_str() : "-", rva(g.innerVt), rva(g.fn80));
 }
 
+// "invtime 2" = on + skip (an A/B test, not a fix): the gate still runs and its real answer is logged, but the screen is told
+// "ready" (1) at once, so it makes its readiness wait (mask 0x81, clothing included) at the open. Only for the inventory
+// screen's call (C_UICharacterBase update 0x180567d70: its call at 0x567e4b returns to 0x567e50; the gate's only caller in
+// 1.5.6), every other caller passes through untouched. With skip on the screen stops asking once it has 1, so the
+// gate's real ready time isn't logged: compare open -> fade in, skip off vs on, over 5+ opens each
+constexpr uintptr_t kGateCallRet = 0x567e50;
+bool g_skip = false;
+uintptr_t g_base = 0;
+
 uintptr_t __fastcall HkGate(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+	uintptr_t ret = (uintptr_t)_ReturnAddress();
 	uintptr_t r = g_gate(a, b, c, d);
 	int v = (r & 0xFF) != 0;
 	if (v != g_lastGate) {   // no work on an unchanged frame
 		if (g_lastGate == -1) LogGate(a);   // once an open: which object it waits on
 		g_lastGate = v;
 		Log("invtime gate (object +0x20 ready) = %d at %.1f ms", v, Ms());
+	}
+	if (g_skip && !v && ret == g_base + kGateCallRet) {
+		Log("invtime skip: gate told 1 (its real answer 0) at %.1f ms; its real ready time isn't logged with skip on, compare open -> fade in", Ms());
+		return (r & ~(uintptr_t)0xFF) | 1;
 	}
 	return r;
 }
@@ -97,6 +117,7 @@ constexpr int kSites = sizeof(g_sites) / sizeof(g_sites[0]);
 bool Create() {
 	uintptr_t base = (uintptr_t)GetModuleHandleA("WHGame.dll");
 	if (!base) { Log("invtime: no WHGame.dll"); return false; }
+	g_base = base;
 	for (auto& s : g_sites) {   // all or none: every byte as read from 1.5.6's WHGame.dll
 		s.at = base + s.rva;
 		if (memcmp((void*)s.at, s.bytes, sizeof(s.bytes)) != 0) {
@@ -118,7 +139,12 @@ bool Create() {
 }  // namespace
 
 void Invtime_Command(const char* args) {
-	bool want = args && atoi(args) != 0;
+	int n = args ? atoi(args) : 0;   // 0 off, 1 on, 2 on + skip (HkGate)
+	bool want = n != 0;
+	if (want && (n == 2) != g_skip) {
+		g_skip = n == 2;
+		Log("invtime skip %s", g_skip ? "on: the inventory gate is told ready at once (a test: save first)" : "off");
+	}
 	if (want == g_on) { Log("invtime already %s", g_on ? "on" : "off"); return; }
 	if (want && !g_created && !(g_created = Create())) return;
 	// one batch: the threads are suspended once (MH_ApplyQueued)
