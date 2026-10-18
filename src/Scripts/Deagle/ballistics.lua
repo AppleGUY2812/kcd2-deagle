@@ -14,6 +14,8 @@ local IMPACT_CAP = { perRound = 2,    -- effects a round makes (its first hit an
 	perFrame = 6,                     -- effects all rounds together make in one frame
 	mergeDist = 0.3, mergeTime = 0.1, -- m, s: a second effect on the same surface this close to the last one looks the same: skipped
 	maxHops = 4,                      -- hits a round survives (ricochets, wallbangs)
+	middleHit = 0.25,                 -- a hit between a round's first and its last shows (effect, hole, sound) at this
+	                                  -- chance: Ready or Not's rule (Deagle:ShowFace)
 	maxRounds = 1024 }                -- rounds in flight: past this the oldest is dropped, and logged (the native round sim
 	                                  -- lifts it). Was 64: a 75 rounds/s CIWS lost its rounds 0.85 s out (~300 m) in the
 	                                  -- air; 1024 at 75/s measured 4.6 ms Lua, ~57 fps (2026-10-17, sky). The user: drops
@@ -204,6 +206,51 @@ end
 local EXIT_FX = { stone = true, plaster = true, wood = true, metal = true, glass = true, cloth = true }   -- <family>_exit
 local THIN = { glass = true, cloth = true, straw = true }   -- panes / sheets: often built with no thickness
 
+-- Ready or Not shows a hit's effect, decal and sound (FUN_14499e1f0, called at 0x1449968c2) for the first hit of a
+-- shot, its last entry, its final hit, and any other ("middle") hit only on a 25 % roll: FUN_144994050, decompiled
+-- lines 1717-1738, FUN_143028b10(0.25) at 0x144996895 = (C rand() & 0x7fff) / 32767 <= 0.25 (docs/ron/ron_bullet_code.md
+-- "Effect-spawn calls"). Not on characters: blood always shows (hits.lua). Ready or Not traces the whole line first and
+-- knows which hit is last; a round here meets one surface at a time, so a ray on along its line (HitAhead) tells
+-- whether anything more is to come. The roll has its own C rand() (MSVC's, seed 1 as a C program starts) so the
+-- math.random sequence everything else draws from (and the round contract's golden traces replay) doesn't move.
+local cRandSeed = 1
+local function cRand()
+	cRandSeed = (cRandSeed * 214013 + 2531011) % 4294967296
+	return math.floor(cRandSeed / 65536) % 32768
+end
+function Deagle:MiddleRoll() return cRand() / 32767 <= self.cfg.impactCap.middleHit end
+
+-- anything more on the round's line from pos (just past a surface it went through), up to its range: foliage and
+-- invisible blockers it flies through don't count (FlightHit's rule)
+function Deagle:HitAhead(pos, dir, r)
+	local left, p = self.cfg.range - r.dist, self:Player()
+	for _ = 1, 8 do
+		if left <= 0 then return false end
+		local hits = {}
+		local ok, n = pcall(Physics.RayWorldIntersection, pos, vscale(dir, left), 1, ent_all, p and p.id, r.skip, hits)
+		local h = ok and n and n > 0 and hits[1]
+		if not h then return false end
+		local s = not h.entity and SURFACES[surfaceName(h)]
+		if not (s and s.fx == "pass") then return true end
+		pos, left = vadd(h.pos, vscale(dir, 0.001)), left - h.dist - 0.001
+	end
+	return true
+end
+
+-- a world surface the round goes through or stops in: whether its entry face (and its exit face) show, by Ready or
+-- Not's rule above. first: the round's first hit (nothing met before: no surface, skip or body); stops: it ends here
+-- (this entry is the final hit); otherwise a ray on from the exit: nothing ahead makes this entry the last entry and
+-- the exit the final hit, both shown; something ahead makes both middle hits, each on its own roll. A shot without a
+-- round in flight (an instant ray) is one hit: shown
+function Deagle:ShowFaces(r, stops, exitPos, dir)
+	if not r then return true, true end
+	local first = not (r.faced or r.hitIds)
+	r.faced = true
+	if stops then return true, false end
+	if not self:HitAhead(vadd(exitPos, vscale(dir, 0.002)), dir, r) then return true, true end
+	return first or self:MiddleRoll(), self:MiddleRoll()
+end
+
 -- A round hitting the world (BALLISTICS.md phase 3). A hit flatter than the material's critical angle skips off
 -- (RicochetChance, guns/penetration.lua: measured angles): ricochet whine, and sparks off hard surfaces. Otherwise the
 -- surface's mark (stopped by steel, the round breaks up and sprays fragments along it), then through it if the round can be: its punch has to reach the surface's armour level, and it gets
@@ -234,6 +281,7 @@ function Deagle:Impact(hit, dir, phys, r)
 		-- quiet: the surface's hit sound, caps and random draws as before (the round contract's golden traces replay
 		-- this random sequence), but no impact effect and no hole at a ricochet point: Ready or Not shows none there
 		self:MarkCapped(s, hit, dir, scale * 0.6, r, name, true)
+		r.faced = true   -- a skip is a hit: what comes after it isn't the shot's first (ShowFaces)
 		local out = self:Deflect(r, hit.pos, hit.normal, dir, pen.keep or c.ricochetKeep, c.ricochetScatter, nil,
 			pen.lift or (not pen.hard and 1 or nil), pen.exit, pen.exitMax, pen.exitAdd)
 		-- Ready or Not's ricochet (its hit code, docs/ron/ron_bullet_code.md; user 2026-10-18: copy its effects): the
@@ -250,45 +298,57 @@ function Deagle:Impact(hit, dir, phys, r)
 		end
 		return true
 	end
-	self:MarkCapped(s, hit, dir, scale, r, name)
-	if self.state.logActions or tag ~= "" then
-		log(string.format("%simpact %s at %.0f deg -> %s x%.2f hole %s", tag, name, graze, s.fx, scale, tostring(s.hole)))
+	-- how far it gets, before any effect: whether the entry shows depends on whether this is a middle hit (ShowFaces)
+	local why, ratio, depth, reach, far, thick   -- why: it stops here, and the reason for a traced shot's log ("" none)
+	if not (r and pen and pen.penetrable) or s.fx == "water" then why = ""
+	else
+		ratio = self:EnergyRatio(phys, energy)
+		if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then   -- 9 mm level 2, .50 AE 3
+			why = string.format("armour level %d needs more than %.0f J", pen.armour, energy or -1)
+		else
+			depth = c.wallbang.budget * ratio / pen.density * (r.tumble and c.tumble.pen or 1)
+			reach = depth + 0.01
+			local back, p = {}, self:Player()
+			local ok, n = pcall(Physics.RayWorldIntersection, vadd(hit.pos, vscale(dir, reach)), vscale(dir, -reach), 1, ent_all, p and p.id, nil, back)
+			far = ok and n and n > 0 and back[1]
+			thick = far and far.entity == hit.entity and reach - far.dist or nil
+			local function farSide()   -- what the ray back from the round's reach met first
+				if not far then return "nothing" end
+				return string.format("%s%s at %.1f cm deep", surfaceName(far), far.entity ~= hit.entity and " (another object)" or "",
+					(reach - far.dist) * 100)
+			end
+			if THIN[s.fx] then thick = math.max(thick or 0, 0.005)
+			elseif not thick or thick < 0.002 then   -- the far side is out of reach (or it's the near side)
+				why = string.format("no far side within its reach %.1f cm (back ray met %s)", depth * 100, farSide())
+			end
+			if not why and thick >= depth then
+				why = string.format("%.1f cm thick here, it could go %.1f cm (back ray met %s)", thick * 100, depth * 100, farSide())
+			end
+		end
 	end
-	-- stopped by steel: the round breaks up on it and its fragments spray along the face (Splash, as on plate armour)
+	local exitPos = not why and vadd(hit.pos, vscale(dir, thick))
+	local showIn, showOut = self:ShowFaces(r, why ~= nil, exitPos, dir)
+	-- a middle hit that lost its roll: no effect, hole or sound, with the caps and random draws of a shown one (the
+	-- golden traces replay that sequence; a ricochet's quiet mark does the same)
+	self:MarkCapped(showIn and s or { hole = s.hole }, hit, dir, scale, r, name, not showIn)
+	if self.state.logActions or tag ~= "" then
+		log(string.format("%simpact %s at %.0f deg -> %s x%.2f hole %s%s", tag, name, graze, s.fx, scale, tostring(s.hole),
+			showIn and "" or " (middle hit, not shown)"))
+	end
+	-- stopped: by steel, the round breaks up on it and its fragments spray along the face (Splash, as on plate armour);
 	-- why it stopped, in the shot log of a traced shot (cfg.debugShotLog)
-	local function stops(why)
+	if why then
 		if pen and pen.hard and s.fx == "metal" then self:Splash(hit.pos, hit.normal, dir, scale) end
-		if tag ~= "" and why then log(tag .. "stopped in " .. name .. ": " .. why) end
+		if tag ~= "" and why ~= "" then log(tag .. "stopped in " .. name .. ": " .. why) end
 		return false
 	end
-	if not (r and pen and pen.penetrable) or s.fx == "water" then return stops() end
-	local ratio = self:EnergyRatio(phys, energy)
-	if 2 + math.floor(math.log(ratio) / math.log(2) + 0.5) < pen.armour then   -- 9 mm level 2, .50 AE 3
-		return stops(string.format("armour level %d needs more than %.0f J", pen.armour, energy or -1))
-	end
-	local depth = c.wallbang.budget * ratio / pen.density * (r.tumble and c.tumble.pen or 1)
-	local reach, back, p = depth + 0.01, {}, self:Player()
-	local ok, n = pcall(Physics.RayWorldIntersection, vadd(hit.pos, vscale(dir, reach)), vscale(dir, -reach), 1, ent_all, p and p.id, nil, back)
-	local far = ok and n and n > 0 and back[1]
-	local thick = far and far.entity == hit.entity and reach - far.dist or nil
-	local function farSide()   -- what the ray back from the round's reach met first
-		if not far then return "nothing" end
-		return string.format("%s%s at %.1f cm deep", surfaceName(far), far.entity ~= hit.entity and " (another object)" or "",
-			(reach - far.dist) * 100)
-	end
-	if THIN[s.fx] then thick = math.max(thick or 0, 0.005)
-	elseif not thick or thick < 0.002 then   -- the far side is out of reach (or it's the near side)
-		return stops(string.format("no far side within its reach %.1f cm (back ray met %s)", depth * 100, farSide()))
-	end
-	if thick >= depth then
-		return stops(string.format("%.1f cm thick here, it could go %.1f cm (back ray met %s)", thick * 100, depth * 100, farSide()))
-	end
-	local exitPos = vadd(hit.pos, vscale(dir, thick))
 	local exitNormal = far and vdot(far.normal, dir) > 0 and far.normal or dir
-	if EXIT_FX[s.fx] then self:SpawnFx("deagle_impacts." .. s.fx .. "_exit", exitPos, dir, scale) end
-	if s.fx == "glass" then self:HitSound(s.ron, exitPos, scale) end
+	if showOut then
+		if EXIT_FX[s.fx] then self:SpawnFx("deagle_impacts." .. s.fx .. "_exit", exitPos, dir, scale) end
+		if s.fx == "glass" then self:HitSound(s.ron, exitPos, scale) end
+	end
 	if s.hole then
-		self:Mark({ hole = s.hole }, { pos = exitPos, normal = exitNormal, entity = hit.entity }, dir, scale, c.holeExitSize)
+		self:Mark({ hole = s.hole }, { pos = exitPos, normal = exitNormal, entity = hit.entity }, dir, scale, c.holeExitSize, not showOut)
 	end
 	local left = energy * (1 - thick / depth)
 	-- in and out through faces that aren't each other's far side (a corner, an edge): the two outward normals add up
@@ -302,7 +362,7 @@ function Deagle:Impact(hit, dir, phys, r)
 			local b = math.rad(c.deflect.maxDeg * math.min(1, lop) * (0.5 + 0.5 * thick / depth))
 			out = coneDir(vnorm(vadd(vscale(dir, math.cos(b)), vscale(vnorm(side), math.sin(b)))), c.deflect.scatter)
 			r.tumble = true
-			self:SpawnFx("deagle_impacts." .. s.fx, exitPos, exitNormal, scale * c.deflect.chipScale)   -- the corner breaks off
+			if showOut then self:SpawnFx("deagle_impacts." .. s.fx, exitPos, exitNormal, scale * c.deflect.chipScale) end   -- the corner breaks off
 			if self.state.logActions then log(string.format("deflect %s: corner %.1f cm, bent %.0f deg", name, thick * 100, math.deg(b))) end
 		end
 	end

@@ -137,9 +137,14 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	local big = id == "deagle"
 
 	-- a 3 cm plank wall at 20 m, stone behind at 40 m: through the plank (exit debris + exit hole), on into the stone
+	-- (the plank's exit is a middle hit, the stone behind it the last: shown here on every roll, impactCap.middleHit 1;
+	-- how often it shows has its own check below)
 	reset()
 	world.slabs = { { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 240, y1 = 241, surface = 1 } }
+	local middle = Deagle.cfg.impactCap.middleHit
+	Deagle.cfg.impactCap.middleHit = 1
 	fire()
+	Deagle.cfg.impactCap.middleHit = middle
 	local plank, stone = landed[1], landed[2]
 	local exitHole
 	for _, d in ipairs(M.decals) do if d.pos.y > 220.02 and d.pos.y < 220.05 then exitHole = d end end
@@ -627,6 +632,112 @@ do
 	local ran = 0
 	for i = l0 + 1, #M.logs do if M.logs[i]:find("shot 9001 t=", 1, true) then ran = ran + 1 end end
 	check(string.format("shot log: 5 paused frames log %d lines, a moving frame 1", paused), paused == 0 and ran == 1, ran)
+end
+-- Ready or Not's middle hits (ballistics.lua ShowFaces; its FUN_144994050, the 25 % roll at 0x144996895): the first
+-- hit, the last entry and the final hit always show; a hit between them shows its effect, hole and sound together on a
+-- 25 % roll; bodies always bleed. Budgets that would hide repeats at one spot are off here, so only the roll decides
+do
+	local cap, hb, sb, fb = Deagle.cfg.impactCap, Deagle.cfg.holeBudget, Deagle.cfg.soundBudget, Deagle.cfg.fxBudget
+	local was = { cap.mergeDist, cap.perFrame, hb.on, sb.on, fb.on }
+	cap.mergeDist, cap.perFrame, hb.on, sb.on, fb.on = 0, 1e9, false, false, false
+	-- one round into the first slab's front at 20 m (the Deagle at full energy): what showed at its entry (y 220) and
+	-- at its exit (past y 220.001): { fx, decals, sounds } counts each
+	local function oneRound(slabs)
+		reset()
+		world.slabs = slabs
+		local n0 = #M.native
+		local r = { pos = vec(100, 220, 31.75), vel = vec(0, physD.velocity, 0), dist = 20 }
+		local hit = { pos = vec(100, 220, 31.75), normal = vec(0, -1, 0), surface = slabs[1].surface, dist = 20, energy = physD.energy }
+		M.fxLog = {}
+		local through = Deagle:Impact(hit, vec(0, 1, 0), physD, r)
+		local at = { entry = { 0, 0, 0 }, exit = { 0, 0, 0 } }
+		local function side(y) return y > 220.001 and at.exit or at.entry end
+		for _, f in ipairs(M.fxLog) do local a = side(f.pos.y) a[1] = a[1] + 1 end
+		for _, d in ipairs(M.decals) do local a = side(d.pos.y) a[2] = a[2] + 1 end
+		for i = n0 + 1, #M.native do
+			local y = M.native[i]:match("^%[DN%] ron3 [%d%.]+ [%-%d%.]+ ([%-%d%.]+) ")
+			if y then local a = side(tonumber(y)) a[3] = a[3] + 1 end
+		end
+		return through, at
+	end
+	local function shown(a) return a[1] > 0 or a[2] > 0 or a[3] > 0 end
+	local function all(a, want) return (a[1] > 0) == want[1] and (a[2] > 0) == want[2] and (a[3] > 0) == want[3] end
+	-- a 3 cm plank at 20 m, a stone wall at 40 m behind it: the plank's exit is a middle hit
+	local N, out, entry, together, wentOn = 1000, 0, 0, 0, 0
+	for _ = 1, N do
+		local through, at = oneRound({ { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 240, y1 = 241, surface = 1 } })
+		if through then wentOn = wentOn + 1 end
+		if shown(at.exit) then out = out + 1 end
+		if shown(at.entry) then entry = entry + 1 end
+	end
+	check(string.format("middle hits: plank 20 m + stone 40 m: the plank's exit shows on %d of %d rounds (Ready or Not: 25 %%), its entry on %d (the first hit: all), %d went on",
+		out, N, entry, wentOn), out >= 0.22 * N and out <= 0.28 * N and entry == N and wentOn == N, out)
+	-- a glass pane (3 cm) before the stone: its exit's effect, hole and sound come and go together (one roll)
+	local split, glassOut = 0, 0
+	for _ = 1, 400 do
+		local _, at = oneRound({ { y0 = 220, y1 = 220.03, surface = 5 }, { y0 = 240, y1 = 241, surface = 1 } })
+		local s = shown(at.exit)
+		if s then glassOut = glassOut + 1 end
+		if not all(at.exit, { s, s, s }) then split = split + 1 end
+	end
+	check(string.format("middle hits: a glass pane's exit: effect, hole and sound together on every round (%d split; shown %d of 400)", split, glassOut),
+		split == 0 and glassOut > 60 and glassOut < 140, split)
+	-- the plank alone (nothing behind it within the round's range): its exit is the final hit, every round
+	local planeOut, planeIn = 0, 0
+	for _ = 1, 200 do
+		local _, at = oneRound({ { y0 = 220, y1 = 220.03, surface = 3 } })
+		if shown(at.exit) then planeOut = planeOut + 1 end
+		if shown(at.entry) then planeIn = planeIn + 1 end
+	end
+	check(string.format("middle hits: a plank alone: entry %d and exit %d of 200 rounds shown (first and final hit)", planeIn, planeOut),
+		planeIn == 200 and planeOut == 200, planeOut)
+	-- a later surface the round stops in (its last entry and final hit) always shows: the round came through a body
+	-- first (r.hitIds), so this stone isn't its first hit
+	local stoneIn = 0
+	for _ = 1, 200 do
+		reset()
+		world.slabs = { { y0 = 220, y1 = 221, surface = 1 } }
+		M.fxLog = {}
+		local r = { pos = vec(100, 220, 31.75), vel = vec(0, physD.velocity, 0), dist = 20, hitIds = { npc = true } }
+		local hit = { pos = vec(100, 220, 31.75), normal = vec(0, -1, 0), surface = 1, dist = 20, energy = physD.energy }
+		Deagle:Impact(hit, vec(0, 1, 0), physD, r)
+		if #M.fxLog > 0 then stoneIn = stoneIn + 1 end
+	end
+	check(string.format("middle hits: a wall a round stops in after a body: shown %d of 200 (the final hit)", stoneIn), stoneIn == 200, stoneIn)
+	-- a plank after a body, stone behind: the plank's entry is a middle hit too now (not the first, not the last)
+	local midIn = 0
+	for _ = 1, 400 do
+		reset()
+		world.slabs = { { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 240, y1 = 241, surface = 1 } }
+		M.fxLog = {}
+		local r = { pos = vec(100, 220, 31.75), vel = vec(0, physD.velocity, 0), dist = 20, hitIds = { npc = true } }
+		local hit = { pos = vec(100, 220, 31.75), normal = vec(0, -1, 0), surface = 3, dist = 20, energy = physD.energy }
+		Deagle:Impact(hit, vec(0, 1, 0), physD, r)
+		for _, f in ipairs(M.fxLog) do if f.pos.y < 220.001 then midIn = midIn + 1 break end end
+	end
+	check(string.format("middle hits: a plank after a body with stone behind: its entry shows on %d of 400 (a middle hit)", midIn),
+		midIn > 60 and midIn < 140, midIn)
+	-- a body between the plank and the wall: it bleeds on every round (no roll on characters); the plank's exit is a
+	-- middle hit then (the body is ahead of it)
+	local bled, plankOut = 0, 0
+	local R = 40
+	for _ = 1, R do
+		reset()
+		world.slabs = { { y0 = 220, y1 = 220.03, surface = 3 }, { y0 = 240, y1 = 241, surface = 1 } }
+		newNpc(230)
+		fire()
+		local b, o = false, false
+		for _, f in ipairs(M.fxLog or {}) do
+			if f.n:find("blood", 1, true) and f.pos.y > 229 and f.pos.y < 231.5 then b = true end
+			if f.n:find("wood", 1, true) and f.pos.y > 220.001 and f.pos.y < 220.1 then o = true end
+		end
+		if b then bled = bled + 1 end
+		if o then plankOut = plankOut + 1 end
+		M.fxLog = {}
+	end
+	check(string.format("middle hits: a body behind the plank bleeds on %d of %d rounds; the plank's exit shows on %d (a middle hit)", bled, R, plankOut),
+		bled == R and plankOut < R, bled)
+	cap.mergeDist, cap.perFrame, hb.on, sb.on, fb.on = was[1], was[2], was[3], was[4], was[5]
 end
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("penetration: %d/%d checks pass", n - fails, n))
