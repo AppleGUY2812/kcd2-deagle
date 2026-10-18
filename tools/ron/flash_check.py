@@ -95,7 +95,10 @@ def main():
         for k, quads in enumerate(stages):
             ref = np.zeros((fr.H, fr.W, 3)); ours = np.zeros_like(ref)
             sprites = [x for x in fr.step(ps, (k + 1) * fr.DT, rng) if x['kind'] in ('pop', 'pop_side', 'core', 'flame', 'longspark', 'corespark')]
-            fr.draw(sprites, ref); draw_cards(quads, ours, emit)
+            # KCD2 draws a card's sub-materials in their id order (cards.json "materials" = the .mtl's), each over the
+            # last by alpha: drawn in that order here too (stable: a sub-material's own quads keep the bake's order)
+            order = {m: i for i, m in enumerate(D['materials'])}
+            fr.draw(sprites, ref); draw_cards(sorted(quads, key=lambda q: order[q['mtl']]), ours, emit)
             ours_img = np.clip(np.rint(SCENE.display(ours) * 255), 0, 255).astype(np.uint8)
             a, b = fr.tonemap(ref).astype(float), ours_img.astype(float)
             mask = (a.max(2) > 30) | (b.max(2) > 30)

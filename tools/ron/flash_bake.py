@@ -306,7 +306,9 @@ for c in sets.values():
         for s in v:
             for q in s: members.setdefault((q['mtl'], q['tex'], q['sheet']), []).append(q['rgb'])
 mats = []
-for (mtl, tex, sheet), rgbs in sorted(members.items()):
+# sub-material ids dim to bright: KCD2 draws a card's sub-materials in id order, each over the last by alpha, where
+# Ready or Not adds them; brightest last keeps the white core white under the streak (named by level: <name>_<level>)
+for (mtl, tex, sheet), rgbs in sorted(members.items(), key=lambda kv: (int(kv[0][0].rsplit('_', 1)[1]), kv[0])):
     k = kcd2_emittance(np.mean(np.array(rgbs), axis=0), sheet)
     w = float(k.max()) * 10.0                   # Illum: HDR = colour x intensity x 0.1 (Illum.cfx:953)
     mats.append((mtl, tex, tuple(round(float(x), 4) for x in k / k.max()), w))
