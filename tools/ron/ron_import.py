@@ -98,14 +98,15 @@ def add_mesh(name, m, place, groups):
     """place: per-point Blender position from the psk point; groups: list of (vertex group name, [(point, weight)])"""
     pts = [place(p) for p in m["points"]]
     W = m["wedges"]
-    # psk.read gives Unreal axes (one mirror back from the file) and p_conv mirrors again: the file's own winding holds
-    faces = [(W[a][0], W[b][0], W[c][0]) for a, b, c, _, _ in m["faces"]]
+    # front faces are (w0, w2, w1) here: the file's order drew the inside of the gun in KCD2 (the user, 2026-10-18:
+    # "im seeing the inside of the gun"; Blender's preview draws both sides, so only the game showed it)
+    faces = [(W[a][0], W[c][0], W[b][0]) for a, b, c, _, _ in m["faces"]]
     me = bpy.data.meshes.new(name)
     me.from_pydata(pts, [], faces)
     uv = me.uv_layers.new(name="UVMap")
     li = 0
     for a, b, c, _, _ in m["faces"]:
-        for wi in (a, b, c):
+        for wi in (a, c, b):
             uv.data[li].uv = (W[wi][1], 1 - W[wi][2]); li += 1
     mats = m["materials"] or [name]
     for mn in mats:
@@ -113,6 +114,13 @@ def add_mesh(name, m, place, groups):
     for poly, (_, _, _, mat, _) in zip(me.polygons, m["faces"]):
         poly.material_index = min(mat, len(mats) - 1); poly.use_smooth = True
     me.update()
+    if m.get("normals") and len(m["normals"]) == len(m["points"]):
+        nrm = [Vector((n[1], n[0], n[2])).normalized() for n in m["normals"]]   # the same swap as the points
+        agree = sum(1 for poly in me.polygons if poly.normal.dot(sum((nrm[v] for v in poly.vertices), Vector())) > 0)
+        print(f"RON FACING {name}: {agree}/{len(me.polygons)} faces agree with RoN's stored normals")
+        if agree < 0.95 * len(me.polygons):
+            raise SystemExit(f"RON {name}: faces point inward ({agree}/{len(me.polygons)} agree): fix the winding")
+        me.normals_split_custom_set_from_vertices(nrm)   # RoN's own normals: its shading, hard edges included
     ob = bpy.data.objects.new(name, me); scene.collection.objects.link(ob)
     for gname, pw in groups:
         vg = ob.vertex_groups.get(gname) or ob.vertex_groups.new(name=gname)

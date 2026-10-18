@@ -79,6 +79,9 @@ def read(path):
             eo, es, ec = ch[k]
             extra.append([struct.unpack_from("<ff", d, eo + es * i) for i in range(ec)])
     out["extra_uvs"] = extra
+    if "VTXNORMS" in ch:   # per point, Y-mirrored like the points
+        no, ns, nc = ch["VTXNORMS"]
+        out["normals"] = [(x, -y, z) for x, y, z in (struct.unpack_from("<fff", d, no + 12 * i) for i in range(nc))]
     if "VERTEXCOLOR" in ch:
         co, cs, cc = ch["VERTEXCOLOR"]
         out["colors"] = [tuple(d[co + cs * i:co + cs * i + 4]) for i in range(cc)]
