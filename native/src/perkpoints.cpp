@@ -286,6 +286,7 @@ std::string Respec_Refund() {
 	char arg[64];
 	snprintf(arg, sizeof(arg), "%s +%d", label, gone);
 	std::string r = Points_Command(arg);
+	if (r.compare(0, strlen(label), label) != 0) r += fix;   // the points write itself refused: say how to add them by hand
 	Log("points: respec %s: %d of %d perks removed; %s", label, gone, asked, r.c_str());
 	char head[96];
 	snprintf(head, sizeof(head), "respec %s: %d of %d perks removed, refund: ", label, gone, asked);
