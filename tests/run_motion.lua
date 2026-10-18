@@ -151,6 +151,17 @@ Deagle:MotionParams(Deagle.guns.glock_17)
 sent = {}
 for i = from, #M.native do local k, v = M.native[i]:match("^%[DN%] mparams (%S+) ?(%S*)") if k then sent[k] = tonumber(v) or true end end
 check("glock_17: defaults (drag_aim_loc 0.4, hang_k 100, sprint_roll -35.5)", sent.drag_aim_loc == 0.4 and sent.hang_k == 100 and sent.sprint_roll == -35.5, tostring(sent.drag_aim_loc))
+-- a Ready or Not gun takes its blueprint's own movement numbers (gun.ronStats)
+from = #M.native + 1
+Deagle:MotionParams({ id = "ron_test", ronStats = "BP_Secondary_LARGrizzly" })
+sent = {}
+for i = from, #M.native do local k, v = M.native[i]:match("^%[DN%] mparams (%S+) ?(%S*)") if k then sent[k] = tonumber(v) or true end end
+check(string.format("ron gun (Grizzly): drag %s/%s/%s/%s, move scale %s/%s/%s, rot %s, interp %s",
+	tostring(sent.drag_aim_rot), tostring(sent.drag_aim_loc), tostring(sent.drag_strafe_rot), tostring(sent.drag_strafe_loc),
+	tostring(sent.move_scale_x), tostring(sent.move_scale_y), tostring(sent.move_scale_z), tostring(sent.move_rot_p), tostring(sent.mesh_interp)),
+	sent.drag_aim_rot == 0.6 and sent.drag_aim_loc == 0.4 and sent.drag_strafe_rot == 0.4 and sent.drag_strafe_loc == 0.2
+	and sent.move_scale_x == 10 and sent.move_scale_y == 10 and sent.move_scale_z == 6 and sent.move_rot_p == 60 and sent.mesh_interp == 55,
+	tostring(sent.move_scale_z))
 -- deagle_mparam overrides and is kept
 M.cmds.deagle_mparam = M.cmds.deagle_mparam and M.cmds.deagle_mparam:gsub("%%line", "test_roll 10")
 from = #M.native + 1

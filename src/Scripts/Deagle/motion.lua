@@ -28,12 +28,27 @@ Deagle.motionGuns = {
 }
 Deagle.motionOverride = Deagle.motionOverride or {}   -- deagle_mparam, kept across gun switches until the game restarts
 
+-- a Ready or Not gun's own movement numbers (gun.ronStats: guns/ron_stats.lua), 1:1 onto the keys they are in
+-- motion.h (docs/weapon_movement_design.md). Not mapped yet: LazySpringStrength / ADS (how it scales the hang spring
+-- isn't decoded: hang_* keep the defaults) and its sprint pose (comes from its own sprint clips, not its blueprint)
+function Deagle:RonMotion(gun)
+	local r = gun.ronStats and self.ronStats and self.ronStats[gun.ronStats]
+	if not r then return {} end
+	local m = r.MovementSpeedScale or {}
+	return { drag_aim_rot = r.InertiaDragAimRotation, drag_aim_loc = r.InertiaDragAimLocation,
+		drag_strafe_rot = r.InertiaDragStrafeRotation, drag_strafe_loc = r.InertiaDragStrafeLocation,
+		move_scale_x = m[1], move_scale_y = m[2], move_scale_z = m[3],
+		move_rot_p = r.MovementSpeedRotationScalePitchYawRoll and r.MovementSpeedRotationScalePitchYawRoll[1],
+		mesh_interp = r.MeshSpaceAimInterp }
+end
+
 function Deagle:MotionParams(gun)
 	if not self.native then return end
 	gun = gun or self.gun or {}
 	local p = {}
 	for k, v in pairs(self.motionDefaults) do p[k] = v end
 	for k, v in pairs(self.motionGuns[gun.id or ""] or {}) do p[k] = v end
+	for k, v in pairs(self:RonMotion(gun)) do p[k] = v end
 	for k, v in pairs(gun.motion or {}) do p[k] = v end
 	for k, v in pairs(self.motionOverride) do p[k] = v end
 	local keys = {}
