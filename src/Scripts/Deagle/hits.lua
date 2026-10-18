@@ -212,9 +212,10 @@ function Deagle:HoleAllowed(pos, normal, scale)
 	return true
 end
 
-function Deagle:Mark(s, hit, dir, scale, size)
+-- quiet (a ricochet point, ballistics.lua): the sound and the same random draws, no effect and no hole drawn
+function Deagle:Mark(s, hit, dir, scale, size, quiet)
 	local c = self.cfg
-	if s.fx then self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale) end
+	if s.fx and not quiet then self:SpawnFx(s.fx == "blood" and c.bloodFx or ("deagle_impacts." .. s.fx), hit.pos, hit.normal, scale) end
 	if s.ron then self:HitSound(s.ron, hit.pos, scale) end
 	if s.hole and self:HoleAllowed(hit.pos, hit.normal, scale) then
 		size = (size or c.holeSize) * scale * (0.85 + 0.3 * math.random())
@@ -222,8 +223,10 @@ function Deagle:Mark(s, hit, dir, scale, size)
 		-- (WHGame 1.5.6, CreateMatDecal's binding: Claude 5's reverse engineering 2026-10-15), so a world hit's part id
 		-- would hand the engine a garbage pointer
 		local ent = hit.entity
+		local rot = math.random() * 360
+		if quiet then return end
 		try("bullet hole", Particle.CreateMatDecal, vadd(hit.pos, vscale(hit.normal, 0.005)), hit.normal, size, c.holeLife,
-			"Materials/deagle/decals/bullet_hole_" .. s.hole, math.random() * 360, dir, ent and ent.id or nil, ent and hit.partid or nil)
+			"Materials/deagle/decals/bullet_hole_" .. s.hole, rot, dir, ent and ent.id or nil, ent and hit.partid or nil)
 	end
 end
 

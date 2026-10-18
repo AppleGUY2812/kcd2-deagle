@@ -168,7 +168,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	world.ground = { z = 31.0, surface = 1 }
 	world.slabs = { { y0 = 300, y1 = 301, surface = 1 } }
 	fire(math.rad(-2))
-	local skips = M.fxNames["deagle_impacts.ricochet_stone"] or 0
+	local skips = M.fxNames["deagle_impacts.ricochet"] or 0
 	check(string.format("%s: skims the ground at 2 deg -> ricochet (%d), then hits the wall", id, skips),
 		skips >= 1 and #landed == skips + 1 and landed[#landed].hit.pos.y >= 300 - 1e-6, #landed)
 
@@ -176,7 +176,7 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	reset()
 	world.ground = { z = 31.0, surface = 1 }
 	fire(math.rad(-45))
-	check(string.format("%s: into the ground at 45 deg: stays (%d hits)", id, #landed), #landed == 1 and not M.fxNames["deagle_impacts.ricochet_stone"], #landed)
+	check(string.format("%s: into the ground at 45 deg: stays (%d hits)", id, #landed), #landed == 1 and not M.fxNames["deagle_impacts.ricochet"], #landed)
 
 	-- stone's critical angle is 12 deg: at 8 deg it skips (98 %), at 20 deg it doesn't (0.03 %); the old Ready or Not
 	-- rule skipped 15 % of 20 deg hits and only 37 % of 8 deg ones

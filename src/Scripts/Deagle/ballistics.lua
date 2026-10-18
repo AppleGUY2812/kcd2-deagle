@@ -231,13 +231,18 @@ function Deagle:Impact(hit, dir, phys, r)
 	local graze = math.deg(math.asin(math.min(1, cosI)))     -- between the shot and the surface
 	local tag = r and r.logId and ("shot " .. r.logId .. " ") or ""   -- traced shots (cfg.debugShotLog) log every hit
 	if r and pen and math.random() < self:RicochetChance(pen.crit, graze) then
-		self:MarkCapped(s, hit, dir, scale * 0.6, r, name)
+		-- quiet: the surface's hit sound, caps and random draws as before (the round contract's golden traces replay
+		-- this random sequence), but no impact effect and no hole at a ricochet point: Ready or Not shows none there
+		self:MarkCapped(s, hit, dir, scale * 0.6, r, name, true)
 		local out = self:Deflect(r, hit.pos, hit.normal, dir, pen.keep or c.ricochetKeep, c.ricochetScatter, nil,
 			pen.lift or (not pen.hard and 1 or nil), pen.exit, pen.exitMax, pen.exitAdd)
-		-- sparks and Ready or Not's ricochet sound (a metallic spang and whine) off hard surfaces only: off water, ground,
-		-- wood, plaster and glass the surface's own hit sound (Mark) is all (user 2026-10-14, off water: "what is that twang")
+		-- Ready or Not's ricochet (its hit code, docs/ron/ron_bullet_code.md; user 2026-10-18: copy its effects): the
+		-- weapon's P_Bullet_Ricochet at the hit + 5 cm along the normal, facing the way the round goes on, off every
+		-- surface, at the round's own scale (no extra factor); no impact, no decal, no hole there.
+		self:SpawnFx("deagle_impacts.ricochet", vadd(hit.pos, vscale(hit.normal, 0.05)), out, scale)
+		-- the sound as before: Ready or Not's ricochet (a metallic spang and whine) off hard surfaces only; off water,
+		-- ground, wood, plaster and glass the surface's own hit sound (MarkCapped) is all (user 2026-10-14: "what is that twang")
 		if pen.hard then
-			self:SpawnFx("deagle_impacts.ricochet_" .. (s.fx == "metal" and "metal" or "stone"), hit.pos, out, scale * c.ricochet.fxScale)
 			self:HitSound("ricochet", hit.pos, scale, c.ricochet.volume * self:HitLoudness(phys, energy))
 		end
 		if self.state.logActions or r.logId then
@@ -312,9 +317,9 @@ end
 
 -- a world impact's effect, decal and sound, within the budget (IMPACT_CAP); hits on bodies always show
 local lastMark = { name = false, x = 0, y = 0, z = 0, t = -1e9 }
-function Deagle:MarkCapped(s, hit, dir, scale, r, name)
+function Deagle:MarkCapped(s, hit, dir, scale, r, name, quiet)
 	local c = self.cfg.impactCap
-	if hit.entity or not c then return self:Mark(s, hit, dir, scale) end
+	if hit.entity or not c then return self:Mark(s, hit, dir, scale, nil, quiet) end
 	local now = System.GetCurrTime()
 	if now ~= self.capT then self.capT, self.capN = now, 0 end
 	local pos = hit.pos
@@ -329,7 +334,7 @@ function Deagle:MarkCapped(s, hit, dir, scale, r, name)
 	if self.capN >= c.perFrame then return end
 	self.capN = self.capN + 1
 	lastMark.name, lastMark.x, lastMark.y, lastMark.z, lastMark.t = name, pos.x, pos.y, pos.z, now
-	return self:Mark(s, hit, dir, scale)
+	return self:Mark(s, hit, dir, scale, nil, quiet)
 end
 
 -- ---------------------------------------------------------------------------
