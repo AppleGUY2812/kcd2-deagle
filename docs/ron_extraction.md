@@ -90,6 +90,7 @@ the current mods touches the 40 G19 export paths, but check before exporting ano
 | `fsblist.py <banksdir> <out.json>`, `fsbx.py <bank> <outdir> <regex> [--wav]` | FSB5 sample names; decode samples (`--wav`: ffmpeg to 16-bit WAV) |
 | `anim_list.py <AnimData pkg> [out]` | a gun's first-person montages -> sequences (+ notifies) |
 | `RonExport/`, `ronexport.bat <list.txt> [outDir]` | CUE4Parse export: ActorX `.psk` / `.psa`, PNG textures, material JSON |
+| `anim_dump.py <skeleton> <out.json> <anim>...`, `acl_dump/` (`acl_dump.cpp` + `build.ps1`: ACL 2.1 / RTM 2.2 headers, MSVC) | decode AnimSequences to JSON tracks per bone: ACL-compressed ones (the DLC3 Grizzly's: CUE4Parse 1.2.2 says "Unsupported compressed data type") through `acl_dump.exe`, the others through `animdec.py`. Grizzly MK V 2026-10-18: 17 arm + 13 gun clips, 0 failed (`E:\Tools\deagle-work\ron\grizzly\{arms,weapon}_clips.json`); its mesh / textures / casing / mag through `grizzly_export.bat` (full plugin paths `ReadyOrNot/Plugins/GameFeatures/ReadyOrNotDLC3/Content/...`, not `/ReadyOrNotDLC3/...`) |
 | `psk_render.py`, `render.bat <psk> <png> <prefix>` | headless Blender render of a .psk from 3 sides |
 | `build_ooz.sh`, `ooz_stdafx.h` | the Oodle decompressor |
 
