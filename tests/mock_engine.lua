@@ -210,6 +210,7 @@ _G.System = {
 	Log = function(s) end, Warning = function(s) table.insert(M.errors, "WARN " .. tostring(s)) end,
 	AddCCommand = function(name, code, help) M.cmds[name] = code end,
 	GetCurrTime = function() return M.t end,
+	IsPointIndoors = function(p) M.indoorCalls = (M.indoorCalls or 0) + 1 return M.indoors == true end,   -- M.indoors
 	GetCurrAsyncTime = function() return M.t end,
 	GetFrameID = function() return M.frameId or 0 end,
 	GetViewCameraPos = function() return vec(100, 200, 31.75) end,
@@ -331,5 +332,7 @@ for _, lib in ipairs({ "System", "Script", "Game", "Particle", "Physics", "Actio
 	end
 end
 local log = System.LogAlways
+-- KCD2's Calendar: the world hour (M.hour, default 13:00), each call counted (M.calendarCalls)
+_G.Calendar = { GetWorldHourOfDay = function() M.calendarCalls = (M.calendarCalls or 0) + 1 return M.hour or 13 end }
 System.LogAlways = function(msg) M.record("System", "LogAlways", msg) return log(msg) end
 return M

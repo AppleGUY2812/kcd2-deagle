@@ -370,6 +370,31 @@ if mesh then
 	check(string.format("deagle_flash ours: back to our 16 cards, %d Ready or Not cards left showing", r.leftOn), r.back and r.leftOn == 0, r.leftOn)
 	check(string.format("flash card skins from the .cdf: %d (%d expected), %d showing at load; %d attached, loaded, moved or turned at run time",
 		mesh.cdfCards, mesh.want, mesh.cdfShown, mesh.runtime), mesh.cdfCards == mesh.want and mesh.cdfShown == 0 and mesh.runtime == 0, mesh.runtime)
+	-- the Ready or Not cards' exposure step (Deagle:FlashEvSuffix): the hour on KCD2's EV curve, indoors darker, the
+	-- nearest baked .mtl, worked out once a second; a strength the user picked turns it off
+	local R, look, mtl0 = Deagle.cfg.flashRon, Deagle.cfg.flashMesh.look, Deagle.cfg.flashRon.mtl
+	Deagle.cfg.flashMesh.look = "ron"
+	local function at(hour, indoors) M.hour, M.indoors, Deagle.flashEv = hour, indoors, nil return Deagle:FlashLook().mtl end
+	local night, day, inside, before20, after20 = at(23), at(13), at(13, true), at(19 + 55 / 60), at(20 + 5 / 60)
+	at(23); M.hour = 13
+	local c0 = M.calendarCalls
+	local cached = Deagle:FlashLook().mtl; Deagle:FlashLook()   -- two shots in the same second: no new Calendar call
+	local calls = M.calendarCalls - c0
+	M.t = M.t + R.evEvery + 0.01
+	local later = Deagle:FlashLook().mtl
+	R.mtl = "deagle_vm_flash_ron_hot"; local picked = at(23); R.mtl = mtl0
+	local missing = {}
+	for _, st in ipairs(R.evSteps) do
+		local f = io.open("src/Objects/manmade/weapons/deagle/vm/deagle_vm_flash_ron" .. st[2] .. ".mtl", "rb")
+		if f then f:close() else missing[#missing + 1] = st[2] end
+	end
+	Deagle.cfg.flashMesh.look, M.hour, M.indoors, Deagle.flashEv = look, nil, nil, nil
+	check(string.format("Ready or Not flash exposure steps: 23:00 %s, 13:00 %s, 13:00 indoors %s, 19:55 %s, 20:05 %s; 2 shots in a second %d Calendar call(s) (%s), a second later %s; _hot picked at night %s; .mtl missing: %s",
+		night, day, inside, before20, after20, calls, cached, later, picked, table.concat(missing, ",")),
+		night == "deagle_vm_flash_ron_ev7" and day == "deagle_vm_flash_ron" and inside == "deagle_vm_flash_ron_ev8"
+		and before20 == "deagle_vm_flash_ron_ev9" and after20 == "deagle_vm_flash_ron_ev9" and calls == 0
+		and cached == "deagle_vm_flash_ron_ev7" and later == "deagle_vm_flash_ron" and picked == "deagle_vm_flash_ron_hot"
+		and #missing == 0, night)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),

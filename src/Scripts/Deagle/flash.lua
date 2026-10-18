@@ -127,11 +127,62 @@ function Deagle:FlashLook()
 	local c, r, phys = self.cfg.flashMesh, self.cfg.flashRon, self:ShotPhysics()
 	local large = phys and phys.blast >= self.cfg.physics.largeFlashBlast
 	if c.look == "ron" then
+		-- a strength the user picked (flashRon.mtl _dim, _hot, ...) turns the exposure steps off
 		return { look = "ron", set = large and r.large or r.small, variants = r.variants, stages = r.stages, time = r.time,
-			mtl = r.mtl, cdfMtl = "deagle_vm_flash_ron" }
+			mtl = r.mtl == "deagle_vm_flash_ron" and r.mtl .. self:FlashEvSuffix() or r.mtl, cdfMtl = "deagle_vm_flash_ron" }
 	end
 	return { look = "ours", set = large and c.large or c.small, variants = c.roll and FLASH_SHAPES * FLASH_TURNS or FLASH_SHAPES,
 		stages = 1, time = c.time, mtl = c.mtl, cdfMtl = "deagle_vm_flash" }
+end
+-- the Ready or Not cards' exposure step: tools/ron/flash_bake.py solves one .mtl per EV through KCD2's curve at that EV
+-- (kcd2_tonemap.EV_SCENES), so the flash shows on screen as Ready or Not's by day and by night. KCD2's eye EV comes from
+-- the hour (flashRon.evCurve, interpolated at the fractional hour; the real adapted exposure is GPU-side) and indoors is
+-- at most flashRon.evIndoor (System.IsPointIndoors needs vis areas: KCD2's houses may not count as indoors); then the
+-- nearest baked step (flashRon.evSteps). Worked out at most once every flashRon.evEvery s of game time (FlashLook runs
+-- every shot). Without Calendar / IsPointIndoors in game: one red line, the day step / outdoors
+local function evAt(curve, h)
+	for i = 2, #curve do
+		local a, b = curve[i - 1], curve[i]
+		if h <= b[1] then return a[2] + (b[2] - a[2]) * (h - a[1]) / math.max(b[1] - a[1], 1e-6) end
+	end
+	return curve[#curve][2]
+end
+function Deagle:FlashEvSuffix()
+	local r, now = self.cfg.flashRon, System.GetCurrTime()
+	local e = self.flashEv
+	if e and now >= e.t and now - e.t < r.evEvery then return e.suffix end
+	local hour, indoors
+	local okH, h = pcall(function() return Calendar.GetWorldHourOfDay() end)
+	if okH and type(h) == "number" then hour = h % 24
+	elseif not self.flashEvNoHour then
+		self.flashEvNoHour = true
+		log("$4flash: no Calendar.GetWorldHourOfDay (" .. tostring(h) .. "): the Ready or Not flash keeps its day step")
+	end
+	if hour and r.evIndoor then
+		local okI, inside = pcall(function() return System.IsPointIndoors(g_localActor:GetWorldPos()) end)
+		if okI then indoors = inside and true or false
+		elseif not self.flashEvNoIndoor then
+			self.flashEvNoIndoor = true
+			log("$4flash: no System.IsPointIndoors (" .. tostring(inside) .. "): the flash's exposure step goes by the hour only")
+		end
+	end
+	local suffix, ev = "", nil
+	if hour then
+		ev = evAt(r.evCurve, hour)
+		if indoors then ev = math.min(ev, r.evIndoor) end
+		local best
+		for _, st in ipairs(r.evSteps) do
+			if not best or math.abs(st[1] - ev) < math.abs(best[1] - ev) then best = st end
+		end
+		suffix = best[2]
+	end
+	if not e or e.suffix ~= suffix then
+		log(string.format("flash: KCD2 eye EV %s (%s, %s): Ready or Not cards %s", ev and string.format("%.1f", ev) or "?",
+			hour and string.format("%02d:%02d", math.floor(hour), math.floor(hour % 1 * 60)) or "no hour",
+			indoors and "indoors" or "outdoors", "deagle_vm_flash_ron" .. suffix))
+	end
+	self.flashEv = { t = now, suffix = suffix }
+	return suffix
 end
 -- every card in the .cdf (both looks, both sizes): the attachments hidden at setup
 function Deagle:FlashCardNames()

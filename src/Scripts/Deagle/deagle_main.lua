@@ -99,7 +99,13 @@ Deagle.cfg = {
 	-- pops at ~33 ms of age on that frame too: its sprites live 35-40 ms at any frame rate. Don't "fix" it to show
 	-- every stage.
 	flashRon = { time = 2 / 60, stages = 2, variants = 16, mtl = "deagle_vm_flash_ron", large = "deagle_vm_flash_ron",
-		small = "deagle_vm_flash_ron_s", sparks = "deagle.muzzle_sparks_ron" },
+		small = "deagle_vm_flash_ron_s", sparks = "deagle.muzzle_sparks_ron",
+		-- its exposure steps (Deagle:FlashEvSuffix): KCD2's eye EV over the day (EV Max 11 from 7 to 19 h, EV Min 7 at
+		-- night; foggy_drizzly's time of day), the .mtl suffix baked for each EV (tools/ron/flash_bake.py, solved through
+		-- that hour's curve: the flash shows the same by day and by night), indoors at most evIndoor (the eye adapts to
+		-- EV Min there), worked out once every evEvery s. A strength picked in flashRon.mtl (_dim, _hot...) turns it off
+		evCurve = { { 0, 7 }, { 4, 7 }, { 5, 7.8 }, { 6, 9.34 }, { 7, 11 }, { 19, 11 }, { 20, 9.34 }, { 21, 7.8 }, { 22, 7 }, { 24, 7 } },
+		evSteps = { { 11, "" }, { 9.34, "_ev9" }, { 7.8, "_ev8" }, { 7, "_ev7" } }, evIndoor = 7.8, evEvery = 1.0 },
 	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)
 	muzzleLight = "deagle.muzzle_light", muzzleLightLarge = "deagle.muzzle_large_light",   -- its light, per shot
 	flashLive = { 0.8, 1.0 },  -- the live flash's size on each frame it's seen (2 frames; 1 frame under 40 fps)
