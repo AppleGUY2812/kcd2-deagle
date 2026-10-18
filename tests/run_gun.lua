@@ -5,6 +5,8 @@ local id = arg[1] or "deagle"
 local M = dofile("tests/mock_engine.lua")
 dofile("src/Scripts/Deagle/deagle_main.lua")
 Deagle:OnGameplayStarted(); M.console("deagle_native_ok")
+-- the flash checks below count a flash per shot: pinned on here; Ready or Not's 65 % roll has its own check at the end
+Deagle.cfg.flashChance = 1
 if not Deagle:UseGun(id) then print("FAIL no gun " .. id) os.exit(1) end
 local g = Deagle.guns[id]
 local known, n = {}, 0
@@ -355,6 +357,24 @@ end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
 		cueCheck.heard == cueCheck.n and cueCheck.worst <= 1 / 60 + 1e-3, cueCheck.worst)
+end
+-- Ready or Not's flash roll (user 2026-10-18: copy it): over 1000 shots the flash comes on 0.62-0.68 of them, and the
+-- smoke on every one, flash or not (RoN: MuzzleFlash gated by MuzzleFlashChance 0.65, MuzzleSmoke always)
+if phys then
+	local c = Deagle.cfg
+	if not Deagle.vmShown then act("deagle_toggle"); M.advance(2.0) end
+	local mode, chance = c.flashMode, c.flashChance
+	c.flashMode, c.flashChance = "mesh", 0.65
+	local shot, spawn = Deagle.FlashMeshShot, Particle.SpawnEffect
+	local flashes, smokes, noFlashSmoke = 0, 0, 0
+	local flashed
+	Deagle.FlashMeshShot = function(...) flashed = true; flashes = flashes + 1 return shot(...) end
+	Particle.SpawnEffect = function(name, ...) if name == c.muzzleSmokeFx then smokes = smokes + 1; if not flashed then noFlashSmoke = noFlashSmoke + 1 end end return spawn(name, ...) end
+	for _ = 1, 1000 do flashed = false; Deagle:MuzzleFlash({ x = 0, y = 1, z = 0 }) end
+	Deagle.FlashMeshShot, Particle.SpawnEffect = shot, spawn
+	c.flashMode, c.flashChance = mode, chance
+	check(string.format("Ready or Not's flash roll: flash on %d of 1000 shots (0.62-0.68)", flashes), flashes >= 620 and flashes <= 680, flashes)
+	check(string.format("smoke on every shot: %d of 1000, %d of them without a flash", smokes, noFlashSmoke), smokes == 1000 and noFlashSmoke > 0, smokes)
 end
 -- worn gear is looked for when first person starts and once a second later, not every second: each search is a
 -- 5-9 ms entity query (a stutter a second, the audit 2026-10-15)

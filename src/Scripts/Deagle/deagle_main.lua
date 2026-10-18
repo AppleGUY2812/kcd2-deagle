@@ -90,6 +90,8 @@ Deagle.cfg = {
 	-- onto cards (tools/ron/flash_bake.py): WeaponFlash_Pistol_V3 of the Grizzly MK V .50 AE for big blasts, the G19's V2
 	-- for small ones. variants x stages cards; a shot picks a variant and shows the stage its game time is in (sparks
 	-- outlive the 0.035-0.04 s pop: time 0.095 s). Rotations are baked, no roll. mtl: _dim / _hot (x1/3, x3)
+	-- the share of shots with a flash (and its light): Ready or Not's MuzzleFlashChance 0.65; the smoke comes every shot
+	flashChance = 0.65,
 	flashRon = { time = 0.095, stages = 10, variants = 4, mtl = "deagle_vm_flash_ron", large = "deagle_vm_flash_ron",
 		small = "deagle_vm_flash_ron_s" },
 	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)

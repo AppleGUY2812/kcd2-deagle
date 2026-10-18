@@ -20,7 +20,13 @@ function Deagle:MuzzleFlash(dir)
 	-- A bigger blast burns a little longer (the engine can't stretch a flash per shot, so two versions of it). Neither
 	-- can be shorter than ~0.08 s: a new emitter is first drawn a frame or two late (tools/check_fx.py).
 	local fx = (phys and phys.blast >= c.physics.largeFlashBlast) and c.muzzleFxLarge or c.muzzleFx
-	if c.flashMode == "world" then
+	-- Ready or Not plays the flash on a weighted coin per shot: FUN_144997050 activates MuzzleFlash only when
+	-- (rand() & 0x7fff) / 32767 <= MuzzleFlashChance (0.65, BaseMagazineWeapon's constructor; the Grizzly keeps it),
+	-- the light with it (it lives in the same system); MuzzleSmoke fires on every shot (user 2026-10-18: copy RoN)
+	local flashOn = math.random() <= c.flashChance
+	if not flashOn then
+		-- no flash this shot
+	elseif c.flashMode == "world" then
 		try("fx", Particle.SpawnEffect, fx, pos, dir, scale)
 	elseif c.flashMode == "mesh" and self.vmInFp and self.vmShown and self:FlashMeshShot() then
 		local vm = self.vmId and System.GetEntity(self.vmId)
