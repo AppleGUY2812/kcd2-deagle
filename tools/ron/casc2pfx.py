@@ -9,6 +9,9 @@ Prints the <Particles> blocks for src/Libs/Particles/deagle.xml (library deagle)
                     spawned on the muzzle every shot, its y = the barrel
   shell_puff_ron    P_WeaponSmoke_M2011_Ejection (Puff Left): spawned on the ejection port at every casing, y = the
                     casing's throw direction
+  barrel_smoke_ron  P_BarrelSmokeTrail's LingerSmoke (the Grizzly's HeatSmoke, run 5x fast: CustomTimeDilation 5), the
+                    only one of its emitters both flags switch on: kept on the muzzle by the plugin (smokefx), y = the
+                    barrel; its particles stay in the world (see linger() for what that changes)
 
 Mapping (KCD2 facts in MODLOG, conventions shared with tools/ron/ns2pfx.py):
 - frame: RoN's component +X is the barrel (resp. the throw), after the emitter's EmitterRotation; KCD2's emitter y is
@@ -46,7 +49,9 @@ MATS = {
     'MI_Muzzle_Puff_Front': dict(tex='gun_ron_puff_front_diff', tiles=(8, 4)),
     'MI_Muzzle_puff_Side': dict(tex='gun_ron_puff_side_diff', tiles=(8, 4)),
     'MI_Muzzle_Puff_Side': dict(tex='gun_ron_puff_side_diff', tiles=(8, 4)),
+    'MI_WispySmoke': dict(tex='gun_ron_wispy_diff', tiles=(8, 4)),
 }
+BARREL = ('ReadyOrNot/Content/ReadyOrNot/VFX/VFXBarrel/P_BarrelSmokeTrail', 5.0)   # the Grizzly's HeatSmoke CustomTimeDilation
 SYSTEMS = {
     'muzzle_smoke_ron': ('ReadyOrNot/Content/ReadyOrNot/Assets/Particles/WeaponFlash/Particle/Gunsmoke/fx/P_WeaponSmoke_M2011_Muzzle',
                          ['ScreenPuff', 'BigPuff', 'TinyPuff', 'Puff Left']),
@@ -253,9 +258,84 @@ def convert(E, label):
     return p, notes
 
 
-ORDER = ['Count', 'ParticleLifeTime', 'PositionOffset', 'EmitAngle', 'Facing', 'OrientToVelocity', 'Texture', 'TextureTiling',
+def linger(mods, paths, dil):
+    """P_BarrelSmokeTrail's LingerSmoke at RoN's time dilation dil (asset seconds / dil = real seconds; speeds x dil,
+    accelerations x dil^2, drag and rates x dil). Modelled, each in the output's comment: SizeScaleBySpeed (size x
+    clamp(0.1 x speed in asset cm/s, 1, 2)) becomes part of the size curve for a mean particle (life 6.5 asset s, up
+    acceleration 1.25 cm/s^2, the rms of the random sideways one); SourceMovement (particles follow the gun x1 -> 0.15)
+    has no KCD2 match: the particles stay where they are born (MoveRelativeEmitter false) while the emitter rides the
+    muzzle; StartAlpha by emitter time -> Alpha's EmitterStrength curve (KCD2 bakes it at a particle's birth, as Cascade
+    does; that a free emitter's strength is its age is CryEngine's rule, unchecked in KCD2)."""
+    E = emitter(mods, paths, 'LingerSmoke')
+    req, ms, sp = E['req'], E['ms'], E['spawn']
+    M = MATS[E['mat']]
+    p, notes = {}, []
+    dur = float(req.get('EmitterDuration')) / dil
+    rate = float(minmax(sp['Rate'], 1)[1][0]) * dil
+    lo, hi = minmax(ms['Lifetime']['Lifetime'], 1)
+    lo, hi = lo[0] / dil, hi[0] / dil
+    p['Continuous'] = 'true'
+    p['Count'] = f(rate * hi, 1)                                   # KCD2: continuous rate = Count / ParticleLifeTime
+    p['EmitterLifeTime'] = f(dur)
+    if req.get('EmitterDelay'): p['SpawnDelay'] = f(float(req['EmitterDelay']) / dil)
+    p['ParticleLifeTime'] = one_sided(lo, hi)
+    p['MoveRelativeEmitter'] = 'false'
+    # speed: the local start velocity, turned by EmitterRotation, is down the barrel. HeatSmoke sits on ItemMesh with
+    # no rotation of its own (unlike MuzzleSmoke, yawed 90), so the barrel is the component's +Y here
+    loc = [m for k, m in ms.items() if k == 'Velocity']
+    a, b = minmax(loc[0]['StartVelocity'], 3)
+    v = rot(req.get('EmitterRotation') or (0, 0, 0), (a + b) / 2)
+    if abs(v[0]) > 1e-3 or abs(v[2]) > 1e-3 or v[1] <= 0: raise SystemExit('LingerSmoke: start velocity not down the barrel: %s' % v)
+    p['Speed'] = f(v[1] * dil / 100)
+    notes.append('a world 1 cm/s (5 real) start rise, the random sideways acceleration (+-0.25 m/s^2) and 0.15 of the gun velocity are not carried over')
+    # up acceleration -> negative gravity; drag
+    alo, ahi = minmax(ms['Acceleration']['Acceleration'], 3)
+    up_lo, up_hi = alo[2] * dil * dil / 100, ahi[2] * dil * dil / 100
+    p['GravityScale'] = '-' + one_sided(up_lo / 9.81, up_hi / 9.81)
+    drag = float(minmax(ms['AccelerationDrag']['DragCoefficientRaw'], 1)[1][0]) if isinstance(ms['AccelerationDrag']['DragCoefficientRaw'], dict) else float(ms['AccelerationDrag']['DragCoefficientRaw'])
+    p['AirResistance'] = f(drag * dil)
+    # size: X only (camera-facing), x the speed scale of a mean particle
+    sa, sb = minmax(ms['Size']['StartSize'], 3)
+    mt, mv = table(ms['SizeMultiplyLife']['LifeMultiplier'])
+    life = 6.5; aup = 1.25; alat = 1 / np.sqrt(3); k = drag; v0 = float(np.linalg.norm((a + b) / 2))
+    age = mt * life
+    along = v0 * np.exp(-k * age)
+    vup = aup / k + (1 - aup / k) * np.exp(-k * age)
+    vlat = alat / k * (1 - np.exp(-k * age))
+    speed = np.sqrt(along ** 2 + vup ** 2 + 2 * vlat ** 2)
+    sss = ms['SizeScaleBySpeed']
+    sc = np.clip((sss.get('SpeedScale') or (0.1, 0.1))[0] * speed, 1, (sss.get('MaxScale') or (2, 2))[0])
+    curve = mv[:, 0] * sc
+    pk = curve.max()
+    cur = age_curve(mt, curve / pk)
+    p['Size'] = one_sided(sa[0] * pk / 200, sb[0] * pk / 200) + (',ParticleAge=' + cur if cur else '')
+    notes.append('size by speed for a mean particle: x%s at birth, x%s at the end' % (f(sc[0], 2), f(sc[-1], 2)))
+    # colour, alpha: start alpha by emitter time x alpha over life
+    _, cv = table(ms['Color']['StartColor'])
+    p['Color'] = '(x=%s,y=%s,z=%s)' % tuple(f(x) for x in cv[0, :3])
+    et, ev = table(ms['Color']['StartAlpha'])
+    lt, lv = table(ms['ColorScaleOverLife']['AlphaScaleOverLife'])
+    epk, lpk = ev[:, 0].max(), lv[:, 0].max()
+    p['Alpha'] = f(epk * lpk, 4) + ',EmitterStrength=' + age_curve(et / et[-1], ev[:, 0] / epk) + ',ParticleAge=' + age_curve(lt, lv[:, 0] / lpk)
+    tx, ty = M['tiles']
+    p['Texture'] = TEX + M['tex'] + '.tif'
+    p['TextureTiling'] = 'TilesX=%d,TilesY=%d,AnimFramesCount=%d,AnimBlend=true,FlipChance=0.5' % (tx, ty, tx * ty)
+    rlo, rhi = minmax(ms['Rotation']['StartRotation'], 1)
+    p['RandomAngles'] = 'y=%s' % f(min(180, (rhi[0] - rlo[0]) * 180))
+    qlo, qhi = minmax(ms['RotationRate']['StartRotationRate'], 1)
+    p['RandomRotationRate'] = 'y=%s' % f(max(abs(qlo[0]), abs(qhi[0])) * 360 * dil)
+    pu, pv = ms['PivotOffset'].get('PivotOffset') or (0, 0)
+    if abs(pv) > 1e-6: p['PivotY'] = f(2 * pv)
+    if abs(pu) > 1e-6: p['PivotX'] = f(2 * pu)
+    notes.append('its material fades it within 50 cm of the camera (CamFadeDistance); KCD2 has no such fade')
+    p['SoftParticle'] = 'true'
+    p['DiffuseLighting'] = '1'; p['DiffuseBacklighting'] = '1'; p['EmissiveLighting'] = '0'
+    return p, notes
+
+
+ORDER = ['Continuous', 'EmitterLifeTime', 'SpawnDelay', 'MoveRelativeEmitter', 'Count', 'ParticleLifeTime', 'PositionOffset', 'EmitAngle', 'Facing', 'OrientToVelocity', 'Texture', 'TextureTiling',
          'SoftParticle', 'Alpha', 'Color', 'DiffuseLighting', 'DiffuseBacklighting', 'EmissiveLighting', 'Size', 'Aspect', 'Speed',
-         'AirResistance', 'InitAngles', 'RandomAngles', 'PivotX', 'PivotY', 'CameraMinDistance']
+         'AirResistance', 'GravityScale', 'InitAngles', 'RandomAngles', 'RandomRotationRate', 'PivotX', 'PivotY', 'CameraMinDistance']
 
 
 def main():
@@ -280,6 +360,14 @@ def main():
             out.append('\t\t\t</Particles>')
         out.append('\t\t</Childs>')
         out.append('\t</Particles>')
+    mods, paths = load(BARREL[0])
+    prm, notes = linger(mods, paths, BARREL[1])
+    if a.print_spec: print('barrel_smoke_ron LingerSmoke', prm, notes, file=sys.stderr)
+    out.append('\t<!-- barrel_smoke_ron: Ready or Not P_BarrelSmokeTrail (LingerSmoke at its HeatSmoke\'s x%s time), by tools/ron/casc2pfx.py (do not edit by hand) -->' % f(BARREL[1]))
+    out.append('\t<Particles Name="barrel_smoke_ron">')
+    out.append('\t\t<!-- ' + '; '.join(notes) + ' -->')
+    out.append('\t\t<Params ' + ' '.join('%s="%s"' % (k, prm[k]) for k in ORDER if k in prm) + ' />')
+    out.append('\t</Particles>')
     print('\n'.join(out))
 
 

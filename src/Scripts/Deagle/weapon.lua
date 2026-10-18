@@ -49,7 +49,7 @@ function Deagle:Shoot(force)
 
 	if c.gunFx then self:PlayTrigger(c.shotTrigger) end
 	self:ShotHeard(self:ShotPhysics())
-	if c.gunFx then self:MuzzleFlash(System.GetViewCameraDir()) end
+	if c.gunFx then self:MuzzleFlash(System.GetViewCameraDir()); self:BarrelHeatShot() end
 	self:Recoil()
 	if c.gunFx then self:EjectCase() end
 
@@ -352,4 +352,60 @@ function Deagle:CsAccuracy(w)
 	local move = math.max(0, math.min(1, (speed - lo) / (hi - lo)))
 	local k = a.scale
 	return k * ((s.crouched and w.inCrouch or w.inStand) + move * w.inMove + (air and w.inJump or 0) + s.accFire), k * w.spread
+end
+
+-- Ready or Not's barrel smoke (BaseMagazineWeapon's heat: its decompiled fire routine FUN_144992310 and Tick
+-- FUN_1449a71d0, docs/ron/gun_smoke_shells.md 1.2): every shot adds perShot heat (up to max) and stops the smoke; the
+-- heat cools by cool a second; once it is at least threshold and minTime has passed since the last shot, the smoke
+-- starts, once per pause in firing; it stops when the heat falls under threshold, at the next shot, or when the gun is
+-- put away (VmHide). The heat cools with the gun away too (worked out from game time at the next look). The smoke is
+-- the plugin's (smokefx: kept on the muzzle while it spawns), deagle.barrel_smoke_ron (tools/ron/casc2pfx.py).
+function Deagle:BarrelHeat(now)
+	local B, h = self.cfg.barrelSmoke, self.barrelHeat
+	if not h then h = { v = 0, t = 0, at = now }; self.barrelHeat = h end
+	local dt = math.max(0, now - h.at)
+	h.v, h.t, h.at = math.max(h.v - dt * B.cool, 0), h.t + dt, now
+	return h
+end
+function Deagle:BarrelHeatShot()
+	local B = self.cfg.barrelSmoke
+	local h = self:BarrelHeat(System.GetCurrTime())
+	h.v, h.t, h.played = math.min(h.v + B.perShot, B.max), 0, false
+	self:BarrelSmokeStop()
+end
+function Deagle:BarrelHeatTick()   -- every frame with the gun out
+	local h = self:BarrelHeat(System.GetCurrTime())
+	local B = self.cfg.barrelSmoke
+	if not h.played and h.v >= B.threshold and h.t >= B.minTime then
+		h.played = true
+		self:BarrelSmokeStart()
+	elseif h.v < B.threshold and h.smoking then
+		self:BarrelSmokeStop()
+	end
+end
+function Deagle:BarrelSmokeStart()
+	local c, B = self.cfg, self.cfg.barrelSmoke
+	if not (self.native and self.nativeCaps and self.nativeCaps.smoke) then
+		if not self.barrelSmokeSaid then   -- once: a plugin before 2026-10-18 has no smokefx
+			self.barrelSmokeSaid = true
+			log("barrel smoke: off until the plugin from 2026-10-18 or later is installed (this one has no smokefx)")
+		end
+		return
+	end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	local ok, lp, ld = false, nil, nil
+	if vm then ok, lp, ld = pcall(self.MuzzleLocal, self, vm) end
+	if not ok then return end
+	local phys = self:ShotPhysics()
+	local scale = (phys and c.physics.flashPerUnit * phys.blast or 1) * c.muzzleFxScale / 0.6   -- as the muzzle smoke
+	self:Native(string.format("smokefx %s %.4f %.3f %.3f %.4f %.4f %.4f %.4f %.4f %.4f", B.fx, scale, B.follow, B.hold,
+		lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
+	self.barrelHeat.smoking = true
+end
+function Deagle:BarrelSmokeStop()
+	local h = self.barrelHeat
+	if h and h.smoking then
+		h.smoking = false
+		if self.native then self:Native("smokestop") end
+	end
 end

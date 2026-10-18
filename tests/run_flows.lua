@@ -19,6 +19,7 @@ end)
 local function ours() local n, ns = 0, 0 for k, e in pairs(M.entities()) do if type(k) ~= "string" and e.name and e.name:find("^deagle_") then n = n + 1; if bit.band(e.flags or 0, 32768) ~= 0 then ns = ns + 1 end end end return n, ns end
 step("gameplay started", function()
 	Deagle:OnGameplayStarted()
+	Deagle.cfg.flashChance = 1   -- the flash checks count one per shot; Ready or Not's 65 % roll is checked in run_gun
 	-- the pyramid must be gone as soon as the save loads, not only once the gun is drawn
 	if ours() ~= 0 then error(ours() .. " stale entities left after load") end
 end)
@@ -72,6 +73,31 @@ step("slow motion (F9)", function()
 	Deagle:OnAction("deagle_slowmo", "press"); local off = M.cvars and M.cvars.t_Scale
 	print("   t_Scale on/off:", on, off)
 	if on ~= 0.1 or off ~= 1 then error("slow motion toggle") end
+end)
+step("barrel smoke after a burst (Ready or Not's heat)", function()
+	-- 3 shots at the Deagle's rate stay under the threshold, 4 smoke 0.5 s after the last; a shot while it smokes stops it
+	Deagle.nativeCaps = Deagle.nativeCaps or {}; Deagle.nativeCaps.smoke = true
+	Deagle.barrelHeat = nil
+	M.advance(12)   -- any earlier heat gone
+	local function n(pat) local k = 0 for _, l in ipairs(M.native) do if l:find(pat) then k = k + 1 end end return k end
+	local function burst(k) for i = 1, k do Deagle.state.ammo = 7; Deagle:Fire(true); M.advance(0.3) end end
+	local s0 = n("^%[DN%] smokefx ")
+	burst(3); M.advance(1.0)
+	local after3 = n("^%[DN%] smokefx ") - s0
+	M.advance(10); Deagle.barrelHeat = nil
+	burst(4); M.advance(0.1)
+	local early = n("^%[DN%] smokefx ") - s0
+	M.advance(0.6)
+	local after4 = n("^%[DN%] smokefx ") - s0
+	local stops0 = n("^%[DN%] smokestop")
+	Deagle.state.ammo = 7; Deagle:Fire(true); M.advance(0.05)
+	local stops = n("^%[DN%] smokestop") - stops0
+	print(string.format("   smokefx after 3 shots %d, after 4 shots: %d at +0.1 s, %d at +0.7 s; smokestop on the next shot %d (heat %.2f)",
+		after3, early, after4, stops, Deagle.barrelHeat.v))
+	if after3 ~= 0 or early ~= 0 or after4 ~= 1 or stops ~= 1 then error("barrel smoke isn't Ready or Not's heat rule") end
+	local line = M.native[#M.native]
+	for i = #M.native, 1, -1 do if M.native[i]:find("^%[DN%] smokefx ") then line = M.native[i] break end end
+	if not line:find("^%[DN%] smokefx deagle%.barrel_smoke_ron ") then error("barrel smoke effect: " .. line) end
 end)
 step("casings come from a pool", function()   -- 100 shots, at most 80 casings ever exist
 	Deagle.state.ammo = 7

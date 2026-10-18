@@ -369,6 +369,37 @@ static void LiveStep(bool newFrame) {
 	else { g_liveFrame = -1; g_liveNow = 0; LivePlace(0); }
 }
 
+// ---- the barrel smoke (Ready or Not's HeatSmoke; flash.lua's heat model starts and stops it): a continuous emitter
+// kept on the muzzle while it spawns (follow s of game time, its box moved with it so it is never culled); its
+// particles stay in the world where they were born (MoveRelativeEmitter false in deagle.barrel_smoke_ron). "smokestop"
+// = Ready or Not's Deactivate: no new smoke, the old drifts on. KCD2 has no emitter stop we know of (MODLOG
+// 2026-10-12), so the emitter is moved 1 km under the muzzle to spawn out of sight. Each is let go at hold s (letting
+// one go sooner would delete the smoke it already made: fxs, MODLOG 2026-10-12), so a new one doesn't drop the old.
+struct Smoke { uintptr_t em; float scale; double born, follow, hold; bool stopped; };
+static Smoke g_smokes[4];
+static int g_nSmokes = 0;
+static void SmokeStop() {
+	for (int i = 0; i < g_nSmokes; i++) {
+		Smoke& k = g_smokes[i];
+		if (k.stopped) continue;
+		k.stopped = true;
+		float loc[8];
+		if (g_haveVmTM && MuzzleLoc(g_vmTM, k.scale, loc)) { loc[6] -= 1000; SafeSetLocation(k.em, loc); }
+	}
+}
+static void SmokeStep() {
+	int keep = 0;
+	for (int i = 0; i < g_nSmokes; i++) {
+		Smoke k = g_smokes[i];
+		double age = g_pieceClock - k.born;
+		if (age > k.hold) { SafeRelease(k.em); continue; }
+		float loc[8];
+		if (!k.stopped && age <= k.follow && g_haveVmTM && MuzzleLoc(g_vmTM, k.scale, loc)) MoveKeepBox(k.em, loc);
+		g_smokes[keep++] = k;
+	}
+	g_nSmokes = keep;
+}
+
 static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
 	auto getEntity = (GetEntityFn)VFn(es, 0x70);
@@ -395,6 +426,7 @@ static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	memcpy(g_vmTM, tm, sizeof(tm)); g_haveVmTM = true;
 	if (g_nFlashes) MoveFlashes();
 	LiveStep(newFrame);
+	SmokeStep();
 	return true;
 }
 
@@ -813,7 +845,7 @@ static void Command(const char* line) {
 		Freecam_Reset("hello");
 		for (auto& f : g_filters) f.want = 0;   // a load holsters the gun and ends the freecam: let our references go
 		// a load may have freed the old level's emitters: forget them (at most a few, only if a flash was burning)
-		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1;
+		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1; g_nSmokes = 0;
 		g_heldN = 0; g_heldHead = 0; g_nTraces = 0;   // the same for impact pieces and tracer emitters (Claude 3's audit)
 		PreloadTracers();
 		// the handshake, then the player's saved settings (settings.cpp)
@@ -821,7 +853,7 @@ static void Command(const char* line) {
 		{
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
-			g_console.push_back("deagle_native_caps files fxr");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers
+			g_console.push_back("deagle_native_caps files fxr smoke");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
@@ -987,6 +1019,29 @@ static void Command(const char* line) {
 		}
 	}
 	else if (!strcmp(cmd, "flashdisarm")) { if (g_live) { SafeRelease(g_live); g_live = 0; } g_liveFrame = -1; }
+	else if (!strcmp(cmd, "smokefx")) {   // smokefx <effect> <scale> <follow s> <hold s> <pos xyz> <dir xyz>: the barrel smoke
+		char effect[96] = {}; float scale = 1, follow = 0, hold = 0, pos[3], dir[3];
+		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &follow, &hold,
+			&pos[0], &pos[1], &pos[2], &dir[0], &dir[1], &dir[2]);
+		float loc[8];
+		if (n != 10 || !Finite(&scale, 1) || !Finite(&follow, 1) || !Finite(&hold, 1) || !Finite(pos, 3) || !Finite(dir, 3) || hold <= 0 || hold > 30)
+			Log("bad smokefx command: %s", rest);
+		else {
+			memcpy(g_flashPos, pos, sizeof(pos)); memcpy(g_flashDir, dir, sizeof(dir));
+			if (!g_haveVmTM || !MuzzleLoc(g_vmTM, scale, loc)) Log("smokefx: the gun isn't placed yet");
+			else {
+				SmokeStop();   // the one before (Lua stops it first; again here to be sure)
+				if (g_nSmokes == (int)(sizeof(g_smokes) / sizeof(g_smokes[0]))) {   // full: the oldest goes (its smoke with it)
+					SafeRelease(g_smokes[0].em);
+					memmove(g_smokes, g_smokes + 1, sizeof(Smoke) * (g_nSmokes - 1)); g_nSmokes--;
+				}
+				uintptr_t em = SafeSpawnFlash(effect, loc);
+				if (em == (uintptr_t)-1 || !em) Log("smokefx: %s didn't spawn", effect);
+				else g_smokes[g_nSmokes++] = Smoke{ em, scale, g_pieceClock, follow, hold, false };
+			}
+		}
+	}
+	else if (!strcmp(cmd, "smokestop")) SmokeStop();
 	else if (!strcmp(cmd, "flashgrow")) {   // flashgrow <size on drawn frame 1> <2> ... (up to 8; none = the particles' own life)
 		float v[8] = {};
 		int n = sscanf_s(rest, "%f %f %f %f %f %f %f %f", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7]);

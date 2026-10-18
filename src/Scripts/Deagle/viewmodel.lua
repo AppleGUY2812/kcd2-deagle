@@ -234,6 +234,7 @@ function Deagle:VmTick(token)
 	self:CueTick()
 	self:EnvTick()
 	self:CaseTick()
+	self:BarrelHeatTick()
 	self:FlashLightTick()
 	if self.MotionTick then self:MotionTick() end
 	self:HoldGameMapsOff()
@@ -447,6 +448,7 @@ end
 function Deagle:VmHide()
 	self.vmShown, self.vmZoomHidden = false, false
 	self:FlashDisarm()
+	self:BarrelSmokeStop()
 	self.vmToken = (self.vmToken or 0) + 1
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if vm then pcall(vm.Hide, vm, 1) end

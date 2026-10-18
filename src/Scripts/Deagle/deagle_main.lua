@@ -135,6 +135,12 @@ Deagle.cfg = {
 	armorFx = "deagle_impacts.metal",   -- a round on plate / mail sparks like any metal (KCD2's plate hit effect doesn't exist)
 	-- how impact / blood effects are spawned. "plugin": the plugin spawns them and sets their place again for their first
 	-- frames (like the tracer pieces), so they're drawn at once; a Lua-spawned emitter isn't drawn for ~0.3 s (MODLOG,
+	-- Ready or Not's barrel smoke after a burst (Deagle:BarrelHeatShot / BarrelHeatTick, weapon.lua): its
+	-- BaseMagazineWeapon heat (per shot, threshold, max, cooling a second, minTime s after the last shot; constructor
+	-- defaults, the Grizzly keeps them: 4 quick shots smoke, 3 don't), its P_BarrelSmokeTrail as fx; follow / hold:
+	-- s the plugin keeps the emitter on the muzzle / holds it (its 1.6 s + 0.02 s delay; + its longest 1.6 s particle)
+	barrelSmoke = { fx = "deagle.barrel_smoke_ron", perShot = 0.4, threshold = 1.0, max = 2.0, cool = 0.2, minTime = 0.5,
+		follow = 1.62, hold = 3.3 },
 	-- tracer lab), which hid Ready or Not's sparks and flash (0.05-0.3 s). The plugin holds each effect 2 s. "lua":
 	-- Particle.SpawnEffect (the old way; also the fallback without the plugin)
 	impactSpawn = "plugin",
