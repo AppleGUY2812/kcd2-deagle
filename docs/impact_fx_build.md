@@ -27,13 +27,13 @@ emitter is pre-aged by one frame (checked by script: no part is shorter).
 | `ricochet` | `P_Bullet_Ricochet` (Cascade; every RoN pistol's RicochetParticleSystem, all surfaces) | two spark flashes, a powder ring, fast sparks + two trails of tiny sparks riding an invisible carrier along the new path (RoN's own tracer streak left out: ours stay) |
 | `water` | `P_BulletImpact_Water` (Cascade; RoN's pistol row is Cascade) | caustic sheets, droplets, dust puff (its 3 switched-on emitters) |
 | `straw` | none in RoN | fluttering straw bits, light dust (ours) |
-| `cloth` | was the Cascade ricochet version; `NS_Bullet_Impact_Fabric_Big` not ported yet | puff_fast, smoke_round, fibres |
-| `glass` | was Cascade `P_VFX_Impact_Glass_Plate_Exit`; `NS_BulletImpact_Glass` not ported yet | flash, whisp, shards |
+| `cloth` | `NS_Bullet_Impact_Fabric_Big` (RON_Fabric_Thin / Carpet / Stuffing) | debris (glow dots, lit), feathers, a white spatter streak, smoke kick, one lit spark streak |
+| `glass` | `NS_BulletImpact_Glass` (RON_Glass_Plate / Windshield) | base dust, glass chunks (dithered clip baked as a threshold), spatter streak. Chunk normal map not carried over |
 
 Converted by `tools/ron/ns2pfx.py` from runs of RoN's own particle shaders (docs/ron/niagara_gpu.md). The far side of a
 wallbang plays the same entry effect along the bullet (RoN's hit code; `effects.lua` EXIT_AS_ENTRY), so the `*_exit`
 effects below are only used in the `new` look. A ricochet point plays only `ricochet` (no impact, no hole: RoN's hit code). Not
-converted yet: foliage, fabric, glass, flesh.
+converted yet: foliage, flesh (blood).
 
 ## 2. Bullet holes (`src/Materials/deagle/decals/bullet_hole_<surface>.mtl`)
 `Particle.CreateMatDecal(pos, normal, size, lifeTime, "Materials/deagle/decals/bullet_hole_<surface>")`.

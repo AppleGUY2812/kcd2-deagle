@@ -142,3 +142,31 @@ def ron_sparks_lit(name, png, colour):
 ron_sparks_lit("imp_ron_ricflash03_diff", "T_VFX_Sparks_03_B.png", (5151.597, 920.969, 236.775))   # Sparks_02
 ron_sparks_lit("imp_ron_ricflash02_diff", "T_VFX_Sparks_02_B.png", (2555.0, 255.0, 25.0))          # Sparks_03
 ron_sparks_lit("imp_ron_powder_diff", "T_VFX_Powder_01_B.png", (1.0, 1.0, 1.0))                    # SpallCircle
+
+
+# Cloth (NS_Bullet_Impact_Fabric_Big) and glass (NS_BulletImpact_Glass): materials that saturate texture x a particle
+# colour above 1, baked with that colour (the converter then writes Color 1), plus glass's dithered clip
+def sat_bake(name, png, colour, alpha_from="a", size=None):
+    t = load(png, size)
+    px = np.empty_like(t)
+    px[..., :3] = np.clip(t[..., :3] * np.array(colour), 0, 1)
+    px[..., 3] = t[..., 3] if alpha_from == "a" else t[..., 0]
+    save_rgba(name, px)
+
+
+sat_bake("imp_ron_spray_x100_diff", "T_debrisSpray_4x1.png", (100, 100, 100))      # cloth spatter (MI_DebrisSpray x User 100)
+sat_bake("imp_dust_x2_diff", "T_thinSmoke_02_8x4.png", (2, 2, 2))                # glass base dust (MI_ThinSmoke_01 x User 2)
+sat_bake("imp_ron_sparks05_diff", "T_VFX_Sparks_05_B.png", (5000 * 0.945, 500 * 0.945, 250 * 0.945), "r")   # cloth sparks
+fe = load("T_VFX_Feathers_01_B.png", 1024)                                         # feathers: colour 0.25 x 0.945 in Color
+fe[..., 3] = fe[..., 0]
+save_rgba("imp_ron_feather_diff", fe)
+# M_Glass_Chunks: masked with a temporal dither, clip where A x alpha < 0.667 + 0.167 x noise, i.e. on average
+# opacity = saturate((A x alpha - 0.667) / 0.167). Alpha holds s = 1 - 0.667 / A (0 below): with SourceMin 1 -> 0
+# over the particle alpha and SourceWidth 0.167, KCD2 gives saturate((s - (1 - alpha)) / 0.167), the same ramp to
+# within the ramp width's change with A. Colour = A (Debris Color 1).
+gc = load("T_Glass_Chunks_3x3_Mask.png")
+px = np.empty_like(gc)
+A = gc[..., 3]
+px[..., 0] = px[..., 1] = px[..., 2] = A
+px[..., 3] = np.where(A > 0.667, 1 - 0.667 / np.maximum(A, 1e-6), 0.0)
+save_rgba("imp_ron_glasschunk_diff", px)

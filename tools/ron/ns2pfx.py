@@ -65,6 +65,12 @@ MATS = {
     # parameters, baked to 4 variants x 16 frames over life with the splash colour (tools/ron/mk_ron_clip_tex.py)
     'MIC_BloodClip_A': dict(tex='imp_ron_mudsplash_diff', tiles=(8, 8), lit=True, back=1, baked_color=True,
                             tiling='TilesX=8,TilesY=8,VariantCount=4,AnimFramesCount=16,AnimCycle=Once,AnimBlend=true,FlipChance=0.5'),
+    # M_Sparks_NoNormal_Master again (cloth): feathers (colour 0.25 x Base Overlay 0.945, Opacity 1.5 x Master 1.0),
+    # sparks (HDR colour baked; Opacity 5 x Master 0.5)
+    'MI_Feathers_01': dict(tex='imp_ron_feather_diff', tiles=(5, 5), lit=True, back=1, soft=True, color_mul=0.945, alpha_mul=1.5),
+    'MI_Sparks_05': dict(tex='imp_ron_sparks05_diff', tiles=(3, 3), lit=True, back=1, soft=True, baked_color=True, alpha_mul=2.5),
+    # M_Glass_Chunks: dithered clip baked as a threshold (mk_ron_fx_tex.py); its normal map isn't carried over
+    'M_Glass_Chunks': dict(tex='imp_ron_glasschunk_diff', tiles=(3, 3), lit=True, back=0, dither=True),
     # M_Particle_Additive with its default T_longSpark_02_8x2 (drawn 4x2), adds texture x colour; PivotOffset (0, 0.5)
     'M_Particle_Additive': dict(tex='imp_sparks_diff', tiles=(4, 2), additive=True, ei=1),
 }
@@ -234,8 +240,8 @@ def build(frames, b, rend, M, mat, em, name, nmin, nmax, axis=2, vkey='Velocity'
         p['DiffuseLighting'] = '1'; p['DiffuseBacklighting'] = f(M.get('back', 0)); p['EmissiveLighting'] = '0'
         clo = chi = 1.0; vec = np.ones_like(vec)
     else:
-        rgb = base_rgb * chi
-        if rgb.max() > 1.001: raise SystemExit('%s: lit colour above 1 (%s): check the material' % (em, rgb))
+        rgb = base_rgb * chi * M.get('color_mul', 1.0)
+        if rgb.max() > 1.001: raise SystemExit('%s: lit colour above 1 (%s): the material saturates it, bake it (--matover)' % (em, rgb))
         p['Color'] = '(x=%s,y=%s,z=%s)' % tuple(f(x) for x in rgb)
         p['DiffuseLighting'] = '1'; p['DiffuseBacklighting'] = f(M.get('back', 0)); p['EmissiveLighting'] = '0'
     if chi > 0 and 1 - clo / chi >= 0.02: p['Color'] += ',Random=' + f(1 - clo / chi, 2)
@@ -257,6 +263,9 @@ def build(frames, b, rend, M, mat, em, name, nmin, nmax, axis=2, vkey='Velocity'
     acv = age_curve(ts, Ca / apk)
     if acv: p['Alpha'] += ',' + acv
     masknote = ''
+    if M.get('dither'):   # threshold texture (mk_ron_fx_tex.py, glass chunks): SourceMin 1 -> 0 over the alpha
+        p['AlphaClip'] = 'Scale=(Min=1,Max=1),SourceMin=(Min=1,Max=0),SourceWidth=(Min=0.167,Max=0.167)'
+        if over: p['Alpha'] = one_sided(apk * alo, min(ahi_abs, 1.0))
     if M.get('masked'):
         # RoN draws where tex.a x alpha >= 1/3, opaque. The texture's alpha holds s = 0.004 + 0.996 (1 - 1/(3 tex.a))
         # (0 where tex.a < 1/3; tools/ron/mk_ron_fx_tex.py), and SourceMin runs 1 -> 0.004 with the particle alpha:
@@ -413,12 +422,15 @@ def main():
     ap.add_argument('--samples', type=int, default=48)
     ap.add_argument('--into', help='library XML: replace the effect\'s top-level block there (or add it), old layer names off')
     ap.add_argument('--note', default='', help='a line for the comment above the effect (which surfaces use it)')
+    ap.add_argument('--matover', default='{}', help='JSON {material: {key: value}} merged into MATS for this effect '
+                    '(a system whose particle colour makes a saturating material need its own baked texture)')
     ap.add_argument('--cascade', action='store_true', help='dir is a Cascade system name (tools/ron/cascade_sim.py), not an extract dir')
     ap.add_argument('--axis', default='z', choices='xz', help='the RoN local axis that becomes the KCD2 emitter y: z = the hit normal, x = a ricochet\'s outgoing direction')
     ap.add_argument('--hide', default='', help='emitters drawn invisible, kept as carriers for their children (comma list)')
     ap.add_argument('--skip', default='LOW_SETTINGS',
                     help='emitters left out (regex): RoN draws either its HIGH or its LOW debris, by quality setting')
     a = ap.parse_args()
+    for k, v in json.loads(a.matover).items(): MATS[k] = {**MATS.get(k, {}), **v}
     out = ['\t<Particles Name="%s">\n\t\t<Params Enabled="false" Count="1" ParticleLifeTime="0.05" />\n\t\t<Childs>\n' % a.effect]
     names = []
     if a.cascade:
