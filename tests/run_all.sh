@@ -28,6 +28,7 @@ luajit tests/run_accuracy.lua >/dev/null || { echo "FAIL run_accuracy"; fail=1; 
 luajit tests/run_motion.lua >/dev/null || { echo "FAIL run_motion"; fail=1; }
 luajit tests/run_settings.lua >/dev/null || { echo "FAIL run_settings"; fail=1; }
 luajit tests/run_env.lua >/dev/null || { echo "FAIL run_env"; fail=1; }
+luajit tests/run_flykeys.lua >/dev/null || { echo "FAIL run_flykeys"; fail=1; }
 luajit tests/run_perf.lua >/dev/null || { echo "FAIL run_perf"; fail=1; }
 luajit tests/run_effects.lua >/dev/null || { echo "FAIL run_effects"; fail=1; }
 python3 tests/test_profile_guess.py >/dev/null || { echo "FAIL test_profile_guess"; fail=1; }

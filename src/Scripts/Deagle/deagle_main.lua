@@ -573,6 +573,8 @@ end
 -- ---------------------------------------------------------------------------
 function Deagle:OnAction(action, activation, value)
 	local s = self.state
+	-- the Flight mod's keys come from the plugin (FlyKey) once it's linked: its own actions would count twice
+	if self.flyKeys and type(action) == "string" and action:find("^flight_") then return true end
 	if action == "deagle_look_x" or action == "deagle_look_y" then return self:FreecamLook(action, tonumber(value) or 0) end
 	if action == "deagle_inspect" and s.drawn then
 		if activation == "press" then self:Inspect() end
@@ -650,6 +652,29 @@ function Deagle:HookActions()
 	local p = self:Player()
 	if p then wrapOnAction(p, "instance") end
 	return self.wrapped.Player ~= nil or self.wrapped.instance ~= nil
+end
+
+-- The Flight mod (Mods/flight, someone else's: Scripts/mods/flight.lua, global Flight) reads its keys from key
+-- actions, and KCD2 sends Lua none while Henry carries a body (logged live 2026-10-18), so it can't fly with one. With
+-- the plugin linked, the plugin reads those keys from the keyboard instead (flykeys) and FlyKey sets them; F4 toggles
+function Deagle:FlyLink()
+	if type(Flight) ~= "table" or type(Flight.Keys) ~= "table" then return end
+	self:Native("flykeys 1")   -- the plugin answers deagle_flykey linked 1; until then Flight keeps its own keys
+end
+function Deagle:FlyKey(line)
+	local name, v = tostring(self.Arg(line)):match("^(%a+)%s+(%d)")
+	if not name or type(Flight) ~= "table" or type(Flight.Keys) ~= "table" then return end
+	if name == "linked" then
+		self.flyKeys = v == "1"
+		log("Flight mod: its keys come from the plugin " .. (self.flyKeys and "(they work while carrying a body)" or "no more"))
+	elseif name == "toggle" then
+		if v == "1" then
+			Flight.active = not Flight.active
+			if Flight.log then Flight.log(Flight.active and "Flight On" or "Flight Off") end
+		end
+	elseif Flight.Keys[name] ~= nil then
+		Flight.Keys[name] = v == "1"
+	end
 end
 
 function Deagle:LoadInput()
@@ -904,7 +929,8 @@ System.AddCCommand("deagle_input", "Deagle:LoadInput()", "Reload the Deagle key 
 System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.state.logActions", "Toggle logging of every input action")
 System.AddCCommand("deagle_fx", "Deagle:FxTest(Deagle.Arg([[%1]]))", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
-System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end; Deagle:RonWarm()", "internal: native plugin handshake")
+System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end; Deagle:RonWarm(); Deagle:FlyLink()", "internal: native plugin handshake")
+System.AddCCommand("deagle_flykey", "Deagle:FlyKey([[%line]])", "internal: the plugin's read of a Flight mod key (<name> 0|1)")
 System.AddCCommand("deagle_ron_state", "Deagle:RonState([[%1]])", "internal: Ready or Not's sound engine started in the plugin (1) or failed (0)")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
 System.AddCCommand("deagle_dev_reload", "Deagle:DevReload()", "Re-run the Deagle script from the dev path")

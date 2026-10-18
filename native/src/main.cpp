@@ -343,6 +343,7 @@ static void MoveFlashes() {
 // flashseed <m>: a spawned flash gets a box this big around the muzzle at once (0 = off). A new emitter starts with
 // an empty box and is culled until its first update computes one, which runs after the frame's culling
 // (docs/flash_no_delay_research.md): measured in game 2026-10-12 one game frame late. To test against that.
+static bool g_flyKeys = false;   // flykeys: read the Flight mod's keys here (OnCamera)
 static float g_flashSeed = 0;
 static uintptr_t g_live = 0;
 static float g_liveScale = 1, g_liveSizes[8] = {};
@@ -1059,6 +1060,12 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
+	else if (!strcmp(cmd, "flykeys")) {   // Lua takes the keys over only on this answer (an older plugin doesn't answer)
+		g_flyKeys = atoi(rest) != 0;
+		Log("flykeys %s", g_flyKeys ? "on" : "off");
+		std::lock_guard<std::mutex> lk(g_consoleMu);
+		g_console.push_back(g_flyKeys ? "deagle_flykey linked 1" : "deagle_flykey linked 0");
+	}
 	else if (!strcmp(cmd, "notorch")) g_filters[F_NO_TORCH].want = atoi(rest) != 0 ? 1 : 0;
 	else if (!strcmp(cmd, "nocamera")) g_filters[F_NO_CAMERA].want = atoi(rest) != 0 ? 1 : 0;   // the freecam's mouse look
 	else if (!strcmp(cmd, "vol")) { g_masterVol = (float)atof(rest); if (RonReady()) RonVolume(0.5f * g_masterVol); }
@@ -1177,6 +1184,29 @@ static void OnCamera(uintptr_t camera) {
 			fcWas = fc;
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.push_back(fc ? "deagle_freecam_state 1" : "deagle_freecam_state 0");
+		}
+	}
+	{   // flykeys: the keyboard for the Flight mod (Mods/flight, Scripts/mods/flight.lua). While Henry carries a body KCD2
+		// sends no key actions to Lua at all (logged live 2026-10-18), so with flykeys on its keys come from here, sent
+		// on each change (deagle_flykey <flight.lua's key name> 0|1); Lua then drops Flight's own key actions
+		static const struct { int vk; const char* name; } kFly[] = { { VK_F4, "toggle" }, { 'W', "forward" }, { 'S', "back" },
+			{ 'A', "left" }, { 'D', "right" }, { VK_SPACE, "up" }, { VK_LMENU, "down" }, { VK_LSHIFT, "fast" }, { VK_LCONTROL, "slow" } };
+		static bool flyWas[sizeof(kFly) / sizeof(kFly[0])] = {};
+		bool focus = false;
+		if (g_flyKeys) {
+			HWND w = GetForegroundWindow();
+			DWORD pid = 0;
+			if (w) GetWindowThreadProcessId(w, &pid);
+			focus = pid == GetCurrentProcessId();
+		}
+		for (size_t i = 0; i < sizeof(kFly) / sizeof(kFly[0]); i++) {
+			bool d = focus && (GetAsyncKeyState(kFly[i].vk) & 0x8000) != 0;   // out of focus: every key let go
+			if (d == flyWas[i]) continue;
+			flyWas[i] = d;
+			char c[48];
+			snprintf(c, sizeof(c), "deagle_flykey %s %d", kFly[i].name, d ? 1 : 0);
+			std::lock_guard<std::mutex> lk(g_consoleMu);
+			g_console.push_back(c);
 		}
 	}
 	if (g_env) {
