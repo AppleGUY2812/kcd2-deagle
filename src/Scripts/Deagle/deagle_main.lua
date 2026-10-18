@@ -841,6 +841,23 @@ System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "inter
 -- doesn't know the verb and stays silent, so say what was asked; the answer comes back as deagle_points_said.
 System.AddCCommand("deagle_points", "local a = Deagle.Arg([[%line]]); System.LogAlways('[Deagle] points: asked the plugin' .. (Deagle.native and '' or ' (not linked: no answer will come)') .. ' for: ' .. (a ~= '' and a or 'the list')); Deagle:Native('points ' .. a)", "deagle_points [<skill> <n>|+n|-n]: Henry's unspent perk points; no argument lists them (e.g. deagle_points alchemy 7, deagle_points survival +2; stats are stat0-stat3)")
 System.AddCCommand("deagle_points_said", "System.LogAlways('[Deagle] points: ' .. [[%line]])", "internal: the plugin's answer to deagle_points")
+-- deagle_respec <skill>: one skill's perks off and their points back. The plugin lists the owned ones
+-- (deagle_respec_remove <skill> <guid>...), Lua removes them (soul:RemovePerk), the plugin counts what came off and
+-- refunds that many points (respec_refund).
+function Deagle:RespecRemove(line)
+	local words = {}
+	for w in string.gmatch(Deagle.Arg(line), "%S+") do words[#words + 1] = w end
+	local soul = player and player.soul
+	local bad = 0
+	for i = 2, #words do
+		if not (soul and pcall(function() soul:RemovePerk(words[i]) end)) then bad = bad + 1 end
+	end
+	System.LogAlways(string.format("[Deagle] points: respec %s: removed %d perk ids%s", tostring(words[1]), #words - 1 - bad,
+		bad > 0 and (", " .. bad .. " failed") or ""))
+	self:Native("respec_refund")
+end
+System.AddCCommand("deagle_respec", "local a = Deagle.Arg([[%line]]); System.LogAlways('[Deagle] points: asked the plugin to reset ' .. a .. (Deagle.native and '' or ' (not linked: no answer will come)')); Deagle:Native('respec ' .. a)", "deagle_respec <skill>: that skill's perks come off and their points come back (e.g. deagle_respec alchemy)")
+System.AddCCommand("deagle_respec_remove", "Deagle:RespecRemove([[%line]])", "internal: the plugin's list of perks for deagle_respec to remove")
 System.AddCCommand("deagle_slowmo", "Deagle:SlowMoCmd(Deagle.Arg([[%1]]))", "deagle_slowmo [speed|off]: slow motion at that game speed (0.01-1, kept: F9 uses it too); no value = on / off like F9")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")

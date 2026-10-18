@@ -1034,6 +1034,16 @@ static void Command(const char* line) {
 		std::lock_guard<std::mutex> lk(g_consoleMu);
 		g_console.push_back("deagle_points_said " + said);
 	}
+	else if (!strcmp(cmd, "respec")) {   // deagle_respec <skill>: Lua removes the perks we list, then respec_refund
+		std::string said = Respec_Command(rest);
+		std::lock_guard<std::mutex> lk(g_consoleMu);
+		g_console.push_back(said.rfind("REMOVE ", 0) == 0 ? "deagle_respec_remove " + said.substr(7) : "deagle_points_said " + said);
+	}
+	else if (!strcmp(cmd, "respec_refund")) {
+		std::string said = Respec_Refund();
+		std::lock_guard<std::mutex> lk(g_consoleMu);
+		g_console.push_back("deagle_points_said " + said);
+	}
 	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
 }
 

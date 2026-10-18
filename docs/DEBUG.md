@@ -46,6 +46,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_zoom <n>` | debug zoom (F2 steps x4 / x10 / off) |
 | `\` or `deagle_freecam` | free camera: time keeps running. **WASD** fly, **Space** up, **Left Ctrl** down, **Shift** 5x faster; Henry doesn't walk. The **mouse turns the camera** and Henry's aim stays put; **hold right mouse** to aim Henry instead (the camera stays). A red line shows where a shot goes; left click fires. **Scroll** = faster / slower (or `deagle_freecam speed 10`). Turns itself off on a save load. (testing) |
 | `deagle_points` | Henry's unspent perk points. No argument lists them; `deagle_points alchemy 7` sets alchemy to 7, `deagle_points survival +2` adds 2. Menu names work (horsemanship, sword, archery...). Stats are `stat0`-`stat3` until we check which is which. Reopen the perk screen to see the change. Needs the native plugin from 2026-10-18 or later. Untested: whether the points survive a save + reload or a level-up. (testing) |
+| `deagle_respec <skill>` | Resets one skill: its bought perks come off and you get exactly that many points back to spend again (e.g. `deagle_respec alchemy`). Other skills stay as they are. Free perks (like Lab Dweller) stay. Needs the native plugin from 2026-10-18 or later. (testing) |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.on 0`) is an unknown command.

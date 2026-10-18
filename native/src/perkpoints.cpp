@@ -9,6 +9,12 @@
 //   A block counts only if its +0x08 points back at its C_PerkList (true for all three in game 2026-10-18): a stray
 //   qword that equals the vtable can't pass that, even when its +0x58 lands in zeroed memory that "agrees" with
 //   Henry's all-zero points (Claude 4's review). More than 3 blocks: nothing is written, the addresses are listed.
+// deagle_respec <skill>: the owned perks are C_PerkList +0x40..+0x48, an array of perk object pointers (C_BuffPerk,
+// C_MetaPerk, C_SoulAbilityPerk...), the perk's GUID at object +0x10 (in game 2026-10-18 it held exactly the save's
+// bought perks plus free ones like Lab Dweller; +0x28..+0x30 held the not-yet-owned buyable ones). Lua removes them
+// (soul:RemovePerk, which works), then respec_refund counts how many are really gone and adds that many points: one
+// point per perk, as the Lethean Water refund was (alchemy 0 -> 7 for 7 perks). perkdefs.inc says which perks cost a
+// point and their sub-perks (tools/gen_perkdefs.py).
 // Skill ids 0..34 only (skill.xml's highest id is 34; in game the u16 after id 35 already held other data), and only
 // by name: no raw index reaches a write.
 // Unverified: which stat is which (named stat0-stat3 until each is checked on the perk screen, as alchemy was), and
@@ -41,6 +47,23 @@ const Alias kAliases[] = {   // the menu's names for a few skills
 	{ "lockpicking", "thievery" }, { "reading", "scholarship" }, { "dog", "houndmaster" }, { "warfare", "defense" },
 };
 const int kStatOff = 0x10, kSkillOff = 0x24, kBlockPtr = 0x58, kBackPtr = 0x08, kMaxBlocks = 3;
+const int kOwnedBegin = 0x40, kOwnedEnd = 0x48, kPerkGuid = 0x10, kMaxOwned = 4000;
+
+struct PerkDef { int kind, idx; const char* guid; const char* subs[4]; };
+const PerkDef kPerks[] = {
+#include "perkdefs.inc"
+};
+
+// "1071e935-a667-47c1-8b2d-e0818434a471" -> the 16 bytes as a GUID sits in memory (first three fields little-endian)
+bool GuidBytes(const char* g, uint8_t out[16]) {
+	unsigned d1, d2, d3, b[8];
+	if (sscanf_s(g, "%8x-%4x-%4x-%2x%2x-%2x%2x%2x%2x%2x%2x", &d1, &d2, &d3, &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6], &b[7]) != 11) return false;
+	memcpy(out, &d1, 4);
+	uint16_t w2 = (uint16_t)d2, w3 = (uint16_t)d3;
+	memcpy(out + 4, &w2, 2); memcpy(out + 6, &w3, 2);
+	for (int i = 0; i < 8; i++) out[8 + i] = (uint8_t)b[i];
+	return true;
+}
 
 Module g_game;
 uintptr_t g_vtable = 0;
@@ -108,7 +131,7 @@ bool WriteU16(uintptr_t addr, uint16_t v) {
 	__try { *(uint16_t*)addr = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
-struct Block { uintptr_t addr; uint16_t stats[4]; uint16_t skills[35]; };
+struct Block { uintptr_t addr, list; uint16_t stats[4]; uint16_t skills[35]; };
 
 struct ScanStats { int lists = 0, regions = 0; double gb = 0, ms = 0; };
 
@@ -138,7 +161,7 @@ std::vector<Block> FindBlocks(ScanStats* st) {
 	st->lists = n;
 	for (int i = 0; i < n; i++) {
 		Block b{};
-		if (ReadBlock(hits[i], &b.addr, b.stats, b.skills)) blocks.push_back(b);
+		if (ReadBlock(hits[i], &b.addr, b.stats, b.skills)) { b.list = hits[i]; blocks.push_back(b); }
 	}
 	return blocks;
 }
@@ -163,6 +186,40 @@ int Lookup(const char* name, bool* isStat) {
 	return -1;
 }
 
+// the owned perks' GUIDs of one C_PerkList; false if the array can't be read
+bool ReadOwned(uintptr_t list, uint8_t (*out)[16], int cap, int* n) {
+	*n = 0;
+	__try {
+		auto b = *(uintptr_t**)(list + kOwnedBegin), e = *(uintptr_t**)(list + kOwnedEnd);
+		if (!b || e < b || e - b > cap) return false;
+		for (auto p = b; p < e; p++) if (*p) memcpy(out[(*n)++], (const void*)(*p + kPerkGuid), 16);
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+std::vector<int> g_pending;   // kPerks indexes Lua was asked to remove (respec), counted by respec_refund
+int g_pendKind = -1, g_pendIdx = -1;
+
+// kPerks indexes of one skill / stat that the player owns now (the first agreeing block's list)
+bool OwnedOf(int kind, int idx, std::vector<int>* found, std::string* err) {
+	ScanStats st;
+	std::vector<Block> blocks = FindBlocks(&st);
+	Log("points: respec scan %d perk lists, %zu with points (%.1f ms)", st.lists, blocks.size(), st.ms);
+	if (blocks.empty()) { *err = "Henry's perks not found (load a save first)"; return false; }
+	if ((int)blocks.size() > kMaxBlocks) { *err = "more perk-point copies than the 3 seen in game, nothing changed"; return false; }
+	static uint8_t owned[kMaxOwned][16];
+	int n = 0;
+	if (!ReadOwned(blocks[0].list, owned, kMaxOwned, &n)) { *err = "Henry's owned-perk list didn't read, nothing changed"; return false; }
+	found->clear();
+	for (int i = 0; i < (int)(sizeof(kPerks) / sizeof(kPerks[0])); i++) {
+		if (kPerks[i].kind != kind || kPerks[i].idx != idx) continue;
+		uint8_t g[16];
+		if (!GuidBytes(kPerks[i].guid, g)) continue;
+		for (int k = 0; k < n; k++) if (!memcmp(owned[k], g, 16)) { found->push_back(i); break; }
+	}
+	return true;
+}
+
 std::string Said(std::string s) {   // goes back through Lua's [[%line]]: no "]]" may reach it
 	for (auto& c : s) if (c == ']') c = ')';
 	return s;
@@ -173,6 +230,46 @@ std::string PointsCommand(const char* rest);
 }  // namespace
 
 std::string Points_Command(const char* rest) { return Said(PointsCommand(rest)); }
+
+std::string Respec_Command(const char* rest) {
+	char name[48] = {};
+	bool isStat = false;
+	int idx = sscanf_s(rest, "%47s", name, (unsigned)sizeof(name)) == 1 ? Lookup(name, &isStat) : -1;
+	if (idx < 0) return Said(std::string("usage: deagle_respec <skill> (e.g. alchemy); '") + name + "' isn't one");
+	std::vector<int> found;
+	std::string err;
+	if (!OwnedOf(isStat ? 1 : 0, idx, &found, &err)) return Said(err);
+	const char* label = isStat ? kStats[idx] : kSkills[idx];
+	if (found.empty()) return Said(std::string("no ") + label + " perks to reset");
+	g_pending = found; g_pendKind = isStat ? 1 : 0; g_pendIdx = idx;
+	std::string cmd = std::string("REMOVE ") + label;   // main.cpp turns this into deagle_respec_remove
+	for (int i : found) {
+		cmd += std::string(" ") + kPerks[i].guid;
+		for (auto sub : kPerks[i].subs) if (sub) cmd += std::string(" ") + sub;
+	}
+	Log("points: respec %s: %zu owned perks to remove", label, found.size());
+	return cmd;
+}
+
+std::string Respec_Refund() {
+	if (g_pendKind < 0) return "respec: nothing pending";
+	int kind = g_pendKind, idx = g_pendIdx;
+	g_pendKind = -1;
+	std::vector<int> still;
+	std::string err;
+	if (!OwnedOf(kind, idx, &still, &err)) return Said("respec: " + err + " (perks removed, no points added)");
+	int gone = 0;
+	for (int i : g_pending) { bool kept = false; for (int k : still) if (k == i) kept = true; if (!kept) gone++; }
+	const char* label = kind ? kStats[idx] : kSkills[idx];
+	if (!gone) return Said(std::string("respec ") + label + ": no perk came off, no points added");
+	char arg[64];
+	snprintf(arg, sizeof(arg), "%s +%d", label, gone);
+	std::string r = Points_Command(arg);
+	Log("points: respec %s: %d of %zu perks removed; %s", label, gone, g_pending.size(), r.c_str());
+	char head[96];
+	snprintf(head, sizeof(head), "respec %s: %d of %zu perks removed, refund: ", label, gone, g_pending.size());
+	return Said(head + r);
+}
 
 namespace {
 
