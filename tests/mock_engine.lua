@@ -106,10 +106,14 @@ local function newEntity(name, props)
 	function e:GetBoneDir(b) return vec(0, 1, 0) end
 	function e:GetBoneLocal(b, t) return vec(t.x, t.y, t.z) end   -- a world direction in the bone's axes (bone = world axes here)
 	function e:AddImpulse() return true end
+	function e:EnablePhysics(on) self.physOff = not on end
+	function e:GetAngles() local a = rawget(self, "angles") or vec(0, 0, 0) return vec(a.x, a.y, a.z) end
+	function e:SetAngles(a) self.angles = vec(a.x, a.y, a.z) end
 	function e:SetVelocityEx(v, w) M.velEx = { v = v, w = w, name = self.name, cam = System.GetViewCameraDir() } end   -- last velocity + spin set (casings), camera then
 	-- collision classes as CryEngine's SetPhysicParams sets them: the values are ORed in, the UNSET ones cleared
 	e.ccType, e.ccIgnore = 0, 0
 	function e:SetPhysicParams(kind, t)
+		if kind == PHYSICPARAM_SIMULATION and type(t) == "table" then self.sim = t return end
 		if kind ~= PHYSICPARAM_COLLISION_CLASS or type(t) ~= "table" then return end
 		if t.collisionClass then self.ccType = bit.bor(self.ccType, t.collisionClass) end
 		if t.collisionClassIgnore then self.ccIgnore = bit.bor(self.ccIgnore, t.collisionClassIgnore) end
@@ -187,6 +191,7 @@ player.this = { id = player.id }
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }
 _G.PHYSICPARAM_COLLISION_CLASS = 21   -- KCD2's value (read live 2026-10-17)
+_G.PHYSICPARAM_SIMULATION = 5   -- KCD2's value (MODLOG 2026-10-13)
 _G.ent_all = 287   -- KCD2's value (measured): static | sleeping | rigid | living | independent | terrain, no water
 _G.ent_static, _G.ent_terrain = 1, 0x100
 _G.ENTITY_FLAG_CASTSHADOW = 2

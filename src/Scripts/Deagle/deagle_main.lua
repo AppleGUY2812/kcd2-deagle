@@ -255,12 +255,16 @@ Deagle.cfg = {
 	-- casing bounce sounds (Deagle:CaseTick): bounces under minSpeed m/s are silent (RoN's ShellNormalizeMin 0.5), at
 	-- most max per casing, followed for life s; volume x RoN's own level
 	caseBounce = { minSpeed = 0.5, drop = 0.4, max = 3, life = 4, volume = 1.0 },
-	-- casing throw (Deagle:EjectCase): speed m/s, up = degrees above the gun's right, back = degrees rearward, spin
-	-- rad/s end over end. Lands 1.7-2.7 m away standing (real pistols: 1-3 m). Was 1.75 m/s at ~52 deg up: 0.8 m, and a
-	-- slow-motion hang at the top. KCD2's physics caps a rigid body's spin at 20 rad/s (measured live): the plugin lifts
-	-- a casing's cap to spinCap for its flight (casespin), back to 20 at its first bounce
+	-- casing throw (Deagle:EjectCase), Ready or Not's BulletShell (docs/ron/gun_smoke_shells.md 2, from its decompiled
+	-- shell init): out of the gun's right side angle deg up, at max(base m/s, Henry's sideways speed) x a random times;
+	-- spin a random whole 0..spin rad/s on each world axis (the same number), cut to spinCap: Unreal's default top spin
+	-- 3600 deg/s (RoN sets none; Unreal's source default, not read from RoN's exe); KCD2's own cap is 20 rad/s in free
+	-- flight (MODLOG 2026-10-13), so the plugin sets spinCap (casespin). nudge: random whole deg of pitch and yaw on the
+	-- case's own rotation. damping /s (its BodyInstance, linear = angular). freeze / life: s until its physics stops / it
+	-- is put away. RoN draws its first 0.3 s with the weapon's field of view; our casings are world objects, as is our gun.
 	-- ghost: casings in flight pass through each other (until their first bounce); 0 = they collide all the way
-	eject = { speed = { 2.8, 4.2 }, up = { 20, 40 }, back = { 5, 25 }, spin = { 100, 200 }, spinCap = 300, ghost = true },
+	eject = { angle = 40, base = 2.0, times = { 1, 3 }, spin = 360, spinCap = 62.83, nudge = 10, damping = 1.0, freeze = 4.0, life = 6.0,
+		ghost = true },
 }
 
 -- The viewmodel: its own character placed on the camera (its camera bone tag_view is the model origin, +Y forward),
@@ -664,7 +668,7 @@ function Deagle:OnGameplayStarted()
 	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
-	self.vmId, self.casePool, self.flashUntil = nil, nil, nil   -- a load ends the old world: its ids may now name other entities
+	self.vmId, self.casePool, self.caseThrow, self.flashUntil = nil, nil, nil, nil   -- a load ends the old world: its ids may now name other entities
 	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	self.paths, self.pathsToken = nil, nil

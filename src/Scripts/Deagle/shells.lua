@@ -1,13 +1,18 @@
 -- Shells (Claude 4): ejected cases, their entities, bounces and clinks.
 -- Split out of deagle_main.lua (2026-10-15), which loads it (Deagle:LoadModule); its helpers come from Deagle.U.
 local U = Deagle.U
-local RON_SURFACE, camBasis, entityHex, surfaceName, try, vadd, vlen, vscale = U.RON_SURFACE, U.camBasis, U.entityHex, U.surfaceName, U.try, U.vadd, U.vlen, U.vscale
+local RON_SURFACE, entityHex, surfaceName, try, vadd, vcross, vdot, vlen, vnorm, vscale = U.RON_SURFACE, U.entityHex, U.surfaceName, U.try, U.vadd, U.vcross, U.vdot, U.vlen, U.vnorm, U.vscale
 
--- casing out of the viewmodel's ejection port: random cone, speed and spin so no two take the same path; port smoke
+-- A casing out of the viewmodel's ejection port, thrown the way Ready or Not throws its BulletShell (decompiled
+-- ABaseShell init FUN_1449d27e0, docs/ron/gun_smoke_shells.md 2): out of the gun's right side 40 deg up (no cone), at
+-- max(2 m/s, Henry's sideways speed) x a random 1-3 and nothing of his other motion (the case starts at rest and gets
+-- a velocity change); its own rotation kept from where it last lay plus a random whole -10..10 deg of pitch and yaw;
+-- spin one random whole number 0..360 rad/s on all three world axes, which the physics' top spin cuts to
+-- cfg.eject.spinCap; damping 1 /s. Its physics stops at 4 s and it goes back to the pool at 6 s (hidden).
 -- Casings come from a pool: CASE_POOL of them are made once, then the oldest is picked up again (its motion stopped
--- with ResetPhysics and thrown anew). Spawning a physics entity every shot made ~10 a second at 750 rpm and left up to
--- 200 rigid bodies lying around for 20 s; now at most CASE_POOL exist.
-local CASE_POOL = 12
+-- with ResetPhysics and thrown anew), so at most CASE_POOL exist. 80 holds 6 s of the fastest gun here (CS2 rifles,
+-- 0.08 s a shot: 75); faster fire (deagle_stress) takes back the oldest early.
+local CASE_POOL = 80
 -- Casings in flight pass through each other (cfg.eject.ghost). At 250 rounds a second ~4 are thrown from the same
 -- port spot in one frame, each inside the others: the rigid-body solver took the game from 60 to 5 fps within 2 s
 -- (deagle_stress 250 sky shot casebody, 2026-10-17; the port smoke cost nothing). Casings in flight carry a class bit
@@ -26,6 +31,8 @@ function Deagle:CaseEntity()
 	local id = self.casePool[self.caseNext]
 	local e = id and System.GetEntity(id)
 	if e then
+		e:Hide(0)
+		e:EnablePhysics(true)   -- stopped at cfg.eject.freeze
 		e:ResetPhysics()
 		return e
 	end
@@ -39,33 +46,65 @@ function Deagle:CaseEntity()
 	return e
 end
 
-local function inRange(r) return r[1] + math.random() * (r[2] - r[1]) end
+-- the gun's own axes at the shot (right, barrel, up), from its muzzle bone: Ready or Not throws from a point on the
+-- gun mesh, so the throw turns with the gun, not with the camera
+local function gunAxes(self)
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm then return nil end
+	local ok, _, ld = pcall(self.MuzzleLocal, self, vm)
+	if not ok then return nil end
+	local X, Y, Z = vm:GetDirectionVector(0), vm:GetDirectionVector(1), vm:GetDirectionVector(2)
+	local f = vnorm(vadd(vadd(vscale(X, ld.x), vscale(Y, ld.y)), vscale(Z, ld.z)))
+	local r = vnorm(vcross(f, Z))
+	return r, f, vcross(r, f)
+end
+
 function Deagle:EjectCase()
 	local port = self:VmBone(self.gun.bones.brass)
 	if not port then return end
 	local c = self.cfg
 	try("eject case", function()
-		local _, f, r, u = camBasis()
 		local E = c.eject
+		local r, _, u = gunAxes(self)
+		if not r then return end
 		local case = self:CaseEntity()
+		-- Ready or Not's BulletShell: linear and angular damping 1 (KCD2 damps both with one number, in contact and in
+		-- free fall; its own free-flight damping is ~0.1 /s, MODLOG 2026-10-13). Every throw: deagle_set takes at once
+		case:SetPhysicParams(PHYSICPARAM_SIMULATION, { damping = E.damping, freefall_damping = E.damping })
 		case:SetWorldPos(port)
-		case:SetDirectionVector(f)   -- its long axis (the model's Y) down the bore, as it leaves the chamber
-		local up, back = math.rad(inRange(E.up)), math.rad(inRange(E.back))
-		local out = vadd(vscale(r, math.cos(back)), vscale(f, -math.sin(back)))
-		local v = vscale(vadd(vscale(out, math.cos(up)), vscale(u, math.sin(up))), inRange(E.speed))
-		local okP, pv = pcall(function() return self:Player():GetVelocity() end)
-		if okP and type(pv) == "table" then v = vadd(v, pv) end   -- the brass keeps the shooter's own motion
-		-- end over end: the ejector stops the case head while the extractor pulls the rim, so the mouth swings out to
-		-- the right (spin about -up), with some wobble
-		local w = vadd(vscale(u, -inRange(E.spin)), vadd(vscale(r, (math.random() - 0.5) * 40), vscale(f, (math.random() - 0.5) * 40)))
-		if self.native then self:Native(string.format("casespin %s %.0f", entityHex(case.id), E.spinCap)) end
+		local a = case:GetAngles()
+		a.x, a.z = a.x + math.rad(math.random(-E.nudge, E.nudge)), a.z + math.rad(math.random(-E.nudge, E.nudge))
+		case:SetAngles(a)
+		local out = vadd(vscale(r, math.cos(math.rad(E.angle))), vscale(u, math.sin(math.rad(E.angle))))
+		local side = 0
+		local okP, pv, pr = pcall(function() local pl = self:Player() return pl:GetVelocity(), pl:GetDirectionVector(0) end)
+		if okP and type(pv) == "table" and type(pr) == "table" then side = vdot(pv, pr) end
+		local v = vscale(out, math.max(E.base, side) * (E.times[1] + math.random() * (E.times[2] - E.times[1])))
+		local s = math.random(0, E.spin)
+		local w = { x = s, y = s, z = s }
+		local wl = vlen(w)
+		if wl > E.spinCap then w = vscale(w, E.spinCap / wl) end
+		if self.native then self:Native(string.format("casespin %s %.2f", entityHex(case.id), E.spinCap)) end
 		case:SetVelocityEx(v, w)
-		local ghost = c.eject.ghost and true or false
+		local ghost = E.ghost and true or false
 		caseGhost(case, ghost)
 		self.casesFlying = self.casesFlying or {}
 		self.casesFlying[case.id] = { t = System.GetCurrTime(), bounces = 0, ev = self.gun.ron and self.gun.ron.shell, ghost = ghost }
+		-- Ready or Not's two timers (game time, so they run with the gun put away too): physics off, then back to
+		-- the pool. A casing thrown again before then has a new throw: the old timers leave it alone.
+		local id, throw = case.id, {}
+		self.caseThrow = self.caseThrow or {}
+		self.caseThrow[id] = throw
+		Script.SetTimer(math.floor(E.freeze * 1000), function()
+			local e = Deagle.caseThrow[id] == throw and System.GetEntity(id)
+			if e then e:EnablePhysics(false) end
+		end)
+		Script.SetTimer(math.floor(E.life * 1000), function()
+			local e = Deagle.caseThrow[id] == throw and System.GetEntity(id)
+			if e then e:Hide(1) end
+		end)
+		self:SpawnFx(c.portFx, port, out, 1.0)
 	end)
-	self:SpawnFx(c.portFx, port, System.GetViewCameraUpDir(), 1.0)
 end
 
 -- A casing's bounces: Ready or Not plays its shell event (9mmShell) on every bounce with Surface = what it landed on
@@ -92,7 +131,6 @@ function Deagle:CaseTick()
 				local lost = wasSpeed > c.minSpeed and speed < wasSpeed * (1 - c.drop)
 				if (landed or lost) and wasSpeed >= c.minSpeed then
 					f.bounces = f.bounces + 1
-					if f.bounces == 1 and self.native then self:Native(string.format("casespin %s 20", entityHex(id))) end   -- the physics' own cap on the ground
 					if f.bounces == 1 and f.ghost then caseGhost(e, false); f.ghost = false end   -- landed: collides with casings again
 					local pos = e:GetWorldPos()
 					local hits = {}

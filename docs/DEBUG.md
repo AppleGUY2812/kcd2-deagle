@@ -142,11 +142,14 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `physics.skullJPerMm2` | `0.4` | a round that reaches the head with this many J per mm² of its face (bone perforation, Sellier & Kneubuehl: 9 mm 26 J, .50 AE 51 J) kills; a helmet that stops it, or padding that drains it below that, leaves a wound |
 | `gore.ragdollOnKill` | `true` | a killing round drops the body at once instead of after KCD2's death animation |
 | `gore.killPush` | `1` | how hard a kill shoves the body (x the round's real momentum x punch) |
-| `eject.speed` | `2.8,4.2` | casing throw speed in m/s (a random pick between the two); standing they land 1.7-2.7 m to the right, plus your own movement |
-| `eject.up` | `20,40` | degrees above the gun's right side a casing leaves at (higher = taller arc, closer landing) |
-| `eject.back` | `5,25` | degrees a casing goes back toward you |
-| `eject.spin` | `100,200` | end-over-end spin in rad/s (needs the plugin's `casespin`: the game caps spin at 20 rad/s without it) |
-| `eject.spinCap` | `300` | spin cap the plugin sets for a casing's flight, back to the game's 20 at its first bounce |
+| `eject.angle` | `40` | degrees above the gun's right side a casing leaves at (Ready or Not's shell spawn point: 40) |
+| `eject.base` | `2` | throw speed in m/s before the random factor; strafing right faster than this throws at your sideways speed instead (Ready or Not's rule). Nothing else of your movement is added |
+| `eject.times` | `1,3` | the random factor on `eject.base` (a pick between the two): 2-6 m/s standing |
+| `eject.spin` | `360` | spin in rad/s: one random whole number up to this, the same on all three axes, cut to `eject.spinCap` |
+| `eject.spinCap` | `62.83` | top spin in rad/s the plugin sets for a casing (Unreal's default, 3600 deg/s; the game's own is 20) |
+| `eject.nudge` | `10` | random whole degrees of pitch and yaw added to the casing's own rotation at each throw |
+| `eject.damping` | `1` | how fast a casing loses speed and spin, per second (Ready or Not's; the game's own is about 0.1) |
+| `eject.freeze` / `eject.life` | `4` / `6` | seconds until a casing stops moving / disappears (back to the pool of 80) |
 | `eject.ghost` | `true` | casings in flight pass through each other until their first bounce, then collide again on the ground (at 250 rounds/s, ~4 thrown inside each other a frame took the physics from 60 to 5 fps); `0` = they collide all the way |
 | `caseBounce.volume` | `1` | shell clinks x Ready or Not's own level |
 

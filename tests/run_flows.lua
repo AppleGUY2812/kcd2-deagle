@@ -73,28 +73,35 @@ step("slow motion (F9)", function()
 	print("   t_Scale on/off:", on, off)
 	if on ~= 0.1 or off ~= 1 then error("slow motion toggle") end
 end)
-step("casings come from a pool", function()   -- 20 shots, at most 12 casings ever exist
+step("casings come from a pool", function()   -- 100 shots, at most 80 casings ever exist
 	Deagle.state.ammo = 7
-	for i = 1, 20 do if Deagle.state.ammo == 0 then Deagle.state.ammo = 7 end Deagle:OnAction("deagle_fire", "press"); M.advance(0.12) end
+	for i = 1, 100 do if Deagle.state.ammo == 0 then Deagle.state.ammo = 7 end Deagle:OnAction("deagle_fire", "press"); M.advance(0.25) end
 	local n = 0
 	for k, e in pairs(M.entities()) do if type(k) ~= "string" and e.name and e.name:find("^deagle_case_") then n = n + 1 end end
-	print("   casings in the world after 20 more shots:", n)
-	if n > 12 then error(n .. " casings: the pool isn't reused") end
-	-- thrown at 1-3 m pistol distances: 2.8-4.2 m/s, out to the gun's right and up, spinning end over end
+	print("   casings in the world after 100 more shots:", n)
+	if n ~= 80 then error(n .. " casings after 100+ throws: the pool of 80 isn't filled and reused") end
+	-- Ready or Not's throw: out of the gun's right side 40 deg up, 2-6 m/s standing (base 2 x 1-3), the same spin on
+	-- all three world axes cut to 62.83 rad/s; damping 1
 	local ve = M.velEx
 	if not ve or not ve.name:find("^deagle_case_") then error("casing not thrown with SetVelocityEx") end
 	local function dot(a, b) return a.x * b.x + a.y * b.y + a.z * b.z end
-	local f = ve.cam   -- the camera when it was thrown (the mock camera swings a lot with recoil)
-	local r = { x = f.y, y = -f.x, z = 0 }
-	local rl = math.sqrt(r.x ^ 2 + r.y ^ 2); r.x, r.y = r.x / rl, r.y / rl
-	local u = { x = r.y * f.z, y = -r.x * f.z, z = r.x * f.y - r.y * f.x }   -- r x f
-	local sp, side, up = math.sqrt(dot(ve.v, ve.v)), dot(ve.v, r), dot(ve.v, u)
+	-- the mock's muzzle bone points the viewmodel's +Y (world +Y here): right = +X, up = +Z
+	local sp = math.sqrt(dot(ve.v, ve.v))
+	local dirOk = math.abs(ve.v.x / sp - math.cos(math.rad(40))) < 1e-3 and math.abs(ve.v.y / sp) < 1e-3 and math.abs(ve.v.z / sp - math.sin(math.rad(40))) < 1e-3
 	local spin = math.sqrt(dot(ve.w, ve.w))
-	print(string.format("   last casing: %.2f m/s, %.2f to the gun's right, %.2f up, spin %.0f rad/s", sp, side, up, spin))
-	if sp < 2.8 or sp > 4.25 or side < 0.5 * sp or up <= 0 or spin < 100 then error("casing throw out of range") end
-	local capped = false   -- the physics' 20 rad/s spin cap lifted by the plugin before the throw
-	for _, l in ipairs(M.native) do if l:find("^%[DN%] casespin %x+ 300$") then capped = true end end
-	if not capped then error("casing spin cap not lifted (casespin)") end
+	print(string.format("   last casing: %.2f m/s along (%.3f %.3f %.3f), spin (%.1f %.1f %.1f) = %.2f rad/s", sp, ve.v.x / sp, ve.v.y / sp, ve.v.z / sp, ve.w.x, ve.w.y, ve.w.z, spin))
+	if sp < 2 or sp > 6 or not dirOk then error("casing throw isn't Ready or Not's (2-6 m/s, 40 deg up to the gun's right)") end
+	if spin > 62.83 + 1e-6 or ve.w.x ~= ve.w.y or ve.w.y ~= ve.w.z then error("casing spin isn't Ready or Not's (r, r, r) cut to 62.83 rad/s") end
+	local thrown = System.GetEntity(Deagle.casePool[Deagle.caseNext])
+	if not (thrown.sim and thrown.sim.damping == 1 and thrown.sim.freefall_damping == 1) then error("casing damping isn't 1") end
+	local capped = false   -- the physics' 20 rad/s spin cap set to Unreal's 62.83 by the plugin before the throw
+	for _, l in ipairs(M.native) do if l:find("^%[DN%] casespin %x+ 62%.83$") then capped = true end end
+	if not capped then error("casing spin cap not set (casespin 62.83)") end
+	-- its physics stops at 4 s, it is put away at 6 s, and thrown again it shows and moves again
+	M.advance(4.1)
+	if not thrown.physOff or thrown.hidden then error("casing: physics should stop at 4 s, still shown") end
+	M.advance(2.0)
+	if not thrown.hidden then error("casing not put away at 6 s") end
 	-- in flight casings pass through each other (one class bit for casings, ignored); landed, both bits go
 	local GHOST = 1073741824
 	Deagle.state.ammo = 7; Deagle:Fire(true)   -- a fresh one, before any frame reads it
