@@ -837,6 +837,10 @@ end
 System.AddCCommand("deagle_paths", "Deagle:Paths(Deagle.Arg([[%1]]))", "deagle_paths 1|0|clear: draw every round's path (yellow flight, red inside, cyan after a ricochet / wallbang)")
 System.AddCCommand("deagle_freecam", "Deagle:Native('freecam ' .. Deagle.Arg([[%line]]))", "deagle_freecam [on|off|status|speed <m/s>|fast <x>|max <m>|keys wasd|nav|arrows|key <vk>]: free camera (time runs, Henry still aims and shoots, and doesn't walk). \\ toggles; WASD fly, Space up, Left Ctrl down, Shift faster")
 System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "internal: the plugin's free camera came on (1) or went off (0)")
+-- deagle_points: Henry's unspent perk points (native/src/perkpoints.cpp, Claude 1). A plugin older than 2026-10-18
+-- doesn't know the verb and stays silent, so say what was asked; the answer comes back as deagle_points_said.
+System.AddCCommand("deagle_points", "local a = Deagle.Arg([[%line]]); System.LogAlways('[Deagle] points: asked the plugin' .. (Deagle.native and '' or ' (not linked: no answer will come)') .. ' for: ' .. (a ~= '' and a or 'the list')); Deagle:Native('points ' .. a)", "deagle_points [<skill> <n>|+n|-n]: Henry's unspent perk points; no argument lists them (e.g. deagle_points alchemy 7, deagle_points survival +2; stats are stat0-stat3)")
+System.AddCCommand("deagle_points_said", "System.LogAlways('[Deagle] points: ' .. [[%line]])", "internal: the plugin's answer to deagle_points")
 System.AddCCommand("deagle_slowmo", "Deagle:SlowMoCmd(Deagle.Arg([[%1]]))", "deagle_slowmo [speed|off]: slow motion at that game speed (0.01-1, kept: F9 uses it too); no value = on / off like F9")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")

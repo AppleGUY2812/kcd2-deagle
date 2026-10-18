@@ -16,6 +16,7 @@
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
+#include "perkpoints.h"
 #include "fx.h"
 #include <deque>
 #include <mutex>
@@ -1028,6 +1029,11 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "probe")) Probe_Command(rest);   // probe <name> ...: architecture step 1 checks (probe.cpp, Claude 5)
 	else if (!strcmp(cmd, "rounds")) Rounds_Command(rest);   // rounds bind | stats: the native round sim (rounds.cpp, Claude 5)
+	else if (!strcmp(cmd, "points")) {   // deagle_points: Henry's unspent perk points (perkpoints.cpp, Claude 1)
+		std::string said = Points_Command(rest);
+		std::lock_guard<std::mutex> lk(g_consoleMu);
+		g_console.push_back("deagle_points_said " + said);
+	}
 	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
 }
 
