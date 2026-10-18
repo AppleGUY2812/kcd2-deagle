@@ -71,5 +71,25 @@ local glock = {
 	holster = { { 0.180, S .. "Pistols Shared/Pistol Holster", start = true } },
 	holsterEmpty = { { 0.180, S .. "Pistols Shared/Pistol Holster", start = true } },
 }
+-- Ready or Not's own MK V (Claude 1's import, its own animations): RoN 1:1. Each action starts ONE full-length event at
+-- its SoundSourceAnimNotify on the TP body sequence (tp_swt_stand_grizzly_add_*, read 2026-10-18; the montages and the
+-- FP sequences carry no sound notifies; FP and TP clips are the same length, holster 0.833 / 1.0). The part events
+-- (Reload Quick / Empty MagOut, MagIn ...) are already inside these (found in renders: Reload Empty holds its Start,
+-- MagOut, MagIn and Slide Release), so they are never started on their own. A speed reload drops the mag: RoN plays
+-- Pistol Mag Drop from code when it lands (in none of the full events), so here at DropSpeedReloadMagazine (FP weapon
+-- montage) + the fall.
+local grizzly = {
+	spd_reload = { { 0.007, G .. "Reload Speed", start = true }, { 0.446 + MAG_FALL, DROP, feet = true } },   -- 1.667 s, drops the mag
+	spd_reload_empty = { { 0.010, G .. "Reload Empty", start = true }, { 0.445 + MAG_FALL, DROP, feet = true } },   -- 1.9 s
+	tac_reload = { { 0.010, G .. "Reload Tac", start = true } },          -- 2.5 s, keeps the mag
+	mag_check = { { 0.028, G .. "Ammo Check", start = true } },           -- 3.0 s
+	draw = { { 0.188, S .. "Draw/Draw Pistol V2", start = true } },        -- 0.833 s
+	draw_first = { { 0.005, G .. "First Draw", start = true } },           -- 1.5 s
+	holster = { { 0.180, S .. "Pistols Shared/Pistol Holster", start = true } },
+}
+local grizzlyRoles = { reload = grizzly.tac_reload, reloadEmpty = grizzly.spd_reload_empty, inspect = grizzly.mag_check,
+	inspectEmpty = grizzly.mag_check, draw = grizzly.draw, drawEmpty = grizzly.draw, holster = grizzly.holster,
+	holsterEmpty = grizzly.holster }
 if Deagle.guns.deagle then Deagle.guns.deagle.ronCues = deagle end
+if Deagle.guns.ron_grizzly then Deagle.guns.ron_grizzly.ronCues = grizzlyRoles end
 if Deagle.guns.glock_17 then Deagle.guns.glock_17.ronCues = glock end

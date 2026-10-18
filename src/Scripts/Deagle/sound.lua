@@ -202,8 +202,10 @@ function Deagle:HitSoundPlay(what, pos, scale, vol)
 end
 
 -- the gun's Ready or Not events while cfg.sounds is "ron" (nil: play the gun mod's own recordings)
+-- (a gun ported from Ready or Not, ronOnly, has no other sounds: always its own)
 function Deagle:RonSounds()
-	return self.cfg.sounds == "ron" and self.gun and self.gun.ron or nil
+	local g = self.gun
+	return (self.cfg.sounds == "ron" or (g and g.ronOnly)) and g and g.ron or nil
 end
 
 -- where Henry's gun is heard from while the free camera is the listener (his head)

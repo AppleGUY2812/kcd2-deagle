@@ -139,18 +139,23 @@ check("dry fire: " .. M.native[#M.native], M.native[#M.native]:find("^%[DN%] ron
 -- RoN mixes its dry clicks 37-44 dB under the shot (measured): raised to cfg.vm.dryDb of its mix (FN57 -40 dB -> -22: x7.9)
 local dryVol = tonumber(M.native[#M.native]:match("^%[DN%] ron ([%d%.]+) "))
 check(string.format("dry fire raised to be heard: x%.2f", dryVol or 0), dryVol and math.abs(dryVol - 10 ^ ((-22 + 40) / 20)) < 0.05, dryVol)
--- every Ready or Not handling cue can start early enough for its click to land on its moment, and every event has a click time
+-- Ready or Not's own MK V (Claude 1's import, RoN's own animations; a stand-in gun here): RoN's full-length action events
+-- at its own notify times, nothing else
+Deagle:RegisterGun("ron_grizzly", { ronOnly = true, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire" }, cues = {} })
+dofile("src/Scripts/Deagle/guns/ron_handling.lua")
+-- every Ready or Not handling cue can start early enough for its click to land on its moment, and every event that
+-- lands by its click has a click time (an event started at RoN's own action time needs none)
 local late, unknown = {}, {}
 for id, g in pairs(Deagle.guns) do
 	for key, list in pairs(g.ronCues or {}) do
 		for _, c in ipairs(list) do
-			local click = Deagle.ronClick[c[2]]
+			local click = c.start and 0 or Deagle.ronClick[c[2]]
 			if not click then unknown[#unknown + 1] = c[2]
 			else
 				local r = g.rate and (g.rate[key] or g.rate.default) or 1   -- clip seconds play faster than real ones
 				local need = (c.start and 0 or click / 1000) + (Deagle.cfg.vm.cueLead or 0)
-				-- a sound at the clip's first frame fires at once
-				if c[1] > 0 and c[1] / r < need - 0.005 then late[#late + 1] = string.format("%s %s %s %.0f ms", id, key, c[2], 1000 * (need - c[1] / r)) end
+				-- a sound inside the clip's first frame (RoN's action-start events, 5-28 ms) fires at once
+				if c[1] > 1 / 30 and c[1] / r < need - 0.005 then late[#late + 1] = string.format("%s %s %s %.0f ms", id, key, c[2], 1000 * (need - c[1] / r)) end
 			end
 		end
 	end
@@ -169,6 +174,21 @@ do
 	Deagle.gun = saved
 end
 check("every RoN handling event has a measured click: " .. table.concat(unknown, "; "), #unknown == 0, #unknown)
+do
+	local saved, g = Deagle.gun, Deagle.guns.ron_grizzly
+	Deagle.gun = g
+	local re = Deagle:RonCues("reloadEmpty") or {}
+	local drop = 0.445 + 0.45 - (Deagle.cfg.vm.cueLead or 0)
+	check("RoN MK V empty reload: its one full event at once, the mag lands at its drop + the fall (" .. #re .. " cues)", #re == 2
+		and re[1][1] == 0 and re[1][2] == "ron:event:/Weapons/Grizzly/Grizzly Reload Empty"
+		and math.abs(re[2][1] - drop) < 0.001 and re[2][2] == "ronfeet:event:/Weapons/Shared/Mag Drops/Pistol Mag Drop", re[1] and re[1][2])
+	local tac, chk = Deagle:RonCues("reload") or {}, Deagle:RonCues("inspect") or {}
+	check("RoN MK V tac reload keeps its mag (no drop), mag check is Ammo Check", #tac == 1 and tac[1][2]:find("Grizzly Reload Tac$") ~= nil
+		and #chk == 1 and chk[1][2]:find("Grizzly Ammo Check$") ~= nil, tac[1] and tac[1][2])
+	Deagle.cfg.sounds = "original"
+	check("RoN MK V: its own RoN sounds with deagle_sounds original too (it has no others)", Deagle:RonSounds() == g.ron, Deagle:RonSounds())
+	Deagle.cfg.sounds = "ron"; Deagle.gun = saved; Deagle.guns.ron_grizzly = nil
+end
 -- an impact: RoN's event, its distance left to the plugin (from the listener, the free camera too) as PropagateDistance=@
 n0 = #M.native
 local cp = System.GetViewCameraPos()
