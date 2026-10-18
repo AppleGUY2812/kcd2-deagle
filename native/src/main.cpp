@@ -13,6 +13,7 @@
 #include "gore.h"
 #include "settings.h"
 #include "freecam.h"
+#include "invtime.h"
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
@@ -1060,6 +1061,7 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
+	else if (!strcmp(cmd, "invtime")) Invtime_Command(rest);
 	else if (!strcmp(cmd, "flykeys")) {   // Lua takes the keys over only on this answer (an older plugin doesn't answer)
 		g_flyKeys = atoi(rest) != 0;
 		Log("flykeys %s", g_flyKeys ? "on" : "off");

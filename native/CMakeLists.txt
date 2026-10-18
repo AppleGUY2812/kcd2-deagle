@@ -6,7 +6,7 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")   # static CRT: no redistributable needed
 file(GLOB MINHOOK_SRC third_party/minhook/src/*.c third_party/minhook/src/hde/hde64.c)
-add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp sim/sim.cpp ${MINHOOK_SRC})
+add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp sim/sim.cpp ${MINHOOK_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
 target_include_directories(deagle_native PRIVATE third_party/minhook/include src)
 target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)
