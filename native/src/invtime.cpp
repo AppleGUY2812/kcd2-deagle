@@ -97,8 +97,14 @@ void Invtime_Command(const char* args) {
 	if (want == g_on) { Log("invtime already %s", g_on ? "on" : "off"); return; }
 	if (want && !g_created && !(g_created = Create())) return;
 	// one batch: the threads are suspended once (MH_ApplyQueued)
+	bool queued = true;
 	for (auto& s : g_sites)
-		if ((want ? MH_QueueEnableHook((void*)s.at) : MH_QueueDisableHook((void*)s.at)) != MH_OK) Log("invtime: couldn't queue %s", s.name);
+		if ((want ? MH_QueueEnableHook((void*)s.at) : MH_QueueDisableHook((void*)s.at)) != MH_OK) { Log("invtime: couldn't queue %s", s.name); queued = false; }
+	if (!queued) {   // all or none: take the queued ones back, apply nothing
+		for (auto& s : g_sites) g_on ? MH_QueueEnableHook((void*)s.at) : MH_QueueDisableHook((void*)s.at);
+		Log("invtime: nothing changed, still %s", g_on ? "on" : "off");
+		return;
+	}
 	MH_STATUS st = MH_ApplyQueued();
 	if (st != MH_OK) { Log("invtime: %s failed (MinHook %d)", want ? "hooking" : "unhooking", (int)st); return; }
 	g_on = want;
