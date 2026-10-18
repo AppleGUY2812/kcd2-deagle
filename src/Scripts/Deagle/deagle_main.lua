@@ -936,7 +936,7 @@ System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.s
 System.AddCCommand("deagle_fx", "Deagle:FxTest(Deagle.Arg([[%1]]))", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
 System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end; Deagle:RonWarm(); Deagle:FlyLink()", "internal: native plugin handshake")
-System.AddCCommand("deagle_invtime", "Deagle:Native('invtime ' .. Deagle.Arg([[%1]]))", "deagle_invtime 1|0: log how long the inventory / map screen's black screen waits at each step (plugin log, invtime lines); off by default")
+System.AddCCommand("deagle_invtime", "Deagle:Native('invtime ' .. Deagle.Arg([[%1]]))", "deagle_invtime 1|2|0: log how long the inventory / map screen's black screen waits at each step (plugin log, invtime lines); 2 = the same plus a test that skips the clothing-loaded gate (save first); off by default")
 System.AddCCommand("deagle_flykey", "Deagle:FlyKey([[%line]])", "internal: the plugin's read of a Flight mod key (<name> 0|1)")
 System.AddCCommand("deagle_ron_state", "Deagle:RonState([[%1]])", "internal: Ready or Not's sound engine started in the plugin (1) or failed (0)")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")
