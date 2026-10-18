@@ -43,9 +43,9 @@ local num = "[%-%d.]+"
 local fxCmds = count("^%[DN%] flashfx deagle%.muzzle[_a-z]* " .. string.rep(num, 7, " ") .. "$")
 local posCmds, offCmds = count("^%[DN%] flashpos "), count("^%[DN%] flashoff")
 print("   flash (" .. Deagle.cfg.flashMode .. "): plugin flashfx/flashpos/flashoff", fxCmds, posCmds, offCmds, " entity loads", M.slotFx,
-	" in the world", fx["deagle.muzzle"], " smoke", fx["deagle.muzzle_smoke"])
+	" in the world", fx["deagle.muzzle"], " smoke", fx[Deagle.cfg.muzzleSmokeFx])
 if fxCmds ~= 7 or posCmds < 7 or offCmds < 1 or (M.slotFx or 0) ~= 0 or (fx["deagle.muzzle"] or 0) + (fx["deagle.muzzle_large"] or 0) ~= 0
-	or (fx["deagle.muzzle_smoke"] or 0) ~= 7 then table.insert(M.errors, "flash not spawned on the muzzle by the plugin every shot") end
+	or (fx[Deagle.cfg.muzzleSmokeFx] or 0) ~= 7 then table.insert(M.errors, "flash not spawned on the muzzle by the plugin every shot") end
 step("flash left in the world", function()   -- flashMode world: spawned where it was fired
 	Deagle.cfg.flashMode = "world"; Deagle.state.ammo = 7; M.advance(0.5)
 	local function flashes() local f = M.fxNames or {} return (f["deagle.muzzle"] or 0) + (f["deagle.muzzle_large"] or 0) end

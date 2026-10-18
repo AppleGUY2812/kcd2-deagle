@@ -66,7 +66,10 @@ Deagle.cfg = {
 	reloadTrigger = nil,
 	muzzleFx = "deagle.muzzle",         -- Libs/Particles/deagle.xml (preloaded via PreloadList.txt): the flash, rides on the gun
 	muzzleFxLarge = "deagle.muzzle_large",   -- the same flash burning longer, for big blasts (cfg.physics.largeFlashBlast)
-	muzzleSmokeFx = "deagle.muzzle_smoke",   -- smoke + barrel wisp, left in the world
+	-- every shot's smoke, left in the world: Ready or Not's P_WeaponSmoke_M2011_Muzzle (its Grizzly .50's, every shot;
+	-- tools/ron/casc2pfx.py), at the Deagle's size (the Grizzly's own cartridge) and smaller for smaller blasts;
+	-- "deagle.muzzle_smoke" = our earlier smoke + barrel wisp
+	muzzleSmokeFx = "deagle.muzzle_smoke_ron",
 	-- "gun": the flash rides the muzzle, moved with the gun every frame (like CS2 / CoD / Ready or Not); "world": it stays
 	-- where it was fired; "live": one never-stopping emitter shown for the frames of a shot. Not "live": its hide (a
 	-- size of nothing) didn't hide it, and letting it go doesn't stop it (the plugin only drops its reference): after
@@ -123,7 +126,9 @@ Deagle.cfg = {
 	-- until the next reload, like real guns); true = arcade, the rounds you had stay and the mag pops back
 	cancelKeepsRounds = false,
 	muzzleFxScale = 1.0,      -- multiplier on the flash size the cartridge gives (cfg.physics.flashPerUnit)
-	portFx = "deagle.port_smoke",
+	-- the ejection port's puff at every casing, along its throw: Ready or Not's P_WeaponSmoke_M2011_Ejection (its
+	-- ShellParticle); "deagle.port_smoke" = our earlier one
+	portFx = "deagle.shell_puff_ron",
 	bloodFx = "deagle_blood.entry",           -- Ready or Not's blood (deagle_blood.xml): entry splash, back toward the shooter
 	bloodArmorFx = "deagle_blood.armor_entry",  -- through padding / mail / plate: a cloth tuft and less blood
 	bloodExitFx = "deagle_blood.exit",        -- out the back, along the round
