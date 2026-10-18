@@ -9,6 +9,7 @@ in clip-timeline seconds (frames / the clip's fps), for the script's reload / in
           the reload is over and a shot may cut the rest
   trim    the hands have settled (3 mm / 1 deg to the end): the clip ends there
 usage: clip_times.py <tracks.json> [--cues <{key: [[t, file]...]} .json> | --profile guns/<slug>.json]
+(a profile's "times" {key: {seat, ready, ...}} override the measured moments)
                      [--swap reload,reload_empty] [--lua]"""
 import json, sys, math, argparse, re
 
@@ -86,6 +87,9 @@ if __name__ == "__main__":
         cues = {KEY[r]: [[x["t"], x.get("file") or x.get("option") or ""] for x in c.get("sounds", [])]
                 for r, c in clips.items() if r in KEY}
     res = times(json.load(open(a.tracks)), cues, [s for s in a.swap.split(",") if s])
+    if a.profile:   # moments the gun's own source gives exactly (a Ready or Not gun's anim notifies) beat the measured ones
+        for k, d in json.load(open(a.profile)).get("times", {}).items():
+            res.setdefault(k, {}).update(d)
     if a.lua:
         print("times = { " + ", ".join(f"{k} = {{ " + ", ".join(f"{w} = {v}" for w, v in sorted(d.items())) + " }" for k, d in res.items()) + " },")
     else:

@@ -40,5 +40,5 @@ Deagle:RegisterGun("ron_grizzly", {
 	newMagAt = nil,
 	burstGap = nil,   -- seconds between burst rounds, from the burst clip's slide cycles
 	-- clip-timeline seconds (tools/clip_times.py): clean reload cancel, new mag seated, ready to fire, settled
-	times = { reload = { cancel = 0.0, out = 0.3, ready = 2.467, seat = 1.733, trim = 2.467 }, reloadEmpty = { cancel = 0.0, out = 0.367, ready = 1.867, seat = 1.067, trim = 1.867 }, inspect = { trim = 3.0 }, inspectEmpty = { trim = 3.0 }, draw = { ready = 0.467, trim = 0.733 }, drawEmpty = { ready = 0.467, trim = 0.733 } },
+	times = { reload = { cancel = 0.0, out = 0.3, ready = 2.252, seat = 1.766, trim = 2.467 }, reloadEmpty = { cancel = 0.0, out = 0.367, ready = 1.717, seat = 1.105, trim = 1.867 }, inspect = { trim = 3.0 }, inspectEmpty = { trim = 3.0 }, draw = { ready = 0.467, trim = 0.733 }, drawEmpty = { ready = 0.467, trim = 0.733 } },
 })
