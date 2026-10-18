@@ -92,10 +92,71 @@ float Tick() {
 	return dt < 0 ? 0 : dt > 0.1f ? 0.1f : dt;   // a hitch or a pause must not fling the camera
 }
 
+// the view offset (Freecam_ViewOffset): this frame's, and whether CSystem's camera holds it now (with the real fov)
+float g_voRot[3] = {}, g_voLoc[3] = {}, g_voFov = 0;
+bool g_voApplied = false; float g_voReal[12] = {}, g_voShaken[12] = {}, g_voRealFov = 0;
+constexpr int kCamFov = 0x30;             // CCamera::m_fov (vertical, radians), as main.cpp's CopyCamera reads it
+
+bool SafeSetFov(uintptr_t cam, float fov) {
+	__try { *(float*)(cam + kCamFov) = fov; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool SafeGetFov(uintptr_t cam, float& fov) {
+	__try { fov = *(const float*)(cam + kCamFov); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 void Restore() {
+	if (g_voApplied) {
+		g_voApplied = false;
+		uintptr_t cam = g_sys + g_camOff;
+		if (!SafeSetFov(cam, g_voRealFov) || !SafeSetMatrix(cam, g_voReal)) Log("view offset: restoring the view camera faulted");
+	}
 	if (!g_applied) return;
 	g_applied = false;
 	if (!SafeSetMatrix(g_sys + g_camOff, g_real)) Log("freecam: restoring the view camera faulted");
+}
+
+// the game window's width / height, for turning a horizontal field of view into KCD2's vertical one
+float Aspect() {
+	HWND w = GetActiveWindow();
+	RECT r{};
+	if (!w || !GetClientRect(w, &r) || r.bottom <= r.top || r.right <= r.left) return 0;
+	return float(r.right - r.left) / float(r.bottom - r.top);
+}
+
+// After SetViewCamera with the free camera off: this frame's view offset into the render camera
+void ApplyViewOffset(const float* m) {
+	if (g_voRot[0] == 0 && g_voRot[1] == 0 && g_voRot[2] == 0 && g_voLoc[0] == 0 && g_voLoc[1] == 0 && g_voLoc[2] == 0 && g_voFov == 0) return;
+	uintptr_t cam = g_sys + g_camOff;
+	float fov = 0;
+	if (!SafeGetFov(cam, fov)) return;
+	// camera-local: pitch about right (+ = up), yaw about up (+ = right, so -z), roll about forward
+	const float k = 3.14159265f / 180.0f;
+	float p = g_voRot[0] * k, y = -g_voRot[1] * k, r = g_voRot[2] * k;
+	float Rz[9] = { cosf(y), -sinf(y), 0, sinf(y), cosf(y), 0, 0, 0, 1 };
+	float Rx[9] = { 1, 0, 0, 0, cosf(p), -sinf(p), 0, sinf(p), cosf(p) };
+	float Ry[9] = { cosf(r), 0, sinf(r), 0, 1, 0, -sinf(r), 0, cosf(r) };
+	auto mul = [](const float* a, const float* b, float* o) {
+		for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) o[i * 3 + j] = a[i * 3] * b[j] + a[i * 3 + 1] * b[3 + j] + a[i * 3 + 2] * b[6 + j];
+	};
+	float t[9], L[9], C[9] = { m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10] }, R[9];
+	mul(Rz, Rx, t); mul(t, Ry, L); mul(C, L, R);
+	float out[12];
+	for (int i = 0; i < 3; i++) {
+		out[i * 4 + 0] = R[i * 3 + 0]; out[i * 4 + 1] = R[i * 3 + 1]; out[i * 4 + 2] = R[i * 3 + 2];
+		out[i * 4 + 3] = m[i * 4 + 3] + C[i * 3 + 0] * g_voLoc[0] + C[i * 3 + 1] * g_voLoc[1] + C[i * 3 + 2] * g_voLoc[2];
+	}
+	if (!Finite(out, 12)) return;
+	float newFov = fov;
+	if (g_voFov != 0) {
+		float a = Aspect();
+		if (a > 0) {
+			float h = 2 * atanf(tanf(fov / 2) * a) + g_voFov * k;
+			newFov = 2 * atanf(tanf(h / 2) / a);
+		} else { static bool said = false; if (!said) { said = true; Log("view offset: no game window size: no fov part"); } }
+	}
+	memcpy(g_voReal, m, sizeof(g_voReal)); g_voRealFov = fov;
+	if (SafeSetFov(cam, newFov) && SafeSetMatrix(cam, out)) { g_voApplied = true; memcpy(g_voShaken, out, sizeof(out)); }
+	else { SafeSetFov(cam, fov); SafeSetMatrix(cam, m); }
 }
 
 void TurnOff(const char* why) {
@@ -117,6 +178,10 @@ void AfterSetView() {
 		m[3] = g_real[3]; m[7] = g_real[7]; m[11] = g_real[11];
 	}
 	g_applied = false;
+	if (g_voApplied) {   // the same for the view offset: a copy of the offset view is the real one again
+		g_voApplied = false;
+		if (!memcmp(m, g_voShaken, sizeof(g_voShaken))) { memcpy(m, g_voReal, sizeof(g_voReal)); SafeSetFov(cam, g_voRealFov); }
+	}
 	memcpy(g_real, m, sizeof(m));
 	float dt = Tick();
 
@@ -142,7 +207,7 @@ void AfterSetView() {
 		Log("freecam on at %.2f %.2f %.2f", eye[0], eye[1], eye[2]);
 	}
 	else if (!g_want && g_on) TurnOff("asked");
-	if (!g_on) return;
+	if (!g_on) { ApplyViewOffset(m); return; }
 
 	if (focus) {
 		// right = column 0, forward = column 1 of the camera matrix (CryEngine: Y forward, Z up); up/down = world Z
@@ -192,6 +257,11 @@ int ParseVk(const char* s) {
 }
 
 } // namespace
+
+void Freecam_ViewOffset(const float rotDeg[3], const float loc[3], float fovDeg) {
+	for (int i = 0; i < 3; i++) { g_voRot[i] = rotDeg[i]; g_voLoc[i] = loc[i]; }
+	g_voFov = fovDeg;
+}
 
 bool Freecam_Install(uintptr_t env, void* updateFrustum) {
 	if (g_installed) return true;

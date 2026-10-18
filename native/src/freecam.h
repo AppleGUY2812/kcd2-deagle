@@ -23,3 +23,10 @@ void Freecam_Reset(const char* why);
 bool Freecam_Active();
 // The matrix the render uses this frame (Matrix34 rows, translation in [3],[7],[11]); false while off.
 bool Freecam_Matrix(float out12[12]);
+
+// A render-only view offset for this frame (Ready or Not's fire camera shake, native/src/ronvm.cpp): after
+// SetViewCamera, while the free camera is off, the view is turned by rotDeg (pitch up, yaw right, roll; in the camera's
+// own axes, like Unreal's CameraLocal shake), moved by loc (m: right, forward, up) and its horizontal field of view
+// widened by fovDeg; put back after Render like the free camera's. Aim, Lua, the viewmodel and the listener keep the
+// real eye. Zeros = nothing. Set it every camera step (main.cpp OnCamera runs before SetViewCamera).
+void Freecam_ViewOffset(const float rotDeg[3], const float loc[3], float fovDeg);

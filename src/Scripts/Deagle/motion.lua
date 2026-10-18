@@ -56,6 +56,7 @@ function Deagle:MotionParams(gun)
 	table.sort(keys)
 	self:Native("mparams reset")
 	for _, k in ipairs(keys) do self:Native(string.format("mparams %s %.4f", k, p[k])) end
+	if self.RonParams then self:RonParams(gun) end   -- a Ready or Not gun's own recoil in the plugin (recoil.lua)
 end
 
 function Deagle:MotionTick()

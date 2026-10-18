@@ -22,6 +22,10 @@ if command -v g++ >/dev/null; then
   [ -f "$so" ] && { luajit tests/run_round_contract.lua --native "$so" >/dev/null || { echo "FAIL run_round_contract --native"; fail=1; }; }
   # and ballistics.lua's native round path (cfg.roundSim "native", Claude 1) through the DN binding's stand-in
   [ -f "$so" ] && { luajit tests/run_round_contract.lua --dn "$so" >/dev/null || { echo "FAIL run_round_contract --dn"; fail=1; }; }
+  # Ready or Not's recoil in the plugin (native/src/ronvm.cpp, Claude 4) against its decompiled numbers
+  mkdir -p native/build/test
+  { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/ronvm_test.cpp native/src/ronvm.cpp -o native/build/test/ronvm_test &&
+    native/build/test/ronvm_test >/dev/null; } || { echo "FAIL ronvm_test"; fail=1; }
 elif [ "${SKIP_NATIVE:-}" = 1 ]; then echo "SKIP run_round_contract --native (SKIP_NATIVE=1)"
 else echo "FAIL run_round_contract --native: no g++ (SKIP_NATIVE=1 skips it on purpose)"; fail=1; fi
 luajit tests/run_accuracy.lua >/dev/null || { echo "FAIL run_accuracy"; fail=1; }

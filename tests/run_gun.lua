@@ -137,6 +137,13 @@ if Deagle.ronStats and Deagle.ronStats.BP_Secondary_LARGrizzly then
 	local R = Deagle.ronStats.BP_Secondary_LARGrizzly
 	while Deagle:FireMode() ~= "semi" do act("deagle_fire" .. "mode"); M.advance(0.1) end
 	Deagle.ronPatternAt, Deagle.ronKick = {}, nil
+	local np = #M.native
+	Deagle:MotionParams(Deagle.gun)
+	local ronp, ronOn, ronReset = 0, false, false
+	for i = np + 1, #M.native do
+		local l = M.native[i]
+		if l == "[DN] ronp reset" then ronReset = true elseif l == "[DN] ronp on 1" then ronOn = true elseif l:find("^%[DN%] ronp %w+ %-?[%d.]+$") then ronp = ronp + 1 end
+	end
 	Deagle.state.ammo = g.magSize; M.advance(2.0)
 	local entries, singles, n0 = {}, {}, #M.native
 	for i = 1, 7 do   -- single shots 1.5 s apart: every one a burst of its own
@@ -146,8 +153,17 @@ if Deagle.ronStats and Deagle.ronStats.BP_Secondary_LARGrizzly then
 		entries[i] = Deagle.lastRonShot and Deagle.lastRonShot.entry or -1
 		singles[i] = { math.deg(M.view.pitch - p0), math.deg(M.view.yaw - y0) }
 	end
-	local springs = 0
-	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] kick ") then springs = springs + 1 end end
+	local springs, fires, fireOk = 0, 0, true
+	for i = n0 + 1, #M.native do
+		local l = M.native[i]
+		if l:find("^%[DN%] kick ") then springs = springs + 1 end
+		if l:find("^%[DN%] ronfire ") then
+			fires = fires + 1
+			local n = 0
+			for _ in l:sub(14):gmatch("%S+") do n = n + 1 end
+			fireOk = fireOk and n == 16
+		end
+	end
 	-- three quick shots (0.3 s apart): n = 0, 1, 2
 	Deagle.ronPatternAt[Deagle.gun.id] = 0
 	local quick = {}
@@ -158,8 +174,13 @@ if Deagle.ronStats and Deagle.ronStats.BP_Secondary_LARGrizzly then
 	Deagle.state.aiming = true; Deagle.state.ammo = g.magSize; act("deagle_fire"); local ads = Deagle.lastRonShot.pitch / R.RecoilPattern[1][1]
 	Deagle.state.aiming = false; M.advance(1.5)
 	Deagle.gun.ronStats = own
+	local np2 = #M.native
+	Deagle:MotionParams(Deagle.gun)   -- back to this gun's own: the plugin's Ready or Not recoil off
+	local offAgain = false
+	for i = np2 + 1, #M.native do if M.native[i] == "[DN] ronp reset" then offAgain = true end if M.native[i] == "[DN] ronp on 1" then offAgain = false end end
 	ronK = { entries = table.concat(entries, " "), single = singles[1][1], yaw1 = singles[1][2], springs = springs,
-		quick = string.format("%.3f %.3f %.3f", quick[1], quick[2], quick[3]), ads = ads }
+		quick = string.format("%.3f %.3f %.3f", quick[1], quick[2], quick[3]), ads = ads,
+		ronp = ronp, ronOn = ronOn and ronReset, fires = fires, fireOk = fireOk, offAgain = offAgain }
 end
 -- the mesh flash (flashMode "mesh"): the .cdf's cards, skins of this gun on its muzzle bone (tools/flash_cdf.py), all
 -- hidden at load; the 16 of this gun's size (4 shapes x 4 turns round the barrel: the roll) are the look's; a shot shows
@@ -444,6 +465,9 @@ if ronK then
 		ronK.entries, ronK.single, ronK.yaw1, ronK.quick, ronK.ads, ronK.springs),
 		ronK.entries == "1 2 3 1 1 2 3" and ronK.single > 8.4 and ronK.single < 8.69 and ronK.yaw1 > 0.45 and ronK.yaw1 < 0.5
 		and ronK.quick == "1.000 1.150 1.300" and math.abs(ronK.ads - 0.8) < 1e-9 and ronK.springs == 0, ronK.entries)
+	check(string.format("Ready or Not recoil in the plugin: %d ronp keys then on (%s), %d ronfire for 7 shots, 16 numbers each (%s), off again for this gun (%s)",
+		ronK.ronp, tostring(ronK.ronOn), ronK.fires, tostring(ronK.fireOk), tostring(ronK.offAgain)),
+		ronK.ronp >= 60 and ronK.ronOn and ronK.fires == 7 and ronK.fireOk and ronK.offAgain, ronK.fires)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),

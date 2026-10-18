@@ -155,6 +155,77 @@ function Deagle:RonRecoil(r)
 	k.shots = k.shots + 1
 	k.burstEnd = now + 2 * r.FireRate + (self:FireMode() ~= "semi" and 0.05 or 0)
 	self.lastRonShot = { pitch = kp, yaw = ky, n = n, entry = used }
+	if self.native then self:RonFireNative(r, kp, ky, k.burstEnd - now) end
+end
+
+-- the plugin's part of a shot (native/src/ronvm.cpp): the procedural recoil's random numbers (its rand(): rx, rz in
+-- +-RecoilRandomness, ry in +-RecoilRandomness / 2), the kick just added (its copy of the pending kick pushes the gun
+-- offset), the burst window, weapon_right in the viewmodel's own space (the recoil turns about it) and the camera
+-- shake's phases (random where the shake asks for it, else 0)
+function Deagle:RonFireNative(r, kp, ky, window)
+	local rnd = r.RecoilRandomness or 0
+	local rx, ry, rz = (math.random() * 2 - 1) * rnd, (math.random() - 0.5) * rnd, (math.random() * 2 - 1) * rnd
+	local pv = { x = 0, y = 0, z = 0 }
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	local hand = self:VmBone(self.gun.bones.hand or "weapon_right")
+	if vm and hand then
+		local d = U.vsub(hand, vm:GetWorldPos())
+		pv = { x = U.vdot(d, vm:GetDirectionVector(0)), y = U.vdot(d, vm:GetDirectionVector(1)), z = U.vdot(d, vm:GetDirectionVector(2)) }
+	elseif not self.ronNoHand then
+		self.ronNoHand = true
+		U.log("$4Ready or Not recoil: no " .. tostring(self.gun.bones.hand or "weapon_right") .. " bone on the viewmodel: it turns about the viewmodel's origin")
+	end
+	local S = self.ronShakes and self.ronShakes[r.FireCameraShake or ""]
+	local ph = {}
+	local axes = S and { S.Rot[1], S.Rot[2], S.Rot[3], S.Loc[1], S.Loc[2], S.Loc[3], S.FOV } or {}
+	for i = 1, 7 do ph[i] = axes[i] and axes[i][3] and math.random() * 2 * math.pi or 0 end
+	self:Native(string.format("ronfire %.5f %.5f %.5f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f %.4f",
+		rx, ry, rz, kp, ky, window, pv.x, pv.y, pv.z, ph[1], ph[2], ph[3], ph[4], ph[5], ph[6], ph[7]))
+end
+
+-- a Ready or Not gun's numbers for the plugin (ronp: ronvm.cpp's keys); any other gun turns it off. From UseGun and
+-- the plugin handshake (MotionParams)
+local function quatRot(q)   -- Unreal's FQuat::Rotator: (Pitch, Yaw, Roll) in degrees
+	if not q then return { 0, 0, 0 } end
+	local X, Y, Z, W = q.x, q.y, q.z, q.w
+	local sing = Z * X - W * Y
+	return { math.deg(math.asin(math.max(-1, math.min(1, 2 * sing)))), math.deg(math.atan2(2 * (W * Z + X * Y), 1 - 2 * (Y * Y + Z * Z))),
+		math.deg(math.atan2(-2 * (W * X + Y * Z), 1 - 2 * (X * X + Y * Y))) }
+end
+function Deagle:RonParams(gun)
+	if not self.native then return end
+	self:Native("ronp reset")
+	local r = gun and gun.ronStats and self.ronStats and self.ronStats[gun.ronStats]
+	if not r then return end
+	local P, S = self.ronPlayer, self.ronShakes[r.FireCameraShake or ""]
+	local function t3(tr) local t = tr and tr.Translation or {} return { t[1] or 0, t[2] or 0, t[3] or 0 } end
+	local hipT, hipR = t3(r.MeshspaceTransform_Default), quatRot(r.MeshspaceTransform_Default and r.MeshspaceTransform_Default.Rotation)
+	local adsT, adsR = t3(r.MeshspaceTransform_Aiming), quatRot(r.MeshspaceTransform_Aiming and r.MeshspaceTransform_Aiming.Rotation)
+	local pb, rb = r.RecoilPositionBuildup, r.RecoilRotationBuildup
+	local v = {
+		damp = r.RecoilDampStrength, bdamp = r.RecoilBuildupDampStrength, ftime = r.bCalculateProcRecoil and r.RecoilFireTime or 0,
+		fstr = r.RecoilFireStrength, astr = r.RecoilAngleStrength, pbx = pb[1], pby = pb[2], pbz = pb[3], rbp = rb[1], rby = rb[2], rbr = rb[3],
+		fads = r.RecoilFireADSModifier, aads = r.RecoilAngleADSModifier, bads = r.RecoilBuildupADSModifier, hasb = r.RecoilHasBuildup and 1 or 0,
+		hipf = hipT[1], hipr = hipT[2], hipu = hipT[3], hipp = hipR[1], hipy = hipR[2], hipl = hipR[3],
+		adsf = adsT[1], adsr = adsT[2], adsu = adsT[3], adsp = adsR[1], adsy = adsR[2], adsl = adsR[3],
+		interp = P.MeshInterp, lor = P.OffsetMin[1], lof = P.OffsetMin[2], lou = P.OffsetMin[3],
+		hir = P.OffsetMax[1], hif = P.OffsetMax[2], hiu = P.OffsetMax[3],
+		kmf = P.KickMove[1], kmr = P.KickMove[2], kmu = P.KickMove[3], kxf = P.KickMoveMax[1], kxr = P.KickMoveMax[2], kxu = P.KickMoveMax[3],
+		move1p = P.MoveMul1P, adsback = P.AdsKickBack, adsbackmax = P.AdsKickBackMax,
+		krate = P.KickRate, kret = r.RecoilReturnPercentage, kretspd = r.RecoilReturnInterpSpeed,
+	}
+	if S then
+		v.sdur, v.sin, v.sout = S.Duration, S.BlendIn, S.BlendOut
+		local axes = { S.Rot[1], S.Rot[2], S.Rot[3], S.Loc[1], S.Loc[2], S.Loc[3], S.FOV }
+		for i = 1, 7 do v["sa" .. (i - 1)], v["sf" .. (i - 1)] = axes[i][1], axes[i][2] end
+	elseif r.FireCameraShake then
+		U.log("$4Ready or Not recoil: no shake " .. tostring(r.FireCameraShake) .. " in guns/ron_stats.lua (tools/ron/ron_stats.py SHAKES)")
+	end
+	local keys = {}
+	for key in pairs(v) do keys[#keys + 1] = key end
+	table.sort(keys)
+	for _, key in ipairs(keys) do self:Native(string.format("ronp %s %.5f", key, v[key])) end
+	self:Native("ronp on 1")
 end
 function Deagle:RonBurstEnd(now)
 	local k = self.ronKick

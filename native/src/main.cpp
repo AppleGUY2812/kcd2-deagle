@@ -13,6 +13,7 @@
 #include "gore.h"
 #include "settings.h"
 #include "freecam.h"
+#include "ronvm.h"
 #include "invtime.h"
 #include "ron.h"
 #include "probe.h"
@@ -410,10 +411,18 @@ static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	if (!e) return false;
 	auto setTM = (SetWorldTMFn)VFn(e, 0xF0);
 	if (!setTM) return false;
-	float C[9] = { cam[0], cam[1], cam[2], cam[4], cam[5], cam[6], cam[8], cam[9], cam[10] }, L[9], R[9];
+	float C[9] = { cam[0], cam[1], cam[2], cam[4], cam[5], cam[6], cam[8], cam[9], cam[10] }, L[9], R[9], Lr[9], LL[9];
 	LocalRot(mo.rot, L);
-	MulRot(C, L, R);
-	float o[3] = { g_off[0] + mo.off[0], g_off[1] + mo.off[1], g_off[2] + mo.off[2] };
+	// a Ready or Not gun's own recoil and mesh-space offset (ronvm.cpp): its rotation turns about weapon_right (the
+	// pivot, in the viewmodel's own space), so the origin moves by L (p - Lr p); zero when it's off
+	LocalRot(rvm.outRot, Lr);
+	MulRot(L, Lr, LL);
+	MulRot(C, LL, R);
+	const float* pv = rvm.pivot;
+	float q[3];
+	for (int i = 0; i < 3; i++) q[i] = pv[i] - (Lr[i * 3] * pv[0] + Lr[i * 3 + 1] * pv[1] + Lr[i * 3 + 2] * pv[2]);
+	float o[3];
+	for (int i = 0; i < 3; i++) o[i] = g_off[i] + mo.off[i] + rvm.off[i] + L[i * 3] * q[0] + L[i * 3 + 1] * q[1] + L[i * 3 + 2] * q[2];
 	float tm[12];
 	for (int r = 0; r < 3; r++) {
 		tm[r * 4 + 0] = R[r * 3 + 0]; tm[r * 4 + 1] = R[r * 3 + 1]; tm[r * 4 + 2] = R[r * 3 + 2];
@@ -952,6 +961,18 @@ static void Command(const char* line) {
 		static int said = 0; if (said++ < 40) Log("flashoff: releasing %d", g_nFlashes);
 		ReleaseFlashes();
 	}
+	else if (!strcmp(cmd, "ronp")) {     // ronp reset | ronp <key> <value>: a Ready or Not gun's recoil numbers (ronvm.cpp)
+		char key[32] = {}; float v = 0;
+		if (!strncmp(rest, "reset", 5)) RvmReset();
+		else if (sscanf_s(rest, "%31s %f", key, (unsigned)sizeof(key), &v) == 2) { if (!RvmParam(key, v)) Log("ronp: unknown key %s", key); }
+		else Log("bad ronp command: %s", rest);
+	}
+	else if (!strcmp(cmd, "ronfire")) {  // ronfire rx ry rz kickP kickY window pivot(xyz) phase0..6: a Ready or Not gun's shot
+		float f[16] = {};
+		if (sscanf_s(rest, "%f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f", &f[0], &f[1], &f[2], &f[3], &f[4], &f[5], &f[6], &f[7],
+			&f[8], &f[9], &f[10], &f[11], &f[12], &f[13], &f[14], &f[15]) == 16) RvmFire(f[0], f[1], f[2], f[3], f[4], f[5], f + 6, f + 9);
+		else Log("bad ronfire command: %s", rest);
+	}
 	else if (!strcmp(cmd, "kick")) {     // kick <back m> <pitch deg> <yaw deg> [<roll deg>]: peaks of the shot's push
 		float b = 0, pt = 0, yw = 0, rl = 0;
 		if (sscanf_s(rest, "%f %f %f %f", &b, &pt, &yw, &rl) >= 3) {
@@ -1168,6 +1189,13 @@ static void OnCamera(uintptr_t camera) {
 	}
 	uint64_t n = ++g_viewFrames;
 	UpdateMotion(g_cam);
+	{   // a Ready or Not gun's recoil, offsets and fire shake (ronvm.cpp): game seconds, once a drawn frame
+		static LARGE_INTEGER rlast{};
+		double dt = rlast.QuadPart ? double(now.QuadPart - rlast.QuadPart) / freq.QuadPart : 0;
+		rlast = now;
+		RvmStep(float((dt < 0.1 ? dt : 0.1) * g_gameSpeed), mo.aiming);
+		Freecam_ViewOffset(rvm.shakeRot, rvm.shakeLoc, rvm.shakeFov);
+	}
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam, true)) g_placed++;
 	{   // our sounds are heard from where the view is: the free camera while it's on, else Henry's eye
 		float fc[12];
