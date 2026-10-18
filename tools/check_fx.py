@@ -28,7 +28,7 @@ for eff in lib.findall("Particles"):
         life = float(lt[0])
         n += 1
         if eff.get("Name") in RON_EXACT:
-            shortest = life * (1 - (float(lt[1]) if len(lt) > 1 else 0))   # base, random share
+            shortest = life * (1 - (float(lt[1].split("=")[-1]) if len(lt) > 1 else 0))   # base, random share ("0.4" or "Random=0.4")
             print(f"FX RON {eff.get('Name')}.{part.get('Name')}: {shortest * 1000:.0f}-{life * 1000:.0f} ms, all drawn above "
                   f"{2 / shortest:.0f} fps, none below {2 / life:.0f} fps")
             if shortest <= RON_MIN:
