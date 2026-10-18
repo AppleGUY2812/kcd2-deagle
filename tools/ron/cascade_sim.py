@@ -61,16 +61,22 @@ class Emitter:
                 'bSubImageBlend': r.get('InterpolationMethod') in ('PSUVIM_Linear_Blend', 'PSUVIM_Random_Blend'),
                 'Interpolation': r.get('InterpolationMethod'), 'AxisLock': None, 'TypeData': self.typedata}
 
-    def run(self, seconds, bursts, dt=1 / 60.0, seed=1):
+    def run(self, seconds, bursts, dt=1 / 60.0, seed=1, sources=None):
+        """sources: {emitter name: its frames from run()} for ParticleModuleLocationEmitter (spawn at a live particle
+        of that emitter in the same burst, + its velocity x InheritSourceVelocityScale)"""
         np.random.seed(seed)
+        sources = sources or {}
+        locem = next((m for m in self.mods if m['cls'] == 'ParticleModuleLocationEmitter'), None)
+        self.light = next(({k: m.get(k) for k in m if k != 'cls'} for m in self.mods if m['cls'] == 'ParticleModuleLight'), None)
+        self.pivot = next((m.get('PivotOffset') for m in self.mods if m['cls'] == 'ParticleModulePivotOffset'), None)
         R = self.req; S = self.spawn
         dur = R.get('EmitterDuration', 1.0) or 1.0; delay = R.get('EmitterDelay', 0.0) or 0.0
         loops = R.get('EmitterLoops', 0)
         origin = np.array(R.get('EmitterOrigin') or [0, 0, 0], float)
-        rate = lookup(table(S.get('Rate')), [0])[0, 0] if table(S.get('Rate')) else 0.0
+        rate = lookup(table(S.get('Rate')), np.zeros(bursts))[:, 0] if table(S.get('Rate')) else np.zeros(bursts)
         rscale = lookup(table(S.get('RateScale')), [0])[0, 0] if table(S.get('RateScale')) else 1.0
         bl = S.get('BurstList') or []
-        P = {k: [] for k in ('Position', 'Velocity', 'Age', 'Lifetime', 'SizeBase', 'Rot', 'RotRate', 'Accel', 'Drag', 'Burst', 'UniqueID', 'SubImageIndex', 'ColorBase', 'Spawned')}
+        P = {k: [] for k in ('Position', 'Velocity', 'Age', 'Lifetime', 'SizeBase', 'Rot', 'RotRate', 'Accel', 'Drag', 'Burst', 'UniqueID', 'SubImageIndex', 'ColorBase', 'Spawned', 'OwnVelocity')}
         uid = 0; frames = []
         alive = None
         # spawn times per burst sample (independent bursts all at t=0, ids per burst)
@@ -113,6 +119,9 @@ class Emitter:
                         if ta: color[:, 3] = lookup(ta, t_norm)[:, 0]
                 elif c == 'Location':
                     tab = table(m['StartLocation']); pos += lookup(tab, t_norm, np.random.random((n, 3)) if tab.get('Op') == 2 else None)
+                elif c in ('LocationEmitter', 'Light', 'PivotOffset', 'CameraOffset', 'EventGenerator',
+                           'ColorScaleOverLife', 'SizeScaleBySpeed', 'AccelerationOverLifetime'):
+                    pass   # handled at spawn (above) / per frame / render-only (light, pivot: read by the converter)
                 elif c == 'LocationPrimitiveSphere':
                     rad = lookup(table(m['StartRadius']), t_norm)[:, 0] if table(m.get('StartRadius')) else np.full(n, 50.0)
                     d = np.random.normal(size=(n, 3)); d /= np.linalg.norm(d, axis=1, keepdims=True)
@@ -121,10 +130,23 @@ class Emitter:
                     if m.get('Velocity'): vel += d * (lookup(table(m['VelocityScale']), t_norm)[:, :1] if table(m.get('VelocityScale')) else 1)
                 else:
                     if c not in self.skipped: self.skipped.append(c)
+            own = vel.copy()   # the emitter's own spawn velocity, before any inherited from a source particle
+            if locem is not None:
+                src = sources.get(locem.get('EmitterName'))
+                fr = None
+                if src:   # the source's frame at this time
+                    k = min(int(round(t_emit / dt)), len(src) - 1); fr = src[k]
+                m = fr is not None and fr['n'] and (fr['Burst'][:, 0] == burst)
+                if m is not False and m is not None and np.any(m):
+                    idx = np.flatnonzero(m); pick = idx[np.random.randint(0, len(idx), n)]
+                    pos = pos + fr['Position'][pick]
+                    vel = vel + fr['Velocity'][pick] * (locem.get('InheritSourceVelocityScale') or 1.0 if locem.get('InheritSourceVelocity') else 0.0)
+                else:
+                    return   # no live source particle: Cascade spawns nothing
             ids = np.arange(uid, uid + n); uid += n
             for k, v in (('Position', pos), ('Velocity', vel), ('Age', np.zeros(n)), ('Lifetime', life), ('SizeBase', size), ('Rot', rot),
                          ('RotRate', rrate), ('Accel', acc), ('Drag', drag), ('Burst', np.full(n, burst)), ('UniqueID', ids),
-                         ('SubImageIndex', sub), ('ColorBase', color), ('Spawned', st)):
+                         ('SubImageIndex', sub), ('ColorBase', color), ('Spawned', st), ('OwnVelocity', own)):
                 P[k].append(v)
 
         t = 0.0; rate_acc = np.zeros(bursts)
@@ -145,8 +167,8 @@ class Emitter:
                             n = hi if lo is None or lo < 0 else np.random.randint(lo, hi + 1)
                             if n > 0: spawn(int(n), et, b)
                             burst_done[b].add(bi)
-                    if rate > 0:
-                        rate_acc[b] += rate * rscale * dt
+                    if rate[b] > 0:
+                        rate_acc[b] += rate[b] * rscale * dt
                         k = int(rate_acc[b]); rate_acc[b] -= k
                         if k: spawn(k, et, b)
             cur = cat() if cur is None or any(len(v) for v in P.values()) else cur
@@ -162,6 +184,10 @@ class Emitter:
                 frames.append(self.frame(state, t))
                 # update (Cascade: velocity += accel dt, drag, position += velocity dt, age += dt)
                 acc = state['Accel'] - state['Velocity'] * state['Drag'][:, None]
+                for m in self.mods:   # AccelerationOverLifetime: velocity += AccelOverLife(relative time) x dt
+                    if m['cls'] == 'ParticleModuleAccelerationOverLifetime':
+                        na = np.clip(state['Age'] / np.maximum(state['Lifetime'], 1e-6), 0, 1)
+                        acc = acc + lookup(table(m['AccelOverLife']), na)
                 state['Velocity'] = state['Velocity'] + acc * dt
                 state['Position'] = state['Position'] + state['Velocity'] * dt
                 state['Rot'] = state['Rot'] + state['RotRate'] * dt
@@ -176,7 +202,18 @@ class Emitter:
         size = s['SizeBase'].copy(); color = s['ColorBase'].copy(); sub = s['SubImageIndex'].copy()
         for m in self.mods:
             c = m['cls'].replace('ParticleModule', '')
-            if c == 'SizeMultiplyLife':
+            if c == 'SizeScaleBySpeed':
+                # UE: Size = BaseSize x Clamp(speed x SpeedScale, 1, MaxScale) per axis, FMath::Clamp(X, Min, Max) =
+                # X < Min ? Min : X < Max ? X : Max (so a MaxScale under 1 gives 1 below Min, MaxScale above it)
+                sp = np.linalg.norm(s['Velocity'], axis=1)
+                sc = np.stack([sp * m['SpeedScale'][0], sp * m['SpeedScale'][1]], 1); mx = np.array(m['MaxScale'], float)
+                sc = np.where(sc < 1, 1.0, np.where(sc < mx, sc, mx))
+                size = s['SizeBase'].copy(); size[:, :2] = size[:, :2] * sc
+            elif c == 'ColorScaleOverLife':
+                tc = table(m.get('ColorScaleOverLife')); ta = table(m.get('AlphaScaleOverLife'))
+                if tc: color[:, :3] = color[:, :3] * lookup(tc, na)
+                if ta: color[:, 3] = color[:, 3] * lookup(ta, na)[:, 0]
+            elif c == 'SizeMultiplyLife':
                 f = lookup(table(m['LifeMultiplier']), na)
                 if f.shape[1] == 1: f = np.repeat(f, 3, 1)
                 size = size * f
@@ -194,7 +231,8 @@ class Emitter:
                 'SpriteSize': size[:, :2].copy(), 'Initial.SpriteSize': s['SizeBase'][:, :2].copy(), 'Color': color,
                 'Initial.Color': s['ColorBase'].copy(), 'Lifetime': s['Lifetime'][:, None], 'Age': s['Age'][:, None],
                 'NormalizedAge': na[:, None], 'SpriteRotation': s['Rot'][:, None], 'SubImageIndex': sub[:, None],
-                'UniqueID': s['UniqueID'][:, None].astype(np.int64), 'Burst': s['Burst'][:, None]}
+                'UniqueID': s['UniqueID'][:, None].astype(np.int64), 'Burst': s['Burst'][:, None],
+                'OwnVelocity': s['OwnVelocity'].copy()}
 
 
 def load(name):
@@ -204,19 +242,37 @@ def load(name):
     return [Emitter(mods, ek) for ek in root['Emitters']]
 
 
+def source_of(E):
+    m = next((m for m in E.mods if m['cls'] == 'ParticleModuleLocationEmitter'), None)
+    return m.get('EmitterName') if m else None
+
+
+def depth(ems, i, seen=()):
+    """how many location-emitter links lead from emitter i to a free one (sources run first)"""
+    src = source_of(ems[i])
+    j = next((k for k, e in enumerate(ems) if e.name == src), None)
+    return 0 if j is None or j in seen else 1 + depth(ems, j, seen + (i,))
+
+
 def main(name, out, seconds=2.0, bursts=8):
     os.makedirs(out, exist_ok=True)
     ems = load(name)
     sysd = {'name': name, 'type': 'Cascade', 'emitters': {}, 'bursts': {}, 'user': {}, 'disabled': []}
     sims = {}
     used = {}
-    for i, E in enumerate(ems):
+    byname = {}
+    order = sorted(range(len(ems)), key=lambda i: depth(ems, i))
+    for i in order:
+        E = ems[i]
         key = '%s_%d' % ((E.name or 'None').replace(' ', '_'), i)
         if not E.enabled:
             sysd['disabled'].append(key); continue
-        frames = E.run(seconds, bursts, seed=i + 1)
+        frames = E.run(seconds, bursts, seed=i + 1, sources=byname)
+        byname[E.name] = frames
         bl = E.spawn.get('BurstList') or []
-        sysd['emitters'][key] = {'renderer': E.renderer(), 'skipped': E.skipped,
+        sysd['emitters'][key] = {'renderer': E.renderer(), 'skipped': E.skipped, 'source': source_of(E),
+                                 'light': E.light, 'pivot': E.pivot, 'name': E.name,
+                                 'duration': E.req.get('EmitterDuration'), 'rate': (lambda t: t and t.get('Values'))(table(E.spawn.get('Rate'))),
                                  'modules': [m['cls'].replace('ParticleModule', '') for m in E.mods]}
         lo = sum((b.get('CountLow') if (b.get('CountLow') or -1) >= 0 else b.get('Count', 0)) for b in bl)
         hi = sum(b.get('Count', 0) for b in bl)

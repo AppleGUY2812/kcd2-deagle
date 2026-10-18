@@ -55,6 +55,14 @@ MATS = {
     'M_ParticleEmberSimple': dict(tex='imp_ron_glowdot_diff', tiles=(1, 1), lit=True, back=1, soft=True),
     # M_Particle_Additive: adds texture x colour (HDR), no emissive-intensity parameter (1)
     'MI_SparkSpray': dict(tex='imp_ron_sprayadd_diff', tiles=(4, 1), additive=True, ei=1),
+    # P_Bullet_Ricochet (Cascade). M_Sparks_NoNormal_Master: lit, saturate(tex x colour x 0.945) baked per emitter
+    # (mk_ron_fx_tex.py ron_sparks_lit), opacity tex.R x alpha x Opacity x Master Opacity (0.5 default; mapping of the
+    # two cb constants to those names inferred). Its constant emissive (cb4[1], a preshader value) isn't readable.
+    'MI_Sparks_02': dict(tex='imp_ron_ricflash03_diff', tiles=(2, 2), lit=True, back=1, soft=True, baked_color=True, alpha_mul=0.5),
+    'MI_Sparks_03': dict(tex='imp_ron_ricflash02_diff', tiles=(2, 2), lit=True, back=1, soft=True, baked_color=True, alpha_mul=0.5),
+    'MI_Powder_01': dict(tex='imp_ron_powder_diff', tiles=(5, 5), lit=True, back=1, soft=True, baked_color=True, alpha_mul=0.75),
+    # M_Particle_Additive with its default T_longSpark_02_8x2 (drawn 4x2), adds texture x colour; PivotOffset (0, 0.5)
+    'M_Particle_Additive': dict(tex='imp_sparks_diff', tiles=(4, 2), additive=True, ei=1),
 }
 
 
@@ -159,16 +167,29 @@ def emitter_xml(sysd, d, em, samples, mats, name):
     dt = float(np.clip(lmin / 30, 1 / 600, 1 / 60))
     lmax = float(probe[0]['Lifetime'][:, 0].max()) if probe[0]['n'] else 3.0
     frames = E.simulate(lmax + 2 * dt, samples, dt=dt, count=nmax)
+    return build(frames, b, rend, M, mat, em, name, nmin, nmax)
+
+
+def build(frames, b, rend, M, mat, em, name, nmin, nmax, axis=2, vkey='Velocity', head=None, children='', depth=3,
+          override=None, hidden=False, extra_note=''):
+    """one KCD2 <Particles> from simulated frames. axis: the effect's local axis that becomes the KCD2 emitter's y
+    (2 = +Z, the hit normal; 0 = +X, the outgoing direction of a ricochet). vkey: the velocity to read the emission
+    from ('OwnVelocity' for a child that inherits its parent's). head: params written first (Count, Continuous...).
+    children: nested <Particles> (SpawnIndirection children)."""
+    frames = [fr for fr in frames if fr['n']] or frames
     st = ns_stats.measure(frames, b, rend)
     f0 = frames[0]
     p = {}
-    p['Count'] = one_sided(nmin, nmax, 2)
-    if b.get('time'): p['SpawnDelay'] = f(b['time'])
+    if head:
+        p.update(head)
+    else:
+        p['Count'] = one_sided(nmin, nmax, 2)
+        if b.get('time'): p['SpawnDelay'] = f(b['time'])
     p['ParticleLifeTime'] = one_sided(*pct(f0['Lifetime'][:, 0], 0, 100))
     # direction and speed
-    v0 = f0['Velocity']; sp = np.linalg.norm(v0, axis=1) / 100
+    v0 = f0[vkey] if vkey in f0 else f0['Velocity']; sp = np.linalg.norm(v0, axis=1) / 100
     if sp.max() > 0.05:
-        ang = np.degrees(np.arccos(np.clip(v0[:, 2] / np.maximum(sp * 100, 1e-6), -1, 1)))
+        ang = np.degrees(np.arccos(np.clip(v0[:, axis] / np.maximum(sp * 100, 1e-6), -1, 1)))
         a_lo, a_hi = pct(ang, 0, 100)
         p['EmitAngle'] = one_sided(a_lo, a_hi, 1) if a_hi > 1 else '0'
         p['Speed'] = one_sided(*pct(sp))
@@ -203,6 +224,10 @@ def emitter_xml(sysd, d, em, samples, mats, name):
         hdr = float(base_rgb.max()) * chi
         p['Color'] = '(x=%s,y=%s,z=%s)' % tuple(f(x) for x in base_rgb / max(base_rgb.max(), 1e-9))
         p['EmissiveLighting'] = f(hdr * M.get('ei', 1) / 1000, 3)
+    elif M.get('baked_color'):   # the material saturates texture x colour: baked into the texture
+        p['Color'] = '(x=1,y=1,z=1)'
+        p['DiffuseLighting'] = '1'; p['DiffuseBacklighting'] = f(M.get('back', 0)); p['EmissiveLighting'] = '0'
+        clo = chi = 1.0; vec = np.ones_like(vec)
     else:
         rgb = base_rgb * chi
         if rgb.max() > 1.001: raise SystemExit('%s: lit colour above 1 (%s): check the material' % (em, rgb))
@@ -214,6 +239,7 @@ def emitter_xml(sysd, d, em, samples, mats, name):
         if not np.all(np.abs(v2 - 1) < 0.02): p['Color'] += ',' + age_curve(t2, None, vec=[(v, v, v) for v in v2])
     else:
         p['Color'] += ',' + age_curve(ts, None, vec=[tuple(r) for r in vec])
+    Ca = Ca * M.get('alpha_mul', 1.0)
     apk = max(float(Ca.max()), 1e-9)
     # KCD2 (Engine/Shaders.pak, Particles.cfi): particle alpha only reaches the pixel through AlphaClip,
     # clip = alphaTestMin + alphaTestMax x alpha (Min at alpha 0, Max at alpha 1), out = saturate(min(tex.a - SourceMin,
@@ -274,8 +300,105 @@ def emitter_xml(sysd, d, em, samples, mats, name):
         *pct(f0['Lifetime'][:, 0], 0, 100), sp.min(), sp.max(),
         (' at %.0f-%.0f deg off the normal' % tuple(pct(ang, 0, 100))) if sp.max() > 0.05 else '',
         *pct(s0[:, 0]), *pct(s0[:, 1]), st.get('drag_per_s'), st.get('gravity_g'))) + masknote
+    if M.get('pivot') is not None: p['PivotY'] = f(M['pivot'])
+    p.update(override or {})
+    if hidden:   # kept only so its children have a particle to ride on
+        note += ' Drawn invisible (Alpha 0, RoN %s): it only carries its children' % p.get('Alpha')
+        p['Alpha'] = '0'; p.pop('AlphaClip', None)
+    note += extra_note
     attrs = ' '.join('%s="%s"' % kv for kv in p.items())
-    return ('\t\t\t<Particles Name="%s">\n\t\t\t\t<!-- %s -->\n\t\t\t\t<Params %s />\n\t\t\t</Particles>\n' % (name, note, attrs))
+    t = '\t' * depth
+    kids = ('%s\t<Childs>\n%s%s\t</Childs>\n' % (t, children, t)) if children else ''
+    return ('%s<Particles Name="%s">\n%s\t<!-- %s -->\n%s\t<Params %s />\n%s%s</Particles>\n' % (t, name, t, note, t, attrs, kids, t))
+
+
+def cascade_xml(sysname, samples, mats, axis=0, hide=(), skip='LOW_SETTINGS'):
+    """a RoN Cascade system (tools/ron/cascade_sim.py) -> <Particles> children. Location-emitter chains become KCD2
+    children with SpawnIndirection ParentStart (a child emitter per parent particle, at it, moving with it) and
+    InheritVelocity; a rate-spawned emitter becomes Continuous over its EmitterDuration (KCD2's Count = particles alive
+    at once = rate x particle life). hide: emitters kept only as carriers for their children (Alpha 0)."""
+    import cascade_sim as cs
+    ems = cs.load(sysname)
+    lives = []
+    for E in ems:
+        if not E.enabled: continue
+        fr = E.run(0.0, 2, dt=1 / 60)
+        if fr and fr[0]['n']: lives.append(float(fr[0]['Lifetime'].min()))
+    dt = float(np.clip(min(lives or [1.0]) / 30, 1 / 1200, 1 / 60))
+    order = sorted(range(len(ems)), key=lambda i: cs.depth(ems, i))
+    by, runs = {}, {}
+    for i in order:
+        E = ems[i]
+        if not E.enabled or (skip and re.search(skip, E.name or '')): continue
+        fr = E.run(0.0, 2, dt=dt, seed=i + 1, sources=by)
+        lmax = float(fr[0]['Lifetime'].max()) if fr and fr[0]['n'] else 3.0
+        fr = E.run(min(lmax, 3.0) + (E.req.get('EmitterDuration') or 0) + 4 * dt, samples, dt=dt, seed=i + 1, sources=by)
+        by[E.name] = fr; runs[E.name] = (i, E, fr)
+
+    def per_burst(fr):
+        ids = {}
+        for x in fr:
+            if x['n']:
+                for b, u in zip(x['Burst'][:, 0].tolist(), x['UniqueID'][:, 0].tolist()): ids.setdefault(b, set()).add(u)
+        return np.mean([len(v) for v in ids.values()]) if ids else 0.0
+
+    def one(name, depth):
+        i, E, fr = runs[name]
+        rend = E.renderer(); mat = (rend.get('Material') or '').split('.')[-1]
+        if mat not in mats: raise SystemExit('%s: material %s is not in MATS; decode it first' % (name, mat))
+        M = dict(mats[mat]); src = cs.source_of(E)
+        if E.pivot: M['pivot'] = -2 * float(E.pivot[1])   # UE pivot offset (0, 0.5) = half a sprite back: KCD2 PivotY -1 (sign unverified)
+        bl = E.spawn.get('BurstList') or []
+        lo = sum((x.get('CountLow') if (x.get('CountLow') or -1) >= 0 else x.get('Count', 0)) for x in bl)
+        hi = sum(x.get('Count', 0) for x in bl)
+        head = {}
+        rate = (cs.table(E.spawn.get('Rate')) or {}).get('Values') or [0]
+        nparent = per_burst(runs[src][2]) if src in runs else 1.0
+        if hi:
+            head['Count'] = one_sided(max(lo, 1), hi, 2)
+            t0 = min((x.get('Time') or 0) for x in bl) * (E.req.get('EmitterDuration') or 1.0)
+            if t0: head['SpawnDelay'] = f(t0)
+        elif max(rate) > 0:
+            life = float(np.mean([x['Lifetime'].mean() for x in fr if x['n']] or [0.1]))
+            rlo, rhi = min(rate), max(rate)
+            # RoN spreads one rate over all its source's particles; KCD2 runs one child emitter per parent particle
+            head['Continuous'] = 'true'
+            head['Count'] = one_sided(rlo * life / nparent, rhi * life / nparent, 2)
+            head['EmitterLifeTime'] = f(E.req.get('EmitterDuration') or 1.0)
+        if src:
+            head['SpawnIndirection'] = 'ParentStart'
+            locem = next(m for m in E.mods if m['cls'] == 'ParticleModuleLocationEmitter')
+            if locem.get('InheritSourceVelocity'): head['InheritVelocity'] = f(locem.get('InheritSourceVelocityScale') or 1.0)
+        kids = ''.join(one(c, depth + 2) for c in runs if cs.source_of(runs[c][1]) == name)
+        n = (E.name or 'emitter').lower()
+        # Cascade has no built-in gravity: its Acceleration module (world space) is it. A uniform random range gives
+        # each particle its own constant acceleration; KCD2's is one vector, so the mean goes in (GravityScale) and the
+        # spread can't (noted)
+        over, enote = {}, ''
+        accm = next((m for m in E.mods if m['cls'] == 'ParticleModuleAcceleration'), None)
+        if accm:
+            tab = cs.table(accm['Acceleration']); v = np.array(tab['Values'], float)
+            lo3, hi3 = (v[:3], v[3:6]) if tab.get('Op') == 2 else (v[:3], v[:3])
+            mean = (lo3 + hi3) / 2
+            over['GravityScale'] = f(-mean[2] / 980.665, 2)
+            if np.any(np.abs(mean[:2]) > 1): over['Acceleration'] = 'x=%s,y=%s' % (f(mean[0] / 100), f(mean[1] / 100))
+            if np.any(hi3 - lo3 > 1):
+                enote = ' Its random acceleration (+-%s m/s2 per particle) is not reproduced: KCD2 has one vector' % f(float(np.max(hi3 - lo3)) / 200, 1)
+        elif not any(m['cls'] == 'ParticleModuleAccelerationOverLifetime' for m in E.mods):
+            over['GravityScale'] = '0'
+        if name in hide:   # an invisible carrier only has to outlive its children's emission + their particles
+            need = 0.0
+            for c in runs:
+                if cs.source_of(runs[c][1]) == name:
+                    cf = runs[c][2]
+                    need = max(need, (runs[c][1].req.get('EmitterDuration') or 0) + max((float(x['Lifetime'].max()) for x in cf if x['n']), default=0))
+            if need:
+                over['ParticleLifeTime'] = f(need)
+                enote += ' Lives %s s here (RoN %.2f s): its children are done by then' % (f(need), float(fr[0]['Lifetime'].max()) if fr[0]['n'] else 0)
+        return build(fr, {'min': lo, 'max': hi}, rend, M, mat, E.name, n, max(lo, 1), max(hi, 1), axis=axis,
+                     vkey='OwnVelocity', head=head, children=kids, depth=depth, override=over, hidden=name in hide,
+                     extra_note=enote)
+    return ''.join(one(nm, 3) for nm in runs if cs.source_of(runs[nm][1]) is None)
 
 
 def main():
@@ -285,12 +408,20 @@ def main():
     ap.add_argument('--samples', type=int, default=48)
     ap.add_argument('--into', help='library XML: replace the effect\'s top-level block there (or add it), old layer names off')
     ap.add_argument('--note', default='', help='a line for the comment above the effect (which surfaces use it)')
+    ap.add_argument('--cascade', action='store_true', help='dir is a Cascade system name (tools/ron/cascade_sim.py), not an extract dir')
+    ap.add_argument('--axis', default='z', choices='xz', help='the RoN local axis that becomes the KCD2 emitter y: z = the hit normal, x = a ricochet\'s outgoing direction')
+    ap.add_argument('--hide', default='', help='emitters drawn invisible, kept as carriers for their children (comma list)')
     ap.add_argument('--skip', default='LOW_SETTINGS',
                     help='emitters left out (regex): RoN draws either its HIGH or its LOW debris, by quality setting')
     a = ap.parse_args()
-    sysd = json.load(open(os.path.join(a.dir, 'system.json')))
     out = ['\t<Particles Name="%s">\n\t\t<Params Enabled="false" Count="1" ParticleLifeTime="0.05" />\n\t\t<Childs>\n' % a.effect]
     names = []
+    if a.cascade:
+        body = cascade_xml(a.dir, a.samples, MATS, axis={'x': 0, 'z': 2}[a.axis], hide=[x for x in a.hide.split(',') if x], skip=a.skip)
+        out.append(body); names = re.findall(r'<Particles Name="([^"]+)">', body)
+        sysd = {'emitters': {}}
+    else:
+        sysd = json.load(open(os.path.join(a.dir, 'system.json')))
     for em in sysd['emitters']:
         if not os.path.exists(os.path.join(a.dir, em + '.asm')): continue
         if a.skip and re.search(a.skip, em): continue

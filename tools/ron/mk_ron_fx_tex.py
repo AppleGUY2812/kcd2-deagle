@@ -128,3 +128,17 @@ sp = load("T_debrisSpray_4x1.png")
 sp[..., :3] *= sp[..., 3:4]
 sp[..., 3] = 1.0
 save_rgba("imp_ron_sprayadd_diff", sp)
+# P_Bullet_Ricochet (RoN's pistol ricochet, Cascade) through M_Sparks_NoNormal_Master: lit, colour =
+# saturate(tex.rgb x particle colour x Base Overlay 0.945), opacity = tex.R x alpha (x Opacity x Master Opacity, in the
+# effect's Alpha). The emitters' colours are constant over life, so each is baked into its own texture.
+def ron_sparks_lit(name, png, colour):
+    t = load(png)
+    px = np.empty_like(t)
+    px[..., :3] = np.clip(t[..., :3] * np.array(colour) * 0.945, 0, 1)
+    px[..., 3] = t[..., 0]
+    save_rgba(name, px)
+
+
+ron_sparks_lit("imp_ron_ricflash03_diff", "T_VFX_Sparks_03_B.png", (5151.597, 920.969, 236.775))   # Sparks_02
+ron_sparks_lit("imp_ron_ricflash02_diff", "T_VFX_Sparks_02_B.png", (2555.0, 255.0, 25.0))          # Sparks_03
+ron_sparks_lit("imp_ron_powder_diff", "T_VFX_Powder_01_B.png", (1.0, 1.0, 1.0))                    # SpallCircle

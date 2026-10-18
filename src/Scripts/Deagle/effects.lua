@@ -36,6 +36,7 @@ local FX_HOLD = {
 	["deagle_impacts.grass"] = 1.65,
 	["deagle_impacts.gravel"] = 2.15,
 	["deagle_impacts.brick"] = 3.15,
+	["deagle_impacts.ricochet"] = 0.65,
 	["deagle_blood.entry"] = 1.05,
 	["deagle_blood.exit"] = 1.25,
 	["deagle_blood.head"] = 1.55,
@@ -143,7 +144,8 @@ end
 -- light burns gets none (counted; logged at most every 2 s). Sparks only (soil, wood, water, cloth give no light), x
 -- the impact scale (energy). Game time, so F9 stretches them. Off: deagle_set impactLight.on 0
 local IMPACT_LIGHT = { ["deagle_impacts.metal"] = 1, ["deagle_impacts.metal_v2"] = 1, ["deagle_impacts.metal_exit"] = 0.8,
-	["deagle_impacts.ricochet_metal"] = 0.7, ["deagle_impacts.ricochet_stone"] = 0.35, ["deagle_impacts.stone"] = 0.25 }
+	["deagle_impacts.ricochet_metal"] = 0.7, ["deagle_impacts.ricochet_stone"] = 0.35, ["deagle_impacts.stone"] = 0.25,
+	["deagle_impacts.ricochet"] = 0.7 }   -- RoN's ricochet has two particle lights (brightness 155 and 500); the share is a guess
 local IMPACT_LIGHT_HUE = { 1.0, 0.55, 0.25 }   -- hot steel sparks: yellow-orange
 function Deagle:ImpactLight(name, pos, normal, scale)
 	local L, k = self.cfg.impactLight, IMPACT_LIGHT[name]
