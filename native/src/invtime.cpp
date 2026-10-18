@@ -14,6 +14,7 @@
 #include <cstring>
 #include "MinHook.h"
 #include "log.h"
+#include "scan.h"
 #include "invtime.h"
 
 namespace {
@@ -43,10 +44,34 @@ uintptr_t __fastcall HkOpen(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) 
 	Log("invtime open returned at %.1f ms", Ms());
 	return r;
 }
+// what the gate asks (0x1f4a260: RCX = [screen+0x20]; 0x18068c6c4 makes / returns its +0x688; then that object's
+// vfunc +0x80): the pointers and vtables, read under SEH (no C++ objects in here)
+struct GateObjs { uintptr_t obj = 0, vt = 0, inner = 0, innerVt = 0, fn80 = 0; bool fault = false; };
+GateObjs ReadGate(uintptr_t screen) {
+	GateObjs g;
+	__try {
+		g.obj = *(uintptr_t*)(screen + 0x20);
+		if (g.obj) { g.vt = *(uintptr_t*)g.obj; g.inner = *(uintptr_t*)(g.obj + 0x688); }
+		if (g.inner) { g.innerVt = *(uintptr_t*)g.inner; g.fn80 = *(uintptr_t*)(g.innerVt + 0x80); }
+	} __except (1) { g.fault = true; }
+	return g;
+}
+void LogGate(uintptr_t screen) {
+	static Module game;
+	if (!game.base) game = GetModule("WHGame.dll");
+	GateObjs g = ReadGate(screen);
+	if (g.fault) { Log("invtime gate object: unreadable"); return; }
+	auto rva = [&](uintptr_t x) { return x >= game.base && x < game.base + game.size ? (unsigned long long)(x - game.base) : 0ull; };
+	Log("invtime gate object %p %s (vt +0x%llx); its +0x688 %p %s (vt +0x%llx), asked vfunc +0x80 = +0x%llx",
+		(void*)g.obj, g.vt ? RttiName(game, g.vt).c_str() : "-", rva(g.vt), (void*)g.inner,
+		g.innerVt ? RttiName(game, g.innerVt).c_str() : "-", rva(g.innerVt), rva(g.fn80));
+}
+
 uintptr_t __fastcall HkGate(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
 	uintptr_t r = g_gate(a, b, c, d);
 	int v = (r & 0xFF) != 0;
 	if (v != g_lastGate) {   // no work on an unchanged frame
+		if (g_lastGate == -1) LogGate(a);   // once an open: which object it waits on
 		g_lastGate = v;
 		Log("invtime gate (object +0x20 ready) = %d at %.1f ms", v, Ms());
 	}
