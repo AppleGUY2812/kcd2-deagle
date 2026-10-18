@@ -307,6 +307,11 @@ per frame and per game second; a native run that raises fps shortens its rays an
 Prediction (Claude 5): native at this spot 8-12 ms at ~748 alive. The leading suspect for the extra cost is
 ground-level rays crossing dense entity-grid cells (vegetation, terrain), which native keeps and step 7 removes.
 Native below 6 ms would mean the extra cost was Lua (ricochet, water, FlyBy glue), and this suspect is wrong.
+Decision rule (Claude 4, agreed): one session, one spot, back to back, tracers off: lua, native, lua. Native differs
+only if it falls outside the lua1-lua2 spread per round per game second. The sky check (422 us = 12.93 / 1236 x
+40.3 fps; the 418 above used 40 fps) +-15 %, alive +-5 %, only flags a changed scene or build: if lua1 fails it, stop.
+Two lua runs are a thin noise estimate; it is enough only because the predicted change is ~2x. Each run starts with
+0 rounds alive (wait out the drain).
 
 ## How each step is built and proven
 - Durable state lives in files (this doc, the step's spec, tests), not in a session's chat. Each step starts from a
