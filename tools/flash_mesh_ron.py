@@ -8,7 +8,12 @@ MTL = "deagle_vm_flash_ron"
 
 def build(cards):   # -> the card objects <set>_<variant>_<stage>, one mesh each
     D = json.load(open(cards))
-    mats = {name: bpy.data.materials.new(f"{MTL}__{n:02d}__{name}__physNone") for n, name in enumerate(D["materials"], 1)}
+    # Blender cuts names at 63 characters: a cut "__physNone" leaves 3 parts and the toolkit reads the group as the id
+    # (int("deagle_vm_flash_ron")). The game goes by the id, so the name part keeps its tail (where the names differ) to fit
+    keep = 63 - len(f"{MTL}__00____physNone")
+    mats = {name: bpy.data.materials.new(f"{MTL}__{n:02d}__{name[-keep:].strip('_')}__physNone")
+            for n, name in enumerate(D["materials"], 1)}
+    assert all(m.name.count("__") == 3 for m in mats.values()), [m.name for m in mats.values()]
     nodes = []
     for setname, variants in D["sets"].items():
         for v, stages in enumerate(variants, 1):

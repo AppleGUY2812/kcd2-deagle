@@ -36,7 +36,10 @@ _tex = {}
 def tex(name):
     if name not in _tex:
         f, nx, ny = SHEETS[name]
-        _tex[name] = (np.asarray(Image.open(f'{PNG}/{f}.png').convert('RGB')).astype(np.float32) / 255.0, nx, ny)
+        # the sheets are sRGB textures (flash_collect.json exports: "srgb": true, DXT1): Unreal's sampler hands the
+        # material linear values, so a texel adds srgb_to_linear(png) x the particle colour, not png / 255
+        c = np.asarray(Image.open(f'{PNG}/{f}.png').convert('RGB')).astype(np.float32) / 255.0
+        _tex[name] = (np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4).astype(np.float32), nx, ny)
     return _tex[name]
 
 
