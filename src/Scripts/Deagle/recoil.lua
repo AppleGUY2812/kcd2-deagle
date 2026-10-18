@@ -11,6 +11,8 @@ local function clampPitch(x, from)
 end
 
 function Deagle:Recoil()
+	local ron = self.gun.ronStats and self.ronStats and self.ronStats[self.gun.ronStats]
+	if ron then return self:RonRecoil(ron) end
 	local phys = self:ShotPhysics()
 	if phys then return self:PhysicsRecoil(phys) end
 	local p = self:Player()
@@ -114,8 +116,84 @@ function Deagle:GunKickNow()
 	return KICK_K * g.pi, KICK_K * g.yi
 end
 
+-- ---- Ready or Not's own recoil, for the guns imported from it (gun.ronStats: their blueprint's numbers, 1:1), read
+-- from its code (docs/ron/ron_recoil_code.md; addresses there). The camera kick lives here; the gun's procedural
+-- recoil, its mesh-space offsets and the fire camera shake are the plugin's (ronfire / ronshake).
+-- On a shot (OnWeaponFired + GetRecoil): the kick = the next pattern entry (pitch up, yaw right, roll; the index never
+-- resets and a wrap returns entry 0 without moving on: e0 e1 e2, e0 e0 e1 e2, ...) x FirstShotRecoil while the
+-- first-shot flag is up (always while FirstShotResetTime > 0: an inverted test in its code) x (1 + n x
+-- RecoilMultiplierPitch / Yaw), n = the shot's number in the burst (0 for the first, capped at AmmoMax), x
+-- ADSRecoilMultiplier when aiming, x its walk-speed factor (1: KCD2 has no walk-speed setting), into a pending kick.
+-- A burst ends 2 x FireRate after its last shot (+0.05 s in other fire modes): what is still pending goes, and
+-- RecoilReturnPercentage of what was applied comes back at RecoilReturnInterpSpeed (the Grizzly: nothing). No
+-- randomness. RecoilInterpSpeed, RecoilReturnRate and VelocityRecoilMultiplier are read by nothing in its code.
+function Deagle:RonRecoil(r)
+	local now, s = System.GetCurrTime(), self.state
+	local k = self.ronKick
+	if not k then   -- a new string: its clock starts now (a stale one would hand the first frame 0.1 s of kick)
+		k = { pp = 0, py = 0, pr = 0, ap = 0, ay = 0, ar = 0, shots = 0, ret = false }
+		self.ronKick, self.ronKickLast = k, now
+	end
+	self:RonBurstEnd(now)
+	if k.shots == 0 then k.ap, k.ay, k.ar = 0, 0, 0 end
+	k.ret = false
+	local pat = r.RecoilPattern or {}
+	self.ronPatternAt = self.ronPatternAt or {}
+	local i, used = self.ronPatternAt[self.gun.id] or 0, 1
+	if i < 0 or i >= #pat then i = 0 else i, used = i + 1, i + 1 end
+	local e = pat[used]
+	self.ronPatternAt[self.gun.id] = i
+	e = e or { 0, 0, 0 }
+	self.ronFirstGone = self.ronFirstGone or {}
+	local first = r.FirstShotResetTime > 0 or not self.ronFirstGone[self.gun.id]
+	self.ronFirstGone[self.gun.id] = true
+	local fr = first and r.FirstShotRecoil or 1
+	local n = math.max(0, math.min(k.shots, r.AmmoMax or r.Capacity or 0))
+	local m = (s.aiming and r.ADSRecoilMultiplier or 1) * self.cfg.recoil
+	local kp, ky = e[1] * fr * (1 + n * r.RecoilMultiplierPitch) * m, e[2] * fr * (1 + n * r.RecoilMultiplierYaw) * m
+	k.pp, k.py, k.pr = k.pp + kp, k.py + ky, k.pr + (e[3] or 0) * fr * m
+	k.shots = k.shots + 1
+	k.burstEnd = now + 2 * r.FireRate + (self:FireMode() ~= "semi" and 0.05 or 0)
+	self.lastRonShot = { pitch = kp, yaw = ky, n = n, entry = used }
+end
+function Deagle:RonBurstEnd(now)
+	local k = self.ronKick
+	if not (k and k.burstEnd and now >= k.burstEnd) then return end
+	local r = self.ronStats[self.gun.ronStats] or {}
+	local back = r.RecoilReturnPercentage or 0
+	k.pp, k.py, k.pr = -back * k.ap, -back * k.ay, -back * k.ar
+	k.ap, k.ay, k.ar, k.shots, k.burstEnd = 0, 0, 0, 0, nil
+	k.ret = true
+end
+-- every frame: the pending kick goes onto the view at a constant 7 a second (its kick phase, step = pending x 7 dt),
+-- or back at RecoilReturnInterpSpeed after a burst; the view turns by the step (control rotation: aim and view)
+function Deagle:RonKickTick()
+	local k = self.ronKick
+	if not k then return end
+	local now = System.GetCurrTime()
+	local dt = math.min(0.1, now - (self.ronKickLast or now)); self.ronKickLast = now
+	self:RonBurstEnd(now)
+	if dt <= 0 then return end
+	local r = self.ronStats[self.gun.ronStats] or {}
+	local a = (k.ret and (r.RecoilReturnInterpSpeed or 0) or self.ronPlayer.KickRate) * dt
+	local dp, dy = k.pp * a, k.py * a
+	k.pp, k.py, k.pr = k.pp - dp, k.py - dy, k.pr - k.pr * a
+	if not k.ret then k.ap, k.ay = k.ap + dp, math.max(k.ay + dy, 0) end
+	if k.shots == 0 and not k.burstEnd and math.abs(k.pp) < 1e-5 and math.abs(k.py) < 1e-5 then self.ronKick = nil end
+	if math.abs(dp) < 1e-6 and math.abs(dy) < 1e-6 then return end
+	local p = self:Player()
+	try("view kick", function()
+		local d = System.GetViewCameraDir()
+		local pitch = math.asin(math.max(-1, math.min(1, d.z)))
+		local yaw = math.atan2(-d.x, d.y)
+		-- Ready or Not's yaw > 0 turns right; KCD2's view yaw grows to the left
+		p.actor:PlayerSetViewAngles({ x = clampPitch(pitch + math.rad(dp), pitch), y = 0, z = yaw - math.rad(dy) })
+	end)
+end
+
 -- every frame: move the view by how much the recoil offset changed (never sets the aim outright)
 function Deagle:CamRecoilTick()
+	if self.ronKick then self:RonKickTick() end
 	local r = self.camRecoil
 	if not r then return end
 	local now = System.GetCurrTime()

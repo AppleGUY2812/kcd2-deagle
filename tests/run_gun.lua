@@ -127,6 +127,40 @@ if phys then
 		light = (function() local l for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx ") then l = M.native[i] end end return l end)(),
 		wantScale = Deagle.cfg.physics.flashPerUnit * phys.blast * Deagle.cfg.muzzleFxScale }
 end
+-- Ready or Not's own camera kick (gun.ronStats, docs/ron/ron_recoil_code.md 2-3), on this gun's viewmodel with the
+-- Grizzly's numbers: the pattern in its order (e0 e1 e2, then e0 e0 e1 e2: the wrap quirk), x (1 + 0.15 n) within a burst,
+-- x 0.8 aiming, onto the view at 7 a second, the rest dropped 0.59 s after the last shot; no gun-kick springs
+local ronK
+if Deagle.ronStats and Deagle.ronStats.BP_Secondary_LARGrizzly then
+	local own = Deagle.gun.ronStats
+	Deagle.gun.ronStats = "BP_Secondary_LARGrizzly"
+	local R = Deagle.ronStats.BP_Secondary_LARGrizzly
+	while Deagle:FireMode() ~= "semi" do act("deagle_fire" .. "mode"); M.advance(0.1) end
+	Deagle.ronPatternAt, Deagle.ronKick = {}, nil
+	Deagle.state.ammo = g.magSize; M.advance(2.0)
+	local entries, singles, n0 = {}, {}, #M.native
+	for i = 1, 7 do   -- single shots 1.5 s apart: every one a burst of its own
+		Deagle.state.ammo = g.magSize
+		local p0, y0 = M.view.pitch, M.view.yaw
+		act("deagle_fire"); M.advance(1.5)
+		entries[i] = Deagle.lastRonShot and Deagle.lastRonShot.entry or -1
+		singles[i] = { math.deg(M.view.pitch - p0), math.deg(M.view.yaw - y0) }
+	end
+	local springs = 0
+	for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] kick ") then springs = springs + 1 end end
+	-- three quick shots (0.3 s apart): n = 0, 1, 2
+	Deagle.ronPatternAt[Deagle.gun.id] = 0
+	local quick = {}
+	for i = 1, 3 do Deagle.state.ammo = g.magSize; act("deagle_fire"); quick[i] = Deagle.lastRonShot.pitch / R.RecoilPattern[i][1]; M.advance(0.3) end
+	M.advance(1.5)
+	-- aiming
+	Deagle.ronPatternAt[Deagle.gun.id] = 0
+	Deagle.state.aiming = true; Deagle.state.ammo = g.magSize; act("deagle_fire"); local ads = Deagle.lastRonShot.pitch / R.RecoilPattern[1][1]
+	Deagle.state.aiming = false; M.advance(1.5)
+	Deagle.gun.ronStats = own
+	ronK = { entries = table.concat(entries, " "), single = singles[1][1], yaw1 = singles[1][2], springs = springs,
+		quick = string.format("%.3f %.3f %.3f", quick[1], quick[2], quick[3]), ads = ads }
+end
 -- the mesh flash (flashMode "mesh"): the .cdf's cards, skins of this gun on its muzzle bone (tools/flash_cdf.py), all
 -- hidden at load; the 16 of this gun's size (4 shapes x 4 turns round the barrel: the roll) are the look's; a shot shows
 -- one in its own frame, the same the next frame, then none (1 frame under 40 fps). Nothing is attached, loaded, moved or
@@ -404,6 +438,12 @@ if mesh then
 	Deagle.gun.flashRon, Deagle.cfg.flashMesh.look = own, look
 	check(string.format("Ready or Not flash set per gun: by blast %s, flashRon small %s, large %s", byBlast, small, large),
 		small == R.small and large == R.large and (own or byBlast == R.large or byBlast == R.small), small)
+end
+if ronK then
+	check(string.format("Ready or Not camera kick (Grizzly numbers): entries %s, one shot %.2f deg up (pattern 8.69, ~1.3 %% dropped at 0.59 s), yaw %+.2f deg (left = +), quick shots x %s, ADS x %.2f, %d gun-kick springs sent",
+		ronK.entries, ronK.single, ronK.yaw1, ronK.quick, ronK.ads, ronK.springs),
+		ronK.entries == "1 2 3 1 1 2 3" and ronK.single > 8.4 and ronK.single < 8.69 and ronK.yaw1 > 0.45 and ronK.yaw1 < 0.5
+		and ronK.quick == "1.000 1.150 1.300" and math.abs(ronK.ads - 0.8) < 1e-9 and ronK.springs == 0, ronK.entries)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
