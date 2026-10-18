@@ -43,7 +43,8 @@ case "${1:-status}" in
 start)
 	[ -z "$(pid)" ] || { echo "KCD2 is already running (pid $(pid)): the user is playing, not starting" >&2; exit 1; }
 	free=$(powershell.exe -NoProfile -Command "[int]((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1024)" | tr -d '\r')
-	[ "$free" -gt 6000 ] || { echo "only ${free} MB free on Windows: close something first (KCD2 needs ~6 GB)" >&2; exit 1; }
+	min="${KCD2_MIN_FREE_MB:-6000}"   # the user may lower it ("i have enough memory u go ahead", 2026-10-18: 3 GB free)
+	[ "$free" -gt "$min" ] || { echo "only ${free} MB free on Windows (min ${min}): close something first, or KCD2_MIN_FREE_MB=<MB>" >&2; exit 1; }
 	day="$BACKUP/$(date +%F)"
 	if [ ! -d "$day" ]; then mkdir -p "$day"; cp -r "$SAVES/." "$day/"; echo "saves backed up -> $day ($(du -sh "$day" | cut -f1))"; fi
 	cfg_on
