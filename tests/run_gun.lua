@@ -135,6 +135,7 @@ if Deagle.ronStats and Deagle.ronStats.BP_Secondary_LARGrizzly then
 	local own = Deagle.gun.ronStats
 	Deagle.gun.ronStats = "BP_Secondary_LARGrizzly"
 	local R = Deagle.ronStats.BP_Secondary_LARGrizzly
+	M.view.pitch, M.view.yaw = 0, 0   -- its kick never springs back: earlier shots may have climbed the view to the pole
 	while Deagle:FireMode() ~= "semi" do act("deagle_fire" .. "mode"); M.advance(0.1) end
 	Deagle.ronPatternAt, Deagle.ronKick = {}, nil
 	local np = #M.native
@@ -148,6 +149,7 @@ if Deagle.ronStats and Deagle.ronStats.BP_Secondary_LARGrizzly then
 	local entries, singles, n0 = {}, {}, #M.native
 	for i = 1, 7 do   -- single shots 1.5 s apart: every one a burst of its own
 		Deagle.state.ammo = g.magSize
+		M.view.pitch = 0
 		local p0, y0 = M.view.pitch, M.view.yaw
 		act("deagle_fire"); M.advance(1.5)
 		entries[i] = Deagle.lastRonShot and Deagle.lastRonShot.entry or -1
@@ -176,8 +178,9 @@ if Deagle.ronStats and Deagle.ronStats.BP_Secondary_LARGrizzly then
 	Deagle.gun.ronStats = own
 	local np2 = #M.native
 	Deagle:MotionParams(Deagle.gun)   -- back to this gun's own: the plugin's Ready or Not recoil off
-	local offAgain = false
+	local offAgain = false   -- this gun's own state again: off for ours, on for a Ready or Not gun
 	for i = np2 + 1, #M.native do if M.native[i] == "[DN] ronp reset" then offAgain = true end if M.native[i] == "[DN] ronp on 1" then offAgain = false end end
+	if own then offAgain = not offAgain end
 	ronK = { entries = table.concat(entries, " "), single = singles[1][1], yaw1 = singles[1][2], springs = springs,
 		quick = string.format("%.3f %.3f %.3f", quick[1], quick[2], quick[3]), ads = ads,
 		ronp = ronp, ronOn = ronOn and ronReset, fires = fires, fireOk = fireOk, offAgain = offAgain }
@@ -357,10 +360,12 @@ if w then
 end
 if recoil then
 	-- after a pause the recoil clock was stale: the first frame counted as 0.1 s, half the springy kick was gone at once
+	if not g.ronStats then   -- the cartridge-physics recoil (a Ready or Not gun has its own: checked further down)
 	check(string.format("first shot after a pause: %.2f deg on its first frame, peak %.2f of %.2f", recoil.first, recoil.peak, recoil.up),
 		recoil.first < 0.85 * recoil.peak and recoil.peak > 0.8 * recoil.up, recoil.peak)
 	check(string.format("cartridge kick %.1f deg: climbs %.1f, settles at %.1f (keeps ~%d%%), gun kick sent %d", recoil.up, recoil.peak, recoil.final, recoil.keep * 100, recoil.kicks),
 		recoil.peak > recoil.final and recoil.peak < 1.05 * recoil.up and math.abs(recoil.final - recoil.keep * recoil.up) < 0.1 * recoil.up + 0.02 and recoil.kicks == 1, recoil.final)
+	end
 	-- flashMode "gun" (the default): the shot's flash spawned on the muzzle by the plugin at the cartridge's size; the
 	-- live flash is never armed (it kept burning after a load, in game 2026-10-12)
 	recoil.flashName, recoil.flashScale = string.match(recoil.light or "", "^%[DN%] flashfx (%S+) ([%d.]+)")
@@ -388,8 +393,10 @@ if recoil then
 	local large = phys.blast >= Deagle.cfg.physics.largeFlashBlast
 	local wantFx = large and Deagle.cfg.muzzleFxLarge or Deagle.cfg.muzzleFx
 	check(string.format("flash %s for blast x%.2f", tostring(recoil.flashName), phys.blast), recoil.flashName == wantFx, recoil.flashName)
+	if not g.ronStats then   -- the cartridge-physics recoil (a Ready or Not gun has its own: checked further down)
 	check(string.format("5 fast shots climb %.1f deg, more than 5 single shots (%.1f)", recoil.string5, 5 * recoil.final), recoil.string5 > 1.1 * 5 * recoil.final, recoil.string5)   -- fast fire climbs noticeably more (a light 9 mm barely loads the grip)
 	check(string.format("the barrel is still kicked %.1f deg up 0.08 s after a shot (next bullet goes there)", recoil.kickNow or 0), (recoil.kickNow or 0) > 0.3, recoil.kickNow)
+	end
 	local a1, a2 = Deagle:SprayRand(3, 2), Deagle:SprayRand(3, 2)
 	check("the spray pattern is the same every time (learnable)", a1 == a2 and Deagle:SprayRand(3, 2) ~= Deagle:SprayRand(4, 2), a1)
 end
@@ -465,7 +472,7 @@ if ronK then
 		ronK.entries, ronK.single, ronK.yaw1, ronK.quick, ronK.ads, ronK.springs),
 		ronK.entries == "1 2 3 1 1 2 3" and ronK.single > 8.4 and ronK.single < 8.69 and ronK.yaw1 > 0.45 and ronK.yaw1 < 0.5
 		and ronK.quick == "1.000 1.150 1.300" and math.abs(ronK.ads - 0.8) < 1e-9 and ronK.springs == 0, ronK.entries)
-	check(string.format("Ready or Not recoil in the plugin: %d ronp keys then on (%s), %d ronfire for 7 shots, 16 numbers each (%s), off again for this gun (%s)",
+	check(string.format("Ready or Not recoil in the plugin: %d ronp keys then on (%s), %d ronfire for 7 shots, 16 numbers each (%s), back to this gun's own (%s)",
 		ronK.ronp, tostring(ronK.ronOn), ronK.fires, tostring(ronK.fireOk), tostring(ronK.offAgain)),
 		ronK.ronp >= 60 and ronK.ronOn and ronK.fires == 7 and ronK.fireOk and ronK.offAgain, ronK.fires)
 end
