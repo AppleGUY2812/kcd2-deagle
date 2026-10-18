@@ -9,6 +9,9 @@ in docs/ron_extraction.md); the raw dump is the appendix. Owner: Claude 1, 2026-
 - `a/b` on a scalar = random between a and b, picked once per particle. `x/y/z/X/Y/Z` on a vector = random between
   (x,y,z) and (X,Y,Z).
 - `... (TimeScale 1)` = a curve over the particle's life, sampled from start to end (two samples = start → end).
+- **Careful:** `cascade_dump.py` doesn't print a distribution's type. Several `a/b` values below are **uniform random**
+  (Op 2 in the raw table) and the module's Update re-draws them **every frame** (no random stream), not a curve:
+  corrected per brick from the raw tables and RoN's code (docs/ron/cascade_semantics.md, 2026-10-18).
 - Colours are **HDR, linear**: 38,250 means ~38,000× white, i.e. it blows out to pure white under bloom.
 - `Spawn bursts (CountLow, Count, Time)`: (-1, 1, 0) = exactly 1 particle at t = 0. The spawn *rate* never runs: the
   emitter's duration is 0, so the bursts are all there is.
@@ -28,10 +31,10 @@ in docs/ron_extraction.md); the raw dump is the appendix. Owner: Claude 1, 2026-
 | size | 25-35 cm (uniform) |
 | size over life | ×1 → ×1.5 (x, y), ×1 → ×2 (z) |
 | rotation | random 0-25 (Cascade units of full turns: any angle) |
-| sprite frames | 0 → 23 in order over its life (the sheet has 16: it runs off the end, so ~2 frames show) |
+| sprite frames | **a random frame 0-23, re-drawn every frame** (truncated, no blending; the sheet has 16, and what 16-23 show is decided on the GPU: unverified) |
 | colour | 38,250 / 450 / 200 (orange-white, blown out) |
 | alpha over life | 1 → 0 |
-| **light** | on **80 %** of shots; brightness 70-80; colour scale 10-25; radius = size × 100 (**25-35 m**); exponent 320 (very hard fall-off); lights translucency too |
+| **light** | rolled once at spawn: on **80 %** of shots. Colour = particle colour × alpha × colour scale × brightness; brightness **random 70-80** and colour scale **one grey random 10-25**, both re-drawn every frame. Radius = 100 × (size x + size y) / 2 of the current size: **25-35 m at spawn, up to ~52 m as it grows**. Exponent 320 (very hard fall-off). Lives exactly as long as the particle; lights translucency too |
 | event | sends "FlashCore" (emitter 2 listens) |
 | quality | High/Epic |
 
@@ -57,10 +60,10 @@ in docs/ron_extraction.md); the raw dump is the appendix. Owner: Claude 1, 2026-
 | velocity | 100 cm/s forward |
 | size | 8-12 cm; over life ×1 → ×1.5 (z ×1 → ×1.2) |
 | rotation | random |
-| sprite frames | 0 → 11 in order |
-| colour | **0.85 / 0.07 / 0.02 → 38,250 / 450 / 200** over life (starts dim red, ends blown out) |
+| sprite frames | **a random frame 0-11, re-drawn every frame** |
+| colour | **random per channel, every frame**, between 0.85 / 0.07 / 0.02 and 38,250 / 450 / 200 (R 0.85-38,250, G 0.07-450, B 0.02-200), not a ramp |
 | alpha | 1 → 0 |
-| **light** | 80 % of shots; brightness 15-50; colour scale 10-25; radius = size × 100 (8-12 m); exponent 16 (soft) |
+| **light** | 80 % of shots (own roll); brightness **random 15-50 every frame**; grey colour scale random 10-25 every frame; colour = particle colour (itself random) × alpha × those; radius = 100 × size: 8-12 m at spawn, up to ~18 m; exponent 16 (soft) |
 | quality | every setting |
 
 ## Emitter 4: SmallFlame (side tongues)
@@ -80,10 +83,10 @@ in docs/ron_extraction.md); the raw dump is the appendix. Owner: Claude 1, 2026-
 | material | `M_Particle_Additive`, `T_longSpark_02_8x2` (4×2), random frame |
 | spawn | **10 at t = 0.01 s** |
 | lifetime | 0.05-0.085 s |
-| direction | cone of 0-13.5° around the barrel (angle 0-0.075 of a half turn) |
+| direction | cone of **0-13 whole degrees** around the barrel: RoN's code takes angle × 182.04 and truncates it to an integer number of degrees (docs/ron/cascade_semantics.md) |
 | speed | **5-50 m/s** (500-5000 cm/s) + start velocity ±50 cm/s sideways + 5× the gun's own velocity |
-| forces | constant acceleration (world space, values 0), drag 2.5-15, random acceleration ±3000 cm/s² per axis |
-| size | 0.25-0.75 cm; stretched by speed (×0.05 per cm/s, up to ×100 long); size-over-life curve of 15 samples (x stays ×1, y from ×0.5 up, z 0: see the appendix) |
+| forces | constant acceleration 0 (does nothing); a random acceleration ±3000 cm/s² per axis drawn once at spawn, world space; drag v ← v × (1 − c·dt) every frame with **c re-drawn 2.5-15 every frame** |
+| size | 0.25-0.75 cm; every frame length (y) = base × clamp(0.05 × speed in cm/s, 1, 100), then × the 16-sample life curve: x ×1, y ×0.5 → ×0.97 at mid-life → ×0.5 at the end |
 | orbit | ±0.5 cm wobble, rotating ±10/s |
 | facing | along velocity; pivot 0.15 |
 | colour / alpha | 25 / 0.27 / 0.19 (dim red-orange); alpha 1.5 → 0 |
@@ -92,7 +95,7 @@ in docs/ron_extraction.md); the raw dump is the appendix. Owner: Claude 1, 2026-
 ## Emitter 6: LongSpark (one forward streak)
 | brick | value |
 |---|---|
-| material | `M_Particle_Additive`, frames 0 → 3 in order |
+| material | `M_Particle_Additive`, **a random frame 0-3, re-drawn every frame** |
 | spawn | 1 at t = 0.01 s |
 | lifetime | **0.03 s** |
 | size | 25-50 cm; over life (×0.1, ×0.5, ×1) → (×0.05, ×1.25, ×2) |
@@ -115,8 +118,8 @@ in docs/ron_extraction.md); the raw dump is the appendix. Owner: Claude 1, 2026-
 ## Timeline of one shot (60 fps: frame 1 = 0-0.017 s, frame 2 = 0.017-0.033 s, frame 3 = 0.033-0.05 s)
 | frame | what's on screen |
 |---|---|
-| 1 | front pop (+ light, 80 %), side pop, pistol core (+ light), small flame: all at full start size |
-| 2 | the same, ×1.25-1.5 bigger and fading; long streak, star burst and 10 sparks appear (born at 0.01 s) |
+| 1 | front pop (+ light, 80 %), side pop, pistol core (+ light), small flame: all at full start size; the pops and core show a random sheet frame and the core a random colour |
+| 2 | the same, ×1.25-1.5 bigger and fading, **new random frames, colour and light brightness**; long streak, star burst and 10 sparks appear (born at 0.01 s) |
 | 3 | pistol core and small flame are gone (0.035 s); pops end at 0.04 s; sparks fly on |
 | 4-5 | only sparks, gone by 0.085 s |
 
