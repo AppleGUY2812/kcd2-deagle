@@ -12,19 +12,21 @@ M_BulletImpact_Master (M_BulletImpact_*): slots t1 = Texture (height), t2 = Mate
   normal      = normalize(-dh/du x NI, -dh/dv x NI, 1), dh = Texture.R(uv + 0.005) - Texture.R(uv) (NI = NormalIntensity)
   roughness   = saturate(MaterialType.G x Roughness_Multi);  metallic = Metalness
 Decal_Impact_MasterMaterial (M_BulletImpact_Metal / _Wood_01, Decal_Impact_Inst_*): uv' = (uv - 0.5) / DecalSize + 0.5
-  base colour = Base.rgb (Base clamped: the hole sits in the middle DecalSize of the box), opacity = saturate(Base.a x
-  AlphaPower), normal = the Normal map (wrapped), roughness = Roughness, metallic = Metal.
+  base colour = Base.rgb as sampled, nothing else (sample t2 at uv' -> mov_sat o0.xyz; Base is clamped, so the hole
+  sits in the middle DecalSize of the box), opacity = saturate(Base.a x AlphaPower), normal = the Normal map at the
+  same uv' (its own sampler wraps), roughness = Roughness, metallic = Metal.
+Both write the normal with the decal's opacity, so the bake leaves it flat where the opacity is 0.
 
 UE textures marked sRGB are linearised before use as heights / weights (the shader reads linear values); the KCD2
 diffuse is written sRGB. Normals: UE tangent space (x = +u, y = +v down), green flipped for CryEngine (green up).
-_ddna alpha = smoothness = 1 - roughness. Output: E:/Tools/deagle-work/fx_tif_impacts, compiled by
-tools/fx_impact_textures.ps1. usage: mk_hole_tex.py [out_dir]"""
+_ddna alpha = smoothness = 1 - roughness. Output: E:/Tools/deagle-work/fx_tif_impacts/_ron_entry_holes (not the live folder;
+copy them up to fx_tif_impacts to use them, then tools/fx_impact_textures.ps1). usage: mk_hole_tex.py [out_dir]"""
 import json, os, sys
 import numpy as np
 from PIL import Image
 
 SRC = '/mnt/e/Tools/deagle-work/ron_fx/decals'
-OUT = sys.argv[1] if len(sys.argv) > 1 else '/mnt/e/Tools/deagle-work/fx_tif_impacts'
+OUT = sys.argv[1] if len(sys.argv) > 1 else '/mnt/e/Tools/deagle-work/fx_tif_impacts/_ron_entry_holes'
 N = 512
 
 # RoN materials (MI parameters over the master's defaults, read by tools/ron/ron_mat.py) and which textures are sRGB
@@ -126,6 +128,10 @@ def main():
         m = MATS[mat]
         # 1024 for the shader maths (the 0.005 uv step is ~5 texels of RoN's 1024 maps), then down to N
         col, alpha, n, rough = (bake_bullet if m['master'] == 'bullet' else bake_impact)(m, 2 * N)
+        # both masters write the normal with the decal's opacity (o1.w = opacity): where that is 0 RoN leaves the
+        # surface normal alone. The impact master's Normal map wraps (its own sampler) while Base is clamped, so
+        # without this its copies around the hole would show as dents in KCD2
+        n = np.where((alpha > 0)[..., None], n, np.array([0.0, 0.0, 1.0]))
         d = np.concatenate([lin_to_srgb(col), alpha[..., None]], -1)
         d = d.reshape(N, 2, N, 2, 4).mean((1, 3))
         nn = n.reshape(N, 2, N, 2, 3).mean((1, 3)); nn /= np.linalg.norm(nn, axis=-1, keepdims=True)
