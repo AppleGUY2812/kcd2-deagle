@@ -811,3 +811,17 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 - RoN's hit code (Claude 5, docs/ron/ron_bullet_code.md): the far side of a wallbang plays the ENTRY table's effect along
   the travel direction (effects.lua EXIT_AS_ENTRY); a ricochet point gets no impact, only the weapon's
   RicochetParticleSystem; middle hits get an impact on a 25 % roll; 100 pooled impacts, the oldest reused.
+
+## 2026-10-18: Ready or Not's casing throw, checked live; the flash delivery test (Claude 4)
+- Casings (e232d9e, docs/ron/gun_smoke_shells.md 2): 3 throws on a hillside read back 4.0 / 4.1 / 5.9 m/s at 39.4 deg
+  up (RoN: 2-6 m/s, 40 deg); horizontal speed x0.859 over 0.15 s with damping 1 (e^-0.15 = 0.861), so KCD2's
+  PHYSICPARAM_SIMULATION damping / freefall_damping act per second like Unreal's; landed 2.1-3.6 m out downhill.
+  `Entity:EnablePhysics(false)` on a BasicEntity rigid body stops it mid-flight (moved 0.000 m, velocity 0) and
+  `(true)` lets it fall again; `GetAngles` / `SetAngles` work on it; `Hide(1)` at 6 s. Spin not read back.
+- Flash delivery (tools/flashlag.lua + flashlag_read.py, sheets in Desktop\Deagle Progress\27): in the frame Lua
+  asks for it, the gun's mesh card shows (110 of 114 read); a new particle emitter per shot shows one game frame
+  later (23 of 23, at ~60 and 30 fps). Three other ways drew nothing at all in 0-7 frames (0 of 68): a new emitter
+  with its box written at once (flashseed 0.3), one emitter restarted per trial at 0.5 m (fxr, the tracers' way,
+  which does show far away), and the live emitter shown by its size (flasharm / flashshot). Likely for the live one:
+  KCD2 bakes the emitter's scale into each particle at its birth (armed at 1e-4, its particles stay tiny); not
+  measured. KCD2's System.DrawText draws a size-5 "#" magenta, about 8 px wide.
