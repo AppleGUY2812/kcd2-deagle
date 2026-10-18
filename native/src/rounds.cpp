@@ -45,6 +45,7 @@ void Once(int u, bool ok, const char* detail = "") {
 // what the world calls cost (rounds stats)
 struct Cost { uint64_t n = 0; int64_t ticks = 0; };
 Cost g_cost[U_COUNT];
+uint64_t g_traceFull = 0;   // tracer draws refused by the full ring (rounds stats)
 struct Timed {
 	int u; LARGE_INTEGER t0;
 	explicit Timed(int k) : u(k) { QueryPerformanceCounter(&t0); }
@@ -265,6 +266,8 @@ void __cdecl WorldDraw(void*, uint32_t round, int32_t fx, double count, double, 
 	float p[3] = { (float)at->x, (float)at->y, (float)at->z }, d[3] = { (float)dir->x, (float)dir->y, (float)dir->z };
 	Timed tm(U_TRACER);
 	bool ok = TracerInner(FX_TRACE_BASE + (int)round, g_fx[fx - 1].c_str(), (float)count, p, d);
+	// a full ring (FX_TRACE_MAX streaks drawn) refuses new rounds: the visual cap, not a failed call
+	if (!ok && Fx_TracersInUse() >= FX_TRACE_MAX) { g_traceFull++; return; }
 	Once(U_TRACER, ok);
 }
 
@@ -501,8 +504,9 @@ void Stats() {
 	if (g_sim) {
 		sim_stats st;
 		sim_get_stats(g_sim, &st);
-		Log("rounds stats: sim %llu steps, %llu rays, %llu hits, %u alive, %d tracer slots in use", (unsigned long long)st.steps,
-			(unsigned long long)st.rays, (unsigned long long)st.hits, sim_alive(g_sim), Fx_TracersInUse());
+		Log("rounds stats: sim %llu steps, %llu rays, %llu hits, %u alive, %d tracer slots in use, %llu draws refused (ring full)",
+			(unsigned long long)st.steps, (unsigned long long)st.rays, (unsigned long long)st.hits, sim_alive(g_sim), Fx_TracersInUse(),
+			(unsigned long long)g_traceFull);
 	}
 }
 
