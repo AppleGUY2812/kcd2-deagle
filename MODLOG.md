@@ -788,3 +788,26 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   rigid body. The 6 impact-light entities (effects.lua) moved onto every sparky hit at 75 rounds/s and shoved the
   player ("an invisible object in front of me"). Helper entities (lights, markers) need physics off, plus
   `DestroyPhysics` for ones already spawned. tests/run_effects.lua checks it. (Claude 2, found by Claude 4)
+
+## 2026-10-18: Ready or Not's real entry hits for dirt, grass, gravel, sand, wood, stone, plaster, brick (Claude 2)
+- Only the metal hit had been taken from RoN's in-game Niagara systems; stone, plaster, wood, soil, sand, cloth and
+  glass were built from Cascade `P_*` systems, which are RoN's RicochetImpactEffects (and unused by its hitscan code),
+  not its entry hits. The entry hits are `ImpactEffects_Pistol`'s `NS_*` rows. Now converted by running their own
+  compiled shaders (tools/ron/ns2pfx.py, docs/ron/niagara_gpu.md).
+- Emulator bug (fixed): every curve read the first curve data interface of its class. An emitter with two float curves
+  (FloatFromCurve, FloatFromCurve001) got the same LUT twice. The DIs' constants sit in DataInterfaceInfo order (one
+  curve = 4 floats; where the first one starts depends on the emitter: cb0[50].x / .y / [80].y seen), and each spawn
+  script's `ResolvedDataInterfaces` names the DI object. The metal port was not affected (one curve per class per
+  emitter); the first dirt conversion was (its dust thickened over life instead of fading).
+- Burst decoding: a burst of exactly 1 compiles to `f2i(SpawnCountScale)` (no literal); a burst at time t > 0 starts its
+  scope with `sub(t, age)`. Counts "0-1" are 1: the compiled `max(n x scale, 1)`.
+- Material parameter defaults (Darkness, Desat, Emissive Intensity ...) are readable: UE 5.3 serialises
+  FMaterialCachedExpressionData unversioned right after the material's properties (tools/ron/ron_mat.py). The shader's
+  texture slots don't follow ReferencedTextures.
+- KCD2's particle shader (Engine/Shaders.pak, Shaders/HWScripts/CryFX/Particles.cfi): the particle's colour alpha
+  reaches the pixel only through AlphaClip: `clip.xyz = alphaTestMin + alphaTestMax x alpha` per vertex (Min at alpha 0,
+  Max at 1), then `a = saturate(min(tex.a - SourceMin, SourceWidth) x Scale / SourceWidth)`, discarded at <= 0.004.
+  The default is tex.a x alpha. Particle colour is 8-bit, so an alpha above 1 must go into Scale.
+- RoN's hit code (Claude 5, docs/ron/ron_bullet_code.md): the far side of a wallbang plays the ENTRY table's effect along
+  the travel direction (effects.lua EXIT_AS_ENTRY); a ricochet point gets no impact, only the weapon's
+  RicochetParticleSystem; middle hits get an impact on a 25 % roll; 100 pooled impacts, the oldest reused.

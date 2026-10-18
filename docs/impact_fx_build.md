@@ -7,26 +7,31 @@ Ripped textures are for private use only. The DDS files are gitignored and never
 Spawn with `Particle.SpawnEffect("deagle_impacts.<family>", hitPos, hitNormal, scale)`. The emitter's y axis is the
 surface normal (`EmitAngle` opens a cone around it, 0 = straight out).
 
-**Scale 1 = a 9 mm pistol round.** Lua scales by round energy (Deagle about 2). Sizes and speeds follow Ready or Not's
-readable Cascade impacts, converted from UE cm to m. `Size` is half the RoN sprite width, because RoN's pistol
+**Scale 1 = a 9 mm pistol round.** Lua scales by round energy (Deagle about 2; the user's choice, 2026-10-14: RoN
+plays every pistol hit at one size). Sizes and speeds are Ready or Not's, converted from UE cm to m. `Size` is half the RoN sprite width, because RoN's pistol
 impact BP uses the same "Big" systems as rifles. Every part lives at least 0.08 s after its Random spread, since a new
 emitter is pre-aged by one frame (checked by script: no part is shorter).
 
-| effect | parts | look (RoN source) |
+| effect | RoN source (ImpactEffects_Pistol row) | layers (RoN's numbers in the XML comments) |
 |---|---|---|
-| `metal` | flash (glow + light r 1.5 m), sparks_fast (~18, 5 m/s, 1 g, bounce), sparks_slow (6), smoke_kick, bits (6) | `P_Bullet_Impact_Metal_Big`. **Also used for hits on plate armour.** |
-| `stone` | spark_flash, spatter (velocity-aligned spray), base_dust, dust (grey 0.79, 1.8 s), chips (~16, 7 m/s, bounce) | `P_Bullet_Impact_Concrete_Big`. Stone, concrete, brick, ceramics |
-| `plaster` | spatter, dust_jet (white), powder (squib 8x8), chips (~14 white) | `P_BulletImpact_Plaster` |
-| `wood` | spatter, smoke_kick (warm 1/0.83/0.75), base_dust, splinters (~8, 2 s, bounce), specks | `P_Bullet_Impact_Wood_Big` |
-| `soil` | kick (2 squibs thrown up), cloud (brown), wisp (dark), bits (~20) | `P_VFX_Impact_Dirt`. Soil, dirt, grass, mud, gravel |
-| `sand` | kick + cloud in pale tan, fine grains | the dirt kick, lighter and finer |
-| `water` | column (~7 drops), droplets (~10 at 1.5 g), puff, mist | `P_BulletImpact_Water` |
-| `straw` | fluttering straw bits (air drag 4, gravity 0.35), light dust | (no RoN straw; recoloured shreds) |
-| `cloth` | puff_fast, smoke_round, fibres (~10, air-braked) | `P_Bullet_Impact_Fabric_Big` |
-| `glass` | flash, quick bright whisp, shards (~10, 3x3 variants, bounce) | `P_VFX_Impact_Glass_Plate_Exit` |
+| `metal` | `NS_Bullet_Impact_Metal_Big_Shotgun` (RON_Steel) | flash, main sparks, core sparks, spark burst, dark chips. **Also used for hits on plate armour.** |
+| `stone` | `NS_Bullet_Impact_Concrete_Big` (RON_ConcreteStrong / Rock / Ceramic) | base dust, debris (Stones2x2), dust, shot spatter |
+| `plaster` | `NS_BulletImpact_Plaster` (RON_Plaster / Drywall) | base dust, debris, shot spatter (at 0.025 s), big smoke, smoke kick (16x2 dust streak) |
+| `wood` | `NS_Bullet_Impact_Wood_Big` (RON_Pine / Plywood / Mahogany) | debris (Shards, dissolving), dust, shot spatter, smoke kick. FLOATING_DIRT (vector field) not converted |
+| `soil` | `NS_BulletImpact_Dirt` (RON_Dirt) | 35-50 dirt grains every way, dust puff at 0.05 s, 10-15 spatter streaks |
+| `grass` | `NS_BulletImpact_Grass` (RON_Grass) | 15-20 grass blades (dissolving), puff, dust streak |
+| `gravel` | `NS_BulletImpact_Gravel` (RON_Gravel) | grains, sand blocks, dust, one spark. Mesh pebbles not converted |
+| `sand` | `NS_BulletImpact_Sand` (RON_Sand) | puff, sand grains, spatter. No KCD2 surface uses it |
+| `brick` | `NS_BulletImpact_Brick` (RON_Brick / Limestone) | debris, dust, spatter, smoke kick. No KCD2 surface uses it |
+| `water` | `P_BulletImpact_Water` (Cascade; RoN's pistol row is Cascade) | caustic sheets, droplets, dust puff (its 3 switched-on emitters) |
+| `straw` | none in RoN | fluttering straw bits, light dust (ours) |
+| `cloth` | was the Cascade ricochet version; `NS_Bullet_Impact_Fabric_Big` not ported yet | puff_fast, smoke_round, fibres |
+| `glass` | was Cascade `P_VFX_Impact_Glass_Plate_Exit`; `NS_BulletImpact_Glass` not ported yet | flash, whisp, shards |
 
-Not in RoN's readable data (Niagara bytecode) and therefore our choice: exact counts on the `NS_*` systems, plus
-everything about straw.
+Converted by `tools/ron/ns2pfx.py` from runs of RoN's own particle shaders (docs/ron/niagara_gpu.md). The far side of a
+wallbang plays the same entry effect along the bullet (RoN's hit code; `effects.lua` EXIT_AS_ENTRY), so the `*_exit`
+effects below are only used in the `new` look. Not converted yet: mud (`NS_VFX_Impact_Mud`, KCD2 mud uses `soil`
+meanwhile), foliage, fabric, glass, flesh.
 
 ## 2. Bullet holes (`src/Materials/deagle/decals/bullet_hole_<surface>.mtl`)
 `Particle.CreateMatDecal(pos, normal, size, lifeTime, "Materials/deagle/decals/bullet_hole_<surface>")`.

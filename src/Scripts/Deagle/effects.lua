@@ -13,11 +13,11 @@ local FX_VARY = {
 -- Generated: tools/fx_hold.py (tests/run_all.sh fails when it no longer matches the particle libraries)
 local FX_HOLD = {
 	["deagle_impacts.metal"] = 1.65,
-	["deagle_impacts.stone"] = 1.95,
-	["deagle_impacts.plaster"] = 1.55,
-	["deagle_impacts.wood"] = 2.15,
-	["deagle_impacts.soil"] = 1.55,
-	["deagle_impacts.sand"] = 1.40,
+	["deagle_impacts.stone"] = 4.15,
+	["deagle_impacts.plaster"] = 2.15,
+	["deagle_impacts.wood"] = 4.15,
+	["deagle_impacts.soil"] = 3.15,
+	["deagle_impacts.sand"] = 2.15,
 	["deagle_impacts.water"] = 0.90,
 	["deagle_impacts.straw"] = 1.75,
 	["deagle_impacts.cloth"] = 1.95,
@@ -33,6 +33,9 @@ local FX_HOLD = {
 	["deagle_impacts.water_v3"] = 1.70,
 	["deagle_impacts.metal_v2"] = 1.05,
 	["deagle_impacts.metal_v2_jet"] = 0.40,
+	["deagle_impacts.grass"] = 1.65,
+	["deagle_impacts.gravel"] = 2.15,
+	["deagle_impacts.brick"] = 3.15,
 	["deagle_blood.entry"] = 1.05,
 	["deagle_blood.exit"] = 1.25,
 	["deagle_blood.head"] = 1.55,
@@ -42,6 +45,10 @@ local FX_HOLD = {
 -- (1080p, 60 deg view), and rounds are dropped at 250 m anyway (cfg.range); far ricochets landed up to 1 km out
 local FX_FAR = 250
 local LOOK_NEW = { ["deagle_impacts.water"] = "deagle_impacts.water_v3", ["deagle_impacts.metal"] = "deagle_impacts.metal_v2" }
+-- Ready or Not plays the entry effect on the far side of a wallbang too, its +Z along the bullet: one table for both,
+-- the exit flag only turns it (its hit code, docs/ron/ron_bullet_code.md). Its ExitImpactEffects table, which our
+-- <family>_exit effects were built from, isn't read by that code. So in the "ron" look an exit is the entry effect.
+local EXIT_AS_ENTRY = "^(deagle_impacts%.[%w_]+)_exit$"
 -- Impact effect budget. A CIWS at 75 rounds/s spawned ~300 impact effects a second and the game fell to 4 fps (engine
 -- 200-250 ms a frame, back to normal within a second of stopping: their dust and smoke piling up in front of the
 -- camera; deagle_stress 75 aim, 2026-10-15). So: (1) a hit next to a fresh effect of the same kind gets none (within
@@ -104,6 +111,8 @@ end
 function Deagle:SpawnFx(name, pos, normal, scale)
 	if not name then return end
 	if self.cfg.impactLook == "new" and LOOK_NEW[name] then name = LOOK_NEW[name] end
+	local kind = name   -- the budget's same-kind merge keeps entry and far side apart (they're 3 cm apart on a plank)
+	if self.cfg.impactLook == "ron" then name = string.match(name, EXIT_AS_ENTRY) or name end
 	if name == self.cfg.muzzleFx then scale = self.cfg.muzzleFxScale end
 	local lib = string.match(name, "^([%w_]+)%.")
 	if PLUGIN_FX[lib] and pos then   -- an impact / blood effect too far to see isn't spawned (debug zoom sees further)
@@ -112,7 +121,7 @@ function Deagle:SpawnFx(name, pos, normal, scale)
 		if dx * dx + dy * dy + dz * dz > (FX_FAR * (self.zoom or 1)) ^ 2 then return end
 	end
 	self:ImpactLight(name, pos, normal, scale)
-	if PLUGIN_FX[lib] and pos and not self:FxBudget(name, pos, scale) then return end
+	if PLUGIN_FX[lib] and pos and not self:FxBudget(kind, pos, scale) then return end
 	local vary = FX_VARY[name]
 	if vary and pos and normal then
 		local a = math.abs(normal.z) < 0.9 and { x = 0, y = 0, z = 1 } or { x = 1, y = 0, z = 0 }

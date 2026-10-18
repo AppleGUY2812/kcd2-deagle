@@ -144,10 +144,11 @@ for _, id in ipairs({ "deagle", "glock_17" }) do
 	local exitHole
 	for _, d in ipairs(M.decals) do if d.pos.y > 220.02 and d.pos.y < 220.05 then exitHole = d end end
 	check(string.format("%s: through a 3 cm plank (exit fx %s, exit hole %s), then the stone wall behind with %.0f of %.0f J",
-		id, tostring((M.fxNames["deagle_impacts.wood_exit"] or 0) > 0), exitHole and string.format("%.3f m", exitHole.size) or "none",
+		id, tostring((M.fxNames["deagle_impacts.wood"] or 0) == 2), exitHole and string.format("%.3f m", exitHole.size) or "none",
 		stone and stone.energy or -1, plank and plank.energy or -1),
 		plank and stone and plank.surface == "mat_wood" and stone.surface == "mat_rock" and stone.energy < plank.energy
-		and (M.fxNames["deagle_impacts.wood_exit"] or 0) == 1 and exitHole ~= nil and exitHole.size > 0.06, #landed)
+		-- the far side plays the entry effect again, along the bullet (Ready or Not's hit code; effects.lua EXIT_AS_ENTRY)
+		and (M.fxNames["deagle_impacts.wood"] or 0) == 2 and exitHole ~= nil and exitHole.size > 0.06, #landed)
 
 	-- 15 cm of timber: the .50 AE gets through (~19 cm of wood), the 9 mm (~10 cm) stops in it
 	reset()

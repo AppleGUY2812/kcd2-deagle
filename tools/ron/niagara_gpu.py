@@ -176,7 +176,13 @@ def burst_counts(ops):
         if lo is None:  # a literal straight into the scope
             lits = [v[1][0] for x in ops[i:i + 12] if x[1] == 'i2f' for v in x[2] if v[0] == 'c']
             lo = lits[0] if lits else None
-        out[em] = {'min': lo, 'max': (lo + int(span) - 1) if span else lo, 'note': 'count = min + int(rand * (max-min+1)), x SpawnCountScale, at least 1'}
+        if lo is None and reg is None and any(x[1] == 'f2i' and x[0] == scope for x in ops[i:i + 12]):
+            lo = 1  # count 1: the compiler folds i2f(1) x SpawnCountScale into f2i(SpawnCountScale)
+        # spawn time: a time t > 0 compiles to sub(t, emitter age) in the scope's first ops; t = 0 to a neg
+        t0 = next((v[1][1] for x in ops[i:i + 4] if x[1] == 'sub' and x[0] == scope
+                   for v in x[2][:1] if v[0] == 'c'), 0.0)
+        out[em] = {'min': lo, 'max': (lo + int(span) - 1) if span else lo, 'time': round(t0, 4),
+                   'note': 'count = min + int(rand * (max-min+1)), x SpawnCountScale, at least 1; time = s after the hit'}
     return out
 
 
@@ -213,7 +219,7 @@ def extract(game_path, outdir):
             try: d = props(p, u, e)
             except Exception: d = {}
             em = fn.split('/')[1]
-            dis_by_owner.setdefault(em, []).append({'cls': cls, **{k: v for k, v in d.items()}})
+            dis_by_owner.setdefault(em, []).append({'cls': cls, 'obj': e['name'], **{k: v for k, v in d.items()}})
         elif 'RendererProperties' in str(cls):
             try: d = props(p, u, e)
             except Exception as x: d = {'error': repr(x)}
@@ -250,10 +256,12 @@ def extract(game_path, outdir):
             E = sysd['emitters'].setdefault(em, {})
             E['external'] = ext; E['data_interfaces'] = dis_by_owner.get(em, [])
         elif e['name'] == 'SpawnScript':
-            em = fn.split('/')[1]; vm = props(p, u, e).get('CachedScriptVM', {})
+            em = fn.split('/')[1]; sp = props(p, u, e); vm = sp.get('CachedScriptVM', {})
             E = sysd['emitters'].setdefault(em, {})
             E['attributes'] = [(a['Name'], a['Type']) for a in vm.get('Attributes', [])]
             E['di_info'] = [d['Name'] for d in vm.get('DataInterfaceInfo', [])]
+            # which data-interface object each compiled name is (the GPU script's DI exports carry the same names)
+            E['di_map'] = {d['CompileName']: d['ResolvedDataInterface'] for d in sp.get('ResolvedDataInterfaces', []) or []}
     dis(dx)
     json.dump(sysd, open(os.path.join(outdir, 'system.json'), 'w'), indent=1, default=str)
     return sysd
@@ -276,7 +284,7 @@ def layout(attrs):
 
 
 def find_base(asm):
-    m = re.search(r'imad r\d+\.x, vThreadID\.y, cb0\[(\d+)\]\.y, vThreadID\.x', asm)
+    m = re.search(r'imad r\d+\.[xyzw], vThreadID\.y, cb0\[(\d+)\]\.y, vThreadID\.x', asm)
     return int(m.group(1))
 
 
@@ -291,13 +299,14 @@ def curve_slots(asm):
         a = re.search(r'-cb0\[(\d+)\]\.([xyzw])', L[i - 2]); b = re.search(r'cb0\[(\d+)\]\.([xyzw])', L[i - 1])
         if not (a and b and L[i - 1].startswith('mul_sat')): continue
         stride, off = 1, None
-        for ln2 in L[i + 1:i + 14]:
-            if 'ishl' in ln2 and 'l(0x00000001' in ln2: stride = 2
-            if 'bfi' in ln2 and 'l(0x0000001f), l(0x00000001)' in ln2: stride = 2
+        for ln2 in L[i + 1:i + 24]:
+            if 'ishl' in ln2 and re.search(r'ishl .*l\((0x[0-9a-f]+, )*0x00000001', ln2): stride = 2   # index x 2
+            if 'bfi' in ln2 and 'l(0x0000001f), l(0x00000001)' in ln2: stride = 2                    # index x 2 + 1
             mm = re.search(r'imad r\S+, r\S+, l\(0x0000000(\d)\), cb0\[(\d+)\]\.([xyzw])', ln2)
-            if mm: stride = int(mm.group(1)); off = (int(mm.group(2)), mm.group(3)); break
+            if mm: stride = int(mm.group(1)); off = off or (int(mm.group(2)), mm.group(3)); break
             mm = re.search(r'iadd r\S+, r\S+, cb0\[(\d+)\]\.([xyzw])', ln2)
-            if mm and 'umin' not in ln2: off = (int(mm.group(1)), mm.group(2)); break
+            if mm and 'umin' not in ln2 and off is None: off = (int(mm.group(1)), mm.group(2))
+            if off is not None and re.match(r'(add|mul_sat|utof) .*cb0\[\d+\]', ln2): break   # the next curve
         out.append({'min': (int(a.group(1)), a.group(2)), 'inv': (int(b.group(1)), b.group(2)), 'n': (int(m.group(1)), m.group(2)),
                     'off': off, 'stride': stride})
     # one entry per DI (spawn and update both sample)
@@ -306,15 +315,46 @@ def curve_slots(asm):
     return list(uniq.values())
 
 
-def build_static(curves, dis_):
+CURVE_CLS = {1: 'NiagaraDataInterfaceCurve', 2: 'NiagaraDataInterfaceVector2DCurve', 3: 'NiagaraDataInterfaceVectorCurve',
+             4: 'NiagaraDataInterfaceColorCurve'}
+
+
+def curve_dis(curves, E):
+    """each curve slot's data interface. The DIs' shader parameters sit in cb0 one row each, in the order of the
+    script's DataInterfaceInfo (unused ones keep their row), so row - first row = the DI's index there; di_map turns
+    its compiled name into the DI object. Returns {off slot: DI dict}; raises if the classes don't line up."""
+    dis_ = E['data_interfaces']; info = E.get('di_info', []); dmap = E.get('di_map', {})
+    by_obj = {d.get('obj'): d for d in dis_}
+    if not curves: return {}
+    if not dmap or not all(d.get('obj') for d in dis_):
+        raise ValueError('system.json has no DI names: extract it again (niagara_gpu.py extract)')
+    # the DI parameters are packed in DataInterfaceInfo order (a curve: MinTime, InvTimeRange, NumSamplesMinusOne,
+    # LUTOffset = 4 components; unused DIs keep their space; where the first one starts depends on the emitter).
+    # Assign slots to DIs in order, matching the curve type; two slots 4 components apart are two DIs in a row.
+    comp = lambda c: c['min'][0] * 4 + 'xyzw'.index(c['min'][1])
+    cs = sorted(curves, key=comp)
+    cls = [(by_obj.get(dmap.get(n)) or {}).get('cls') for n in info]
+    def solve(i, j):
+        if i == len(cs): return []
+        for k in range(j, len(info)):
+            if cls[k] != CURVE_CLS[cs[i]['stride']]: continue
+            if i and comp(cs[i]) - comp(cs[i - 1]) == 4 and k != j: break    # back to back: must be the next DI
+            if i and comp(cs[i]) - comp(cs[i - 1]) > 4 and k == j: continue  # a gap: at least one DI between
+            rest = solve(i + 1, k + 1)
+            if rest is not None: return [k] + rest
+        return None
+    ks = solve(0, 0)
+    if ks is None:
+        raise ValueError('curve slots %s do not line up with the DIs %s' % ([(c['min'], c['stride']) for c in cs], info))
+    return {c['off']: by_obj[dmap[info[k]]] for c, k in zip(cs, ks)}
+
+
+def build_static(curves, E):
     """t2 = every curve's LUT back to back; returns (words, {off slot: (start, samples-1, min, inv)})"""
-    by_stride = {1: 'NiagaraDataInterfaceCurve', 2: 'NiagaraDataInterfaceVector2DCurve', 3: 'NiagaraDataInterfaceVectorCurve',
-                 4: 'NiagaraDataInterfaceColorCurve'}
     data, info = [], {}
+    which = curve_dis(curves, E)
     for c in curves:
-        cand = [d for d in dis_ if d['cls'] == by_stride[c['stride']]]
-        if not cand: raise ValueError('no curve DI with stride %d' % c['stride'])
-        d = cand[0]
+        d = which[c['off']]
         lut = d.get('ShaderLUT') or [1.0] * c['stride']
         nm1 = int(d.get('LUTNumSamplesMinusOne', len(lut) // c['stride'] - 1))
         mn = float(d.get('LUTMinTime', 0.0)); mx = float(d.get('LUTMaxTime', 1.0))
@@ -332,7 +372,7 @@ class Emitter:
         self.fl, self.nf, self.il, self.ni = layout(E['attributes'])
         self.base = find_base(self.asm)
         self.curves = curve_slots(self.asm)
-        self.static, self.cinfo = build_static(self.curves, E['data_interfaces'])
+        self.static, self.cinfo = build_static(self.curves, E)
         ncb = int(re.search(r'dcl_constantbuffer CB0\[(\d+)\]', self.asm).group(1))
         self.cb0 = np.zeros((ncb, 4), U32)
         ext = E.get('external', [])
@@ -352,6 +392,7 @@ class Emitter:
 
     def setcb(self, slot, val, kind='f'):
         r, c = slot; c = 'xyzw'.index(c) if isinstance(c, str) else c
+        if r >= len(self.cb0): return   # a constant this shader doesn't declare (no data interfaces, ...)
         self.cb0[r, c] = struct.unpack('<I', struct.pack('<f' if kind == 'f' else '<i' if kind == 'i' else '<I', val))[0]
 
     def run(self, n_existing, n_spawn, fin, iin, dt, seed, rot=None, cap=None):

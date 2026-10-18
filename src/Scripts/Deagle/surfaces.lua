@@ -7,7 +7,7 @@ local U = Deagle.U
 -- hits
 -- ---------------------------------------------------------------------------
 -- What a round does on each of KCD2's 74 surface types (Libs/MaterialEffects/SurfaceTypes.xml): our impact effect
--- (deagle_impacts.<family>, built from Ready or Not's, docs/impact_fx_build.md) and bullet hole
+-- (deagle_impacts.<family>: Ready or Not's own hit for the nearest RoN surface, docs/impact_fx_build.md) and bullet hole
 -- (Materials/deagle/decals/bullet_hole_<hole>), or "pass": invisible helpers (window and map barriers, player / NPC /
 -- horse-only colliders, designer blockers) and foliage, which a round flies through. Worn armour (plate / mail combos)
 -- sparks like metal and gets no hole (decals don't follow a moving body).
@@ -23,8 +23,10 @@ surfaces("stone", "ceramic", { "mat_ceramics" }, "ceramic")
 surfaces("plaster", "plaster", { "mat_plaster" })
 surfaces("wood", "wood", { "mat_wood", "mat_wood_unwalk", "mat_door_wood", "mat_shield_wood", "mat_stairs_wood" })
 surfaces("wood", "wood_soft", { "mat_wood_soft", "mat_wicker" })
-surfaces("soil", "soil", { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_gravel", "mat_road", "mat_field" })
-surfaces("soil", "soil", { "mat_forest", "mat_grass", "mat_grassdry" }, "grass")
+surfaces("soil", "soil", { "mat_soil", "mat_soil_unwalk", "mat_mud", "mat_road", "mat_field" })   -- mud: RoN's own mud hit not ported yet
+surfaces("gravel", "soil", { "mat_gravel" }, "soil")
+surfaces("soil", "soil", { "mat_forest" }, "grass")
+surfaces("grass", "soil", { "mat_grass", "mat_grassdry" }, "grass")
 surfaces("water", nil, { "mat_water", "mat_mudwater", "mat_slowwater", "mat_rockwater", "mat_puddle" })
 surfaces("straw", nil, { "mat_thatch", "mat_organic_stuff" })
 surfaces("cloth", "cloth", { "mat_sack", "mat_fabric_items", "mat_fabric", "mat_leather" })

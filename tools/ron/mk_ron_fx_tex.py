@@ -86,3 +86,45 @@ px = np.empty_like(shard)
 px[..., 0] = px[..., 1] = px[..., 2] = 0.35 + 0.65 * shard[..., 0]
 px[..., 3] = shard[..., 1]
 save_rgba("imp_ron_shards_diff", px)
+
+
+# Ready or Not's Niagara impacts (tools/ron/ns2pfx.py), masked materials: RoN clips where texture alpha x particle
+# alpha < 0.3333; alpha here is that clip's threshold (clip()); colour as each pixel shader computes it (tools/ron/ron_mat.py)
+def clip(a):
+    """RoN's masked clip, kept as a threshold KCD2's AlphaClip can move with particle alpha (tools/ron/ns2pfx.py):
+    0.004 + 0.996 (1 - 1/(3a)) where a >= 1/3, else 0"""
+    s = np.where(a >= 1 / 3, 0.004 + 0.996 * (1 - 1 / (3 * np.maximum(a, 1e-6))), 0.0)
+    return s.astype(np.float32)
+
+
+#   imp_ron_grain_diff  M_SandSplashSmall: colour T_Cloud_ABC.R, clip T_Bullet_ConcreteImpact_BaseHRA.A. Which slot is
+#                       which texture is inferred (the other way round draws square grains), not read
+cloud = load("T_Cloud_ABC.png", 256)
+hra = load("T_Bullet_ConcreteImpact_BaseHRA.png", 256)
+px = np.empty_like(hra)
+px[..., 0] = px[..., 1] = px[..., 2] = cloud[..., 0]
+px[..., 3] = clip(hra[..., 3])
+save_rgba("imp_ron_grain_diff", px)
+#   imp_ron_grass_diff  M_GrassBlade: colour T_FX_GrassBlade.rgb, clip its alpha (2x2 blades)
+g = load("T_FX_GrassBlade.png", 512)
+g[..., 3] = clip(g[..., 3])
+save_rgba("imp_ron_grass_diff", g)
+#   imp_ron_woodshard_diff  Shards_Mat: colour Shards.R (grey), clip Shards.A (2x2)
+sh = load("Shards.png", 256)
+px = np.empty_like(sh)
+px[..., 0] = px[..., 1] = px[..., 2] = sh[..., 0]
+px[..., 3] = clip(sh[..., 3])
+save_rgba("imp_ron_woodshard_diff", px)
+#   imp_ron_sandblocks_diff  M_SandSplash: T_SandBlocks.rgb, clip its alpha (2x2)
+sb = load("T_SandBlocks.png", 512)
+sb[..., 3] = clip(sb[..., 3])
+save_rgba("imp_ron_sandblocks_diff", sb)
+#   imp_ron_glowdot_diff  M_ParticleEmberSimple: lit, colour T_Glow_A.rgb x particle colour, opacity T_Glow_A.R
+gl = load("T_Glow_A.png", 256)
+gl[..., 3] = gl[..., 0]
+save_rgba("imp_ron_glowdot_diff", gl)
+#   imp_ron_sprayadd_diff  MI_SparkSpray (M_Particle_Additive): adds T_debrisSpray_4x1.rgb x colour; onto black
+sp = load("T_debrisSpray_4x1.png")
+sp[..., :3] *= sp[..., 3:4]
+sp[..., 3] = 1.0
+save_rgba("imp_ron_sprayadd_diff", sp)
