@@ -44,10 +44,11 @@ const char* kStats[] = { "stat0", "stat1", "stat2", "stat3" };   // order unveri
 struct Alias { const char* name; const char* is; };
 const Alias kAliases[] = {   // the menu's names for a few skills
 	{ "horsemanship", "horse_riding" }, { "riding", "horse_riding" }, { "sword", "weapon_sword" }, { "swords", "weapon_sword" },
-	{ "shield", "weapon_shield" }, { "dagger", "weapon_dagger" }, { "polearm", "weapon_large" }, { "polearms", "weapon_large" },
+	{ "shield", "weapon_shield" }, { "dagger", "weapon_dagger" }, { "polearm", "weapon_large" },
 	{ "unarmed", "weapon_unarmed" }, { "heavy", "heavy_weapons" }, { "archery", "marksmanship" }, { "bow", "marksmanship" },
 	{ "craft", "craftsmanship" }, { "smithing", "craftsmanship" }, { "herbalism", "survival" }, { "hunting", "survival" },
-	{ "lockpicking", "thievery" }, { "reading", "scholarship" }, { "dog", "houndmaster" }, { "warfare", "defense" },
+	{ "lockpicking", "thievery" }, { "reading", "scholarship" }, { "dog", "houndmaster" }, { "warfare", "fencing" },
+	{ "defence", "defense" }, { "polearms", "weapon_large" },   // the menu says Warfare for fencing (text_ui_soul.xml)
 };
 const int kStatOff = 0x10, kSkillOff = 0x24, kBlockPtr = 0x58, kBackPtr = 0x08, kMaxBlocks = 3;
 const int kOwnedBegin = 0x40, kOwnedEnd = 0x48, kPerkGuid = 0x10, kMaxOwned = 4000;
