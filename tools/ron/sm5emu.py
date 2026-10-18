@@ -123,7 +123,7 @@ class Program:
         S = State(); S.n = n
         S.r = {}
         S.cb = {k: np.asarray(v, U32).reshape(-1, 4) for k, v in cb.items()}
-        S.srv = {k: np.asarray(v, U32) for k, v in srv.items()}
+        S.srv = {k: (v if isinstance(v, tuple) else np.asarray(v, U32)) for k, v in srv.items()}
         S.uav = {k: np.asarray(v, U32) for k, v in uav.items()}
         tid = np.arange(n, dtype=U32)
         S.vtid = np.stack([tid, np.zeros(n, U32), np.zeros(n, U32), np.zeros(n, U32)], 1)
@@ -375,7 +375,23 @@ class Program:
                 for lane in np.nonzero(act)[0]:
                     buf[addr[lane]] = U32((int(buf[addr[lane]]) + int(val[lane])) & 0xffffffff)
             elif nm == 'sample_l':
-                # scene textures (depth / normals for collision): nothing in the way
-                W(np.tile(f2u([1e9, 0, 0, 1]), (S.n, 1)))
+                res = a[2]; tex = S.srv.get(int(res.kind[1:])) if res.kind[1:].isdigit() else None
+                if isinstance(tex, tuple) and tex[0] == 'tex3d':
+                    # a 3D texture (a vector field): trilinear, wrap, texel centres at (i + 0.5) / N; data [z, y, x, 4]
+                    vol = tex[1]; nz, ny, nx = vol.shape[:3]
+                    uvw = F(1)[:, :3]
+                    g = uvw * np.array([nx, ny, nz], np.float32) - 0.5
+                    i0 = np.floor(g).astype(np.int64); fr = (g - i0).astype(np.float32)
+                    out = np.zeros((S.n, 4), np.float32)
+                    for dz in (0, 1):
+                        for dy in (0, 1):
+                            for dx in (0, 1):
+                                wgt = ((fr[:, 0] if dx else 1 - fr[:, 0]) * (fr[:, 1] if dy else 1 - fr[:, 1]) * (fr[:, 2] if dz else 1 - fr[:, 2]))
+                                xi = (i0[:, 0] + dx) % nx; yi = (i0[:, 1] + dy) % ny; zi = (i0[:, 2] + dz) % nz
+                                out += vol[zi, yi, xi] * wgt[:, None]
+                    W(f2u(out)[:, res.swz] if out.ndim == 2 else f2u(out))
+                else:
+                    # scene textures (depth / normals for collision): nothing in the way
+                    W(np.tile(f2u([1e9, 0, 0, 1]), (S.n, 1)))
             else:
                 raise NotImplementedError(op.line)

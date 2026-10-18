@@ -363,6 +363,24 @@ def build_static(curves, E):
     return np.array(data, np.float32).view(U32), info
 
 
+def vector_field(name):
+    """a VectorFieldStatic (Niagara's engine ones: Engine/Plugins/FX/Niagara/Content/VectorFields/Assets/<name>) ->
+    (volume [z, y, x, 4] float32, bounds min, bounds max). Its SourceData is FFloat16Color per voxel, x fastest,
+    at the end of the export; Bounds a Box of doubles."""
+    rel = 'Engine/Plugins/FX/Niagara/Content/VectorFields/Assets/' + name
+    base = os.path.join(ronpaths.OUT, rel)
+    if not os.path.exists(base + '.uasset'):
+        subprocess.run([sys.executable, '-I', os.path.join(HERE, 'ronx.py'), ronpaths.PAKS, ronpaths.OUT, ronpaths.OOZ,
+                        r'VectorFields/Assets/%s\.(uasset|uexp|ubulk)$' % re.escape(name)], check=True, capture_output=True)
+    p, u = pkg_open(base)
+    e = p.exports[0]; d = props(p, u, e); blob = p.data(e)
+    nx, ny, nz = d['SizeX'], d['SizeY'], d['SizeZ']
+    raw = blob[-(nx * ny * nz * 8) - 4:-4] if len(blob) >= nx * ny * nz * 8 + 4 else blob[-(nx * ny * nz * 8):]
+    vol = np.frombuffer(raw, np.float16).astype(np.float32).reshape(nz, ny, nx, 4)
+    b = bytes.fromhex(d['Bounds']); mn = struct.unpack_from('<3d', b, 0); mx = struct.unpack_from('<3d', b, 24)
+    return vol, np.array(mn, np.float32), np.array(mx, np.float32)
+
+
 class Emitter:
     def __init__(self, sysd, name, outdir):
         from sm5emu import Program
@@ -389,6 +407,17 @@ class Emitter:
         self.cb1 = cb1.view(U32)
         rp = E.get('renderer', {})
         self.blend = bool(rp.get('bSubImageBlend'))
+        # a vector field DI: its 3D texture goes to the shader's texture3d slot; its bounds to the two constant rows
+        # the shader subtracts (uvw = (p x scale - min) / (max - min)); owner scale 1 and large-world tile 0 for it
+        self.vf = None
+        vfd = next((d for d in E.get('data_interfaces', []) if d.get('cls') == 'NiagaraDataInterfaceVectorField'), None)
+        if vfd:
+            vol, mn, mx = vector_field(vfd['Field'])
+            t3 = re.search(r'sample_l_indexable\(texture3d\)\S* r\d+\.\w+, r\d+\.\w+, t(\d+)', self.asm)
+            bm = re.search(r'add r\d+\.\w+, -cb0\[(\d+)\]\.(\w+), cb0\[(\d+)\]\.(\w+)', self.asm[t3.start() - 800:t3.start()]) if t3 else None
+            if not (t3 and bm): raise ValueError('vector field: texture or bounds constants not found in ' + name)
+            self.vf = {'slot': int(t3.group(1)), 'vol': vol, 'min': mn, 'max': mx,
+                       'rmin': (int(bm.group(1)), bm.group(2)[1:4]), 'rmax': (int(bm.group(3)), bm.group(4)[1:4])}   # dest .yzw: source lanes 1-3
 
     def setcb(self, slot, val, kind='f'):
         r, c = slot; c = 'xyzw'.index(c) if isinstance(c, str) else c
@@ -409,6 +438,13 @@ class Emitter:
         for k in range(3):
             for c in range(3): self.setcb((B + 25 + k, c), float(R[k][c]))
         self.setcb((B + 49, 'x'), 0, 'i'); self.setcb((B + 49, 'w'), seed * 7 + 1, 'u')
+        if self.vf:
+            for c in 'xyz': self.setcb((B + 39, c), 1.0)              # Engine.Owner.Scale
+            for c in 'xyz': self.setcb((B + 40, c), 0.0)              # large-world tile 0 (the effect at the origin)
+            self.setcb((B + 40, 'w'), 2097152.0)                       # UE5's LWC tile size
+            (rn, cn), (rx, cx) = self.vf['rmin'], self.vf['rmax']
+            for k in range(3):
+                self.setcb((rn, cn[k]), float(self.vf['min'][k])); self.setcb((rx, cx[k]), float(self.vf['max'][k]))
         for off, (start, nm1, mn, inv) in self.cinfo.items():
             c = [x for x in self.curves if x['off'] == off][0]
             self.setcb(c['min'], mn); self.setcb(c['inv'], inv); self.setcb(c['n'], nm1, 'u'); self.setcb(off, start, 'u')
@@ -422,7 +458,9 @@ class Emitter:
         cbs[0] = self.cb0
         for k in self.extcb: cbs[k] = self.cb1
         S = self.prog.run(threads, cb=cbs,
-                          srv={**{k: np.zeros(0, U32) for k in self.texsrv}, self.bufsrv[0]: fin, self.bufsrv[1]: iin, self.bufsrv[2]: self.static},
+                          srv={**{k: np.zeros(0, U32) for k in self.texsrv},
+                               **({self.vf['slot']: ('tex3d', self.vf['vol'])} if self.vf else {}),
+                               self.bufsrv[0]: fin, self.bufsrv[1]: iin, self.bufsrv[2]: self.static},
                           uav={0: ui, 1: uf, 2: u2},
                           gsm={'g0': 64, 'g1': 16, 'g2': 4, 'g3': 1})
         return int(u2[1]), uf, ui

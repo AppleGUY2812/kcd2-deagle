@@ -17,7 +17,7 @@ emitter is pre-aged by one frame (checked by script: no part is shorter).
 | `metal` | `NS_Bullet_Impact_Metal_Big_Shotgun` (RON_Steel) | flash, main sparks, core sparks, spark burst, dark chips. **Also used for hits on plate armour.** |
 | `stone` | `NS_Bullet_Impact_Concrete_Big` (RON_ConcreteStrong / Rock / Ceramic) | base dust, debris (Stones2x2), dust, shot spatter |
 | `plaster` | `NS_BulletImpact_Plaster` (RON_Plaster / Drywall) | base dust, debris, shot spatter (at 0.025 s), big smoke, smoke kick (16x2 dust streak) |
-| `wood` | `NS_Bullet_Impact_Wood_Big` (RON_Pine / Plywood / Mahogany) | debris (Shards, dissolving), dust, shot spatter, smoke kick. FLOATING_DIRT (vector field) not converted |
+| `wood` | `NS_Bullet_Impact_Wood_Big` (RON_Pine / Plywood / Mahogany) | debris (Shards, dissolving), dust, shot spatter, smoke kick, floating dirt (its curl-noise vector field stood in by Turbulence3DSpeed) |
 | `soil` | `NS_BulletImpact_Dirt` (RON_Dirt) | 35-50 dirt grains every way, dust puff at 0.05 s, 10-15 spatter streaks |
 | `grass` | `NS_BulletImpact_Grass` (RON_Grass) | 15-20 grass blades (dissolving), puff, dust streak |
 | `gravel` | `NS_BulletImpact_Gravel` (RON_Gravel) | grains, sand blocks, dust, one spark. Mesh pebbles not converted |

@@ -36,4 +36,6 @@ Facts and the engine layout: MODLOG 2026-10-14 and 2026-10-18.
 
 Emulator limits (2026-10-18): data interfaces are matched to their constants in DataInterfaceInfo order (each spawn
 script's ResolvedDataInterfaces names the object); vector fields (VectorField DI), collision queries and mesh
-renderers aren't emulated, so wood's FLOATING_DIRT and gravel's mesh pebbles aren't converted.
+renderers aren't emulated, so gravel's mesh pebbles aren't converted. Vector fields are (Niagara's engine
+fields, e.g. TilingCurl32: FFloat16Color voxels, trilinear + wrap in sm5emu); KCD2 can't sample one, so the converter
+puts the measured push into Turbulence3DSpeed (not the same paths).
