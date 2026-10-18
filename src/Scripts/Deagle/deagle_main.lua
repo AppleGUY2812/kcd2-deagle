@@ -929,6 +929,7 @@ System.AddCCommand("deagle_testnpc", "Deagle:TestNpc([[%line]])", "deagle_testnp
 System.AddCCommand("deagle_testwall", "Deagle:TestWall([[%line]])", "deagle_testwall: a row of KCD2 objects, one per surface (stone, plaster, pots, wood, wicker, metal, glass, sack, straw, hay, food, leather), 4 m ahead | clear")
 System.AddCCommand("deagle_shotsound", "Deagle:SetOnOff('shotSound', [[%1]])", "deagle_shotsound 0|1: gunshot sound off / on (impacts still play)")
 System.AddCCommand("deagle_flash", "Deagle:FlashLookCmd(Deagle.Arg([[%1]]))", "deagle_flash ron|ours: Ready or Not's own muzzle flash or ours, both on the gun's flash cards (sets flashMode mesh; kept)")
+System.AddCCommand("deagle_flashhold", "Deagle:FlashHoldCmd([[%line]])", "deagle_flashhold <variant> <stage> | next | off: show one muzzle flash card and keep it (debugging; shots leave it alone); next steps through every card")
 System.AddCCommand("deagle_gunfx", "Deagle:SetOnOff('gunFx', [[%1]])", "deagle_gunfx 0|1: everything at the gun off / on (flash, smoke, light, casings, tracers, gunshot): only the impacts show")
 System.AddCCommand("deagle_sounds", "Deagle:Set('sounds ' .. (Deagle.Arg([[%1]]):find('orig') and 'original' or 'ron'))", "deagle_sounds ron|original: Ready or Not's sound engine, or the gun mods' own shot and animation sounds")
 System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")

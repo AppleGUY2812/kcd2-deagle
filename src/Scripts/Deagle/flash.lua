@@ -251,6 +251,7 @@ end
 function Deagle:FlashMeshShot()
 	local m = self.flashMesh
 	if not m then return false end
+	if m.held then return true end   -- deagle_flashhold: the held card stays, a shot neither shows another nor hides it
 	if m.mtl ~= self:FlashLook().mtl then self:FlashMeshMaterial(self.vmId and System.GetEntity(self.vmId)) end
 	for i in pairs(m.shown) do self:FlashMeshShow(i, false) end
 	m.variant = math.random(m.look.variants)
@@ -266,7 +267,7 @@ end
 -- which counted as the next frame and hid variant a before it was ever drawn (traced in game 2026-10-14)
 function Deagle:FlashMeshTick()
 	local m = self.flashMesh
-	if not m or not m.on or System.GetFrameID() == m.frame then return end
+	if not m or m.held or not m.on or System.GetFrameID() == m.frame then return end
 	local want = flashCard(m, System.GetCurrTime() - m.t0 + (self.frameDt or 0.016) / 2)
 	if want ~= m.cur then
 		if m.cur then self:FlashMeshShow(m.cur, false) end
@@ -274,6 +275,41 @@ function Deagle:FlashMeshTick()
 		m.cur = want
 	end
 	if not want then m.on = nil end
+end
+-- deagle_flashhold <variant> <stage> | next | off: one flash card of the current look shown and kept (debugging: the
+-- user, 2026-10-18, "a freeze frame or step through of the flash frames"). While held, shots leave it alone; next steps
+-- through every card (variant 1 stage 1 .. last variant last stage, then back to 1/1) and logs which one it shows;
+-- off hides it and gives the flash back to the shots
+function Deagle:FlashHoldCmd(arg)
+	local m = self.flashMesh
+	if not m or not m.names then log("$4flashhold: no flash cards on this gun (flashMode mesh?)") return end
+	local L = m.look
+	local n = L.variants * L.stages
+	arg = self.Arg and self.Arg(arg) or arg
+	local w = {}
+	for x in string.gmatch(tostring(arg or ""), "%S+") do w[#w + 1] = x end
+	if w[1] == "off" then
+		if m.held then self:FlashMeshShow(m.held, false) end
+		m.held, m.on, m.cur = nil, nil, nil
+		log("flashhold off: the shots flash again")
+		return
+	end
+	local i
+	if w[1] == "next" or not w[1] then i = (m.held or 0) % n + 1
+	else
+		local v, st = tonumber(w[1]), tonumber(w[2] or 1)
+		if not v or v < 1 or v > L.variants or not st or st < 1 or st > L.stages then
+			log(string.format("$4flashhold: variant 1-%d, stage 1-%d (or next / off)", L.variants, L.stages)) return
+		end
+		i = (v - 1) * L.stages + st
+	end
+	for k in pairs(m.shown) do self:FlashMeshShow(k, false) end
+	if m.mtl ~= self:FlashLook().mtl then self:FlashMeshMaterial(self.vmId and System.GetEntity(self.vmId)) end
+	m.on, m.cur = nil, nil
+	m.held = i
+	self:FlashMeshShow(i, true)
+	log(string.format("flashhold %s look: variant %d stage %d (card %d of %d, %s, material %s)", L.look,
+		math.floor((i - 1) / L.stages) + 1, (i - 1) % L.stages + 1, i, n, tostring(m.names[i]), tostring(m.mtl)))
 end
 -- Ready or Not's flash lights (flashMesh.light.mode "ron"), from its WeaponFlash_Pistol_V3 (the Deagle) and V2 (the
 -- Glock) ParticleModuleLight: a main light on the burst 25 cm (V2: 10 cm) ahead of the muzzle for 0.04 s, and a second
