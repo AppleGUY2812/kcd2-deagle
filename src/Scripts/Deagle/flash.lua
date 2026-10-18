@@ -38,6 +38,12 @@ function Deagle:MuzzleFlash(dir)
 			self:Native(string.format("flashfx %s %.4f %.4f %.4f %.4f %.4f %.4f %.4f", light, scale, lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
 			self.flashUntil = System.GetCurrTime() + FLASH_FOLLOW
 		end
+		-- Ready or Not's look: its Sparks (0-10 a shot, 50-85 ms) are a particle effect, the rest is on the cards; on
+		-- the muzzle like the flash (the effect's y = RoN's +X, down the barrel); RoN's own size, no cartridge scale
+		if okM and self:FlashLook().look == "ron" then
+			self:Native(string.format("flashfx %s 1 %.4f %.4f %.4f %.4f %.4f %.4f", c.flashRon.sparks, lp.x, lp.y, lp.z, ld.x, ld.y, ld.z))
+			self.flashUntil = System.GetCurrTime() + FLASH_FOLLOW
+		end
 	elseif c.flashMode == "live" and self.flashArmed and self.vmInFp and self.vmShown then
 		-- the live flash (armed when the gun came out, FlashArm): seen in the frame it's fired, for 2 frames, 1 under
 		-- 40 fps (Ready or Not: 0.035-0.04 s); its light from a short per-shot emitter on the muzzle
@@ -133,7 +139,8 @@ function Deagle:FlashCardNames()
 	for _, set in ipairs({ c.large, c.small }) do
 		for v = 1, FLASH_SHAPES * FLASH_TURNS do out[#out + 1] = set .. "_" .. v end
 	end
-	for _, set in ipairs({ r.large, r.small }) do
+	for i, set in ipairs({ r.large, r.small }) do
+		if i == 2 and set == r.large then break end   -- one set for both sizes (flashRon.small = large): no names twice
 		for v = 1, r.variants do
 			for st = 1, r.stages do out[#out + 1] = set .. "_" .. v .. "_" .. st end
 		end

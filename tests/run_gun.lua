@@ -196,9 +196,16 @@ if phys then
 	local rset = (phys.blast >= Deagle.cfg.physics.largeFlashBlast) and R.large or R.small
 	mesh.ron = { cards = n, hidden = #ronShown() == 0, last = M.attachCgf and M.attachCgf[Deagle.flashMesh.names[n]],
 		want = "/flash/" .. rset .. "_" .. R.variants .. "_" .. R.stages .. ".skin", look = Deagle.flashMesh.look.look }
+	local function sparksSince(n0)   -- Ready or Not's Sparks effect spawned on the muzzle, at its own size
+		local k = 0
+		for i = n0 + 1, #M.native do if M.native[i]:find("^%[DN%] flashfx deagle%.muzzle_sparks_ron 1 ") then k = k + 1 end end
+		return k
+	end
 	local function ronShot(fps)
 		Deagle.state.lastShot = -100
+		local n0 = #M.native
 		Deagle:Shoot(true)
+		mesh.ron.sparks = (mesh.ron.sparks or 0) + sparksSince(n0)
 		local frames, seq, variant, ok = 0, {}, nil, true
 		for _ = 1, 200 do
 			local sh = ronShown()
@@ -220,6 +227,11 @@ if phys then
 	M.console("deagle_flash", "ours")
 	M.advance(0.2, 60)
 	mesh.ron.back = Deagle.flashMesh.look.look == "ours" and #Deagle.flashMesh.names == 16
+	local n0 = #M.native
+	Deagle.state.lastShot = -100
+	Deagle:Shoot(true)
+	M.advance(0.2, 60)
+	mesh.ron.sparksOurs = sparksSince(n0)
 	mesh.ron.leftOn = 0                               -- no Ready or Not card left showing after the switch back
 	for n in pairs(M.cdfAttach or {}) do if n:find("_ron") and M.hidden[n] ~= true then mesh.ron.leftOn = mesh.ron.leftOn + 1 end end
 	mesh.runtime = (M.boneAttach or 0) + (M.runtimeCgf or 0)
@@ -348,8 +360,13 @@ if mesh then
 	local r = mesh.ron
 	check(string.format("Ready or Not flash (deagle_flash ron): %d hidden cards, last %s", r.cards, tostring(r.last)),
 		r.look == "ron" and r.hidden and tostring(r.last):sub(-#r.want) == r.want, r.last)
-	check(string.format("Ready or Not flash at 60 fps: %d frames (0.095 s = 6), one variant stepping through its stages (%s); x0.1: %d frames (57)",
-		r.f60, table.concat(r.seq60, ","), r.fslow), r.f60 >= 5 and r.f60 <= 7 and r.ok60 and r.fslow >= 54 and r.fslow <= 60 and r.okslow, r.f60)
+	-- one stage per 60 fps frame (flashRon.time = stages / 60): 2 frames at 60 fps, and x0.1 slow motion 20
+	local want60 = math.floor(Deagle.cfg.flashRon.time * 60 + 0.5)
+	check(string.format("Ready or Not flash at 60 fps: %d frames (%.3f s = %d), one variant stepping through its stages (%s); x0.1: %d frames (%d)",
+		r.f60, Deagle.cfg.flashRon.time, want60, table.concat(r.seq60, ","), r.fslow, want60 * 10),
+		math.abs(r.f60 - want60) <= 1 and r.ok60 and math.abs(r.fslow - want60 * 10) <= 2 and r.okslow, r.f60)
+	check(string.format("Ready or Not's Sparks effect on the muzzle with its flash: %d of 2 shots; with ours: %d", r.sparks or 0, r.sparksOurs or -1),
+		r.sparks == 2 and r.sparksOurs == 0, r.sparks)
 	check(string.format("deagle_flash ours: back to our 16 cards, %d Ready or Not cards left showing", r.leftOn), r.back and r.leftOn == 0, r.leftOn)
 	check(string.format("flash card skins from the .cdf: %d (%d expected), %d showing at load; %d attached, loaded, moved or turned at run time",
 		mesh.cdfCards, mesh.want, mesh.cdfShown, mesh.runtime), mesh.cdfCards == mesh.want and mesh.cdfShown == 0 and mesh.runtime == 0, mesh.runtime)

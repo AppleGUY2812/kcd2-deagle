@@ -88,12 +88,18 @@ Deagle.cfg = {
 		light = { mode = "ron", intensity = 0.5, bulb = 0.3, refBlast = 2.08 } },
 	-- flashMesh.look "ron" (deagle_flash ron): Ready or Not's pistol flash, its textures and its Cascade system run and baked
 	-- onto cards (tools/ron/flash_bake.py): WeaponFlash_Pistol_V3 of the Grizzly MK V .50 AE for big blasts, the G19's V2
-	-- for small ones. variants x stages cards; a shot picks a variant and shows the stage its game time is in (sparks
-	-- outlive the 0.035-0.04 s pop: time 0.095 s). Rotations are baked, no roll. mtl: _dim / _hot (x1/3, x3)
+	-- for small ones. variants x stages cards; a shot picks a variant and shows the stage its game time is in. Its
+	-- Sparks (50-85 ms) are the particle effect sparks, spawned on the muzzle with the cards. Rotations are baked, no
+	-- roll. mtl: _dim / _hot (x1/3, x3)
 	-- the share of shots with a flash (and its light): Ready or Not's MuzzleFlashChance 0.65; the smoke comes every shot
 	flashChance = 0.65,
-	flashRon = { time = 0.095, stages = 10, variants = 4, mtl = "deagle_vm_flash_ron", large = "deagle_vm_flash_ron",
-		small = "deagle_vm_flash_ron_s" },
+	-- flashRon: tools/ron/flash_bake.py's cards, one stage per 60 fps frame (time = stages / 60): stage k = Ready or
+	-- Not's flash at the end of frame k after the shot. Below 60 fps a frame can skip a stage (30 fps: the shot's frame
+	-- shows stage 2, at 16.7 ms into a 33 ms frame, and the next is past the flash); that is right, Ready or Not draws its
+	-- pops at ~33 ms of age on that frame too: its sprites live 35-40 ms at any frame rate. Don't "fix" it to show
+	-- every stage.
+	flashRon = { time = 2 / 60, stages = 2, variants = 16, mtl = "deagle_vm_flash_ron", large = "deagle_vm_flash_ron",
+		small = "deagle_vm_flash_ron", sparks = "deagle.muzzle_sparks_ron" },   -- one set for now: the V3 (Grizzly) flash; the Glock's V2 set comes with V2 in flash_ref
 	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)
 	muzzleLight = "deagle.muzzle_light", muzzleLightLarge = "deagle.muzzle_large_light",   -- its light, per shot
 	flashLive = { 0.8, 1.0 },  -- the live flash's size on each frame it's seen (2 frames; 1 frame under 40 fps)

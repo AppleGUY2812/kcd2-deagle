@@ -25,10 +25,12 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 import cascade_sim as cs
 import flash_ref as fr
+import kcd2_tonemap as kt
 
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
 REPO = ARGS[0]
 GAIN = float(ARGS[1]) if len(ARGS) > 1 else 1.0
+SCENE = kt.Scene(**kt.FLASH_SCENE)   # the KCD2 scene the cards' colours are solved for (kcd2_tonemap.FLASH_SCENE)
 cs.FX = '/mnt/e/Tools/deagle-work/ron_fx/_data/flash_collect.json'
 PNG = '/mnt/e/Tools/deagle-work/ron_fx/flash'
 OUT = '/mnt/e/Tools/deagle-work/flash_ron'
@@ -81,10 +83,15 @@ def write_textures():
     from PIL import Image
     os.makedirs(OUT + '/tif', exist_ok=True)
     for m, (t, _, _) in SHEETS.items():
-        c = np.asarray(Image.open(f'{PNG}/{t}.png').convert('RGB')).astype(np.float64)
-        a = c.max(axis=2)
-        rgb = np.where(a[..., None] > 0, c * 255.0 / np.maximum(a, 1)[..., None], 255.0)
-        out = np.dstack([np.clip(np.rint(rgb), 0, 255), a]).astype(np.uint8)
+        # Ready or Not's sheets are sRGB (flash_collect.json): a texel adds L = srgb_to_linear(png). On the card KCD2
+        # adds emittance x srgb_to_linear(R) x A (Illum.cfx:894, the emittance map's alpha) x A again (the blend:
+        # GatherAlpha Illum.cfx:858-860), the tif compiled sRGB (rc.ini [AlbedoWithGenericAlpha] colorspace=sRGB).
+        # So A = sqrt(max L) and R = linear_to_srgb(L / A^2) add exactly L
+        c = np.asarray(Image.open(f'{PNG}/{t}.png').convert('RGB')).astype(np.float64) / 255.0
+        L = kt.srgb_inv(c)
+        A = np.sqrt(L.max(axis=2))
+        rgb = np.where(A[..., None] > 0, kt.srgb(L / np.maximum(A, 1e-9)[..., None] ** 2), 1.0)
+        out = np.dstack([np.clip(np.rint(rgb * 255), 0, 255), np.clip(np.rint(A * 255), 0, 255)]).astype(np.uint8)
         Image.fromarray(out, 'RGBA').save(f'{OUT}/tif/{TEX[m]}_diff.tif', compression='tiff_lzw')
 
 
@@ -194,7 +201,43 @@ def card_quad(s):
     col = screen_rgb(s['rgb']); level = int(round(math.log2(lum)))
     hue = 'c%d%d%d' % tuple(int(x * 8) for x in col)
     return {'mtl': f'{TEX[sheet][10:]}_{hue}_{level:02d}', 'tex': TEX[sheet], 'hue': hue, 'col': col, 'level': level,
+            'rgb': [float(x) for x in s['rgb']], 'sheet': sheet,
             'p': [list(map(float, to_bone(q))) for q in corners], 'uv': tile_uv(sheet, s['sub'] % (nx * ny))}
+
+
+def ron_display(hdr):   # Ready or Not's screen colour (flash_ref.tonemap, float 0..1)
+    return np.power(aces(RON_EXPOSURE * np.asarray(hdr, float)), 1 / 2.2)
+
+
+_texels = {}
+def texels(sheet, n=1500):   # a sample of the sheet's linear texels (L, what a texel adds in Ready or Not)
+    if sheet not in _texels:
+        t, _, _ = fr.tex({'MI_MuzzleFlash_SMG': 'SMG', 'MI_MuzzleFlash_Pistol': 'Pistol', 'MI_MuzzleFlash_Side': 'Side',
+                          'M_Particle_Additive': 'Add'}[sheet])
+        L = t.reshape(-1, 3).astype(np.float64)
+        L = L[L.max(axis=1) > 0.01]
+        _texels[sheet] = L[np.random.default_rng(0).choice(len(L), min(n, len(L)), replace=False)]
+    return _texels[sheet]
+
+
+def kcd2_emittance(rgb, sheet):
+    """the HDR colour k (per channel) a card needs so KCD2 (SCENE) shows each texel L of the sheet as Ready or Not
+    shows it: least squares over the sheet's texels of KCD2 display(k * L) vs Ready or Not's display(rgb * L), in
+    display sRGB. The two curves differ, so one k can't match every texel; this is the best single one"""
+    L = texels(sheet)
+    want = ron_display(L * np.asarray(rgb, float)[None, :])
+    k = np.maximum(SCENE.solve(ron_display(np.asarray(rgb, float))), 1e-6)   # start: matched at texel 1
+    err = lambda kk: float(((SCENE.display(L * kk[None, :]) - want) ** 2).sum())
+    for _ in range(3):
+        for ch in range(3):
+            lo, hi = math.log2(k[ch]) - 4, math.log2(k[ch]) + 4
+            for _ in range(30):   # golden section in log2
+                a = hi - (hi - lo) * 0.618; b = lo + (hi - lo) * 0.618
+                ka, kb = k.copy(), k.copy(); ka[ch], kb[ch] = 2 ** a, 2 ** b
+                if err(ka) < err(kb): hi = b
+                else: lo = a
+            k[ch] = 2 ** ((lo + hi) / 2)
+    return k
 
 
 def bake_v2():
@@ -211,7 +254,7 @@ def bake_v2():
             qs = [q for q in (card_quad(x) for x in sprites) if q]
             if not qs:
                 qs.append({'mtl': 't_longspark_02_8x2_c800_00', 'tex': TEX['M_Particle_Additive'], 'hue': 'c800',
-                           'col': (1.0, 0.0, 0.0), 'level': 0,
+                           'col': (1.0, 0.0, 0.0), 'level': 0, 'rgb': [1.0, 0.0, 0.0], 'sheet': 'M_Particle_Additive',
                            'p': [[-0.0005, -0.01, -0.0005], [0.0005, -0.01, -0.0005], [0.0005, -0.01, 0.0005], [-0.0005, -0.01, 0.0005]],
                            'uv': tile_uv('M_Particle_Additive', 0)})
             stages.append(qs)
@@ -257,15 +300,24 @@ def bake(system, name):
 
 os.makedirs(OUT + '/tif', exist_ok=True)
 sets = {'deagle_vm_flash_ron': bake_v2()}   # V3 (the Grizzly's) for the Deagle; the Glock's V2 set comes later
-mats = sorted({(q['mtl'], q['tex'], q['col'], q['level']) for c in sets.values() for v in c for s in v for q in s})
+members = {}
+for c in sets.values():
+    for v in c:
+        for s in v:
+            for q in s: members.setdefault((q['mtl'], q['tex'], q['sheet']), []).append(q['rgb'])
+mats = []
+for (mtl, tex, sheet), rgbs in sorted(members.items()):
+    k = kcd2_emittance(np.mean(np.array(rgbs), axis=0), sheet)
+    w = float(k.max()) * 10.0                   # Illum: HDR = colour x intensity x 0.1 (Illum.cfx:953)
+    mats.append((mtl, tex, tuple(round(float(x), 4) for x in k / k.max()), w))
 json.dump({'sets': sets, 'materials': [m[0] for m in mats], 'stages': STAGES, 'variants': VARIANTS, 'time': T},
           open(OUT + '/cards.json', 'w'))
 write_textures()
 for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_x30', 30.0)):   # brightness steps, to match Ready or Not's on-screen colour live
     subs = []
-    for mtl, tex, col, level in mats:
+    for mtl, tex, col, w in mats:
         r, gg, b = col
-        inten = 2 ** level / 100.0 * GAIN * g
+        inten = w * GAIN * g
         subs.append(f'    <Material Name="{mtl}" MtlFlags="524454" Shader="Illum" GenMask="20000000000000" StringGenMask="%SUBSURFACE_SCATTERING" '
                     f'SurfaceType="" MatTemplate="" Diffuse="0,0,0" Specular="0,0,0" Opacity="0.99" Emittance="{r},{gg},{b},{inten:.4g}" '
                     f'Shininess="10" vertModifType="0" LayerAct="1">\n      <Textures>\n'
@@ -273,7 +325,7 @@ for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_
                     f'        <Texture Map="Emittance" File="textures/particles/deagle/ron_flash/{tex}_diff.tif" />\n      </Textures>\n'
                     f'      <PublicParams EmittanceMapGamma="1" SSSIndex="0" />\n    </Material>')
     xml = ('<!-- Ready or Not\'s pistol muzzle flash on cards (tools/ron/flash_bake.py; private use, never published): one\n'
-           f'     sub-material per texture, hue and brightness (powers of two of Ready or Not\'s HDR nits, x {GAIN * g:.3g}) -->\n'
+           f'     sub-material per texture and Ready or Not colour; emittance solved through KCD2\'s post chain ({SCENE.name}), x {GAIN * g:.3g} -->\n'
            '<Material MtlFlags="524544" vertModifType="0">\n  <SubMaterials>\n' + '\n'.join(subs) + '\n  </SubMaterials>\n</Material>\n')
     open(f'{REPO}/src/Objects/manmade/weapons/deagle/vm/deagle_vm_flash_ron{suffix}.mtl', 'w').write(xml)
 for name, c in sets.items():
