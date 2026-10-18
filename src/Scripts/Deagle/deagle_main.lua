@@ -718,7 +718,7 @@ function Deagle:OnGameplayStarted()
 	s.baseFov, s.fovNow = nil, nil
 	self.inputLoaded = false
 	self:EnsureInit()
-	self.vmId, self.casePool, self.caseThrow, self.flashUntil = nil, nil, nil, nil   -- a load ends the old world: its ids may now name other entities
+	self.vmId, self.casePools, self.caseThrow, self.flashUntil = nil, nil, nil, nil   -- a load ends the old world: its ids may now name other entities
 	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	self.paths, self.pathsToken = nil, nil
@@ -1012,6 +1012,7 @@ end
 function Deagle:LoadGuns()
 	local function load(f) return self:LoadModule(f) end
 	pcall(load, "Scripts/Deagle/guns/cs2.lua")
+	pcall(load, "Scripts/Deagle/guns/ron_stats.lua")   -- Ready or Not's handling numbers for the guns imported from it (ronStats)
 	pcall(load, "Scripts/Deagle/guns/calibers.lua")
 	pcall(load, "Scripts/Deagle/guns/penetration.lua")
 	pcall(load, "Scripts/Deagle/guns/armor.lua")

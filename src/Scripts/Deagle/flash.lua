@@ -127,8 +127,11 @@ function Deagle:FlashLook()
 	local c, r, phys = self.cfg.flashMesh, self.cfg.flashRon, self:ShotPhysics()
 	local large = phys and phys.blast >= self.cfg.physics.largeFlashBlast
 	if c.look == "ron" then
+		-- a Ready or Not gun has its own flash (gun.flashRon: "large" = the Grizzly's V3, "small" = the G19's V2), as
+		-- Ready or Not picks it per weapon; any other gun gets the one its cartridge's blast is closest to
+		local set = self.gun.flashRon == "large" and r.large or self.gun.flashRon == "small" and r.small or (large and r.large or r.small)
 		-- a strength the user picked (flashRon.mtl _dim, _hot, ...) turns the exposure steps off
-		return { look = "ron", set = large and r.large or r.small, variants = r.variants, stages = r.stages, time = r.time,
+		return { look = "ron", set = set, variants = r.variants, stages = r.stages, time = r.time,
 			mtl = r.mtl == "deagle_vm_flash_ron" and r.mtl .. self:FlashEvSuffix() or r.mtl, cdfMtl = "deagle_vm_flash_ron" }
 	end
 	return { look = "ours", set = large and c.large or c.small, variants = c.roll and FLASH_SHAPES * FLASH_TURNS or FLASH_SHAPES,

@@ -25,10 +25,15 @@ local function caseGhost(e, on)
 	pcall(e.SetPhysicParams, e, PHYSICPARAM_COLLISION_CLASS, on and { collisionClass = CASE_CLASS, collisionClassIgnore = CASE_CLASS }
 		or { collisionClassUNSET = CASE_CLASS, collisionClassIgnoreUNSET = CASE_CLASS })
 end
+-- one pool per casing model: a gun with its own casing (gun.caseModel, Ready or Not's 50AE_Casing for the Grizzly)
+-- throws its own; the others throw ours
 function Deagle:CaseEntity()
-	self.casePool = self.casePool or {}
-	self.caseNext = (self.caseNext or 0) % CASE_POOL + 1
-	local id = self.casePool[self.caseNext]
+	local model = self.gun.caseModel or self.cfg.modelDir .. "deagle_case.cgf"
+	self.casePools = self.casePools or {}
+	local pool = self.casePools[model]
+	if not pool then pool = { next = 0 }; self.casePools[model] = pool end
+	pool.next = pool.next % CASE_POOL + 1
+	local id = pool[pool.next]
 	local e = id and System.GetEntity(id)
 	if e then
 		e:Hide(0)
@@ -37,12 +42,12 @@ function Deagle:CaseEntity()
 		return e
 	end
 	e = System.SpawnEntity({
-		class = "BasicEntity", name = "deagle_case_" .. self.caseNext, position = { x = 0, y = 0, z = -1000 },
+		class = "BasicEntity", name = "deagle_case_" .. model:match("([^/]+)%.cgf$") .. "_" .. pool.next, position = { x = 0, y = 0, z = -1000 },
 		flags = ENTITY_FLAG_NO_SAVE,
-		properties = { object_Model = self.cfg.modelDir .. "deagle_case.cgf", Physics = { bPhysicalize = true, bRigidBody = true, bPushableByPlayers = false, Density = -1, Mass = 0.02 } },
+		properties = { object_Model = model, Physics = { bPhysicalize = true, bRigidBody = true, bPushableByPlayers = false, Density = -1, Mass = 0.02 } },
 	})
 	e:SetFlags(ENTITY_FLAG_NO_SAVE, 0)   -- never into a save
-	self.casePool[self.caseNext] = e.id
+	pool[pool.next] = e.id
 	return e
 end
 

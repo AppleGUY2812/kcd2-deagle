@@ -99,6 +99,11 @@ step("barrel smoke after a burst (Ready or Not's heat)", function()
 	for i = #M.native, 1, -1 do if M.native[i]:find("^%[DN%] smokefx ") then line = M.native[i] break end end
 	if not line:find("^%[DN%] smokefx deagle%.barrel_smoke_ron ") then error("barrel smoke effect: " .. line) end
 end)
+-- the casing thrown last, from the current gun's pool (one pool per casing model)
+local function lastCase()
+	local p = Deagle.casePools[Deagle.gun.caseModel or Deagle.cfg.modelDir .. "deagle_case.cgf"]
+	return System.GetEntity(p[p.next])
+end
 step("casings come from a pool", function()   -- 100 shots, at most 80 casings ever exist
 	Deagle.state.ammo = 7
 	for i = 1, 100 do if Deagle.state.ammo == 0 then Deagle.state.ammo = 7 end Deagle:OnAction("deagle_fire", "press"); M.advance(0.25) end
@@ -118,7 +123,7 @@ step("casings come from a pool", function()   -- 100 shots, at most 80 casings e
 	print(string.format("   last casing: %.2f m/s along (%.3f %.3f %.3f), spin (%.1f %.1f %.1f) = %.2f rad/s", sp, ve.v.x / sp, ve.v.y / sp, ve.v.z / sp, ve.w.x, ve.w.y, ve.w.z, spin))
 	if sp < 2 or sp > 6 or not dirOk then error("casing throw isn't Ready or Not's (2-6 m/s, 40 deg up to the gun's right)") end
 	if spin > 62.83 + 1e-6 or ve.w.x ~= ve.w.y or ve.w.y ~= ve.w.z then error("casing spin isn't Ready or Not's (r, r, r) cut to 62.83 rad/s") end
-	local thrown = System.GetEntity(Deagle.casePool[Deagle.caseNext])
+	local thrown = lastCase()
 	if not (thrown.sim and thrown.sim.damping == 1 and thrown.sim.freefall_damping == 1) then error("casing damping isn't 1") end
 	local capped = false   -- the physics' 20 rad/s spin cap set to Unreal's 62.83 by the plugin before the throw
 	for _, l in ipairs(M.native) do if l:find("^%[DN%] casespin %x+ 62%.83$") then capped = true end end
@@ -131,7 +136,7 @@ step("casings come from a pool", function()   -- 100 shots, at most 80 casings e
 	-- in flight casings pass through each other (one class bit for casings, ignored); landed, both bits go
 	local GHOST = 1073741824
 	Deagle.state.ammo = 7; Deagle:Fire(true)   -- a fresh one, before any frame reads it
-	local case = System.GetEntity(Deagle.casePool[Deagle.caseNext])
+	local case = lastCase()
 	local flying = Deagle.casesFlying[case.id]
 	if not flying or bit.band(case.ccType, GHOST) == 0 or bit.band(case.ccIgnore, GHOST) == 0 then error("thrown casing doesn't ignore other casings") end
 	local vels = { { x = 1, y = 0, z = -3 }, { x = 0.5, y = 0, z = 0.4 } }   -- falling, then up off the ground: a bounce
@@ -148,10 +153,22 @@ step("casings come from a pool", function()   -- 100 shots, at most 80 casings e
 	case.GetVelocity = nil
 	Deagle.cfg.eject.ghost = false
 	Deagle.state.ammo = 7; Deagle:Fire(true)
-	local case2 = System.GetEntity(Deagle.casePool[Deagle.caseNext])
+	local case2 = lastCase()
 	if case2.ccIgnore ~= 0 then error("eject.ghost 0: a casing still ignores casings") end
 	Deagle.cfg.eject.ghost = true
 	Deagle.state.ammo = 0; Deagle:VmRounds(Deagle:MagRounds()); M.advance(1.0)
+end)
+step("a gun with its own casing throws it (gun.caseModel), from its own pool", function()
+	local own = Deagle.gun.caseModel
+	Deagle.gun.caseModel = "objects/manmade/weapons/guns/ron_grizzly/50ae_casing.cgf"
+	Deagle.state.ammo = 7
+	Deagle:OnAction("deagle_fire", "press"); M.advance(0.25)
+	local c = lastCase()
+	local pools = 0
+	for _ in pairs(Deagle.casePools) do pools = pools + 1 end
+	Deagle.gun.caseModel = own
+	print("   casing:", c and c.name, "pools:", pools)
+	if not c or not c.name:find("^deagle_case_50ae_casing_%d+$") or pools ~= 2 then error("the gun's own casing model wasn't thrown from its own pool") end
 end)
 step("empty idle", function() M.advance(1.0) end)
 print("   rest:", lastAnims(1))

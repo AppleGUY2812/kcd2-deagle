@@ -395,6 +395,14 @@ if mesh then
 		and before20 == "deagle_vm_flash_ron_ev9" and after20 == "deagle_vm_flash_ron_ev9" and calls == 0
 		and cached == "deagle_vm_flash_ron_ev7" and later == "deagle_vm_flash_ron" and picked == "deagle_vm_flash_ron_hot"
 		and #missing == 0, night)
+	-- a Ready or Not gun names its own flash set (gun.flashRon), as Ready or Not picks it per weapon; others go by blast
+	Deagle.cfg.flashMesh.look = "ron"
+	local own, byBlast = Deagle.gun.flashRon, Deagle:FlashLook().set
+	Deagle.gun.flashRon = "small"; local small = Deagle:FlashLook().set
+	Deagle.gun.flashRon = "large"; local large = Deagle:FlashLook().set
+	Deagle.gun.flashRon, Deagle.cfg.flashMesh.look = own, look
+	check(string.format("Ready or Not flash set per gun: by blast %s, flashRon small %s, large %s", byBlast, small, large),
+		small == R.small and large == R.large and (own or byBlast == R.large or byBlast == R.small), small)
 end
 if cueCheck then
 	check(string.format("reload sounds on the clip's playhead: %d/%d played, worst %.0f ms off", cueCheck.heard, cueCheck.n, cueCheck.worst * 1000),
