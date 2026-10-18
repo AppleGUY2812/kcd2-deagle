@@ -41,7 +41,7 @@ OUT = '/mnt/e/Tools/deagle-work/flash_ron'
 VARIANTS, STAGES = 16, 2
 T = STAGES / 60.0
 CARD_KINDS = ('pop', 'pop_side', 'core', 'flame', 'longspark', 'corespark')   # 0.03 s parts too: KCD2 doesn't draw particles that short
-REF_SHEET = {'SMG': 'MI_MuzzleFlash_SMG', 'Pistol': 'MI_MuzzleFlash_Pistol', 'Side': 'MI_MuzzleFlash_Side',
+REF_SHEET = {'SMG': 'MI_MuzzleFlash_SMG', 'Rifle': 'MI_MuzzleFlash_Rifle', 'Pistol': 'MI_MuzzleFlash_Pistol', 'Side': 'MI_MuzzleFlash_Side',
              'Add': 'M_Particle_Additive'}
 EYE = np.array([0.057, -0.407, -0.042])   # the eye from the muzzle, bone axes, m (MuzzleLocal: lp 0.057 0.407 -0.042)
 SETS = {'deagle_vm_flash_ron': 'WeaponFlash_Pistol_V3', 'deagle_vm_flash_ron_s': 'WeaponFlash_Pistol_V2'}
@@ -212,7 +212,7 @@ def ron_display(hdr):   # Ready or Not's screen colour (flash_ref.tonemap, float
 _texels = {}
 def texels(sheet, n=1500):   # a sample of the sheet's linear texels (L, what a texel adds in Ready or Not)
     if sheet not in _texels:
-        t, _, _ = fr.tex({'MI_MuzzleFlash_SMG': 'SMG', 'MI_MuzzleFlash_Pistol': 'Pistol', 'MI_MuzzleFlash_Side': 'Side',
+        t, _, _ = fr.tex({'MI_MuzzleFlash_SMG': 'SMG', 'MI_MuzzleFlash_Rifle': 'Rifle', 'MI_MuzzleFlash_Pistol': 'Pistol', 'MI_MuzzleFlash_Side': 'Side',
                           'M_Particle_Additive': 'Add'}[sheet])
         L = t.reshape(-1, 3).astype(np.float64)
         L = L[L.max(axis=1) > 0.01]
@@ -240,14 +240,14 @@ def kcd2_emittance(rgb, sheet):
     return k
 
 
-def bake_v2():
-    """RoN's V3 run by flash_ref (the rules read from its exe), 16 shots: the front pop on half of them, as RoN's 0-1
+def bake_v2(system='WeaponFlash_Pistol_V3'):
+    """RoN's V3 (or V2) run by flash_ref (the rules read from its exe), 16 shots: the front pop on half of them, as RoN's 0-1
     burst; each stage = that shot at the end of frame k, with the sheet frame, the core's colour and the drag drawn
     again every frame as RoN does"""
     cards = []
     for v in range(VARIANTS):
         rng = np.random.default_rng(100 + v)
-        ps = fr.spawn_shot(rng, pop=(v % 2 == 0))
+        ps = fr.spawn_shot(rng, pop=(v % 2 == 0), system=system[-2:])
         stages = []
         for k in range(STAGES):
             sprites = [x for x in fr.step(ps, (k + 1) * fr.DT, rng) if x['kind'] in CARD_KINDS]
@@ -299,7 +299,7 @@ def bake(system, name):
 
 
 os.makedirs(OUT + '/tif', exist_ok=True)
-sets = {'deagle_vm_flash_ron': bake_v2()}   # V3 (the Grizzly's) for the Deagle; the Glock's V2 set comes later
+sets = {name: bake_v2(system) for name, system in SETS.items()}   # V3 (the Grizzly's) for big blasts (the Deagle), V2 (the G19's) for small ones (the Glock)
 members = {}
 for c in sets.values():
     for v in c:

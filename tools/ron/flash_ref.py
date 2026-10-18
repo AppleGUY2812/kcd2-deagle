@@ -28,7 +28,7 @@ W, H, VFOV = 640, 360, 55.0          # camera: first person, vertical field of v
 EYE = np.array([-40.7, -5.7, 4.2])   # the eye from the muzzle in RoN's emitter axes (cm): +X down the barrel, +Y right,
                                      # +Z up (flash_bake's EYE, bone axes -> RoN axes)
 EXPOSURE = 0.135                     # RoN's exposure, fitted to the user's clip (flash_bake.RON_EXPOSURE)
-SHEETS = {'SMG': ('Rifle_MuzzleFlash_Macro_Rifle_-_Copy__2_', 4, 4), 'Pistol': ('MuzzleFlash_Macro_M2011', 4, 4),
+SHEETS = {'SMG': ('Rifle_MuzzleFlash_Macro_Rifle_-_Copy__2_', 4, 4), 'Rifle': ('MuzzleFlash_Macro_M14', 4, 4), 'Pistol': ('MuzzleFlash_Macro_M2011', 4, 4),
           'Side': ('T_muzzle_flashes', 2, 2), 'Add': ('T_longSpark_02_8x2', 4, 2)}
 _tex = {}
 
@@ -60,31 +60,43 @@ class P:   # one particle
     pass
 
 
-def spawn_shot(rng, pop=None):
-    """one shot's particles; pop forces the Pop's 0-1 burst (None = RoN's own coin flip)"""
+# where WeaponFlash_Pistol_V2 (the G19's) differs from V3 (the Grizzly's), from both packages' module tables
+# (cascade_dump.py, 2026-10-18); every other brick is the same in both
+SYSTEM = {
+    'V3': dict(pop_sheet='SMG', pop_tiles=23, pop_size=(25, 35), pop_at=25.0, side_end=[1, 2.5, 2], side_piv=-0.35,
+               core_at=12.0, flame_piv=-1.0, long_piv=0.5, star_at=10.0),
+    'V2': dict(pop_sheet='Rifle', pop_tiles=7, pop_size=(17, 32), pop_at=10.0, side_end=[0.75, 2, 2], side_piv=-0.45,
+               core_at=5.0, flame_piv=-0.5, long_piv=0.75, star_at=5.0),
+}
+
+
+def spawn_shot(rng, pop=None, system='V3'):
+    """one shot's particles; pop forces the Pop's 0-1 burst (None = RoN's own coin flip); system V3 (the Grizzly's,
+    the Deagle) or V2 (the G19's, the Glock)"""
+    S = SYSTEM[system]
     ps = []
     def add(**k):
         p = P(); p.__dict__.update(dict(age=0.0, birth=0.0, pos=np.zeros(3), vel=np.zeros(3), acc=np.zeros(3),
                                         rot=0.0, piv=0.0, drag=False, sbs=False, colour_rng=None, sub=None), **k)
         ps.append(p)
-    # Pop, front (SMG sheet): 0-1, sends FlashCore
+    # Pop, front (V3: the SMG sheet, V2: the Rifle sheet): 0-1, sends FlashCore
     if (rng.integers(0, 2) == 1) if pop is None else pop:
-        s = rng.uniform(25, 35, 3)
-        add(kind='pop', sheet='SMG', align='square', life=0.04, pos=np.array([25.0, 0, 0]), vel=np.array([250.0, 0, 0]),
+        s = rng.uniform(*S['pop_size'], 3)
+        add(kind='pop', sheet=S['pop_sheet'], align='square', life=0.04, pos=np.array([S['pop_at'], 0, 0]), vel=np.array([250.0, 0, 0]),
             size=s, mult=[[1, 1, 1], [1.5, 1.5, 2]], colour=np.array([38250, 450, 200.0]), alpha=[1, 0],
-            rot=rng.uniform(0, 25) * 360, sub=('rand', 0, 23))
+            rot=rng.uniform(0, 25) * 360, sub=('rand', 0, S['pop_tiles']))
         # Pop, side, from the event: at the pop's place, no inherited velocity; its own StartVelocity 5 cm/s
-        add(kind='pop_side', sheet='Side', align='vel', life=0.04, pos=np.array([25.0, 0, 0]), vel=np.array([5.0, 0, 0]),
-            size=np.full(3, rng.uniform(20, 30)), mult=[[0.12, 0.5, 1], [1, 2.5, 2]], colour=np.array([38250, 450, 200.0]),
-            alpha=[1, 0], piv=-0.35, sub=('fixed', int(rng.integers(0, 4))))
+        add(kind='pop_side', sheet='Side', align='vel', life=0.04, pos=np.array([S['pop_at'], 0, 0]), vel=np.array([5.0, 0, 0]),
+            size=np.full(3, rng.uniform(20, 30)), mult=[[0.12, 0.5, 1], S['side_end']], colour=np.array([38250, 450, 200.0]),
+            alpha=[1, 0], piv=S['side_piv'], sub=('fixed', int(rng.integers(0, 4))))
     # Pop, pistol core: always 1
-    add(kind='core', sheet='Pistol', align='square', life=0.035, pos=np.array([12.0, 0, 0]), vel=np.array([100.0, 0, 0]),
+    add(kind='core', sheet='Pistol', align='square', life=0.035, pos=np.array([S['core_at'], 0, 0]), vel=np.array([100.0, 0, 0]),
         size=np.full(3, rng.uniform(8, 12)), mult=[[1, 1, 1], [1.5, 1.5, 1.2]], colour=None,
         colour_rng=(np.array([0.85417, 0.07355, 0.0178]), np.array([38250, 450, 200.0])), alpha=[1, 0],
         rot=rng.uniform(0, 25) * 360, sub=('rand', 0, 11))
     # SmallFlame (Side sheet), velocity-aligned, base at the muzzle
     add(kind='flame', sheet='Side', align='vel', life=0.035, vel=np.array([25.0, 0, 0]), size=np.full(3, rng.uniform(15, 20)),
-        mult=[[0.25, 0.5, 1], [0.75, 1.5, 2]], colour=np.array([382.5, 4.5, 2.0]), alpha=[1, 0], piv=-1.0,
+        mult=[[0.25, 0.5, 1], [0.75, 1.5, 2]], colour=np.array([382.5, 4.5, 2.0]), alpha=[1, 0], piv=S['flame_piv'],
         sub=('fixed', int(rng.integers(0, 4))))
     # born at 0.01 s: 10 Sparks, 1 LongSpark, 1 CoreSpark
     for _ in range(int(rng.integers(0, 11))):   # the burst is CountLow 0 / Count 10: 0-10 (Claude 2's catch)
@@ -97,8 +109,8 @@ def spawn_shot(rng, pop=None):
             pos=rng.uniform(-0.5, 0.5, 3), sub=('fixed', int(rng.integers(0, 8))))
     add(kind='longspark', sheet='Add', align='vel', birth=0.01, life=0.03, vel=np.array([-5.0, 0, 0]),
         size=np.full(3, rng.uniform(25, 50)), mult=[[0.1, 0.5, 1], [0.05, 1.25, 2]], colour=np.array([1528, 180, 8.0]),
-        alpha=[1, 0], piv=0.5, sub=('rand', 0, 3))
-    add(kind='corespark', sheet='Add', align='square', birth=0.01, life=0.03, pos=np.array([10.0, 0, 0]),
+        alpha=[1, 0], piv=S['long_piv'], sub=('rand', 0, 3))
+    add(kind='corespark', sheet='Add', align='square', birth=0.01, life=0.03, pos=np.array([S['star_at'], 0, 0]),
         size=np.full(3, rng.uniform(6, 12)), mult=[[0.5, 1.5, 1], [0.6, 1.8, 2]], colour=np.array([1528, 180, 8.0]),
         alpha=[1, 0], rot=rng.uniform(0, 1) * 360, piv=0.09, sub=('fixed', 7))
     return ps

@@ -5,7 +5,7 @@ textures and emittance the game loads (the baked tifs and the .mtl), Illum's emi
 post chain in kcd2_tonemap.FLASH_SCENE. A wrong axis, UV flip or colour shows here before the game sees it.
 Owner: Claude 1.
 
-    python3 tools/ron/flash_check.py [cards.json] [out.png] [flash .mtl]
+    python3 tools/ron/flash_check.py [cards.json] [out.png] [flash .mtl] [set: deagle_vm_flash_ron (V3) | deagle_vm_flash_ron_s (V2)]
 """
 import json, math, re, sys
 import numpy as np
@@ -15,13 +15,15 @@ import flash_ref as fr
 import kcd2_tonemap as kt
 
 class fb:   # flash_bake's texture names (importing flash_bake runs the bake)
-    SHEETS = {'MI_MuzzleFlash_SMG': 'Rifle_MuzzleFlash_Macro_Rifle_-_Copy__2_', 'MI_MuzzleFlash_Pistol': 'MuzzleFlash_Macro_M2011',
+    SHEETS = {'MI_MuzzleFlash_SMG': 'Rifle_MuzzleFlash_Macro_Rifle_-_Copy__2_', 'MI_MuzzleFlash_Rifle': 'MuzzleFlash_Macro_M14', 'MI_MuzzleFlash_Pistol': 'MuzzleFlash_Macro_M2011',
               'MI_MuzzleFlash_Side': 'T_muzzle_flashes', 'M_Particle_Additive': 'T_longSpark_02_8x2'}
     TEX = {m: 'ron_flash_' + t.split('_-_')[0].lower() for m, t in SHEETS.items()}
 
 CARDS = sys.argv[1] if len(sys.argv) > 1 else '/mnt/e/Tools/deagle-work/flash_ron/cards.json'
 OUT = sys.argv[2] if len(sys.argv) > 2 else '/mnt/e/Tools/deagle-work/flash_ron/check.png'
 MTL = sys.argv[3] if len(sys.argv) > 3 else __import__('os').path.join(__import__('os').path.dirname(__file__), '../../src/Objects/manmade/weapons/deagle/vm/deagle_vm_flash_ron.mtl')
+SET = sys.argv[4] if len(sys.argv) > 4 else 'deagle_vm_flash_ron'   # deagle_vm_flash_ron: V3 (the Grizzly's), _s: V2 (the G19's)
+SYSTEM = 'V2' if SET.endswith('_s') else 'V3'
 TIF = '/mnt/e/Tools/deagle-work/flash_ron/tif'
 SCENE = kt.Scene(**kt.FLASH_SCENE)
 OPACITY = 0.99   # the .mtl's Opacity: MatDifColor.w in GatherAlpha (Illum.cfx:858)
@@ -84,12 +86,12 @@ def draw_cards(quads, img, emit):
 def main():
     D = json.load(open(CARDS))
     emit = emittance()
-    cards = D['sets']['deagle_vm_flash_ron']
+    cards = D['sets'][SET]
     tiles = []
     worst = 0.0
     for v, stages in enumerate(cards):
         rng = np.random.default_rng(100 + v)
-        ps = fr.spawn_shot(rng, pop=(v % 2 == 0))
+        ps = fr.spawn_shot(rng, pop=(v % 2 == 0), system=SYSTEM)
         for k, quads in enumerate(stages):
             ref = np.zeros((fr.H, fr.W, 3)); ours = np.zeros_like(ref)
             sprites = [x for x in fr.step(ps, (k + 1) * fr.DT, rng) if x['kind'] in ('pop', 'pop_side', 'core', 'flame', 'longspark', 'corespark')]
@@ -111,7 +113,7 @@ def main():
         dr.text((x + 4, y + 4), f'RoN v{v + 1} frame {k}', fill=(200, 200, 120))
         dr.text((x + w + 4, y + 4), f'cards  overlap {iou:.2f}  diff {diff:.0f}', fill=(120, 200, 200))
     sheet.save(OUT)
-    print(f'KCD2 scene: {SCENE.name}')
+    print(f'{SET} ({SYSTEM}), KCD2 scene: {SCENE.name}')
     print('worst mean colour difference', round(worst, 1), '->', OUT)
 
 

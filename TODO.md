@@ -37,3 +37,7 @@
 - Live check of KCD2 functions, then stamina / skill / stance / moving in the grip hold; flash light from the simulator
   directly.
 - ARC9 MW2019 .50 GS.
+- Ready or Not flash set per gun, not per blast (Claude 4, 2026-10-18): RoN picks it per weapon (G19 -> V2, Grizzly ->
+  V3); we pick by blast (flashRon.large / small at physics.largeFlashBlast 1.5). Same result for the Deagle and Glock,
+  but a third gun near 1.5 would flip with the cartridge. A per-gun field (guns/<gun>.lua flashRonSet) would match RoN
+  and let each .cdf carry only its own set (64 cards, not 96: tools/flash_skin.sh / flash_cdf.py per gun).

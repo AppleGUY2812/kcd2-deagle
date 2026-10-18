@@ -99,7 +99,7 @@ Deagle.cfg = {
 	-- pops at ~33 ms of age on that frame too: its sprites live 35-40 ms at any frame rate. Don't "fix" it to show
 	-- every stage.
 	flashRon = { time = 2 / 60, stages = 2, variants = 16, mtl = "deagle_vm_flash_ron", large = "deagle_vm_flash_ron",
-		small = "deagle_vm_flash_ron", sparks = "deagle.muzzle_sparks_ron" },   -- one set for now: the V3 (Grizzly) flash; the Glock's V2 set comes with V2 in flash_ref
+		small = "deagle_vm_flash_ron_s", sparks = "deagle.muzzle_sparks_ron" },
 	muzzleFxLive = "deagle.muzzle_live", muzzleFxLargeLive = "deagle.muzzle_large_live",   -- the live flash (FlashArm)
 	muzzleLight = "deagle.muzzle_light", muzzleLightLarge = "deagle.muzzle_large_light",   -- its light, per shot
 	flashLive = { 0.8, 1.0 },  -- the live flash's size on each frame it's seen (2 frames; 1 frame under 40 fps)
