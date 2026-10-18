@@ -61,6 +61,19 @@ gun_rest_ue = [(ron_bake.qmul(mq, q), mt + ron_bake.qrot(mq, t)) for q, t in gun
 NAMES = arm_names + gun_names
 PARENT = arm_parent + [(mount_i if p < 0 else p + len(arm_names)) for p in [b[1] for b in G_psk["bones"]]]
 REST = [conv(q, t) for q, t in arm_rest_ue + gun_rest_ue]
+# KCD2 puts a viewmodel's origin at the eye (the Source guns' model origin is their eye); RoN's FP rig is full-body,
+# ~1.7 m up. RoN's FirstPersonCamera sits fixed on CharacterMesh1P (it doesn't follow the fp_camera bone, whose clip
+# keys are a 2-5 deg wobble: Claude 4's decompile), so the whole rig moves by one fixed offset: the idle pose's camera
+# point becomes the origin, axes unchanged (Cry = (-x, y, z) of RoN's after gb_build's turn). An inference: BasePlayer
+# attaches FirstPersonCamera to CharacterMesh1P at RelativeLocation 0 (foot level), so RoN's code places it at run time
+# and that code wasn't found; the fp_camera idle point (-5.87, 21.42, 167.83) cm is the best number we have. RoN's
+# camera FOV is 110 (x1.15 sprinting): compare against RoN footage at that FOV.
+CAM = NAMES.index("fp_camera")
+_idle = A_sk.world(A_sk.local(CFG.get("arms_base", "fp_grizzly_idle_pose_b"), 0))[A_sk.index["fp_camera"]]
+CAM_POS = conv(*_idle).translation.copy()
+_c = Matrix.Translation(CAM_POS).inverted()
+REST = [_c @ m for m in REST]
+print("RON CAMERA (RoN cm)", [round(float(x), 2) for x in _idle[1]])
 
 ad = bpy.data.armatures.new(CFG["slug"] + "_vm")
 arm = bpy.data.objects.new(CFG["slug"] + "_vm", ad)
@@ -117,7 +130,7 @@ def skin_groups(m, names):
     return list(by.items())
 
 
-add_mesh("ron_arms", A_psk, p_conv, skin_groups(A_psk, arm_names))
+add_mesh("ron_arms", A_psk, lambda p: _c @ p_conv(p), skin_groups(A_psk, arm_names))   # moved with the rest pose
 mw = REST[len(arm_names)]   # J_Gun's rest (armature space): the gun's points are in J_Gun space
 add_mesh("ron_gun", G_psk, lambda p: mw @ p_conv(p), skin_groups(G_psk, gun_names))
 for part, bone in (("mag_psk", "tag_mag_01"), ("mag_psk", "tag_mag_02"), ("rounds_psk", "tag_mag_01_bullets"), ("rounds_psk", "tag_mag_02_bullets")):
@@ -150,10 +163,9 @@ def pose_world(arms_clip, gun_clip, f):
         else:
             g = i - len(arm_names); k = gun_idx_in_anim[g]
             q, t = wg[k] if k is not None else gun_rest_local[g]
-            mqq, mtt = None, None
             mw_ = out[mount_i]
             out[i] = mw_ @ conv(q, t)
-    return out
+    return [_c @ m for m in out]
 
 
 for seq, c in CFG["sequences"].items():

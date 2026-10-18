@@ -68,7 +68,7 @@ def bake(name, pose, fps):
 
 # ---------------------------------------------------------------- Source sections a bone doesn't animate come in zeroed
 rest_local = {b.name: (b.parent.matrix_local.inverted() @ b.matrix_local) if b.parent else b.matrix_local for b in arm.data.bones}
-cand = [n for n, m in rest_local.items() if m.translation.length > 1e-3]
+cand = [n for n, m in rest_local.items() if m.translation.length > 1e-3 and arm.data.bones[n].parent]   # a root has nothing to sit on
 for act in roles():
     f0, f1 = rng(act)
     bad = {}
