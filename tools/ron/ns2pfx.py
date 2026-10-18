@@ -177,7 +177,24 @@ def emitter_xml(sysd, d, em, samples, mats, name):
     dt = float(np.clip(lmin / 30, 1 / 600, 1 / 60))
     lmax = float(probe[0]['Lifetime'][:, 0].max()) if probe[0]['n'] else 3.0
     frames = E.simulate(lmax + 2 * dt, samples, dt=dt, count=nmax)
-    return build(frames, b, rend, M, mat, em, name, nmin, nmax)
+    over, enote = {}, ''
+    if E.vf:   # a vector field pushes the particles around: KCD2 can't sample it; its random turbulence is the nearest
+        st = ns_stats.measure(frames, b, rend)
+        k = max(st.get('drag_per_s') or 0.0, 0.0); g = (st.get('gravity_g') or 0.0) * 980.665
+        acc = []
+        for f0, f1 in zip(frames, frames[1:]):
+            if not (f0['n'] and f1['n']): continue
+            c, i0, i1 = np.intersect1d(f0['UniqueID'][:, 0], f1['UniqueID'][:, 0], return_indices=True)
+            v0 = f0['Velocity'][i0]; v1 = f1['Velocity'][i1]
+            r = (v1 - v0) / (f1['t'] - f0['t']) + k * v0; r[:, 2] += g
+            acc.append(np.linalg.norm(r, axis=1))
+        if acc:
+            a = float(np.median(np.concatenate(acc))) / 100
+            over['Turbulence3DSpeed'] = f(a, 2)
+            enote = (' Its vector field (%s, curl noise) pushes each particle along curving paths, %.2f m/s2 median: KCD2'
+                     ' cannot sample that field, so Turbulence3DSpeed %s stands in (random turbulence, not the same paths)'
+                     % (E.vf.get('name', 'TilingCurl32'), a, f(a, 2)))
+    return build(frames, b, rend, M, mat, em, name, nmin, nmax, override=over, extra_note=enote)
 
 
 def build(frames, b, rend, M, mat, em, name, nmin, nmax, axis=2, vkey='Velocity', head=None, children='', depth=3,
@@ -415,6 +432,90 @@ def cascade_xml(sysname, samples, mats, axis=0, hide=(), skip='LOW_SETTINGS'):
     return ''.join(one(nm, 3) for nm in runs if cs.source_of(runs[nm][1]) is None)
 
 
+def flashref_frames(kinds, shots, dt, seed=7):
+    """frames (ns_stats layout, t = particle age) of the given flash_ref.py particle kinds: spawned by its spawn_shot
+    and stepped by its rules (docs/ron/cascade_semantics.md: drag c redrawn every step, the per-particle random
+    acceleration, size by speed then the life curve, sheet frames redrawn every step), at dt."""
+    import flash_ref as fr
+    rng = np.random.default_rng(seed)
+    ps = []
+    for k in range(shots):
+        for q in fr.spawn_shot(rng, pop=False):
+            if q.kind in kinds:
+                q.shot = k; q.uid = len(ps); q.vel0 = q.vel.copy()
+                q.sub0 = q.sub[1] if q.sub[0] == 'fixed' else int(rng.uniform(q.sub[1], q.sub[2]))
+                ps.append(q)
+    frames, t = [], 0.0
+    life = max(q.life for q in ps)
+    while t <= life + dt:
+        live = [q for q in ps if q.age < q.life]
+        if not live: break
+        rows = []
+        for q in live:
+            r = q.age / q.life
+            size = np.array(q.size, float)
+            if q.sbs and t > 0: size[1] = abs(size[1]) * min(max(0.05 * np.linalg.norm(q.vel), 1), 100)
+            size = size * fr.lerp_curve(q.mult, r)
+            colour = q.colour if q.colour is not None else (q.colour_rng[0] + q.colour_rng[1]) / 2
+            rows.append((q, size, colour, fr.lerp_curve(q.alpha, r)))
+        frames.append({'t': t, 'n': len(rows),
+                       'Position': np.array([q.pos for q, *_ in rows]), 'Velocity': np.array([q.vel for q, *_ in rows]),
+                       'OwnVelocity': np.array([q.vel0 for q, *_ in rows]),
+                       'SpriteSize': np.array([sz[:2] for _, sz, _, _ in rows]),
+                       'Color': np.array([np.r_[c, a] for _, _, c, a in rows]),
+                       'Lifetime': np.array([[q.life] for q, *_ in rows]), 'Age': np.array([[q.age] for q, *_ in rows]),
+                       'NormalizedAge': np.array([[q.age / q.life] for q, *_ in rows]),
+                       'SpriteRotation': np.array([[q.rot] for q, *_ in rows]), 'SubImageIndex': np.array([[q.sub0] for q, *_ in rows], float),
+                       'UniqueID': np.array([[q.uid] for q, *_ in rows]), 'Burst': np.array([[q.shot] for q, *_ in rows])})
+        # one step, flash_ref.step's rules
+        for q in live:
+            if q.drag: q.vel = q.vel * (1 - rng.uniform(2.5, 15) * dt)
+            q.vel = q.vel + q.acc * dt
+            q.pos = q.pos + q.vel * dt
+            q.age += dt
+        t += dt
+    return frames
+
+
+def flash_sparks_xml(samples, mats):
+    """WeaponFlash_Pistol_V3's Sparks, LongSpark and CoreSpark (Claude 1's flash plan: the pops / core / flame go on
+    frame-exact cards; these are particles spawned on the shot) -> <Particles> children. RoN's +X = the barrel = the
+    KCD2 emitter y. Born at 0.01 s. Sparks simulate in world space; LongSpark and CoreSpark in the gun's (local)."""
+    M = dict(mats['M_Particle_Additive'])
+    out = []
+    spec = [  # kind, name, RoN emitter, burst (min, max), alignment, overrides
+        ('spark', 'sparks', 'Sparks', (0, 10), 'VelocityAligned',
+         {'TextureTiling': 'TilesX=4,TilesY=2,VariantCount=8', 'MoveRelativeEmitter': 'false', 'PivotY': '-0.3',
+          'RandomOffset': 'x=0.005,y=0.005,z=0.005', 'GravityScale': '0'},
+         ' Count: Cascade burst CountLow 0 / Count 10 = CountLow + round(SRand x 10), 0-10 a shot (flash_ref.py spawns'
+         ' 10). Sheet frame re-drawn every frame in RoN: one random frame per particle here. Drag c redrawn every frame'
+         ' U(2.5, 15): its mean. Random acceleration +-30 m/s2 per axis per particle: KCD2 has one vector, mean 0.'
+         ' Length = base x clamp(0.05 |v|, 1, 100) x the life curve: the mean over particles here. Pivot (0, 0.15):'
+         ' centre 0.15 of the length behind the particle (stock UE shader maths), PivotY sign unverified. Orbit +-0.5 cm.'
+         ' Inherits 5x the gun velocity in RoN (KCD2 free emitter: none).'),
+        ('longspark', 'longspark', 'LongSpark', (1, 1), 'VelocityAligned',
+         {'TextureTiling': 'TilesX=4,TilesY=2,VariantCount=3', 'MoveRelativeEmitter': 'true', 'PivotY': '-1',
+          'GravityScale': '0', 'Speed': '0.05', 'EmitAngle': '180'},
+         ' Velocity -5 cm/s (back along the barrel), so it lies along the barrel; pivot (0, 0.5) puts it ahead of the'
+         ' muzzle (PivotY sign unverified). Frames 0-2 re-drawn every frame in RoN: one per particle here.'),
+        ('corespark', 'corespark', 'CoreSpark', (1, 1), None,
+         {'TextureTiling': 'TilesX=4,TilesY=2,FirstTile=7,VariantCount=1', 'MoveRelativeEmitter': 'true',
+          'PositionOffset': 'y=0.1', 'PivotY': '-0.18', 'GravityScale': '0'},
+         ' PSA_Rectangle: faces the camera, width x, height y. 10 cm down the barrel; pivot (0, 0.09).'),
+    ]
+    for kind, name, em, (lo, hi), align, over, enote in spec:
+        dt = 1 / 2000.0
+        frames = flashref_frames({kind}, samples, dt)
+        rend = {'Alignment': align, 'Material': 'M_Particle_Additive', 'bSubImageBlend': False}
+        head = {'Count': one_sided(max(lo, 1), hi, 2) if lo else str(hi), 'SpawnDelay': '0.01'}
+        if lo == 0: head['Count'] = '%d,Random=1' % hi
+        if kind == 'spark': over = dict(over, AirResistance='8.75,WindScale=0')
+        out.append(build(frames, {'min': lo, 'max': hi}, rend, M, 'M_Particle_Additive', em, name, max(lo, 1), hi,
+                         axis=0, vkey='OwnVelocity', head=head, override=over,
+                         extra_note=enote + ' Brightness: RoN HDR / 1000 (the ns2pfx scale); on it the flash cards\' pop core is 38.25.'))
+    return ''.join(out)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('dir'); ap.add_argument('effect')
@@ -424,6 +525,8 @@ def main():
     ap.add_argument('--note', default='', help='a line for the comment above the effect (which surfaces use it)')
     ap.add_argument('--matover', default='{}', help='JSON {material: {key: value}} merged into MATS for this effect '
                     '(a system whose particle colour makes a saturating material need its own baked texture)')
+    ap.add_argument('--flash-sparks', action='store_true', help='WeaponFlash_Pistol_V3\'s Sparks / LongSpark / CoreSpark from '
+                    'tools/ron/flash_ref.py (dir: ignored, give -)')
     ap.add_argument('--cascade', action='store_true', help='dir is a Cascade system name (tools/ron/cascade_sim.py), not an extract dir')
     ap.add_argument('--axis', default='z', choices='xz', help='the RoN local axis that becomes the KCD2 emitter y: z = the hit normal, x = a ricochet\'s outgoing direction')
     ap.add_argument('--hide', default='', help='emitters drawn invisible, kept as carriers for their children (comma list)')
@@ -433,7 +536,11 @@ def main():
     for k, v in json.loads(a.matover).items(): MATS[k] = {**MATS.get(k, {}), **v}
     out = ['\t<Particles Name="%s">\n\t\t<Params Enabled="false" Count="1" ParticleLifeTime="0.05" />\n\t\t<Childs>\n' % a.effect]
     names = []
-    if a.cascade:
+    if a.flash_sparks:
+        body = flash_sparks_xml(a.samples, MATS)
+        out.append(body); names = re.findall(r'<Particles Name="([^"]+)">', body)
+        sysd = {'emitters': {}}
+    elif a.cascade:
         body = cascade_xml(a.dir, a.samples, MATS, axis={'x': 0, 'z': 2}[a.axis], hide=[x for x in a.hide.split(',') if x], skip=a.skip)
         out.append(body); names = re.findall(r'<Particles Name="([^"]+)">', body)
         sysd = {'emitters': {}}
@@ -444,9 +551,6 @@ def main():
         if a.skip and re.search(a.skip, em): continue
         if 'Mesh' in str(sysd['emitters'][em].get('renderer', {}).get('cls')):
             out.append('\t\t\t<!-- %s: a mesh emitter (RoN static meshes), not converted -->\n' % em); continue
-        unsup = [x for x in sysd['emitters'][em].get('di_info', []) if 'VectorField' in x]
-        if unsup:   # the emulator has no vector fields: their constants read as 0 and the motion blows up
-            out.append('\t\t\t<!-- %s: not converted, needs %s (not emulated yet) -->\n' % (em, ', '.join(unsup))); continue
         n = em.rsplit('_', 1)[0].lower()
         names.append(n)
         out.append(emitter_xml(sysd, a.dir, em, a.samples, MATS, n))
@@ -463,8 +567,10 @@ def main():
         out.append('\t\t\t<!-- layers of the old effect, switched off for deagle_fxreload -->\n')
         out += ['\t\t\t<Particles Name="%s"><Params Enabled="false" /></Particles>\n' % x for x in off]
     out.append('\t\t</Childs>\n\t</Particles>\n')
-    head = '\t<!-- %s: Ready or Not\'s %s, measured by running its own shaders (tools/ron/ns2pfx.py)%s -->\n' % (
-        a.effect, os.path.basename(os.path.normpath(a.dir)), ('. ' + a.note) if a.note else '')
+    src = ("WeaponFlash_Pistol_V3's Sparks, LongSpark and CoreSpark, simulated with the rules read from its exe "
+           "(tools/ron/flash_ref.py, docs/ron/cascade_semantics.md), converted by tools/ron/ns2pfx.py in its flash-sparks mode"
+           if a.flash_sparks else '%s, measured by running its own shaders (tools/ron/ns2pfx.py)' % os.path.basename(os.path.normpath(a.dir)))
+    head = '\t<!-- %s: Ready or Not\'s %s%s -->\n' % (a.effect, src, ('. ' + a.note) if a.note else '')
     block = head + ''.join(out)
     if not a.into:
         sys.stdout.write(block); return
