@@ -842,8 +842,8 @@ System.AddCCommand("deagle_freecam_state", "Deagle:FreecamState([[%1]])", "inter
 System.AddCCommand("deagle_points", "local a = Deagle.Arg([[%line]]); System.LogAlways('[Deagle] points: asked the plugin' .. (Deagle.native and '' or ' (not linked: no answer will come)') .. ' for: ' .. (a ~= '' and a or 'the list')); Deagle:Native('points ' .. a)", "deagle_points [<skill> <n>|+n|-n]: Henry's unspent perk points; no argument lists them (e.g. deagle_points alchemy 7, deagle_points survival +2; stats are stat0-stat3)")
 System.AddCCommand("deagle_points_said", "System.LogAlways('[Deagle] points: ' .. [[%line]])", "internal: the plugin's answer to deagle_points")
 -- deagle_respec <skill>: one skill's perks off and their points back. The plugin lists the owned ones
--- (deagle_respec_remove <skill> <guid>...), Lua removes them (soul:RemovePerk), the plugin counts what came off and
--- refunds that many points (respec_refund).
+-- (deagle_respec_remove <skill> <guid>...), Lua removes them (soul:RemovePerk), and 0.5 s later the plugin counts
+-- what came off and refunds that many points (respec_refund).
 function Deagle:RespecRemove(line)
 	local words = {}
 	for w in string.gmatch(Deagle.Arg(line), "%S+") do words[#words + 1] = w end
@@ -852,9 +852,9 @@ function Deagle:RespecRemove(line)
 	for i = 2, #words do
 		if not (soul and pcall(function() soul:RemovePerk(words[i]) end)) then bad = bad + 1 end
 	end
-	System.LogAlways(string.format("[Deagle] points: respec %s: removed %d perk ids%s", tostring(words[1]), #words - 1 - bad,
-		bad > 0 and (", " .. bad .. " failed") or ""))
-	self:Native("respec_refund")
+	System.LogAlways(string.format("[Deagle] points: respec %s: RemovePerk called %d times%s; points in 0.5 s", tostring(words[1]),
+		#words - 1 - bad, bad > 0 and (", " .. bad .. " calls failed") or ""))
+	Script.SetTimer(500, function() Deagle:Native("respec_refund") end)   -- the next frames: let the perk list update first
 end
 System.AddCCommand("deagle_respec", "local a = Deagle.Arg([[%line]]); System.LogAlways('[Deagle] points: asked the plugin to reset ' .. a .. (Deagle.native and '' or ' (not linked: no answer will come)')); Deagle:Native('respec ' .. a)", "deagle_respec <skill>: that skill's perks come off and their points come back (e.g. deagle_respec alchemy)")
 System.AddCCommand("deagle_respec_remove", "Deagle:RespecRemove([[%line]])", "internal: the plugin's list of perks for deagle_respec to remove")
