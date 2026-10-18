@@ -6,6 +6,12 @@ usage: check_fx.py <repo>"""
 import os, sys, xml.etree.ElementTree as ET
 
 MIN_LIFE = 0.08
+# The rule behind it (Claude 4, 2026-10-18, flashlag 23/23): a new emitter is first drawn one frame late with its
+# particles ~2 frames old, so a part shows at F fps only if it lives over 2/F (60 fps 33 ms, 30 fps 66 ms, 26 fps 77 ms).
+# Ready or Not's own parts keep RoN's lifetimes (user: copy RoN): checked against 2 frames at 60 fps, and the frame rate
+# each one stops showing at is printed (RoN draws them at frame 0 at any rate; the low-fps loss is KCD2's lag).
+RON_EXACT = {"muzzle_sparks_ron"}
+RON_MIN = 2 / 60
 repo = sys.argv[1]
 lib = ET.parse(os.path.join(repo, "src", "Libs", "Particles", "deagle.xml")).getroot()
 bad, n = [], 0
@@ -18,8 +24,16 @@ for eff in lib.findall("Particles"):
         prm = part.find("Params")
         if part is eff or prm is None or prm.get("Enabled") == "false":
             continue
-        life = float(prm.get("ParticleLifeTime", "0").split(",")[0])
+        lt = prm.get("ParticleLifeTime", "0").split(",")
+        life = float(lt[0])
         n += 1
+        if eff.get("Name") in RON_EXACT:
+            shortest = life * (1 - (float(lt[1]) if len(lt) > 1 else 0))   # base, random share
+            print(f"FX RON {eff.get('Name')}.{part.get('Name')}: {shortest * 1000:.0f}-{life * 1000:.0f} ms, all drawn above "
+                  f"{2 / shortest:.0f} fps, none below {2 / life:.0f} fps")
+            if shortest <= RON_MIN:
+                bad.append(f"{eff.get('Name')}.{part.get('Name')} {shortest:.3f} (Ready or Not's, under 2 frames at 60 fps)")
+            continue
         if life < MIN_LIFE:
             bad.append(f"{eff.get('Name')}.{part.get('Name')} {life}")
 if bad:
