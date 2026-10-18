@@ -18,6 +18,9 @@
 
 namespace {
 
+// every hooked function takes 1-3 integer / pointer arguments and no float (decompiled: open(this), gate(this),
+// wait(observer, u32 mask, std::function*), done(lambda*)), so one 4-integer pass-through fits all; the log calls before
+// an original may clobber xmm0-3, which none of them reads. Log's own write lands inside the times: ignore under ~5 ms
 using Fn4 = uintptr_t(__fastcall*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 
 struct Site { uint32_t rva; unsigned char bytes[16]; const char* name; void* hook; Fn4* orig; uintptr_t at; };
@@ -92,12 +95,12 @@ bool Create() {
 void Invtime_Command(const char* args) {
 	bool want = args && atoi(args) != 0;
 	if (want == g_on) { Log("invtime already %s", g_on ? "on" : "off"); return; }
-	if (want) {
-		if (!g_created && !(g_created = Create())) return;
-		for (auto& s : g_sites) MH_EnableHook((void*)s.at);
-	} else {
-		for (auto& s : g_sites) MH_DisableHook((void*)s.at);
-	}
+	if (want && !g_created && !(g_created = Create())) return;
+	// one batch: the threads are suspended once (MH_ApplyQueued)
+	for (auto& s : g_sites)
+		if ((want ? MH_QueueEnableHook((void*)s.at) : MH_QueueDisableHook((void*)s.at)) != MH_OK) Log("invtime: couldn't queue %s", s.name);
+	MH_STATUS st = MH_ApplyQueued();
+	if (st != MH_OK) { Log("invtime: %s failed (MinHook %d)", want ? "hooking" : "unhooking", (int)st); return; }
 	g_on = want;
 	Log("invtime %s", g_on ? "on: open the inventory or map" : "off");
 }
