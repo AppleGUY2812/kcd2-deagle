@@ -61,6 +61,10 @@ MATS = {
     'MI_Sparks_02': dict(tex='imp_ron_ricflash03_diff', tiles=(2, 2), lit=True, back=1, soft=True, baked_color=True, alpha_mul=0.5),
     'MI_Sparks_03': dict(tex='imp_ron_ricflash02_diff', tiles=(2, 2), lit=True, back=1, soft=True, baked_color=True, alpha_mul=0.5),
     'MI_Powder_01': dict(tex='imp_ron_powder_diff', tiles=(5, 5), lit=True, back=1, soft=True, baked_color=True, alpha_mul=0.75),
+    # MAT_BloodClip_Master (NS_VFX_Impact_Mud's splash): an eroding, noise-distorted mask driven by its dynamic
+    # parameters, baked to 4 variants x 16 frames over life with the splash colour (tools/ron/mk_ron_clip_tex.py)
+    'MIC_BloodClip_A': dict(tex='imp_ron_mudsplash_diff', tiles=(8, 8), lit=True, back=1, baked_color=True,
+                            tiling='TilesX=8,TilesY=8,VariantCount=4,AnimFramesCount=16,AnimCycle=Once,AnimBlend=true,FlipChance=0.5'),
     # M_Particle_Additive with its default T_longSpark_02_8x2 (drawn 4x2), adds texture x colour; PivotOffset (0, 0.5)
     'M_Particle_Additive': dict(tex='imp_sparks_diff', tiles=(4, 2), additive=True, ei=1),
 }
@@ -213,6 +217,7 @@ def build(frames, b, rend, M, mat, em, name, nmin, nmax, axis=2, vkey='Velocity'
     if M.get('additive'): p['BlendType'] = 'Additive'
     p['Texture'] = TEX + M['tex'] + '.tif'
     p['TextureTiling'] = ','.join(tiling)
+    if M.get('tiling'): p['TextureTiling'] = M['tiling']   # frames / variants baked by age (mk_ron_clip_tex.py)
     if M.get('soft'): p['SoftParticle'] = 'true'
     # colour, alpha, size: value = per-particle factor x the mean curve over age (model())
     ts, Ca, alo, ahi = model(frames, 'Color', 3)

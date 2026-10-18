@@ -37,6 +37,7 @@ local FX_HOLD = {
 	["deagle_impacts.gravel"] = 2.15,
 	["deagle_impacts.brick"] = 3.15,
 	["deagle_impacts.ricochet"] = 0.65,
+	["deagle_impacts.mud"] = 3.15,
 	["deagle_blood.entry"] = 1.05,
 	["deagle_blood.exit"] = 1.25,
 	["deagle_blood.head"] = 1.55,

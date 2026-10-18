@@ -23,6 +23,8 @@ emitter is pre-aged by one frame (checked by script: no part is shorter).
 | `gravel` | `NS_BulletImpact_Gravel` (RON_Gravel) | grains, sand blocks, dust, one spark. Mesh pebbles not converted |
 | `sand` | `NS_BulletImpact_Sand` (RON_Sand) | puff, sand grains, spatter. No KCD2 surface uses it |
 | `brick` | `NS_BulletImpact_Brick` (RON_Brick / Limestone) | debris, dust, spatter, smoke kick. No KCD2 surface uses it |
+| `mud` | `NS_VFX_Impact_Mud` (RON_Mud / Soil) | debris (Stones2x2), smoke, an eroding splash (MAT_BloodClip_Master baked to 4 variants x 16 frames, tools/ron/mk_ron_clip_tex.py) |
+| `ricochet` | `P_Bullet_Ricochet` (Cascade; every RoN pistol's RicochetParticleSystem, all surfaces) | two spark flashes, a powder ring, fast sparks + two trails of tiny sparks riding an invisible carrier along the new path (RoN's own tracer streak left out: ours stay) |
 | `water` | `P_BulletImpact_Water` (Cascade; RoN's pistol row is Cascade) | caustic sheets, droplets, dust puff (its 3 switched-on emitters) |
 | `straw` | none in RoN | fluttering straw bits, light dust (ours) |
 | `cloth` | was the Cascade ricochet version; `NS_Bullet_Impact_Fabric_Big` not ported yet | puff_fast, smoke_round, fibres |
@@ -30,8 +32,8 @@ emitter is pre-aged by one frame (checked by script: no part is shorter).
 
 Converted by `tools/ron/ns2pfx.py` from runs of RoN's own particle shaders (docs/ron/niagara_gpu.md). The far side of a
 wallbang plays the same entry effect along the bullet (RoN's hit code; `effects.lua` EXIT_AS_ENTRY), so the `*_exit`
-effects below are only used in the `new` look. Not converted yet: mud (`NS_VFX_Impact_Mud`, KCD2 mud uses `soil`
-meanwhile), foliage, fabric, glass, flesh.
+effects below are only used in the `new` look. A ricochet point plays only `ricochet` (no impact, no hole: RoN's hit code). Not
+converted yet: foliage, fabric, glass, flesh.
 
 ## 2. Bullet holes (`src/Materials/deagle/decals/bullet_hole_<surface>.mtl`)
 `Particle.CreateMatDecal(pos, normal, size, lifeTime, "Materials/deagle/decals/bullet_hole_<surface>")`.
