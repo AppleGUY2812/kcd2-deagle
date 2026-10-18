@@ -477,10 +477,11 @@ def flashref_frames(kinds, shots, dt, seed=7):
     return frames
 
 
-def flash_sparks_xml(samples, mats):
-    """WeaponFlash_Pistol_V3's Sparks, LongSpark and CoreSpark (Claude 1's flash plan: the pops / core / flame go on
-    frame-exact cards; these are particles spawned on the shot) -> <Particles> children. RoN's +X = the barrel = the
-    KCD2 emitter y. Born at 0.01 s. Sparks simulate in world space; LongSpark and CoreSpark in the gun's (local)."""
+def flash_sparks_xml(samples, mats, kinds=('spark',)):
+    """WeaponFlash_Pistol_V3's Sparks (and, on request, LongSpark / CoreSpark) -> <Particles> children. Claude 1's
+    flash plan: the pops / core / flame and the 0.03 s LongSpark / CoreSpark go on the frame-exact cards; only the
+    Sparks are particles spawned on the shot. RoN's +X = the barrel = the KCD2 emitter y. Born at 0.01 s. Sparks
+    simulate in world space; LongSpark and CoreSpark in the gun's (local)."""
     M = dict(mats['M_Particle_Additive'])
     out = []
     spec = [  # kind, name, RoN emitter, burst (min, max), alignment, overrides
@@ -504,6 +505,7 @@ def flash_sparks_xml(samples, mats):
          ' PSA_Rectangle: faces the camera, width x, height y. 10 cm down the barrel; pivot (0, 0.09).'),
     ]
     for kind, name, em, (lo, hi), align, over, enote in spec:
+        if kind not in kinds: continue
         dt = 1 / 2000.0
         frames = flashref_frames({kind}, samples, dt)
         rend = {'Alignment': align, 'Material': 'M_Particle_Additive', 'bSubImageBlend': False}
