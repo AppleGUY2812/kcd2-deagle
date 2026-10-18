@@ -825,3 +825,14 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   which does show far away), and the live emitter shown by its size (flasharm / flashshot). Likely for the live one:
   KCD2 bakes the emitter's scale into each particle at its birth (armed at 1e-4, its particles stay tiny); not
   measured. KCD2's System.DrawText draws a size-5 "#" magenta, about 8 px wide.
+
+## 2026-10-18: Ready or Not's Grizzly MK V materials for KCD2 (Claude 2)
+- RoN's gun master (Weapon_1P_MASTER, base pass ps_023): metallic = min(ORM.B, 0.9), roughness = ORM.G, specular
+  0.5; ORM.R (occlusion) is never sampled. The arms (M_SWAT_Officer_Firstperson) and casing (MM_Shell_Casing) are
+  the same without the 0.9 cap. Its emissive is divided by the eye adaptation (`ld_structured t7[0]`), so the
+  front-sight dot shows the same on screen at every exposure; the rain layer is off at Blend 1 / IsGunWet? 0.
+- KCD2 Illum (shadeLib.cfi:421, Illum.cfx:953): GGX roughness = (1 - smoothness)^2, so smoothness = 1 - UE roughness
+  exactly; emittance = Emittance.rgb x intensity x 0.1 (HDR, 1 = 10000 cd/m2) x the emittance map, absolute (no
+  exposure compensation): an exposure-independent glow needs one .mtl per exposure step (ron_grizzly_ev9/_ev8/_ev7).
+- rc presets by suffix (KCD2Mod Tools/rc/rc.ini): _diff Albedo sRGB BC1, _spec Reflectance sRGB BC1, _ddna BC5s +
+  BC4 alpha with glossfromnormals. tools/ron/mk_grizzly_tex.py, commit ebe1064.
