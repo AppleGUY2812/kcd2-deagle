@@ -80,6 +80,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `impactCap.perRound` | `2` | impact effects (effect, decal, sound) a round makes at the world: its first hit and its first skip; damage, penetration and ricochets are never capped (the user's 75 rounds/s stress test did 2-6 impacts a round) |
 | `impactCap.perFrame` | `6` | impact effects all rounds together make in one frame |
 | `impactCap.mergeDist` / `.mergeTime` | `0.3` / `0.1` | metres and seconds: a second effect on the same surface this close to the last one looks the same and is skipped |
+| `impactCap.middleHit` | `0.25` | Ready or Not's rule for a round going through several surfaces: its first hit, last entry and final hit always show; a hit between them shows its effect, hole and sound together on this chance (one roll). Bodies always bleed. 1 = every hit shows |
 | `impactCap.maxHops` | `4` | hits a round survives (ricochets and wallbangs chain) |
 | `impactCap.maxRounds` | `1024` | rounds in flight; past this the oldest is dropped and the log says how many ("round cap", at most once a second). Was 64: a 75 rounds/s CIWS lost its rounds ~300 m out in the air. Goes when rounds move into the plugin |
 | `killCam.on` | `true` | Sniper Elite V2's kill cam: a long shot that will kill a living NPC slows the game to 3 %, the camera rides behind the bullet (1.1 m easing to 2 m, field of view 10 -> 30 degrees), the hit and the way out play at 10 %, then normal speed (numbers read from its data: docs/se2_killcam.md) |
