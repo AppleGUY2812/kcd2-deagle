@@ -67,7 +67,7 @@ def main():
         ps = fr.spawn_shot(rng, pop=(v % 2 == 0))
         for k, quads in enumerate(stages):
             ref = np.zeros((fr.H, fr.W, 3)); ours = np.zeros_like(ref)
-            sprites = [x for x in fr.step(ps, (k + 1) * fr.DT, rng) if x['kind'] in ('pop', 'pop_side', 'core', 'flame')]
+            sprites = [x for x in fr.step(ps, (k + 1) * fr.DT, rng) if x['kind'] in ('pop', 'pop_side', 'core', 'flame', 'longspark', 'corespark')]
             fr.draw(sprites, ref); draw_cards(quads, ours)
             a, b = fr.tonemap(ref).astype(float), fr.tonemap(ours).astype(float)
             mask = (a.max(2) > 30) | (b.max(2) > 30)

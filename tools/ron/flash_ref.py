@@ -84,7 +84,7 @@ def spawn_shot(rng, pop=None):
         mult=[[0.25, 0.5, 1], [0.75, 1.5, 2]], colour=np.array([382.5, 4.5, 2.0]), alpha=[1, 0], piv=-1.0,
         sub=('fixed', int(rng.integers(0, 4))))
     # born at 0.01 s: 10 Sparks, 1 LongSpark, 1 CoreSpark
-    for _ in range(10):
+    for _ in range(int(rng.integers(0, 11))):   # the burst is CountLow 0 / Count 10: 0-10 (Claude 2's catch)
         pitch = math.radians(int(rng.uniform(0, 0.075) * 182.0378)); az = math.radians(int(rng.uniform(0, 1) * 65533.625))
         d = np.array([math.cos(pitch), math.sin(pitch) * math.cos(az), math.sin(pitch) * math.sin(az)])
         v = d * rng.uniform(500, 5000) + np.array([rng.uniform(-50, 50), rng.uniform(-50, 50), 0.0])

@@ -33,12 +33,12 @@ cs.FX = '/mnt/e/Tools/deagle-work/ron_fx/_data/flash_collect.json'
 PNG = '/mnt/e/Tools/deagle-work/ron_fx/flash'
 OUT = '/mnt/e/Tools/deagle-work/flash_ron'
 # One stage per 60 fps frame: stage k = RoN's flash at the end of frame k after the shot (flash_ref.step), so the
-# card on screen is RoN's state for that frame. Only the short-lived sprites go on cards (front pop, its side flame,
-# the pistol core, the small flame: 35-40 ms, dead after frame 1); the sparks, streak and star (born at 0.01 s,
-# up to 0.085 s) are a particle effect, which KCD2 draws one frame after the shot: where RoN has them anyway.
+# card on screen is RoN's state for that frame. The short-lived sprites go on cards (front pop, its side flame, the
+# pistol core, the small flame: 35-40 ms; the streak and star: 30 ms from 0.01 s; all dead after frame 1); only the
+# Sparks (0-10, 0.05-0.085 s) are a particle effect, which KCD2 draws one frame after the shot.
 VARIANTS, STAGES = 16, 2
 T = STAGES / 60.0
-CARD_KINDS = ('pop', 'pop_side', 'core', 'flame')
+CARD_KINDS = ('pop', 'pop_side', 'core', 'flame', 'longspark', 'corespark')   # 0.03 s parts too: KCD2 doesn't draw particles that short
 REF_SHEET = {'SMG': 'MI_MuzzleFlash_SMG', 'Pistol': 'MI_MuzzleFlash_Pistol', 'Side': 'MI_MuzzleFlash_Side',
              'Add': 'M_Particle_Additive'}
 EYE = np.array([0.057, -0.407, -0.042])   # the eye from the muzzle, bone axes, m (MuzzleLocal: lp 0.057 0.407 -0.042)
