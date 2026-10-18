@@ -8,6 +8,8 @@ Every rule is from docs/ron/cascade_semantics.md (read from RoN's exe) and the r
   - VelocityCone: pitch = trunc(U(0, 0.075) x 182.0378) whole degrees, azimuth random; speed U(500, 5000) cm/s;
   - Acceleration: one U(-3000, 3000) cm/s^2 per axis drawn at spawn; AccelerationDrag: v *= 1 - c dt, c = U(2.5, 15)
     drawn every frame; SizeScaleBySpeed: size.y = base.y x clamp(0.05 |v|, 1, 100), then SizeMultiplyLife on top;
+  - StartSize is axis-locked (LockFlag 4) in every emitter: one draw for x, y and z; the core's colour is not
+    locked (three independent draws), so a rare low red draw shows as a green or pink speck, as RoN's would;
   - the Pop's burst is 0-1 particles (CountLow 0, Count 1) and each one sends FlashCore: one side flame at its place;
   - square sprites face the eye and use size.x; velocity-aligned ones lie along the velocity, width x, length y.
 Unverified (shader code, not read): what sheet frames 16-23 show on a 4x4 sheet (taken as frame mod 16 here), the
@@ -18,7 +20,7 @@ exact pivot maths (flash_bake's convention: centre moved -pivot/2 x length along
 """
 import math, os, sys
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 PNG = '/mnt/e/Tools/deagle-work/ron_fx/flash'
 DT = 1 / 60
@@ -55,29 +57,30 @@ class P:   # one particle
     pass
 
 
-def spawn_shot(rng):
+def spawn_shot(rng, pop=None):
+    """one shot's particles; pop forces the Pop's 0-1 burst (None = RoN's own coin flip)"""
     ps = []
     def add(**k):
         p = P(); p.__dict__.update(dict(age=0.0, birth=0.0, pos=np.zeros(3), vel=np.zeros(3), acc=np.zeros(3),
                                         rot=0.0, piv=0.0, drag=False, sbs=False, colour_rng=None, sub=None), **k)
         ps.append(p)
     # Pop, front (SMG sheet): 0-1, sends FlashCore
-    if rng.integers(0, 2) == 1:
+    if (rng.integers(0, 2) == 1) if pop is None else pop:
         s = rng.uniform(25, 35, 3)
         add(kind='pop', sheet='SMG', align='square', life=0.04, pos=np.array([25.0, 0, 0]), vel=np.array([250.0, 0, 0]),
             size=s, mult=[[1, 1, 1], [1.5, 1.5, 2]], colour=np.array([38250, 450, 200.0]), alpha=[1, 0],
             rot=rng.uniform(0, 25) * 360, sub=('rand', 0, 23))
         # Pop, side, from the event: at the pop's place, no inherited velocity; its own StartVelocity 5 cm/s
         add(kind='pop_side', sheet='Side', align='vel', life=0.04, pos=np.array([25.0, 0, 0]), vel=np.array([5.0, 0, 0]),
-            size=rng.uniform(20, 30, 3), mult=[[0.12, 0.5, 1], [1, 2.5, 2]], colour=np.array([38250, 450, 200.0]),
+            size=np.full(3, rng.uniform(20, 30)), mult=[[0.12, 0.5, 1], [1, 2.5, 2]], colour=np.array([38250, 450, 200.0]),
             alpha=[1, 0], piv=-0.35, sub=('fixed', int(rng.integers(0, 4))))
     # Pop, pistol core: always 1
     add(kind='core', sheet='Pistol', align='square', life=0.035, pos=np.array([12.0, 0, 0]), vel=np.array([100.0, 0, 0]),
-        size=rng.uniform(8, 12, 3), mult=[[1, 1, 1], [1.5, 1.5, 1.2]], colour=None,
+        size=np.full(3, rng.uniform(8, 12)), mult=[[1, 1, 1], [1.5, 1.5, 1.2]], colour=None,
         colour_rng=(np.array([0.85417, 0.07355, 0.0178]), np.array([38250, 450, 200.0])), alpha=[1, 0],
         rot=rng.uniform(0, 25) * 360, sub=('rand', 0, 11))
     # SmallFlame (Side sheet), velocity-aligned, base at the muzzle
-    add(kind='flame', sheet='Side', align='vel', life=0.035, vel=np.array([25.0, 0, 0]), size=rng.uniform(15, 20, 3),
+    add(kind='flame', sheet='Side', align='vel', life=0.035, vel=np.array([25.0, 0, 0]), size=np.full(3, rng.uniform(15, 20)),
         mult=[[0.25, 0.5, 1], [0.75, 1.5, 2]], colour=np.array([382.5, 4.5, 2.0]), alpha=[1, 0], piv=-1.0,
         sub=('fixed', int(rng.integers(0, 4))))
     # born at 0.01 s: 10 Sparks, 1 LongSpark, 1 CoreSpark
@@ -86,14 +89,14 @@ def spawn_shot(rng):
         d = np.array([math.cos(pitch), math.sin(pitch) * math.cos(az), math.sin(pitch) * math.sin(az)])
         v = d * rng.uniform(500, 5000) + np.array([rng.uniform(-50, 50), rng.uniform(-50, 50), 0.0])
         add(kind='spark', sheet='Add', align='vel', birth=0.01, life=rng.uniform(0.05, 0.085), vel=v,
-            acc=rng.uniform(-3000, 3000, 3), size=rng.uniform(0.25, 0.75, 3), mult=SPARK_LIFE_MULT,
+            acc=rng.uniform(-3000, 3000, 3), size=np.full(3, rng.uniform(0.25, 0.75)), mult=SPARK_LIFE_MULT,
             colour=np.array([25, 0.27332, 0.1936]), alpha=[1.5, 0], drag=True, sbs=True, piv=0.15,
             pos=rng.uniform(-0.5, 0.5, 3), sub=('fixed', int(rng.integers(0, 8))))
     add(kind='longspark', sheet='Add', align='vel', birth=0.01, life=0.03, vel=np.array([-5.0, 0, 0]),
-        size=rng.uniform(25, 50, 3), mult=[[0.1, 0.5, 1], [0.05, 1.25, 2]], colour=np.array([1528, 180, 8.0]),
+        size=np.full(3, rng.uniform(25, 50)), mult=[[0.1, 0.5, 1], [0.05, 1.25, 2]], colour=np.array([1528, 180, 8.0]),
         alpha=[1, 0], piv=0.5, sub=('rand', 0, 3))
     add(kind='corespark', sheet='Add', align='square', birth=0.01, life=0.03, pos=np.array([10.0, 0, 0]),
-        size=rng.uniform(6, 12, 3), mult=[[0.5, 1.5, 1], [0.6, 1.8, 2]], colour=np.array([1528, 180, 8.0]),
+        size=np.full(3, rng.uniform(6, 12)), mult=[[0.5, 1.5, 1], [0.6, 1.8, 2]], colour=np.array([1528, 180, 8.0]),
         alpha=[1, 0], rot=rng.uniform(0, 1) * 360, piv=0.09, sub=('fixed', 7))
     return ps
 
@@ -126,24 +129,31 @@ def camera():
     return fwd, f
 
 
+def frame_of(s):
+    """a sprite's plane, facing EYE: centre, right, up (unit), width, height (cm, RoN axes), normal. The cards in the
+    game are these same quads (tools/ron/flash_bake.py), so both renders share this geometry."""
+    c = s['pos']; sx, sy = s['size'][0], s['size'][1]
+    to_eye = EYE - c; to_eye /= np.linalg.norm(to_eye)
+    if s['align'] == 'vel':
+        up = s['vel'] / max(np.linalg.norm(s['vel']), 1e-6)
+        nrm = to_eye - to_eye.dot(up) * up; nrm /= max(np.linalg.norm(nrm), 1e-9)
+        right = np.cross(up, nrm); w, h = sx, sy
+        c = c + up * sy * (-s['piv'] / 2)
+    else:
+        nrm = to_eye; a = math.radians(s['rot'])
+        up0 = np.array([0, 0, 1.0]); up0 = up0 - up0.dot(nrm) * nrm; up0 /= np.linalg.norm(up0)
+        r0 = np.cross(up0, nrm)
+        up = up0 * math.cos(a) + r0 * math.sin(a); right = r0 * math.cos(a) - up0 * math.sin(a); w = h = sx
+    return c, right, up, w, h, nrm
+
+
 def draw(sprites, img):
     """additive sprites into an HDR image (linear RoN units), seen from EYE looking down +X"""
     fwd, f = camera()
     yy, xx = np.mgrid[0:H, 0:W]
     dirs = np.stack([np.full(xx.shape, f), (xx - W / 2), -(yy - H / 2)], -1).astype(np.float64)   # +Y right, +Z up
     for s in sprites:
-        c = s['pos']; sx, sy = s['size'][0], s['size'][1]
-        to_eye = EYE - c; to_eye /= np.linalg.norm(to_eye)
-        if s['align'] == 'vel':
-            up = s['vel'] / max(np.linalg.norm(s['vel']), 1e-6)
-            nrm = to_eye - to_eye.dot(up) * up; nrm /= max(np.linalg.norm(nrm), 1e-9)
-            right = np.cross(up, nrm); w, h = sx, sy
-            c = c + up * sy * (-s['piv'] / 2)
-        else:
-            nrm = to_eye; a = math.radians(s['rot'])
-            up0 = np.array([0, 0, 1.0]); up0 = up0 - up0.dot(nrm) * nrm; up0 /= np.linalg.norm(up0)
-            r0 = np.cross(up0, nrm)
-            up = up0 * math.cos(a) + r0 * math.sin(a); right = r0 * math.cos(a) - up0 * math.sin(a); w = h = sx
+        c, right, up, w, h, nrm = frame_of(s)
         # pixel rays hitting the sprite plane
         corners = [c + sgx * right * w / 2 + sgy * up * h / 2 for sgx in (-1, 1) for sgy in (-1, 1)]
         pts = [k - EYE for k in corners]
@@ -188,6 +198,12 @@ def run(out, shots=6, seed=1, frames=6):
     for r, row in enumerate(tiles):
         for c, im in enumerate(row):
             sheet.paste(im.resize((W // 2, H // 2)), (c * W // 2, r * H // 2))
+    d = ImageDraw.Draw(sheet)
+    for r in range(shots):
+        for c in range(frames):
+            d.text((c * W // 2 + 6, r * H // 2 + 4), f'shot {r + 1}  frame {c}  ({(c + 1) * 1000 * DT:.0f} ms)', fill=(200, 200, 120))
+    for c in range(1, frames): d.line([(c * W // 2, 0), (c * W // 2, sheet.height)], fill=(60, 60, 60))
+    for r in range(1, shots): d.line([(0, r * H // 2), (sheet.width, r * H // 2)], fill=(60, 60, 60))
     sheet.save(f'{out}/ref_sheet.png')
     return sheet
 

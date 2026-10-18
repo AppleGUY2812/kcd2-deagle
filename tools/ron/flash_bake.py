@@ -24,6 +24,7 @@ import json, math, os, sys
 import numpy as np
 sys.path.insert(0, os.path.dirname(__file__))
 import cascade_sim as cs
+import flash_ref as fr
 
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
 REPO = ARGS[0]
@@ -31,7 +32,15 @@ GAIN = float(ARGS[1]) if len(ARGS) > 1 else 1.0
 cs.FX = '/mnt/e/Tools/deagle-work/ron_fx/_data/flash_collect.json'
 PNG = '/mnt/e/Tools/deagle-work/ron_fx/flash'
 OUT = '/mnt/e/Tools/deagle-work/flash_ron'
-VARIANTS, STAGES, T = 4, 10, 0.095
+# One stage per 60 fps frame: stage k = RoN's flash at the end of frame k after the shot (flash_ref.step), so the
+# card on screen is RoN's state for that frame. Only the short-lived sprites go on cards (front pop, its side flame,
+# the pistol core, the small flame: 35-40 ms, dead after frame 1); the sparks, streak and star (born at 0.01 s,
+# up to 0.085 s) are a particle effect, which KCD2 draws one frame after the shot: where RoN has them anyway.
+VARIANTS, STAGES = 16, 2
+T = STAGES / 60.0
+CARD_KINDS = ('pop', 'pop_side', 'core', 'flame')
+REF_SHEET = {'SMG': 'MI_MuzzleFlash_SMG', 'Pistol': 'MI_MuzzleFlash_Pistol', 'Side': 'MI_MuzzleFlash_Side',
+             'Add': 'M_Particle_Additive'}
 EYE = np.array([0.057, -0.407, -0.042])   # the eye from the muzzle, bone axes, m (MuzzleLocal: lp 0.057 0.407 -0.042)
 SETS = {'deagle_vm_flash_ron': 'WeaponFlash_Pistol_V3', 'deagle_vm_flash_ron_s': 'WeaponFlash_Pistol_V2'}
 SHEETS = {   # material -> texture, tiles across, down (Ready or Not's materials, flash_collect.json)
@@ -165,6 +174,51 @@ def quad(sheet, align, piv, f, j):
             'p': [list(map(float, q)) for q in corners], 'uv': tile_uv(sheet, f['SubImageIndex'][j][0])}
 
 
+def screen_rgb(rgb):
+    """the colour an HDR RoN colour shows on RoN's screen (its exposure and filmic curve), max channel 1, rounded to
+    1/8 so cards can share sub-materials"""
+    d = aces(RON_EXPOSURE * np.asarray(rgb, float))
+    d = d / max(d.max(), 1e-9)
+    return tuple(round(float(x) * 8) / 8 for x in d)
+
+
+def card_quad(s):
+    """one of flash_ref's sprites as a card: the reference's own plane (facing the eye), in bone axes"""
+    c, right, up, w, h, nrm = fr.frame_of(s)
+    corners = [c - right * w / 2 - up * h / 2, c + right * w / 2 - up * h / 2,
+               c + right * w / 2 + up * h / 2, c - right * w / 2 + up * h / 2]
+    lum = float(np.max(s['rgb']))
+    if lum <= 0.5 or w <= 0 or h <= 0: return None
+    sheet = REF_SHEET[s['sheet']]
+    _, nx, ny = SHEETS[sheet]
+    col = screen_rgb(s['rgb']); level = int(round(math.log2(lum)))
+    hue = 'c%d%d%d' % tuple(int(x * 8) for x in col)
+    return {'mtl': f'{TEX[sheet][10:]}_{hue}_{level:02d}', 'tex': TEX[sheet], 'hue': hue, 'col': col, 'level': level,
+            'p': [list(map(float, to_bone(q))) for q in corners], 'uv': tile_uv(sheet, s['sub'] % (nx * ny))}
+
+
+def bake_v2():
+    """RoN's V3 run by flash_ref (the rules read from its exe), 16 shots: the front pop on half of them, as RoN's 0-1
+    burst; each stage = that shot at the end of frame k, with the sheet frame, the core's colour and the drag drawn
+    again every frame as RoN does"""
+    cards = []
+    for v in range(VARIANTS):
+        rng = np.random.default_rng(100 + v)
+        ps = fr.spawn_shot(rng, pop=(v % 2 == 0))
+        stages = []
+        for k in range(STAGES):
+            sprites = [x for x in fr.step(ps, (k + 1) * fr.DT, rng) if x['kind'] in CARD_KINDS]
+            qs = [q for q in (card_quad(x) for x in sprites) if q]
+            if not qs:
+                qs.append({'mtl': 't_longspark_02_8x2_c800_00', 'tex': TEX['M_Particle_Additive'], 'hue': 'c800',
+                           'col': (1.0, 0.0, 0.0), 'level': 0,
+                           'p': [[-0.0005, -0.01, -0.0005], [0.0005, -0.01, -0.0005], [0.0005, -0.01, 0.0005], [-0.0005, -0.01, 0.0005]],
+                           'uv': tile_uv('M_Particle_Additive', 0)})
+            stages.append(qs)
+        cards.append(stages)
+    return cards
+
+
 def bake(system, name):
     mods = modules(system)
     ems = cs.load(system)
@@ -202,15 +256,15 @@ def bake(system, name):
 
 
 os.makedirs(OUT + '/tif', exist_ok=True)
-sets = {name: bake(system, name) for name, system in SETS.items()}
-mats = sorted({(q['mtl'], q['tex'], q['hue'], q['level']) for c in sets.values() for v in c for s in v for q in s})
+sets = {'deagle_vm_flash_ron': bake_v2()}   # V3 (the Grizzly's) for the Deagle; the Glock's V2 set comes later
+mats = sorted({(q['mtl'], q['tex'], q['col'], q['level']) for c in sets.values() for v in c for s in v for q in s})
 json.dump({'sets': sets, 'materials': [m[0] for m in mats], 'stages': STAGES, 'variants': VARIANTS, 'time': T},
           open(OUT + '/cards.json', 'w'))
 write_textures()
 for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_x30', 30.0)):   # brightness steps, to match Ready or Not's on-screen colour live
     subs = []
-    for mtl, tex, hue, level in mats:
-        r, gg, b = (round(float(c), 4) for c in screen_hue(hue, 2 ** level / 100.0))
+    for mtl, tex, col, level in mats:
+        r, gg, b = col
         inten = 2 ** level / 100.0 * GAIN * g
         subs.append(f'    <Material Name="{mtl}" MtlFlags="524454" Shader="Illum" GenMask="20000000000000" StringGenMask="%SUBSURFACE_SCATTERING" '
                     f'SurfaceType="" MatTemplate="" Diffuse="0,0,0" Specular="0,0,0" Opacity="0.99" Emittance="{r},{gg},{b},{inten:.4g}" '
