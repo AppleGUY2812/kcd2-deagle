@@ -19,7 +19,8 @@ local function step(label, fn) fn(); log[#log + 1] = string.format("%-26s ammo %
 step("draw", function() act("deagle_toggle"); M.advance(2.0) end)
 local roundsAfterOne, ammoAfterOne
 step("fire the magazine", function()
-	for i = 1, g.magSize do act("deagle_fire"); M.advance(0.25); if i == 1 then roundsAfterOne, ammoAfterOne = Deagle.vmRoundsShown, Deagle.state.ammo end end
+	-- one press per cycle: a gun slower than 0.25 s a shot (the Grizzly MK V, Ready or Not's 0.295) would skip presses
+	for i = 1, g.magSize do act("deagle_fire"); M.advance(math.max(0.25, (g.cycle or 0) + 0.02)); if i == 1 then roundsAfterOne, ammoAfterOne = Deagle.vmRoundsShown, Deagle.state.ammo end end
 	M.advance(1.5) end)
 local roundsWhenEmpty = Deagle.vmRoundsShown
 step("inspect (empty)", function() act("deagle_inspect"); M.advance(6) end)
@@ -313,8 +314,8 @@ if recoil then
 		recoil.flashScale and math.abs(recoil.flashScale - recoil.wantScale) < 1e-4, recoil.flashScale)
 	check("no live flash armed or shown (" .. tostring(recoil.flash or recoil.shot) .. ")", recoil.flash == nil and recoil.shot == nil, recoil.flash)
 end
-if phys then   -- loudness: the blast level (times each file's own evened-out gain, or RoN's own mix); the Glock plays ~0.83x the Deagle (a quarter of 6.5 dB)
-	local other = Deagle.guns[id == "deagle" and "glock_17" or "deagle"]
+if phys then   -- loudness: the blast level (times each file's own evened-out gain, or RoN's own mix); the Glock plays ~0.83x a .50 AE (a quarter of 6.5 dB)
+	local other = Deagle.guns[id == "glock_17" and "deagle" or "glock_17"]   -- every .50 (Deagle, Grizzly MK V) against the Glock
 	local mine = Deagle:ShotGain(nil, 1)
 	local saved = Deagle.gun; Deagle.gun = other
 	local theirs = Deagle:ShotGain(nil, 1)

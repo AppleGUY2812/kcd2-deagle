@@ -6,12 +6,13 @@
 # turned to CryEngine's +Y, bone names CryEngine takes, the muzzle bone rigid on its parent, the idle clip's first frame)
 # and the cards are put on the muzzle bone by its bind matrix in the gun's .chr. tools/flash_cdf.py compares every
 # skin's skeleton with the .chr's.
-# blender -b --factory-startup -P flash_skin.py -- <gun.blend> <gun.chr> <idle action> <cards.json> <out_dir> <rc.exe>
+# blender -b --factory-startup -P flash_skin.py -- <gun.blend> <gun.chr> <idle action> <cards.json> <out_dir> <rc.exe> [muzzle bone]
 import bpy, sys, os, re, math, struct, addon_utils
 from mathutils import Matrix
 
-BLEND, CHR, IDLE, CARDS, OUT, RC = sys.argv[sys.argv.index("--") + 1:][:6]
-MUZZLE = "tag_flash"
+ARGS = sys.argv[sys.argv.index("--") + 1:]
+BLEND, CHR, IDLE, CARDS, OUT, RC = ARGS[:6]
+MUZZLE = ARGS[6] if len(ARGS) > 6 else "tag_flash"   # Ready or Not guns: tag_muzzle
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import flash_mesh, flash_mesh_ron
 

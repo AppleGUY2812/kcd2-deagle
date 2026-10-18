@@ -15,7 +15,9 @@ import os, re, struct, sys
 
 FLASH_MTL = "objects/manmade/weapons/deagle/vm"   # the flash materials, shared by every gun
 GUNS = {"src/Objects/manmade/weapons/deagle/vm": "deagle_vm",              # gun dir -> its .chr / .cdf
-        "src/Objects/manmade/weapons/guns/glock_17": "glock_17_vm"}
+        "src/Objects/manmade/weapons/guns/glock_17": "glock_17_vm",
+        "src/Objects/manmade/weapons/guns/ron_grizzly": "ron_grizzly_vm"}
+MUZZLES = {"ron_grizzly_vm": "tag_muzzle"}   # the muzzle bone where it isn't tag_flash (Ready or Not guns)
 MUZZLE = "tag_flash"
 
 
@@ -45,7 +47,8 @@ def check(repo):
     for gun_dir, base in GUNS.items():
         chr_path = os.path.join(repo, gun_dir, base + ".chr")
         ref = chunks(chr_path)
-        muzzle = bone_index(chr_path, MUZZLE)
+        muzzle_bone = MUZZLES.get(base, MUZZLE)
+        muzzle = bone_index(chr_path, muzzle_bone)
         mine = cards(repo, gun_dir)
         if not mine:
             raise SystemExit(f"{gun_dir}: no flash card skins (build them: tools/flash_skin.sh)")
@@ -65,7 +68,7 @@ def check(repo):
                 w = struct.unpack_from("<4f", sv, 32 + i * 64 + 44)
                 on = {b: x for b, x in zip(ids, w) if x > 0}
                 if set(on) != {muzzle} or abs(sum(on.values()) - 1) > 1e-3:
-                    raise SystemExit(f"{path}: vertex {i} hangs on bones {on}, not on {MUZZLE} ({muzzle}) alone")
+                    raise SystemExit(f"{path}: vertex {i} hangs on bones {on}, not on {muzzle_bone} ({muzzle}) alone")
     return names
 
 

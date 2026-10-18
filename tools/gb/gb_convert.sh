@@ -43,13 +43,20 @@ swap="$(python3 -I -c 'import json,sys; print(",".join(json.load(open(sys.argv[1
 python3 "$here/tools/clip_times.py" "$tmp/tracks.json" --profile "$here/guns/$slug.json" --swap "$swap" > "$tmp/times.json"
 python3 -I -c 'import json,sys; [print("  ", k, v) for k, v in json.load(open(sys.argv[1])).items()]' "$tmp/times.json"
 
-echo "== textures"
-out="$(blend "$here/tools/gb/gb_vtf.py" "'$G' 'E:\\Tools\\deagle-work\\guns'" 'MATERIAL|MISSING|FAILED|VTF DONE|Traceback')"
-echo "$out"
-grep -q "VTF DONE" <<<"$out" || { echo "texture decode failed" >&2; exit 1; }
-ps "Copy-Item '$G\\tex\\npy' '$(win "$tmp")' -Recurse -Force; Copy-Item '$G\\tex\\tex.json' '$(win "$tmp")\\tex.json' -Force"
-python3 "$here/tools/gb/gb_tex.py" "$tmp/npy" "$tmp/tex.json" "$tmp/tif" "$slug" "$odir/${slug}_vm.mtl" | grep -E "^(MTL|NO BASE)" || true
-ps "Remove-Item -Recurse -Force '$G\\tex\\tif' -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force '$G\\tex\\tif' | Out-Null; Copy-Item '$(win "$tmp/tif")\\*' '$G\\tex\\tif\\' -Force; Set-Location '$G\\tex\\tif'; & '$RC' '*.tif' /userdialog=0 /refresh /streaming=1 | Select-String 'processed|rror' | % Line"
+mtlfrom="$(python3 -I -c 'import json,sys; print(json.load(open(sys.argv[1])).get("mtlFrom", ""))' "$here/guns/$slug.json")"
+if [ -n "$mtlfrom" ]; then   # a Ready or Not gun: its materials are already converted (tools/ron), only reordered here
+	echo "== materials (from $mtlfrom)"
+	python3 -I "$here/tools/ron/ron_vm_mtl.py" "$tmp/build.json" "$here/$mtlfrom" "$odir" "$slug" | sed 's/^/   /'
+	ps "New-Item -ItemType Directory -Force '$G\\tex\\tif' | Out-Null"
+else
+	echo "== textures"
+	out="$(blend "$here/tools/gb/gb_vtf.py" "'$G' 'E:\\Tools\\deagle-work\\guns'" 'MATERIAL|MISSING|FAILED|VTF DONE|Traceback')"
+	echo "$out"
+	grep -q "VTF DONE" <<<"$out" || { echo "texture decode failed" >&2; exit 1; }
+	ps "Copy-Item '$G\\tex\\npy' '$(win "$tmp")' -Recurse -Force; Copy-Item '$G\\tex\\tex.json' '$(win "$tmp")\\tex.json' -Force"
+	python3 "$here/tools/gb/gb_tex.py" "$tmp/npy" "$tmp/tex.json" "$tmp/tif" "$slug" "$odir/${slug}_vm.mtl" | grep -E "^(MTL|NO BASE)" || true
+	ps "Remove-Item -Recurse -Force '$G\\tex\\tif' -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force '$G\\tex\\tif' | Out-Null; Copy-Item '$(win "$tmp/tif")\\*' '$G\\tex\\tif\\' -Force; Set-Location '$G\\tex\\tif'; & '$RC' '*.tif' /userdialog=0 /refresh /streaming=1 | Select-String 'processed|rror' | % Line"
+fi
 
 echo "== stage into src/"
 python3 "$here/tools/gb/gb_stage.py" "$here" "$slug" "$here/guns/$slug.json" "$tmp/build.json" "$tmp/times.json" > "$tmp/stage.txt"
