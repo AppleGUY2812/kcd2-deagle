@@ -5,7 +5,7 @@ textures and emittance the game loads (the baked tifs and the .mtl), Illum's emi
 post chain in kcd2_tonemap.FLASH_SCENE. A wrong axis, UV flip or colour shows here before the game sees it.
 Owner: Claude 1.
 
-    python3 tools/ron/flash_check.py [cards.json] [out.png] [flash .mtl] [set: deagle_vm_flash_ron (V3) | deagle_vm_flash_ron_s (V2)]
+    python3 tools/ron/flash_check.py [cards.json] [out.png] [flash .mtl] [set: deagle_vm_flash_ron (V3) | deagle_vm_flash_ron_s (V2)] [exposure step: '' | _ev9 | _ev8 | _ev7]
 """
 import json, math, re, sys
 import numpy as np
@@ -25,7 +25,8 @@ MTL = sys.argv[3] if len(sys.argv) > 3 else __import__('os').path.join(__import_
 SET = sys.argv[4] if len(sys.argv) > 4 else 'deagle_vm_flash_ron'   # deagle_vm_flash_ron: V3 (the Grizzly's), _s: V2 (the G19's)
 SYSTEM = 'V2' if SET.endswith('_s') else 'V3'
 TIF = '/mnt/e/Tools/deagle-work/flash_ron/tif'
-SCENE = kt.Scene(**kt.FLASH_SCENE)
+EV = sys.argv[5] if len(sys.argv) > 5 else ''   # the exposure step the .mtl was solved for: '', _ev9, _ev8, _ev7 (kcd2_tonemap.EV_SCENES)
+SCENE = kt.Scene(**kt.EV_SCENES[EV])
 OPACITY = 0.99   # the .mtl's Opacity: MatDifColor.w in GatherAlpha (Illum.cfx:858)
 
 

@@ -180,6 +180,11 @@ NIGHT = dict(hour=23.0, illum_lux=0.5)     # moonlit: clamps at EV Min
 # adaptation on the profile's EV Max (10-11.5 over the 22 open-world profiles; foggy_drizzly = the median 11.0, with
 # neutral balance and saturation). Other days are within a stop; at night (EV Min 7) the flash shows 16x brighter
 FLASH_SCENE = dict(profile='foggy_drizzly', **DAY)
+# the flash's exposure ladder: KCD2 adapts EV 11 by day (7-19 h, EV Max), ~9.3 at 6 h and 20 h, 7.8 at 5 h and 21 h,
+# 7 at night (EV Min; 'Sun intensity' and EV Min/Max over the day, foggy_drizzly). One .mtl suffix per step, each
+# solved through that hour's own curve, colour chart and EV, so the flash shows the same on screen at every hour
+EV_SCENES = {'': FLASH_SCENE, '_ev9': dict(profile='foggy_drizzly', hour=20.0, illum_lux=4000.0),
+             '_ev8': dict(profile='foggy_drizzly', hour=21.0, illum_lux=0.5), '_ev7': dict(profile='foggy_drizzly', **NIGHT)}
 
 
 if __name__ == '__main__':

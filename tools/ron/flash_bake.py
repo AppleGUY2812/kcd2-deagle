@@ -12,7 +12,8 @@ stage the flash's game time is in.
     python3 tools/ron/flash_bake.py <repo> [gain]
     python3 tools/ron/flash_bake.py <repo> --textures      only the textures (tif/*.tif)
     -> E:/Tools/deagle-work/flash_ron/cards.json (for tools/flash_mesh_ron.py), tif/*.tif (for tools/fx_textures.ps1),
-       src/Objects/manmade/weapons/deagle/vm/deagle_vm_flash_ron{,_dim,_hot}.mtl
+       src/Objects/manmade/weapons/deagle/vm/deagle_vm_flash_ron{,_dim,_hot,_x10,_x30}.mtl (by day) and {_ev9,_ev8,_ev7}.mtl (dusk to night,
+       kcd2_tonemap.EV_SCENES)
 
 Coordinates: Ready or Not's emitter has +X down the barrel, +Y right, +Z up (cm); the muzzle bone has +Y down the
 barrel, X and Z flipped against the viewmodel's right and up (MODLOG 2026-10-14), so bone = (-Y, X, -Z) / 100.
@@ -220,14 +221,15 @@ def texels(sheet, n=1500):   # a sample of the sheet's linear texels (L, what a 
     return _texels[sheet]
 
 
-def kcd2_emittance(rgb, sheet):
+def kcd2_emittance(rgb, sheet, scene=None):
     """the HDR colour k (per channel) a card needs so KCD2 (SCENE) shows each texel L of the sheet as Ready or Not
     shows it: least squares over the sheet's texels of KCD2 display(k * L) vs Ready or Not's display(rgb * L), in
     display sRGB. The two curves differ, so one k can't match every texel; this is the best single one"""
+    scene = scene or SCENE
     L = texels(sheet)
     want = ron_display(L * np.asarray(rgb, float)[None, :])
-    k = np.maximum(SCENE.solve(ron_display(np.asarray(rgb, float))), 1e-6)   # start: matched at texel 1
-    err = lambda kk: float(((SCENE.display(L * kk[None, :]) - want) ** 2).sum())
+    k = np.maximum(scene.solve(ron_display(np.asarray(rgb, float))), 1e-6)   # start: matched at texel 1
+    err = lambda kk: float(((scene.display(L * kk[None, :]) - want) ** 2).sum())
     for _ in range(3):
         for ch in range(3):
             lo, hi = math.log2(k[ch]) - 4, math.log2(k[ch]) + 4
@@ -305,17 +307,21 @@ for c in sets.values():
     for v in c:
         for s in v:
             for q in s: members.setdefault((q['mtl'], q['tex'], q['sheet']), []).append(q['rgb'])
-mats = []
 # sub-material ids dim to bright: KCD2 draws a card's sub-materials in id order, each over the last by alpha, where
 # Ready or Not adds them; brightest last keeps the white core white under the streak (named by level: <name>_<level>)
-for (mtl, tex, sheet), rgbs in sorted(members.items(), key=lambda kv: (int(kv[0][0].rsplit('_', 1)[1]), kv[0])):
-    k = kcd2_emittance(np.mean(np.array(rgbs), axis=0), sheet)
-    w = float(k.max()) * 10.0                   # Illum: HDR = colour x intensity x 0.1 (Illum.cfx:953)
-    mats.append((mtl, tex, tuple(round(float(x), 4) for x in k / k.max()), w))
-json.dump({'sets': sets, 'materials': [m[0] for m in mats], 'stages': STAGES, 'variants': VARIANTS, 'time': T},
-          open(OUT + '/cards.json', 'w'))
-write_textures()
-for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_x30', 30.0)):   # brightness steps, to match Ready or Not's on-screen colour live
+ORDER = sorted(members.items(), key=lambda kv: (int(kv[0][0].rsplit('_', 1)[1]), kv[0]))
+
+
+def solve_mats(scene):   # per sub-material: (name, texture, colour with max 1, intensity) for one KCD2 scene
+    mats = []
+    for (mtl, tex, sheet), rgbs in ORDER:
+        k = kcd2_emittance(np.mean(np.array(rgbs), axis=0), sheet, scene)
+        w = float(k.max()) * 10.0                   # Illum: HDR = colour x intensity x 0.1 (Illum.cfx:953)
+        mats.append((mtl, tex, tuple(round(float(x), 4) for x in k / k.max()), w))
+    return mats
+
+
+def write_mtl(suffix, mats, g, scene):
     subs = []
     for mtl, tex, col, w in mats:
         r, gg, b = col
@@ -327,9 +333,22 @@ for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_
                     f'        <Texture Map="Emittance" File="textures/particles/deagle/ron_flash/{tex}_diff.tif" />\n      </Textures>\n'
                     f'      <PublicParams EmittanceMapGamma="1" SSSIndex="0" />\n    </Material>')
     xml = ('<!-- Ready or Not\'s pistol muzzle flash on cards (tools/ron/flash_bake.py; private use, never published): one\n'
-           f'     sub-material per texture and Ready or Not colour; emittance solved through KCD2\'s post chain ({SCENE.name}), x {GAIN * g:.3g} -->\n'
+           f'     sub-material per texture and Ready or Not colour; emittance solved through KCD2\'s post chain ({scene.name}), x {GAIN * g:.3g} -->\n'
            '<Material MtlFlags="524544" vertModifType="0">\n  <SubMaterials>\n' + '\n'.join(subs) + '\n  </SubMaterials>\n</Material>\n')
     open(f'{REPO}/src/Objects/manmade/weapons/deagle/vm/deagle_vm_flash_ron{suffix}.mtl', 'w').write(xml)
+
+
+mats = solve_mats(SCENE)
+json.dump({'sets': sets, 'materials': [m[0] for m in mats], 'stages': STAGES, 'variants': VARIANTS, 'time': T},
+          open(OUT + '/cards.json', 'w'))
+write_textures()
+for suffix, g in (('', 1.0), ('_dim', 1 / 3), ('_hot', 3.0), ('_x10', 10.0), ('_x30', 30.0)):   # brightness steps, to match Ready or Not's on-screen colour live
+    write_mtl(suffix, mats, g, SCENE)
+for suffix, kw in kt.EV_SCENES.items():   # the exposure ladder (kcd2_tonemap.EV_SCENES): the same look at dusk and night
+    if suffix:
+        sc = kt.Scene(**kw)
+        write_mtl(suffix, solve_mats(sc), 1.0, sc)
+        print(suffix, sc.name)
 for name, c in sets.items():
     print(name, 'quads per stage, variant 1..4:', [[len(s) for s in v] for v in c])
 print('materials', len(mats))
