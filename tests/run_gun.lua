@@ -14,6 +14,8 @@ for _, a in pairs(g.anims) do
 	if type(a[1]) == "table" then for _, v in ipairs(a) do known[v[1]] = true end else known[a[1]] = true end
 end
 local function act(a, x) Deagle:OnAction(a, x or "press") end
+-- R tapped (a Ready or Not gun reloads on its tap after cfg.reloadKey.tap; held would be its magazine check)
+local function tapR() act("deagle_reload"); M.advance(0.05); act("deagle_reload", "release") end
 local log = {}
 local function step(label, fn) fn(); log[#log + 1] = string.format("%-26s ammo %2d  %s", label, Deagle.state.ammo, tostring(Deagle.vmAnim and Deagle.vmAnim.name)) end
 step("draw", function() act("deagle_toggle"); M.advance(2.0) end)
@@ -24,13 +26,18 @@ step("fire the magazine", function()
 	M.advance(1.5) end)
 local roundsWhenEmpty = Deagle.vmRoundsShown
 step("inspect (empty)", function() act("deagle_inspect"); M.advance(6) end)
-step("empty reload", function() act("deagle_reload"); M.advance(4) end)
+step("empty reload", function() tapR(); M.advance(4) end)
 local ammoAfterReload = Deagle.state.ammo
 local cueCheck
 step("one shot + reload", function()
 	act("deagle_fire"); M.advance(0.5)
 	local n0, t0 = #M.native, M.t
-	act("deagle_reload"); M.advance(4)
+	tapR()
+	if g.ronStats then   -- its reload starts on the tap: the clock starts with it
+		while not Deagle.state.reloading and M.t - t0 < 1 do M.advance(1 / 60) end
+		t0 = M.t
+	end
+	M.advance(4)
 	-- the reload's sounds land where its clip is (they follow the playhead): each at its cue time / Rate, within a frame
 	-- (a gun with Ready or Not handling: each RoN event starts its click time early, "ron <vol> <event>|")
 	local cues = Deagle:RonCues("reload") or g.cues.reload or {}
@@ -803,6 +810,75 @@ do
 		tostring(ok), tostring(offOk)), ok and offOk, 0)
 	check(string.format("Deagle.FLYBY for the native near misses: chest %s m, gap %s s", tostring(Deagle.FLYBY and Deagle.FLYBY.chest),
 		tostring(Deagle.FLYBY and Deagle.FLYBY.gap)), Deagle.FLYBY and Deagle.FLYBY.chest == 1.25 and Deagle.FLYBY.gap == 0.75, 0)
+end
+
+
+-- Ready or Not's controls on its guns (docs/ron/ron_grizzly_interactions.md 2, 4): R tap = tactical reload once the tap
+-- time has passed, R twice within 0.2 s = speed reload (the old mag dropped with its rounds), R held past 0.2 s = the
+-- magazine check (inspect); the first draw after a load is drawFirst; an empty trigger plays dryFire. Clips the gun
+-- doesn't have yet stand in under their own names (the mock plays any clip in the table).
+if g.ronStats then
+	local A = Deagle.cfg.vm.anims
+	local added = {}
+	for k, v in pairs({ reloadSpeed = { id .. "_vm_reload_speed", 50, 30 }, drawFirst = { id .. "_vm_draw_first", 46, 30 },
+		dryFire = { id .. "_vm_dryfire", 15, 30 } }) do
+		if not A[k] then A[k] = v; added[#added + 1] = k end
+	end
+	local function base0() local vm = System.GetEntity(Deagle.vmId) return vm and vm.layers[0] end
+	local s = Deagle.state
+	if not s.drawn then act("deagle_toggle"); M.advance(2.0) end
+	-- tap: nothing before the tap time, the tactical reload after
+	s.ammo = 4; M.advance(1.0)
+	act("deagle_reload"); M.advance(0.05); act("deagle_reload", "release"); M.advance(0.1)
+	local early = s.reloading
+	M.advance(0.15)
+	local tapKey = base0()
+	check(string.format("RoN R tap: no reload at 0.15 s (%s), the tactical one by 0.3 s (%s)", tostring(early), tostring(tapKey)),
+		not early and s.reloading and tapKey == A.reload[1], tapKey)
+	M.advance(4)
+	-- double tap: the speed reload at once; the dropped mag's rounds are gone (useAmmoItems: a full mag taken)
+	local taken = 0
+	local inv = Deagle:Player().inventory
+	local del, count, items = inv.DeleteItemOfClass, inv.GetCountOfClass, Deagle.cfg.useAmmoItems
+	Deagle.cfg.useAmmoItems = true
+	inv.DeleteItemOfClass = function(_, _, n) taken = taken + n end
+	inv.GetCountOfClass = function() return 99 end
+	s.ammo = 4; M.advance(1.0)
+	act("deagle_reload"); M.advance(0.05); act("deagle_reload", "release"); M.advance(0.05); act("deagle_reload")
+	local dblKey = base0()
+	M.advance(0.05); act("deagle_reload", "release"); M.advance(4)
+	check(string.format("RoN R double tap: speed reload at once (%s), a full mag taken (%d), %d in the gun", tostring(dblKey), taken, s.ammo),
+		dblKey == A.reloadSpeed[1] and taken == g.magSize and s.ammo == g.magSize + 1, taken)
+	-- the tactical one keeps the old mag's rounds: only the missing ones are taken
+	taken = 0; s.ammo = 4; M.advance(1.0)
+	act("deagle_reload"); M.advance(0.05); act("deagle_reload", "release"); M.advance(4)
+	check(string.format("RoN R tap keeps the mag's rounds: %d taken for 4 left", taken), taken == g.magSize + 1 - 4, taken)
+	inv.DeleteItemOfClass, inv.GetCountOfClass, Deagle.cfg.useAmmoItems = del, count, items
+	-- hold: the magazine check, no reload
+	s.ammo = 5; M.advance(1.0)
+	act("deagle_reload"); M.advance(0.35)
+	local holdKey, holdReload = base0(), s.reloading
+	act("deagle_reload", "release"); M.advance(0.5)
+	check(string.format("RoN R hold: magazine check (%s), no reload (%s)", tostring(holdKey), tostring(s.reloading or holdReload)),
+		holdKey == A.inspect[1] and not holdReload and not s.reloading, holdKey)
+	M.advance(6)
+	-- dry fire: an empty trigger plays dryFire
+	s.ammo = 0; M.advance(1.0)
+	act("deagle_fire"); act("deagle_fire", "release"); M.advance(0.02)
+	check("RoN empty trigger: dryFire (" .. tostring(base0()) .. ")", base0() == A.dryFire[1], base0())
+	M.advance(1.0)
+	-- first draw after a load: drawFirst, then draw
+	s.ammo = g.magSize
+	act("deagle_toggle"); M.advance(2.0)
+	Deagle.drawnOnce = nil
+	act("deagle_toggle"); M.advance(0.05)
+	local first = base0()
+	M.advance(3.0); act("deagle_toggle"); M.advance(2.0); act("deagle_toggle"); M.advance(0.05)
+	local second = base0()
+	check(string.format("RoN first draw after a load: %s, then %s", tostring(first), tostring(second)),
+		first == A.drawFirst[1] and second == A.draw[1], first)
+	M.advance(3.0)
+	for _, k in ipairs(added) do A[k] = nil end
 end
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))

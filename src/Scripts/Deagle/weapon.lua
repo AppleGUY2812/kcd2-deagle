@@ -20,6 +20,7 @@ function Deagle:Shoot(force)
 	if s.ammo <= 0 then
 		local ron = self:RonSounds()
 		if ron and ron.dry then self:RonHere(ron.dry, self:DryGain(ron.dry)) else self:PlayTrigger(c.dryTrigger) end
+		self:VmDryFire()
 		self:ShowAmmo()
 		return false
 	end
@@ -153,10 +154,46 @@ function Deagle:Give(line)
 	log("give: pistol " .. self:CountOf(self.cfg.itemId) .. ", cartridges " .. self:CountOf(self.cfg.ammoId))
 end
 
+-- R. A Ready or Not gun (gun.ronStats) reads it like Ready or Not does (cfg.reloadKey): a tap reloads tactically once
+-- the tap time has passed, a second press within the double-tap time reloads fast, a hold checks the magazine. The
+-- times are real seconds (System.GetCurrAsyncTime), checked every frame by ReloadKeyTick; other guns reload on the press.
+function Deagle:ReloadKey(down)
+	if not self.gun.ronStats then
+		if down then self:Reload() end
+		return
+	end
+	local now, r = System.GetCurrAsyncTime(), self.rKey
+	if not down then
+		if r then r.down = false end
+		return
+	end
+	if r and now - r.at <= self.cfg.reloadKey.double and self.cfg.vm.anims.reloadSpeed then
+		self.rKey = nil
+		self:Reload("speed")
+		return
+	end
+	self.rKey = { at = now, down = true }
+end
+
+function Deagle:ReloadKeyTick()   -- every viewmodel frame
+	local r, k = self.rKey, self.cfg.reloadKey
+	if not r then return end
+	local held = System.GetCurrAsyncTime() - r.at
+	if r.down and held > k.hold then
+		self.rKey = nil
+		self:Inspect()
+	elseif not r.down and held >= k.tap then
+		self.rKey = nil
+		self:Reload()
+	end
+end
+
 -- A reload's clip says when its work is done (gun.times, tools/clip_times.py): the new mag seats (the ammo goes in),
 -- then the gun comes back up (ready: the reload is over and a shot cuts the rest of the clip). Until the old mag leaves
 -- the gun, a shot cancels the reload: the rounds you had stay, no new ones.
-function Deagle:Reload()
+-- kind "speed" (Ready or Not's double-tap R, its reloadSpeed clip): the old magazine is dropped with the rounds left in
+-- it; the tactical one (the default) keeps them. An empty gun has one reload either way: reloadEmpty.
+function Deagle:Reload(kind)
 	local s, c = self.state, self.cfg
 	-- a round in the chamber stays there: a fresh mag on top of it makes magSize + 1 (Deagle 7+1, Glock 17+1)
 	local capacity = c.magSize + (s.ammo > 0 and 1 or 0)
@@ -165,7 +202,7 @@ function Deagle:Reload()
 		self:Notify("No .50 AE cartridges")
 		return
 	end
-	local key = s.ammo == 0 and "reloadEmpty" or "reload"
+	local key = s.ammo == 0 and "reloadEmpty" or (kind == "speed" and "reloadSpeed") or "reload"
 	local a = c.vm.anims[key]
 	local len = a[2] / (a[3] or c.vm.fps) / self:Rate(key)
 	local seat = math.min(self:ClipTime(key, "seat") or len, len)
@@ -175,7 +212,7 @@ function Deagle:Reload()
 	s.reloadEnd = now + ready
 	s.reloadCancel = now + (self:ClipTime(key, "cancel") or 0)
 	s.reloadOut = now + (self:ClipTime(key, "out") or self:ClipTime(key, "cancel") or 0)
-	s.reloadTarget = capacity
+	s.reloadTarget, s.reloadDrop = capacity, key == "reloadSpeed"
 	local this = s.reloadEnd
 	local function mine() return Deagle.state.reloading and Deagle.state.reloadEnd == this end
 	self:Notify("Desert Eagle  reloading...")
@@ -197,6 +234,7 @@ function Deagle:SeatMag()
 	if s.magSeated then return end
 	s.magSeated = true
 	self:VmMagIn()
+	if s.reloadDrop then s.ammo = math.min(s.ammo, 1) end   -- a speed reload dropped the old mag: the chambered round stays
 	local take = (s.reloadTarget or c.magSize) - s.ammo
 	if c.useAmmoItems then
 		take = math.min(take, self:CountOf(c.ammoId))

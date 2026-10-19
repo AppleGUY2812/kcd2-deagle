@@ -17,6 +17,10 @@ Deagle.cfg = {
 	rangeMod = 1.0,           -- damage x rangeMod per 12.7 m (CS2: per 500 units)
 	burstShotGap = 0.05,       -- seconds between a burst's rounds (a Glock 18 fires ~1,100-1,200 rounds a minute)
 	burstInterval = 0.3,      -- after a burst
+	-- Ready or Not's R for its guns (gun.ronStats; docs/ron/ron_grizzly_interactions.md 4): a tap reloads tactically
+	-- (keeps the magazine) tap s after the press, a second press within double s of the first reloads fast (drops the
+	-- magazine), holding past hold s checks the magazine instead (its inspect). Real seconds (F9 slow motion too).
+	reloadKey = { tap = 0.25, double = 0.2, hold = 0.2 },
 	heatPerShot = 0.35,       -- degrees of extra spread per shot; cools at heatDecay deg/s (rapid fire opens the cone)
 	heatDecay = 4.0,
 	kickPitchVar = 0.0,
@@ -425,9 +429,9 @@ function Deagle:ClipTime(key, what)
 end
 local SHOT_CUE = { { 0, "shot" } }
 local REST = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }   -- looping rest poses
-local HOLDS_AIM = { draw = true, drawEmpty = true, holster = true, holsterEmpty = true, reload = true, reloadEmpty = true }   -- aim waits for these; shots and inspect it cuts
-local DRAWING = { draw = true, drawEmpty = true }        -- no shooting, reloading or inspecting until the gun is up
-local HOLDS_TOGGLE = { draw = true, drawEmpty = true, reload = true, reloadEmpty = true }   -- a holster asked for meanwhile waits
+local HOLDS_AIM = { draw = true, drawEmpty = true, drawFirst = true, holster = true, holsterEmpty = true, reload = true, reloadEmpty = true, reloadSpeed = true }   -- aim waits for these; shots and inspect it cuts
+local DRAWING = { draw = true, drawEmpty = true, drawFirst = true }        -- no shooting, reloading or inspecting until the gun is up
+local HOLDS_TOGGLE = { draw = true, drawEmpty = true, drawFirst = true, reload = true, reloadEmpty = true, reloadSpeed = true }   -- a holster asked for meanwhile waits
 local SHOTS = { shoot = true, shootEmpty = true, shootBurst = true }
 local INSPECTS = { inspect = true, inspectEmpty = true }
 local GAME_MAPS_OFF = { "combat" }   -- KCD2 action maps on our keys, off while the gun is out (the torch: OnAction)
@@ -635,7 +639,7 @@ function Deagle:OnAction(action, activation, value)
 		self:SetAim(activation == "press")
 		return true
 	elseif action == "deagle_reload" then
-		if activation == "press" then self:Reload() end
+		self:ReloadKey(activation == "press")
 		return true
 	end
 	return false
@@ -719,6 +723,7 @@ function Deagle:OnGameplayStarted()
 	self.inputLoaded = false
 	self:EnsureInit()
 	self.vmId, self.casePools, self.caseThrow, self.flashUntil = nil, nil, nil, nil   -- a load ends the old world: its ids may now name other entities
+	self.drawnOnce, self.rKey = nil, nil                        -- the first draw after a load is the gun's drawFirst
 	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	self.paths, self.pathsToken = nil, nil

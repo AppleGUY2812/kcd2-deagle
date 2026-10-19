@@ -5,7 +5,7 @@ fail=0
 luajit tests/run_flows.lua | grep -q "TOTAL ERRORS:	0$" || { echo "FAIL run_flows"; fail=1; }
 luajit tests/run_transitions.lua | tail -1 | grep -q "script errors: 0" && luajit tests/run_transitions.lua | tail -1 | awk '{split($1,a,"/"); exit !(a[1]==a[2])}' || { echo "FAIL run_transitions"; fail=1; }
 luajit tests/run_fallback.lua | grep -q "FALLBACK ERRORS:	0" || { echo "FAIL run_fallback"; fail=1; }
-for g in deagle glock_17; do luajit tests/run_gun.lua "$g" >/dev/null || { echo "FAIL run_gun $g"; fail=1; }; done
+for g in deagle glock_17 ron_grizzly; do luajit tests/run_gun.lua "$g" >/dev/null || { echo "FAIL run_gun $g"; fail=1; }; done
 luajit tests/run_ballistics.lua >/dev/null || { echo "FAIL run_ballistics"; fail=1; }
 luajit tests/run_penetration.lua >/dev/null || { echo "FAIL run_penetration"; fail=1; }
 luajit tests/run_hits.lua >/dev/null || { echo "FAIL run_hits"; fail=1; }

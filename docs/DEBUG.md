@@ -11,7 +11,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | H | draw / holster (works holstered) |
 | Left mouse | fire (hold for full auto) |
 | Right mouse | aim down sights, off by default (`deagle_ads 1` turns it on) |
-| R | reload (a shot before the new mag clicks cancels it, see "Reloads") |
+| R | reload (a shot before the new mag clicks cancels it, see "Reloads"). Ready or Not guns (Grizzly) use Ready or Not's R: tap = tactical reload (keeps the magazine, starts 0.25 s after the press), tap twice fast = speed reload (drops the magazine and its rounds), hold = magazine check |
 | Y | inspect |
 | B | fire mode (semi / burst / auto, on guns that have them) |
 | F9 | slow motion on / off (0.1x, works holstered). Slower: `deagle_slowmo 0.02` (F9 keeps that speed) |
@@ -144,6 +144,7 @@ On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list setti
 | `impactVolume` | `2` | bullet impact / ricochet / armour sounds x Ready or Not's own level (it mixes them ~9 dB under the shot) |
 | `impactNear` | `3` | m within which impacts play at full level; beyond it -6 dB per doubling of the distance, like real sound (plugin; RoN's own fade silenced them by 12 m) |
 | `vm.cueLead` | `0.045` | s every Ready or Not handling sound (reload, inspect, draw) starts early for the sound engine's output delay: raise it if they still land late |
+| `reloadKey.tap` / `.double` / `.hold` | `0.25` / `0.2` / `0.2` | Ready or Not guns' R (see "Reloads"): s after a tap before the tactical reload, s for a second press to make it a speed reload, s held for the magazine check |
 | `vm.dryDb` | `-22` | empty click loudness in dB of Ready or Not's mix (the shot is -3; RoN's own click -40 / -47) |
 | `hearing.on` | `true` | NPCs hear your shots and impacts (KCD2's own gun_fired / bullet_hit sounds) |
 | `hearing.shot` | `1` | how far a 9 mm shot is heard: KCD2's own guns use 1 (louder guns more) |
@@ -172,6 +173,10 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 - A shot after the old magazine is out fires the round in the chamber; the gun has no magazine until you reload.
 - An empty gun keeps reloading when you pull the trigger.
 - A round in the chamber stays: reloading with rounds left gives 7+1 (Deagle) / 17+1 (Glock).
+- Ready or Not guns (Grizzly): R tap = tactical reload 0.25 s after the press (the old magazine and its rounds are
+  kept); R twice within 0.2 s = speed reload at once (the old magazine drops with its rounds; only the chambered one
+  stays); R held past 0.2 s = magazine check. An empty gun gets its empty reload either way. The times are
+  `deagle_set reloadKey.tap 0.25`, `reloadKey.double 0.2`, `reloadKey.hold 0.2` (real seconds, slow motion too).
 
 ## Checking effects
 - F9 slow motion, then shoot: flash, smoke, casings, light at 1/10 speed. For the flash go slower: `deagle_slowmo 0.02` (1/50) or `0.01` (1/100).

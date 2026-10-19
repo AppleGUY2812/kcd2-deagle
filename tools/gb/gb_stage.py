@@ -11,7 +11,12 @@ NAME = f"{SLUG}_vm"
 KEY = {"idle": "idle", "idle_empty": "idleEmpty", "draw": "draw", "draw_empty": "drawEmpty", "holster": "holster",
        "holster_empty": "holsterEmpty", "shoot": "shoot", "shoot_empty": "shootEmpty", "reload": "reload",
        "reload_empty": "reloadEmpty", "inspect": "inspect", "inspect_empty": "inspectEmpty",
-       "shoot_add": "shootAdd", "shoot_empty_add": "shootEmptyAdd", "shoot_alt": "shootBurst"}
+       "shoot_add": "shootAdd", "shoot_empty_add": "shootEmptyAdd", "shoot_alt": "shootBurst",
+       # Ready or Not ports (docs/ron/ron_grizzly_interactions.md): one clip each
+       "draw_first": "drawFirst", "reload_speed": "reloadSpeed", "shoot_ads": "shootAds", "shoot_empty_ads": "shootEmptyAds",
+       "reload_ads": "reloadAds", "reload_empty_ads": "reloadEmptyAds", "dry_fire": "dryFire", "low_up": "lowUp",
+       "low_up_empty": "lowUpEmpty", "low_down": "lowDown", "low_down_empty": "lowDownEmpty",
+       "sprint_start": "sprintStart", "sprint": "sprint", "sprint_stop": "sprintStop"}
 CUES_FROM = {"draw_empty": "draw", "inspect_empty": "inspect"}   # derived clips reuse their source clip's sounds
 sounds = {}
 def snd(rel):

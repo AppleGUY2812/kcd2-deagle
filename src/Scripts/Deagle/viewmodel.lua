@@ -232,6 +232,7 @@ function Deagle:VmTick(token)
 	self:FlashArm()
 	self:FlashMeshTick()
 	self:CueTick()
+	self:ReloadKeyTick()
 	self:EnvTick()
 	self:CaseTick()
 	self:BarrelHeatTick()
@@ -377,7 +378,7 @@ function Deagle:VmPlay(key, loop, speed, blend)
 		ready = now + math.min(plain and self:ClipTime(key, "ready") or stop, stop) }
 	if not loop then
 		self:PlayCues(key, blend, speed)
-		if HOLDS_AIM[key] and key ~= "reload" and stop > c.adsLead then   -- reload: at its end (mag swap)
+		if HOLDS_AIM[key] and key ~= "reload" and key ~= "reloadSpeed" and stop > c.adsLead then   -- reloads: at their end (mag swap)
 			Script.SetTimer(math.floor((stop - c.adsLead) * 1000), function()
 				if Deagle.vmAnimToken == tok and Deagle.vmShown and Deagle.state.aimHeld then Deagle:UpdateAim(c.adsLead) end
 			end)
@@ -421,6 +422,14 @@ function Deagle:VmRecoilAdd(empty)
 	end)
 end
 
+-- an empty gun's trigger pull: its dryFire clip (Ready or Not's fiveseven dryfire over the locked-slide idle, baked
+-- whole: it starts and ends on idleEmpty), played like a shot; not over a reload, draw, holster or inspect
+function Deagle:VmDryFire()
+	if not (self.cfg.vm.anims.dryFire and self.vmShown) or self.vmHolstering then return end
+	if self:VmBusy() and not SHOTS[self.vmAnim.key] and self.vmAnim.key ~= "dryFire" then return end
+	self:VmPlay("dryFire", false)
+end
+
 -- ---------------------------------------------------------------------------
 -- draw / holster
 -- ---------------------------------------------------------------------------
@@ -436,7 +445,10 @@ function Deagle:VmShow()
 	if not vm then return end
 	self.vmShown = true
 	self:VmPlace()
-	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or "draw", false, 1.0, 0)
+	-- the first draw after a load is the gun's drawFirst if it has one (Ready or Not's draw_first_b: the chamber check)
+	local first = not self.drawnOnce and self.cfg.vm.anims.drawFirst and self.state.ammo > 0
+	self.drawnOnce = true
+	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or first and "drawFirst" or "draw", false, 1.0, 0)
 	pcall(vm.Hide, vm, 0)
 	self.vmRoundsShown = nil
 	self:VmRounds(self:MagRounds())
