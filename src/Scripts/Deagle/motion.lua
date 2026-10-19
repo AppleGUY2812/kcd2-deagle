@@ -50,7 +50,7 @@ function Deagle:MotionParams(gun)
 	for k, v in pairs(self.motionGuns[gun.id or ""] or {}) do p[k] = v end
 	for k, v in pairs(self:RonMotion(gun)) do p[k] = v end
 	for k, v in pairs(gun.motion or {}) do p[k] = v end
-	self.sprintSent = nil   -- the reset puts the plugin's sprint pose back at 1: LowReadyTick sends the gun's again
+	self.sprintSent, self.motionLazy = nil, nil   -- the reset: LowReadyTick / RonLayersTick send the gun's again
 	for k, v in pairs(self.motionOverride) do p[k] = v end
 	local keys = {}
 	for k in pairs(p) do keys[#keys + 1] = k end
@@ -112,3 +112,196 @@ function Deagle:MotionTick()
 end
 
 System.AddCCommand("deagle_mparam", "local s = ([[%line]]):gsub('\"', '') local k, v = s:match('(%S+)%s+(%S+)') if k then Deagle.motionOverride[k] = tonumber(v) Deagle:MotionParams() end", "deagle_mparam <key> <value>: weapon-movement tunable (docs/DEBUG.md), e.g. test_roll 10")
+
+-- ---------------------------------------------------------------------------
+-- Ready or Not's additive animation layers on its guns (its ANIMBP_Player_FP_Master, decoded 2026-10-19 by the
+-- deagle-game-todo-notion session's helper). Each on its own viewmodel layer, weighted by the plugin ("lweight":
+-- KCD2's Lua has no layer weight; nothing plays without it), and only the parts whose clips the gun has:
+--   breathe   its idle loop, weight AimInterp (an FInterpTo at 10 to 1 at the hip, 0.2 aiming)
+--   loco      one layer, its clips crossfading: moveStart (fp_gen_start_quick_01, in 0.1 s; rate / weight 0.6 / 0.5
+--             under 170 cm/s, 0.75 / 0.75 under 270, else 1 / 1), the loop (after 0.5 s) for the speed band and
+--             direction (up to 150 cm/s locoM at speed / 150; to 200 locoM, backwards locoF, at speed / 250; above
+--             locoF at speed / 310; a new direction over 0.3 s), moveStop on stopping (0.05 s; weight 0.4 aiming), out
+--             over 0.1 s
+--   roll      one 3-frame clip (left, centre, right) scrubbed by the strafe keys smoothed by an FInterpTo at 15, weight
+--             AimInterp x 0.7 (its blend from weapon_right down at 0.75 is in the clip)
+--   jump      start (0.05 s in) -> loop with 0.1 s of start left -> end on landing (0.05 s) -> out (0.2 s), AimInterp
+--   crouch    crouchIn / crouchOut on a stance change (0.25 s), out with 0.2 s left, AimInterp
+--   shake     its loop at 0.2
+--   ads       the aim kicks: adsIn at 0.2 (in 0.05 s), adsOut at 0.35 (in 0.2 s), out with 0.1 s left
+-- Layers 0 (base) and 1 (aimed recoil on other guns) stay as they are.
+-- ---------------------------------------------------------------------------
+local AL = { breathe = 2, loco = 3, roll = 4, jump = 5, crouch = 6, shake = 7, ads = 8 }
+Deagle.ronLayerCfg = { aimAds = 0.2, aimRate = 10, moving = 10, dirBlend = 0.3, rollRate = 15, rollW = 0.7 * 0.75,
+	shakeW = 0.2, adsInW = 0.2, adsOutW = 0.35, stopAdsW = 0.4 }
+
+local function clipLen(a) return a and math.max(1, a[2] - 1) / (a[3] or Deagle.cfg.vm.fps) or 0 end
+
+function Deagle:RonLayersOn()
+	return self.gun.ronStats and self.native and self.nativeCaps and self.nativeCaps.lweight and self.vmShown and true or false
+end
+
+-- a layer's weight, faded linearly to w over s seconds (0 = now); sent to the plugin when it changes
+function Deagle:LayerFade(layer, w, s)
+	local L = self.ronLayers
+	local f = L.w[layer] or { now = 0 }
+	f.to, f.rate = w, (s and s > 0) and math.abs(w - f.now) / s or math.huge
+	L.w[layer] = f
+end
+
+-- a clip on a layer: started (a crossfade of blend s from what it plays), its rate, and when it began
+function Deagle:LayerPlay(layer, key, blend, rate, loop)
+	local L, a = self.ronLayers, self.cfg.vm.anims[key]
+	local vm = self:VmEntity()
+	if not (a and vm) then return false end
+	pcall(vm.StartAnimation, vm, 0, a[1], layer, blend or 0, rate or 1, loop and true or false)
+	L.clip[layer] = { key = key, t0 = System.GetCurrTime(), len = clipLen(a) / (rate or 1), rate = rate or 1 }
+	return true
+end
+
+function Deagle:LayersReset()   -- the gun put away or changed: every layer of ours off and back at weight 1
+	local L = self.ronLayers
+	if not L then return end
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	for _, l in pairs(AL) do
+		if L.clip[l] and vm then pcall(vm.StopAnimation, vm, 0, l) end
+		if L.w[l] and self.native then self:Native("lweight " .. l .. " -1") end
+	end
+	self.ronLayers = nil
+end
+
+-- every viewmodel frame on a Ready or Not gun
+function Deagle:RonLayersTick()
+	if not self:RonLayersOn() then if self.ronLayers then self:LayersReset() end return end
+	local a, C, s = self.cfg.vm.anims, self.ronLayerCfg, self.state
+	local now = System.GetCurrTime()
+	local L = self.ronLayers
+	if not L or L.gun ~= self.gun.id or L.vm ~= self.vmId then
+		if L then self:LayersReset() end
+		L = { gun = self.gun.id, vm = self.vmId, w = {}, clip = {}, aim = s.aiming and C.aimAds or 1, roll = 0, t = now }
+		self.ronLayers = L
+		if a.breathe and self:LayerPlay(AL.breathe, "breathe", 0, 1, true) then self:LayerFade(AL.breathe, L.aim, 0) end
+		if a.shake and self:LayerPlay(AL.shake, "shake", 0, 1, true) then self:LayerFade(AL.shake, C.shakeW, 0) end
+	end
+	local dt = math.max(0, math.min(0.1, now - L.t))
+	L.t = now
+	-- what these clips replace in the plugin's procedural motion (motion.cpp): its jump / land offsets (Ready or Not
+	-- has none: its jump clips) and its walk bob (modelled on Ready or Not's jog loop, which the loco clips now are)
+	local want = (a.jumpStart and "j0" or "j1") .. ((a.locoMFwd or a.locoFFwd) and "b0" or "b1")
+	if self.motionLazy ~= want then
+		self.motionLazy = want
+		local j, b = a.jumpStart and 0 or 1, (a.locoMFwd or a.locoFFwd) and 0 or 1
+		self:Native("mparams jump " .. j); self:Native("mparams land " .. j); self:Native("mparams bob " .. b)
+	end
+	-- AimInterp
+	L.aim = L.aim + ((s.aiming and C.aimAds or 1) - L.aim) * math.min(1, dt * C.aimRate)
+	if a.breathe then self:LayerFade(AL.breathe, L.aim, 0) end
+	local p = self:Player()
+	local ok, v = pcall(p.GetVelocity, p)
+	if not ok or type(v) ~= "table" then v = { x = 0, y = 0, z = 0 } end
+	local f = System.GetViewCameraDir()
+	local fl = math.sqrt(f.x * f.x + f.y * f.y)
+	local fx, fy = 0, 1
+	if fl > 1e-4 then fx, fy = f.x / fl, f.y / fl end
+	local vf, vr = (v.x or 0) * fx + (v.y or 0) * fy, (v.x or 0) * fy - (v.y or 0) * fx
+	local speed = math.sqrt(vf * vf + vr * vr) * 100   -- cm/s, as Ready or Not's Speed
+	-- locomotion
+	if a.locoMFwd or a.locoFFwd then
+		local lc = L.clip[AL.loco]
+		local st = L.loco or "idle"
+		local moving = speed > C.moving
+		if moving and (st == "idle" or st == "stop") then
+			local rate, w = 1, 1
+			if speed < 170 then rate, w = 0.6, 0.5 elseif speed < 270 then rate, w = 0.75, 0.75 end
+			if a.moveStart and self:LayerPlay(AL.loco, "moveStart", 0.1, rate, false) then st = "start"; self:LayerFade(AL.loco, w, 0.1)
+			else st = "moving"; L.locoKey = nil end
+		elseif st == "start" and lc and now >= lc.t0 + lc.len - 0.5 then
+			st = "moving"; L.locoKey = nil
+		elseif st == "moving" and not moving then
+			if a.moveStop and self:LayerPlay(AL.loco, "moveStop", 0.05, 1, false) then
+				st = "stop"; self:LayerFade(AL.loco, s.aiming and C.stopAdsW or 1, 0.05)
+			else st = "idle"; self:LayerFade(AL.loco, 0, 0.3) end
+		elseif st == "stop" and lc and now >= lc.t0 + lc.len then
+			st = "idle"; self:LayerFade(AL.loco, 0, 0.1)
+		end
+		if st == "moving" then
+			-- direction: forward / left / right / back by the velocity's angle to the view
+			local dir = math.abs(vr) > math.abs(vf) and (vr > 0 and "R" or "L") or (vf >= 0 and "Fwd" or "Bwd")
+			local set, rate = "M", speed / 150
+			if speed > 200 then set, rate = "F", speed / 310
+			elseif speed > 150 then set, rate = dir == "Bwd" and "F" or "M", speed / 250 end
+			local key = "loco" .. set .. dir
+			if not a[key] then key = a["locoM" .. dir] and "locoM" .. dir or "locoF" .. dir end
+			if key ~= L.locoKey and a[key] then
+				local blend = L.locoKey and C.dirBlend or 0.5   -- a new direction / band, or in from the start clip
+				self:LayerPlay(AL.loco, key, blend, rate, true)
+				L.locoKey = key
+				self:LayerFade(AL.loco, 1, blend)
+			end
+			local vm = self:VmEntity()
+			if vm then pcall(vm.SetAnimationSpeed, vm, 0, AL.loco, rate) end
+		end
+		L.loco = st
+	end
+	-- roll: the strafe keys (OnAction), smoothed
+	if a.roll then
+		local k = self.strafeKeys or {}
+		local want = (k.right and 1 or 0) - (k.left and 1 or 0)
+		L.roll = L.roll + (want - L.roll) * math.min(1, dt * C.rollRate)
+		if not L.clip[AL.roll] then self:LayerPlay(AL.roll, "roll", 0, 0, true) end
+		local vm = self:VmEntity()
+		if vm then pcall(vm.SetAnimationTime, vm, 0, AL.roll, (L.roll + 1) / 2) end
+		self:LayerFade(AL.roll, C.rollW * L.aim, 0)
+	end
+	-- jump
+	if a.jumpStart and a.jumpLoop and a.jumpEnd then
+		local air = false
+		pcall(function() air = p.actor:IsFlying() and true or false end)
+		local jc, js = L.clip[AL.jump], L.jumpState
+		if air and not js then
+			self:LayerPlay(AL.jump, "jumpStart", 0.05, 1, false); L.jumpState = "start"; self:LayerFade(AL.jump, L.aim, 0.05)
+		elseif js == "start" and jc and now >= jc.t0 + jc.len - 0.1 then
+			self:LayerPlay(AL.jump, "jumpLoop", 0.05, 1, true); L.jumpState = "loop"
+		elseif not air and (js == "start" or js == "loop") then
+			self:LayerPlay(AL.jump, "jumpEnd", 0.05, 1, false); L.jumpState = "end"
+		elseif js == "end" and jc and now >= jc.t0 + jc.len then
+			L.jumpState = nil; self:LayerFade(AL.jump, 0, speed > C.moving and 0.1 or 0.2)
+		elseif js then self:LayerFade(AL.jump, L.aim, 0) end
+	end
+	-- crouch
+	if a.crouchIn and a.crouchOut then
+		local crouched = self.motionIn and self.motionIn.crouched or false
+		if L.crouched == nil then L.crouched = crouched end
+		local cc = L.clip[AL.crouch]
+		if crouched ~= L.crouched then
+			L.crouched = crouched
+			self:LayerPlay(AL.crouch, crouched and "crouchIn" or "crouchOut", 0.25, 1, false); L.crouchOn = true
+			self:LayerFade(AL.crouch, L.aim, 0.25)
+		elseif L.crouchOn and cc and now >= cc.t0 + cc.len - 0.2 then
+			L.crouchOn = false; self:LayerFade(AL.crouch, 0, 0.25)
+		elseif L.crouchOn then self:LayerFade(AL.crouch, L.aim, 0) end
+	end
+	-- aim kicks
+	if a.adsIn and a.adsOut then
+		if L.aimWas ~= nil and s.aiming ~= L.aimWas then
+			local key = s.aiming and "adsIn" or "adsOut"
+			self:LayerPlay(AL.ads, key, s.aiming and 0.05 or 0.2, 1, false); L.adsOn = true
+			self:LayerFade(AL.ads, s.aiming and C.adsInW or C.adsOutW, s.aiming and 0.05 or 0.2)
+		elseif L.adsOn and L.clip[AL.ads] and now >= L.clip[AL.ads].t0 + L.clip[AL.ads].len - 0.1 then
+			L.adsOn = false; self:LayerFade(AL.ads, 0, 0.1)
+		end
+		L.aimWas = s.aiming
+	end
+	-- the weights: on toward their targets, sent when they move
+	for layer, fw in pairs(L.w) do
+		local d = fw.to - fw.now
+		if d ~= 0 then
+			local step = fw.rate == math.huge and math.huge or fw.rate * dt   -- (inf x 0 would be NaN)
+			fw.now = math.abs(d) <= step and fw.to or fw.now + (d > 0 and step or -step)
+		end
+		if fw.sent == nil or math.abs(fw.now - fw.sent) > 0.005 or (fw.now == fw.to and fw.sent ~= fw.to) then
+			fw.sent = fw.now
+			self:Native(string.format("lweight %d %.3f", layer, fw.now))
+		end
+	end
+end

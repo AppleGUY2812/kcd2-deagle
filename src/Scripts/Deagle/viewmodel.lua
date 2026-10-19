@@ -250,6 +250,7 @@ function Deagle:VmTick(token)
 	self:BarrelHeatTick()
 	self:FlashLightTick()
 	if self.MotionTick then self:MotionTick() end
+	if self.RonLayersTick then self:RonLayersTick() end
 	self:HoldGameMapsOff()
 	if (self.zoom ~= nil) ~= (self.vmZoomHidden == true) then     -- the gun out of view while the debug zoom is on
 		local vm = self.vmId and System.GetEntity(self.vmId)
@@ -586,6 +587,7 @@ function Deagle:VmHide()
 	self.vmSprint, self.vmLow = nil, nil
 	if (self.wallSent or 0) ~= 0 then self.wallSent = 0; if self.native then self:Native("ronp wall 0") end end
 	self:LeanStop()
+	if self.LayersReset then self:LayersReset() end
 	self:FlashDisarm()
 	self:BarrelSmokeStop()
 	self.vmToken = (self.vmToken or 0) + 1

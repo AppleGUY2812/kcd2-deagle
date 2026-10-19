@@ -614,6 +614,10 @@ function Deagle:OnAction(action, activation, value)
 	-- the Flight mod's keys come from the plugin (FlyKey) once it's linked: its own actions would count twice
 	if self.flyKeys and type(action) == "string" and action:find("^flight_") then return true end
 	if action == "deagle_look_x" or action == "deagle_look_y" then return self:FreecamLook(action, tonumber(value) or 0) end
+	if action == "moveleft" or action == "moveright" then   -- the strafe keys (Ready or Not's roll: motion.lua), KCD2's still
+		self.strafeKeys = self.strafeKeys or {}
+		self.strafeKeys[action == "moveleft" and "left" or "right"] = activation ~= "release"
+	end
 	if action == "deagle_inspect" and s.drawn then
 		if activation == "press" then self:Inspect() end
 		return true
