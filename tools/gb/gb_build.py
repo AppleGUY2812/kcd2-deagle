@@ -190,7 +190,10 @@ for act in [a for a in roles() if a.name not in ("@idle", "@idle_empty")]:
     rname, rmat, rpose = rest_of_end.get(role, ("@idle", REST, IDLE))
     f0, f1 = rng(act)
     pos, ang = gap(body_at(act, f1), rmat)
-    if pos > 3 or ang > 1.5:
+    # a holster ends with the gun put away, and the gun hides there: a settle back to idle swung it up into view
+    # (Ready or Not's holster_b ended 964 mm / 90 deg off idle; its 14-frame settle was the user's flash of the idle gun
+    # at the end of every holster, 2026-10-19)
+    if (pos > 3 or ang > 1.5) and not role.startswith("holster"):
         n = max(6, min(14, int(pos / 8)))
         pose_at(act, f1); last = snap()
         for i in range(1, n + 1):
