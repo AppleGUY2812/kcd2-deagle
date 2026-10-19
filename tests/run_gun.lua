@@ -981,14 +981,14 @@ if g.ronStats then
 	p.GetVelocity = function() return { x = 0, y = vel or 0, z = 0 } end
 	vel = 6; M.advance(0.05)
 	local k1 = base0()
-	M.advance(0.6)
+	M.advance((A.sprintStart[2] - 1) / A.sprintStart[3] + 0.1)   -- the start clip runs out (the real one 0.93 s), then the loop
 	local k2 = base0()
 	ammo0 = s.ammo
 	act("deagle_fire"); act("deagle_fire", "release"); M.advance(0.05)
 	local sprintFired = s.ammo ~= ammo0
 	vel = 2; M.advance(0.05)
 	local k3 = base0()
-	M.advance(1.0)
+	M.advance((A.sprintStop[2] - 1) / A.sprintStop[3] + 0.3)
 	local k4 = base0()
 	check(string.format("RoN sprint: %s -> %s, no shot (%s), then %s -> %s", tostring(k1), tostring(k2), tostring(sprintFired), tostring(k3), tostring(k4)),
 		k1 == A.sprintStart[1] and k2 == A.sprint[1] and not sprintFired and k3 == A.sprintStop[1] and k4 == A.idle[1], k2)
