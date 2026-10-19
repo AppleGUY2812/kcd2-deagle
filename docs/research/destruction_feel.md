@@ -26,6 +26,8 @@ The stage between broken and gone: crack -> sag -> dangle -> tear.
 | rope / sinew links | splinters, thatch strands, rafters dangling between two pieces, stretching and swaying | CryEngine rope physics between two chunks, snapping at a set tension |
 | stretchy skinned fibres | torn wood fibres filling the gap as two pieces part, then tearing | each chunk its own bone, a fibre strip skinned to both sides: it stretches as the pieces separate, hidden past a tear threshold (games use this for bent metal and wood) |
 
+Worked example in code: docs/research/sinew_people_playground.md (People Playground decompiled: its GoreStringBehaviour is this exact effect).
+
 Cost: hinge joints are nearly free once the support graph exists; ropes and fibre strips are extra art and tuning, after
 the basic prototype looks right.
 
