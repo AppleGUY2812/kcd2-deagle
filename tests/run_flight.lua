@@ -42,7 +42,23 @@ local function step(sec)   -- the game moves him by the velocity he has
 end
 
 Deagle:OnGameplayStarted(); M.console("deagle_native_ok"); M.console("deagle_flykey", "linked 1")
-M.console("deagle_flykey", "toggle 1"); M.console("deagle_flykey", "toggle 0")
+local function sentFlydyn() for i = #M.native, 1, -1 do if M.native[i]:find("^%[DN%] flydyn %x+$") then return true end end end
+-- an older plugin (no flydyn caps): no flight, says why
+M.console("deagle_native_caps", "files fxr smoke ronvm lowready lweight lean")
+M.console("deagle_flykey", "toggle 1"); M.console("deagle_flykey", "toggle 0"); step(0.2)
+check("old plugin (no flydyn): refuses, gravity untouched", not Deagle.flight and Flight.active == false and #dyn == 0, #dyn)
+M.console("deagle_native_caps", "files fxr smoke ronvm lowready lweight lean flydyn")
+-- the plugin never answers: off after 1 s, nothing changed
+M.console("deagle_flykey", "toggle 1"); M.console("deagle_flykey", "toggle 0"); step(1.3)
+check("no answer from the plugin: off after 1 s, gravity untouched", sentFlydyn() and not Deagle.flight and Flight.active == false and #dyn == 0, #dyn)
+-- it answers with a failure
+M.console("deagle_flykey", "toggle 1"); M.console("deagle_flykey", "toggle 0"); step(0.1)
+M.console("deagle_flydyn", "fail no living entity"); step(0.1)
+check("a failed read: off, gravity untouched", not Deagle.flight and Flight.active == false and #dyn == 0, #dyn)
+-- the real path: his own values come first (odd ones on purpose: the restore must put back exactly these)
+M.console("deagle_flykey", "toggle 1"); M.console("deagle_flykey", "toggle 0"); step(0.1)
+check("nothing changes before the read comes back", #dyn == 0 and not Deagle.flight, #dyn)
+M.console("deagle_flydyn", "11.5000 0.2000 0.4000")
 step(0.2)
 check("F4: flying; gravity and air control off", Deagle.flight and dyn[#dyn] and dyn[#dyn].gravity == 0 and dyn[#dyn].k_air_control == 0, dyn[#dyn] and dyn[#dyn].gravity)
 check("hovering with no keys: velocity ~0", vel and math.abs(vel.x) + math.abs(vel.y) + math.abs(vel.z) < 0.05, vel and vel.z)
@@ -72,12 +88,12 @@ M.console("deagle_flykey", "toggle 1"); M.console("deagle_flykey", "toggle 0")
 step(0.5)
 check("F4 off in the air: still flying, sinking", Deagle.flight and Deagle.flight.landing and vel and vel.z < -1, vel and vel.z)
 step(6)
-check("landed: flight over, gravity back to BasicActor's 13", not Deagle.flight and dyn[#dyn].gravity == 13 and dyn[#dyn].k_air_control == 0.1,
+check("landed: flight over, his own values back exactly (gravity 11.5, air control 0.2)", not Deagle.flight and dyn[#dyn].gravity == 11.5 and dyn[#dyn].k_air_control == 0.2,
 	tostring(Deagle.flight) .. " " .. tostring(dyn[#dyn] and dyn[#dyn].gravity))
 check("he landed slowly (under 2 m/s at the end)", vel and math.abs(vel.z) < 2, vel and vel.z)
 
 -- F4 on the ground: gravity back at once; deagle_fly works too; speed command
-M.console("deagle_fly"); step(0.2)
+M.console("deagle_fly"); step(0.1); M.console("deagle_flydyn", "11.5000 0.2000 0.4000"); step(0.1)
 check("deagle_fly: on", Deagle.flight ~= nil, "off")
 M.console("deagle_fly"); step(0.2)
 check("deagle_fly on the ground: off at once", not Deagle.flight, "still on")

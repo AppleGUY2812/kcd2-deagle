@@ -20,18 +20,11 @@ Deagle.flightCfg = Deagle.flightCfg or {
 	landGap = 0.25,     -- m above the ground where landing ends
 	landMax = 30,       -- s: landing gives up (gravity back) after this
 }
--- what Henry's physics gets back when flight ends: BasicActor.lua's Living table, with the gravity he had when the
--- flight started if the game reports it (GetPhysicalStats; its fields aren't probed yet, so this is a fallback chain)
-local LIVING = { gravity = 13, k_air_control = 0.1, k_air_resistance = 0.5 }
-local function livingNow(p)
-	local t = { gravity = LIVING.gravity, k_air_control = LIVING.k_air_control, k_air_resistance = LIVING.k_air_resistance }
-	local ok, st = pcall(p.GetPhysicalStats, p)
-	local g = ok and type(st) == "table" and st.gravity
-	if type(g) == "table" and type(g.z) == "number" and g.z < -1 then t.gravity = -g.z
-	elseif type(g) == "number" and math.abs(g) > 1 then t.gravity = math.abs(g) end
-	return t
-end
-local FLYING = { gravity = 0, k_air_control = 0, k_air_resistance = 0 }
+-- What Henry's physics gets back when flight ends: read from his own pe_player_dynamics before anything changes
+-- (the plugin's "flydyn <entity hex>": his living entity's set gravity, +0x18C, and GetParams' kAirControl, answered
+-- by deagle_flydyn <gravity> <kAirControl> <kAirResistance>, or deagle_flydyn fail <token>). No read, no flight: no constants guessed (a stance or a mod may have changed them).
+-- (k_air_resistance isn't read by KCD2's PLAYERDYN binding, 0x180B35634: air drag stays, small between the per-frame sets)
+local FLYING = { gravity = 0, k_air_control = 0 }
 
 Flight = Flight or {}
 Flight.Keys = Flight.Keys or { forward = false, back = false, left = false, right = false, up = false, down = false, fast = false, slow = false }
@@ -79,8 +72,27 @@ end
 
 function Deagle:FlightStart()
 	local p = self:Player()
-	if not p or self.flight then return end
-	self.flight = { v = { x = 0, y = 0, z = 0 }, token = {}, living = livingNow(p) }
+	if not p or self.flight or self.flightAsk then return end
+	if not (self.nativeCaps and self.nativeCaps.flydyn) then
+		Flight.active = false
+		Flight.log("Flight needs the plugin from 2026-10-19 or later (it reads Henry's physics first)") return
+	end
+	self.flightAsk = System.GetCurrTime()
+	self:Native("flydyn " .. U.entityHex(p.id))
+end
+
+-- the plugin's answer: Henry's own values, then the flight starts
+function Deagle:FlightDyn(line)
+	local a = tostring(Deagle.Arg(line) or "")
+	local asked = self.flightAsk
+	self.flightAsk = nil
+	if not asked or not Flight.active then return end
+	local g, ac, ar = a:match("^([%d.%-]+)%s+([%d.%-]+)%s+([%d.%-]+)")
+	if not g then Flight.active = false; Flight.log("Flight off: the plugin couldn't read Henry's physics (" .. a .. ")") return end
+	local p = self:Player()
+	if not p then Flight.active = false return end
+	self.flight = { v = { x = 0, y = 0, z = 0 }, token = {},
+		living = { gravity = tonumber(g), k_air_control = tonumber(ac) } }   -- ar: read, not settable from Lua
 	local okv, v = pcall(p.GetVelocity, p)
 	if okv and type(v) == "table" and v.x then self.flight.v = { x = v.x, y = v.y, z = v.z } end   -- no jolt at the start
 	dyn(p, FLYING)
@@ -96,7 +108,7 @@ function Deagle:FlightStop(now)
 		F.landing = System.GetCurrTime(); return
 	end
 	self.flight = nil
-	if p then dyn(p, F.living or LIVING) end
+	if p then dyn(p, F.living) end
 end
 
 function Deagle:FlightTick(token)
@@ -125,6 +137,10 @@ end
 -- Flight.active is flipped by the plugin bridge (F4) or deagle_fly; this follows it
 function Deagle:FlightWatch()
 	local want = Flight.active == true
+	if self.flightAsk and System.GetCurrTime() - self.flightAsk > 1 then   -- the plugin never answered
+		self.flightAsk = nil; Flight.active = false; want = false
+		Flight.log("Flight off: no answer from the plugin")
+	end
 	if want and (not self.flight or self.flight.landing) then
 		if self.flight then self.flight.landing = nil else self:FlightStart() end
 	elseif not want and self.flight and not self.flight.landing then
@@ -135,4 +151,5 @@ end
 if not Deagle.flightWatching then Deagle.flightWatching = true; Deagle:FlightWatch() end
 
 System.AddCCommand("deagle_fly", "Flight.active = not Flight.active; Flight.log(Flight.active and 'Flight On' or 'Flight Off')", "deagle_fly: flight on / off (F4)")
+System.AddCCommand("deagle_flydyn", "Deagle:FlightDyn([[%line]])", "internal: the plugin's read of Henry's pe_player_dynamics (gravity, air control, air resistance)")
 System.AddCCommand("deagle_fly_speed", "local s = tonumber(Deagle.Arg([[%line]])); if s and s > 0 then Deagle.flightCfg.speed = s end; System.LogAlways('[Deagle] flight speed ' .. Deagle.flightCfg.speed .. ' m/s')", "deagle_fly_speed <m/s>: flying speed (default 10; Shift x4, Ctrl x0.25)")
