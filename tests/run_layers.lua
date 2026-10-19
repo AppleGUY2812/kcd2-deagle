@@ -107,6 +107,20 @@ check("  then out", weight(6) == 0, weight(6))
 Deagle.cfg.accuracy.crouchEye = crouchEye
 M.advance(1.0)
 
+-- flying (Flight.active, flight.lua): 10 m/s and off the ground, but Henry isn't on his feet: no sprint pose, no steps,
+-- no jump loop, and the plugin's sway hears no velocity
+Flight = Flight or {}
+local flyWas = Flight.active
+Flight.active = true; clip("sprint", 20)
+vel = { x = 0, y = 10, z = 0 }; air = true; M.advance(1.0)
+local pv = { (last("%] vel ([%-%d.]+) [%-%d.]+ [%-%d.]+$")), (last("%] vel [%-%d.]+ ([%-%d.]+) [%-%d.]+$")) }
+check(string.format("flying 10 m/s in the air: no sprint pose (%s), steps %s, jump %s, plugin vel %s %s", tostring(Deagle.vmSprint),
+	tostring(weight(3)), tostring(Deagle.ronLayers.jumpState), tostring(pv[1]), tostring(pv[2])),
+	not Deagle.vmSprint and (weight(3) or 0) == 0 and Deagle.ronLayers.jumpState == nil
+	and math.abs(tonumber(pv[1]) or 1) < 0.01 and math.abs(tonumber(pv[2]) or 1) < 0.01, Deagle.vmSprint)
+Flight.active = flyWas; A.sprint = nil
+vel = { x = 0, y = 0, z = 0 }; air = false; M.advance(1.0)
+
 -- holster: every layer off, its weight let go
 act("deagle_toggle"); M.advance(2.0)
 check("holstered: our layers stopped and let go (lweight -1)", vm.layers[2] == nil and vm.layers[3] == nil and weight(2) == -1

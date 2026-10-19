@@ -69,8 +69,9 @@ function Deagle:MotionTick()
 	local m = self.motionIn
 	if not m then m = { hist = {}, dodgeT = -1e9 }; self.motionIn = m end
 	-- world velocity, smoothed, every frame
+	local flying = self:Flying()
 	local ok, v = pcall(p.GetVelocity, p)
-	if not ok or type(v) ~= "table" then v = { x = 0, y = 0, z = 0 } end
+	if not ok or type(v) ~= "table" or flying then v = { x = 0, y = 0, z = 0 } end
 	local dt = m.t and math.max(0, math.min(0.25, now - m.t)) or 0
 	m.t = now
 	local k = m.vx and (1 - math.exp(-dt / c.velSmooth)) or 1
@@ -86,7 +87,7 @@ function Deagle:MotionTick()
 	local vr, vf = (v.x or 0) * fy - (v.y or 0) * fx, (v.x or 0) * fx + (v.y or 0) * fy
 	-- air
 	local air = false
-	pcall(function() air = p.actor:IsFlying() and true or false end)
+	if not flying then pcall(function() air = p.actor:IsFlying() and true or false end) end
 	if air ~= m.air then self:Native("air " .. (air and "1" or "0")); m.air = air end
 	-- stance: the same eye-height band as CsAccuracy (a bob can't flicker it)
 	local a = self.cfg.accuracy
@@ -203,9 +204,9 @@ function Deagle:RonLayersTick()
 	-- AimInterp
 	L.aim = L.aim + ((s.aiming and C.aimAds or 1) - L.aim) * math.min(1, dt * C.aimRate)
 	if a.breathe then self:LayerFade(AL.breathe, L.aim, 0) end
-	local p = self:Player()
+	local p, flying = self:Player(), self:Flying()
 	local ok, v = pcall(p.GetVelocity, p)
-	if not ok or type(v) ~= "table" then v = { x = 0, y = 0, z = 0 } end
+	if not ok or type(v) ~= "table" or flying then v = { x = 0, y = 0, z = 0 } end
 	local f = System.GetViewCameraDir()
 	local fl = math.sqrt(f.x * f.x + f.y * f.y)
 	local fx, fy = 0, 1
@@ -266,7 +267,7 @@ function Deagle:RonLayersTick()
 	-- jump
 	if a.jumpStart and a.jumpLoop and a.jumpEnd then
 		local air = false
-		pcall(function() air = p.actor:IsFlying() and true or false end)
+		if not flying then pcall(function() air = p.actor:IsFlying() and true or false end) end
 		local jc, js = L.clip[AL.jump], L.jumpState
 		if air and not js then
 			self:LayerPlay(AL.jump, "jumpStart", 0.05, 1, false); L.jumpState = "start"; self:LayerFade(AL.jump, L.aim, 0.05)

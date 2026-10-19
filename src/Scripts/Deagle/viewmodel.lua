@@ -509,7 +509,7 @@ function Deagle:LowReadyTick()
 	local p = self:Player()
 	if not p then return end
 	local ok, v = pcall(p.GetVelocity, p)
-	local speed = ok and type(v) == "table" and math.sqrt((v.x or 0) ^ 2 + (v.y or 0) ^ 2) or 0
+	local speed = ok and type(v) == "table" and not self:Flying() and math.sqrt((v.x or 0) ^ 2 + (v.y or 0) ^ 2) or 0
 	local crouched = self.motionIn and self.motionIn.crouched
 	local sprint = a.sprint ~= nil and speed > (self.vmSprint and L.sprintOut or L.sprintIn) and not s.aimHeld and not crouched
 	local low = nil

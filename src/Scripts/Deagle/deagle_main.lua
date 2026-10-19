@@ -701,6 +701,9 @@ function Deagle:HookActions()
 	return self.wrapped.Player ~= nil or self.wrapped.instance ~= nil
 end
 
+-- Flying (Flight.active: flight.lua, or the old Flight mod): Henry isn't on his feet, so the gun's animation reads
+-- him as standing still: no sprint pose, steps, sway, bob or jump loop at 10 m/s (viewmodel.lua, motion.lua)
+function Deagle:Flying() return type(Flight) == "table" and Flight.active == true end
 -- The Flight mod (Mods/flight, someone else's: Scripts/mods/flight.lua, global Flight) reads its keys from key
 -- actions, and KCD2 sends Lua none while Henry carries a body (logged live 2026-10-18), so it can't fly with one. With
 -- the plugin linked, the plugin reads those keys from the keyboard instead (flykeys) and FlyKey sets them; F4 toggles
