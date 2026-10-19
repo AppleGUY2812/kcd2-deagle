@@ -177,6 +177,8 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   kept); R twice within 0.2 s = speed reload at once (the old magazine drops with its rounds; only the chambered one
   stays); R held past 0.2 s = magazine check. An empty gun gets its empty reload either way. The times are
   `deagle_set reloadKey.tap 0.25`, `reloadKey.double 0.2`, `reloadKey.hold 0.2` (real seconds, slow motion too).
+  The speed reload needs the gun's reloadSpeed clip (the next Grizzly build); without it a double tap is a tactical
+  reload.
 
 ## Checking effects
 - F9 slow motion, then shoot: flash, smoke, casings, light at 1/10 speed. For the flash go slower: `deagle_slowmo 0.02` (1/50) or `0.01` (1/100).
