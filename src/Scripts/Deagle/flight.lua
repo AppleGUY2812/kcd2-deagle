@@ -33,7 +33,13 @@ Flight.ours = true
 -- the Flight mod (Mods/flight) if it's still installed: its loop re-arms itself by name (SetTimerForFunction
 -- "Flight.Loop") and calls player:SetPos while Flight.active: the crash. A no-op under that name ends it.
 if type(Flight.Loop) == "function" then Flight.Loop = function() end; System.LogAlways("[Deagle] the Flight mod's SetPos loop is off: flight.lua flies") end
-function Flight.log(s) System.LogAlways("[Deagle] " .. s); if Deagle.Notify then Deagle:Notify(s) end end
+-- every F4 (the bridge calls Flight.log on each toggle) and deagle_fly make sure the watch loop runs: a save load
+-- drops script timers, and the loop started at file load died with them (in game 2026-10-19: "Flight On", nothing flew)
+function Flight.log(s)
+	System.LogAlways("[Deagle] " .. s)
+	if Deagle.Notify then Deagle:Notify(s) end
+	if Deagle.FlightWatchKick then Deagle:FlightWatchKick() end
+end
 
 local function dyn(p, t) pcall(p.SetPhysicParams, p, PHYSICPARAM_PLAYERDYN, t) end
 local function setVel(p, v) pcall(p.SetPhysicParams, p, PHYSICPARAM_VELOCITY, { v = v }) end
@@ -134,8 +140,24 @@ function Deagle:FlightTick(token)
 	Script.SetTimer(0, function() Deagle:FlightTick(token) end)
 end
 
+-- scroll while flying: speed x1.25 a notch (1-200 m/s), shown on screen. KCD2 sends no scroll while Henry carries a
+-- body, so set it before picking one up. Not flying: the wheel stays the game's.
+function Deagle:FlightScroll(faster, activation)
+	if not self.flight or self.flight.landing then return false end
+	if activation ~= "press" then return true end
+	local c = self.flightCfg
+	c.speed = math.max(1, math.min(200, c.speed * (faster and 1.25 or 1 / 1.25)))
+	self:Notify(string.format("flight %.0f m/s", c.speed))
+	return true
+end
+
 -- Flight.active is flipped by the plugin bridge (F4) or deagle_fly; this follows it
+function Deagle:FlightWatchKick()
+	-- the loop ticks every 50 ms: no tick for 0.2 s = dead (abs: a load can put the game clock back)
+	if not self.flightWatchAt or math.abs(System.GetCurrTime() - self.flightWatchAt) > 0.2 then self:FlightWatch() end
+end
 function Deagle:FlightWatch()
+	self.flightWatchAt = System.GetCurrTime()
 	local want = Flight.active == true
 	if self.flightAsk and System.GetCurrTime() - self.flightAsk > 1 then   -- the plugin never answered
 		self.flightAsk = nil; Flight.active = false; want = false
@@ -148,7 +170,7 @@ function Deagle:FlightWatch()
 	end
 	Script.SetTimer(50, function() Deagle:FlightWatch() end)
 end
-if not Deagle.flightWatching then Deagle.flightWatching = true; Deagle:FlightWatch() end
+Deagle:FlightWatchKick()
 
 System.AddCCommand("deagle_fly", "Flight.active = not Flight.active; Flight.log(Flight.active and 'Flight On' or 'Flight Off')", "deagle_fly: flight on / off (F4)")
 System.AddCCommand("deagle_flydyn", "Deagle:FlightDyn([[%line]])", "internal: the plugin's read of Henry's pe_player_dynamics (gravity, air control, air resistance)")

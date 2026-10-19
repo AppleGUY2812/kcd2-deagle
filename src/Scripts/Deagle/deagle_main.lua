@@ -638,6 +638,7 @@ function Deagle:OnAction(action, activation, value)
 		return true
 	end
 	if action == "deagle_fc_faster" or action == "deagle_fc_slower" then   -- scroll: free camera speed
+		if not self.fc and self.FlightScroll then return self:FlightScroll(action == "deagle_fc_faster", activation) end   -- flying: its speed (flight.lua)
 		if not self.fc or activation ~= "press" then return false end
 		local k = action == "deagle_fc_faster" and 1.5 or 1 / 1.5
 		self.fcSpeed = math.max(0.5, math.min(200, (self.fcSpeed or 4) * k))
