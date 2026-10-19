@@ -24,7 +24,18 @@ info = {"slug": slug, "clips": {}, "notes": []}
 note = lambda s: (info["notes"].append(s), print("NOTE", s))
 
 # ---------------------------------------------------------------- role clips
-USED = ["idle", "idle_empty", "draw", "draw_empty", "holster", "holster_empty", "shoot", "shoot_empty", "shoot_alt", "reload", "reload_empty", "inspect", "inspect_empty"]
+USED = ["idle", "idle_empty", "draw", "draw_empty", "holster", "holster_empty", "shoot", "shoot_empty", "shoot_alt", "reload", "reload_empty", "inspect", "inspect_empty",
+        # Ready or Not ports (docs/ron/ron_grizzly_interactions.md): first draw, speed reload, ADS clips, dry fire, low ready
+        # up / down (wall, sprint), sprint start / loop / stop
+        "draw_first", "reload_speed", "shoot_ads", "shoot_empty_ads", "reload_ads", "reload_empty_ads", "dry_fire",
+        "low_up", "low_up_empty", "low_down", "low_down_empty", "sprint_start", "sprint", "sprint_stop",
+        # additive layers (first frame = the idle reference; "_add" names compile as additive in gb_anims.ps1)
+        "breathe_add", "shake_add", "loco_m_fwd_add", "loco_m_l_add", "loco_m_r_add", "loco_m_bwd_add", "loco_f_fwd_add",
+        "loco_f_l_add", "loco_f_r_add", "loco_f_bwd_add", "move_start_add", "move_stop_add", "roll_add", "jump_start_add",
+        "jump_loop_add", "jump_end_add", "crouch_in_add", "crouch_out_add", "ads_in_add", "ads_out_add"]
+# poses and sprint clips sit off the idle pose on purpose: no settle back to it at the end / no ease from it at the start
+NO_END_SETTLE = {"low_up", "low_up_empty", "low_down", "low_down_empty", "sprint_start", "sprint"} | {r for r in USED if r.endswith("_add")}
+NO_START_EASE = {"low_up", "low_up_empty", "low_down", "low_down_empty", "sprint", "sprint_stop"} | {r for r in USED if r.endswith("_add")}
 for a in list(A):
     if a.name.startswith("@"):
         a.name = "src" + a.name          # keep the originals out of the way
@@ -183,8 +194,9 @@ def gap(m0, m1):
     return pos, ang
 pose_at(A["@idle"], 1); REST = {n: (arm.matrix_world @ PB[n].matrix).copy() for n in BODY}
 pose_at(A["@idle_empty"], 1); REST_E = {n: (arm.matrix_world @ PB[n].matrix).copy() for n in BODY}
-rest_of_end = {"shoot_empty": ("@idle_empty", REST_E, IDLE_E)}
-rest_of_start = {"reload_empty": ("@idle_empty", REST_E, IDLE_E), "shoot_empty": ("@idle", REST, IDLE)}
+rest_of_end = {"shoot_empty": ("@idle_empty", REST_E, IDLE_E), "shoot_empty_ads": ("@idle_empty", REST_E, IDLE_E), "dry_fire": ("@idle_empty", REST_E, IDLE_E)}
+rest_of_start = {"reload_empty": ("@idle_empty", REST_E, IDLE_E), "reload_empty_ads": ("@idle_empty", REST_E, IDLE_E),
+                 "shoot_empty": ("@idle", REST, IDLE), "shoot_empty_ads": ("@idle", REST, IDLE), "dry_fire": ("@idle_empty", REST_E, IDLE_E)}
 for act in [a for a in roles() if a.name not in ("@idle", "@idle_empty")]:
     role = act.name[1:]
     rname, rmat, rpose = rest_of_end.get(role, ("@idle", REST, IDLE))
@@ -193,14 +205,14 @@ for act in [a for a in roles() if a.name not in ("@idle", "@idle_empty")]:
     # a holster ends with the gun put away, and the gun hides there: a settle back to idle swung it up into view
     # (Ready or Not's holster_b ended 964 mm / 90 deg off idle; its 14-frame settle was the user's flash of the idle gun
     # at the end of every holster, 2026-10-19)
-    if (pos > 3 or ang > 1.5) and not role.startswith("holster"):
+    if (pos > 3 or ang > 1.5) and not role.startswith("holster") and role not in NO_END_SETTLE:
         n = max(6, min(14, int(pos / 8)))
         pose_at(act, f1); last = snap()
         for i in range(1, n + 1):
             k = i / n; k = k * k * (3 - 2 * k)
             put(lerp(last, rpose, k), act, f1 + i)
         note(f"{act.name}: ended {pos:.0f} mm / {ang:.0f} deg off {rname}; appended a {n}-frame settle")
-    if role.startswith(("draw", "holster")):
+    if role.startswith(("draw", "holster")) or role in NO_START_EASE:
         continue
     sname, smat, spose = rest_of_start.get(role, ("@idle", REST, IDLE))
     pos, ang = gap(body_at(act, f0), smat)
@@ -325,7 +337,7 @@ seated = None
 if A.get("@idle") and B.get("mag"):
     seated = mag_track(A["@idle"])[0][1]
 timing = {"swapTail": {}}
-for role in ("reload", "reload_empty"):
+for role in ("reload", "reload_empty", "reload_speed", "reload_ads", "reload_empty_ads"):
     # a reload that ends with the spare mag seated: leaving it with a blend would slide the spare away from the gun,
     # so the script first switches to idle instantly (identical image) for this long before the end
     act = A.get("@" + role)

@@ -126,6 +126,10 @@ class Pkg:
             if sn=='LinearColor': return r.u('ffff')
             if sn=='RichCurveKey':
                 im,tm,twm=r.u('BBB'); tv=r.u('6f'); return dict(interp=im,t=round(tv[0],4),v=round(tv[1],4),arrive=round(tv[2],4),leave=round(tv[4],4))
+            if sn=='PerPlatformFrameRate':   # native: u32 bCooked, FFrameRate Default (num, den); cooked = no per-platform map
+                ck=r.u('i'); num,den=r.u('ii')
+                assert ck,'uncooked PerPlatformFrameRate'
+                return {'Numerator':num,'Denominator':den}
             if sn in NATIVE_SIZES: d=s.b_hex(r,NATIVE_SIZES[sn]); return d
             if sn in('GameplayTagContainer',): return [s.fn(r) for _ in range(r.u('i'))]
             if sn=='GameplayTag': return s.fn(r)

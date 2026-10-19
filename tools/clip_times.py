@@ -15,7 +15,9 @@ import json, sys, math, argparse, re
 
 BODY = ("j_gun", "j_wrist_ri", "j_wrist_le")
 KEY = {"reload": "reload", "reload_empty": "reloadEmpty", "inspect": "inspect", "inspect_empty": "inspectEmpty",
-       "draw": "draw", "draw_empty": "drawEmpty"}
+       "draw": "draw", "draw_empty": "drawEmpty",
+       # Ready or Not ports: the speed reload, the aimed reloads, the first draw
+       "reload_speed": "reloadSpeed", "reload_ads": "reloadAds", "reload_empty_ads": "reloadEmptyAds", "draw_first": "drawFirst"}
 REST = {"inspect_empty": "idle_empty", "draw_empty": "idle_empty"}
 SLIDE_CUE = ("slideclose", "slide_close", "sliderelease", "slide_release", "slide_charge", "slidecharge", "boltrelease")
 
@@ -67,7 +69,7 @@ def times(t, cues=None, swap=()):
                 r["seat"] = clicks[0]
         ready = settled(3, 1) if clip in swap else settled(30, 10)
         r["ready"] = ready / fps
-        if clip == "reload_empty" and cues:
+        if clip in ("reload_empty", "reload_empty_ads") and cues:
             slide = [c[0] for c in cues.get(key, []) if any(s in c[1].lower() for s in SLIDE_CUE)]
             if slide:
                 r["ready"] = max(r["ready"], max(slide) + 0.05)

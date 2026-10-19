@@ -8,7 +8,7 @@
 # triangle winding flips), x 0.01. Rotations: R' = M R M (M = the swap).
 #   blender -b --factory-startup -P ron_import.py -- <config.json>
 # config: {"slug", "out", "arms_psk", "gun_psk", "mag_psk", "rounds_psk", "arms_clips", "weapon_clips",
-#          "sequences": {name: {"arms": clip, "gun": clip, "fps": n}}}
+#          "sequences": {name: {"arms": clip, "gun": clip, "fps": n, "ref_first": bool (an additive: idle frame first)}}}
 import bpy, sys, os, json, math
 from mathutils import Matrix, Quaternion, Vector
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -185,8 +185,13 @@ for seq, c in CFG["sequences"].items():
             for j in range(k):
                 curves[(n, path, j)] = act.fcurves.new(f'pose.bones["{n}"].{path}', index=j, action_group=n)
     vals = {key: [] for key in curves}
-    for f in range(nf):
-        W = pose_world(c.get("arms"), c.get("gun"), f)
+    # "ref_first": an additive clip for KCD2 (animsettings additive: rc takes the first frame as the reference pose):
+    # frame 1 = the idle pose (arms base + the gun's idle), then the clip baked over it, so the CAF's delta is RoN's own
+    # additive (local: R = add.R x base.R, T = base.T + add.T)
+    ref = bool(c.get("ref_first"))
+    for f in range(-1 if ref else 0, nf):
+        W = pose_world(None, c.get("ref_gun", c.get("gun")), 0) if f < 0 else pose_world(c.get("arms"), c.get("gun"), f)
+        f += 1 if ref else 0
         for i, n in enumerate(NAMES):
             p = PARENT[i]
             basis = (REST[i].inverted() @ W[i]) if p < 0 else ((W[p] @ REST[p].inverted() @ REST[i]).inverted() @ W[i])

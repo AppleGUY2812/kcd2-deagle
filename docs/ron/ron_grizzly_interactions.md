@@ -65,3 +65,33 @@ RoN has **no** inspect, chamber check, jam or fire-select clip for pistols; lean
 ## 5. KCD2's defaults on those keys (keybindSuperactions.xml)
 LeftShift sprint, Space jump, LeftCtrl horse slowdown, C crouch, LeftAlt chat, Q chat_init, E primary action, B quick
 access menu, X companion, F special attack, G distract, R torch (our mod filters it), Mouse 4 / Mouse 5 / H / Y free.
+
+## 6. ADS camera FOV (exe `FUN_144b3bc30`, the PlayerCharacter FOV update, every Tick)
+- Iron sights (no scope): target = the player's FOV setting x **0.75** (hardcoded `DAT_1465117f8`), linear in degrees,
+  only with the user setting bZoomADS (default True). A scope uses its PlayerCameraFOVMultiplier instead.
+- `cam.FOV = FInterpTo(cur, target, dt, speed)` = cur + clamp(dt x speed, 0, 1) x (target - cur). Zoom in: the gun's
+  ADSZoomInSpeed (Grizzly 5, ~0.2 s time constant). Zoom out: DefaultFovInterpTime **10**; ADSZoomOutSpeed (6) is not
+  read on this path.
+- The setting's axis: bUseVerticalFOV True = vertical FOV; False = Hor+ (read as a 16:9 horizontal FOV, then converted
+  to the real aspect).
+- The user's RoN (GameUserSettings.ini, 2026-10-12): FieldOfView 90, bUseVerticalFOV True, bZoomADS True, 1600x900:
+  hip **90 deg vertical**, ADS **67.5 deg vertical** (not "FOV 110" as noted earlier).
+- Not camera FOV: ADSZoom (native 0.9; its reader unknown), minhfov 48 / tgtvfov 27 (the tablet-focus override).
+
+## 7. Lean (static: decompile + a Kismet disassembly of ANIMBP_Player_FP_Master, 2026-10-19)
+- **The first-person camera doesn't roll.** It slides and dips; the tilt you see is the arms and gun canting.
+- Q/E: QuickLeanAmount target +-15 cm (left -15), approached at a constant 400 cm/s; back to 0 with FInterpTo at 30.
+- Camera offset target (`FUN_144b3da80`): X = -(FreeLeanX + (free leaning ? 0 : Quick)), Z = FreeLeanZ - 0.5 |Quick|
+  (Z >= 0: Z x (1 - 0.9 clamp(0.025 |FreeLeanX|, 0, 1))); VInterpTo speed 8; an additive translation on
+  `torso_stabilizer` (parent of `fp_camera`). Clamps X -50..80 standing, -53..65 crouched; Z -90..15; crouched adds
+  -0.55 |FreeLeanX| to Z. Full Q/E: 15 cm sideways, 7.5 cm down.
+- Arms and gun: roll = clamp(lean, -25, 25) deg, RInterpTo 8 (spine_3 pivots round fp_camera, fp_camera gets it back):
+  15 deg on Q/E, up to 25 deg in free lean.
+- LeanSpeedMultiplier (0.5) scales walking while Q/E is held; it isn't a lean speed.
+- Walls (`FUN_144e6df70`): capsule trace, radius 5 cm, half-height 40, from spine_3 along the body's right, length
+  |value| + margin; a hit gives sign x clamp(distance - margin, 0, margin). Margins: Q/E 15 (full lean needs ~30 cm),
+  FreeLeanX 40, FreeLeanZ 25.
+- ADS halves the free-lean rate (150 -> 75 cm/s); nothing found that changes spread while leaning (not exhaustive).
+- Free lean (LeftAlt + WASD): sideways 150 cm/s to +-40, vertical 100 cm/s from -40 to +30, both traced; back to 0 at
+  FInterpTo 10.
+- Unresolved: what blocks a lean (a character and an item virtual), the trace channel (probably WorldStatic).
