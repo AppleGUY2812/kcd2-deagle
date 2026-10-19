@@ -19,6 +19,9 @@ import sys
 import zipfile
 
 abbr, slug, lines_path = sys.argv[1:4]
+# optional: folders (substrings of the pak path) whose lines make the excited reference instead of "!" lines, e.g.
+# "combat/,crime_reaction_barks/assault": real shouting; conversation lines ending in "!" clone into monotone screams
+excited_dirs = [d for d in (sys.argv[4] if len(sys.argv) > 4 else "").split(",") if d]
 G = "/mnt/e/SteamLibrary/steamapps/common/KingdomComeDeliverance2/Localization/"
 W = f"/mnt/e/Tools/deagle-work/voice/{slug}"
 os.makedirs(f"{W}/ref", exist_ok=True)
@@ -43,6 +46,9 @@ for p in sorted(glob.glob(G + "english-part*.pak")) + [G + "IPL_english.pak"]:
 clean = [l for l in found if 5 <= len(l[2].split()) <= 18 and not re.search(r"[<>\[\]{}*]", l[2])]
 calm = [l for l in clean if "!" not in l[2] and "?" not in l[2]]
 loud = [l for l in clean if "!" in l[2]]
+if excited_dirs:
+    loud = [l for l in found if any(d in l[1] for d in excited_dirs) and len(l[2].split()) >= 2
+            and not re.search(r"[<>\[\]{}*]", l[2])]
 print(f"{abbr}: {len(found)} lines with text, {len(calm)} calm, {len(loud)} excited")
 rng = random.Random(7)
 rng.shuffle(calm)
