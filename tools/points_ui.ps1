@@ -1,5 +1,5 @@
-# KCD2 Perk Points: a small window that shows Henry's unspent perk points for every skill and stat, sets them, and
-# resets one skill's perks (refunding their points). Owner: Claude 1. It drives the game's own console commands
+# KCD2 Perk Points: a small window that shows Henry's level and unspent perk points for every skill and stat, raises
+# levels, sets points, and resets one skill's perks (refunding their points). Owner: Claude 1. It drives the game's own console commands
 # deagle_points / deagle_respec (native/src/perkpoints.cpp) over the dev console port (127.0.0.1:4600, as rcon.ps1)
 # and reads the answers from kcd.log. Needs the game running with the native plugin from 2026-10-18 or later.
 #   powershell -ExecutionPolicy Bypass -File points_ui.ps1            the window
@@ -87,6 +87,33 @@ function Run-Lua([string]$code, [string]$done, [int]$ms = 4000) {
 }
 
 function Lua-List($ids) { "{" + (($ids | ForEach-Object { "'$_'" }) -join ",") + "}" }
+
+# Levels: soul:GetSkillLevel / GetStatLevel read them; AdvanceToSkillLevel / AdvanceToStatLevel (what the game's own
+# player.lua and FeatureTests use) raise them through XP, so the level-ups give their perk points as in play. The soul
+# has no call that lowers a level (SetStatLevel / SetSkillLevel are nil in game, checked 2026-10-19). Stats go by full
+# name (strength...; "str" is nil). Max 30.
+$StatNames = @{ stat0 = "strength"; stat1 = "agility"; stat2 = "vitality"; stat3 = "speech" }
+function Lvl-Call([string]$key) {
+	if ($StatNames.ContainsKey($key)) { return @("Stat", $StatNames[$key]) } else { return @("Skill", $key) }
+}
+function Read-Levels {
+	$parts = $Rows | ForEach-Object { $c = Lvl-Call $_[0]; "'$($_[0])=' .. tostring(s:Get$($c[0])Level('$($c[1])'))" }
+	$code = "local s = player and player.soul; if not s then System.LogAlways('[Deagle] points: levels none') return end`n" +
+		"System.LogAlways('[Deagle] points: levels ' .. " + ($parts -join " .. ' ' .. ") + ")"
+	$a = Run-Lua $code '^levels ' 6000
+	$script:LevelsRaw = $a
+	$h = @{}
+	foreach ($m in [regex]::Matches($a, '([a-z_0-9]+)=(\d+)')) { $h[$m.Groups[1].Value] = [int]$m.Groups[2].Value }
+	return $h
+}
+# raise one skill / stat to $to; answers "lvlset <key> <level now>" half a second later (the XP lands first)
+function Raise-Level([string]$key, [int]$to) {
+	$c = Lvl-Call $key
+	$code = "local s = player.soul; local ok, e = pcall(function() s:AdvanceTo$($c[0])Level('$($c[1])', $to) end)`n" +
+		"if not ok then System.LogAlways('[Deagle] points: lvlset $key failed ' .. tostring(e)) return end`n" +
+		"Script.SetTimer(500, function() System.LogAlways('[Deagle] points: lvlset $key ' .. tostring(s:Get$($c[0])Level('$($c[1])'))) end)"
+	return Run-Lua $code "^lvlset $key " 5000
+}
 
 # add or remove one perk (and its sub-perks); "perkset ok" / "perkset failed ..." or the game's silence
 # AddPerk refuses a perk while its exclusive partner is owned, silently: pcall says ok, nothing is added (in game
@@ -184,6 +211,8 @@ if ($Test) {
 	"echo through the console: " + (Ask "deagle_lua System.LogAlways('[Deagle] points: stealth 2, alchemy 6')" $ListDone)
 	"parsed: " + ((Parse-List "stealth 2, alchemy 6").GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join " "
 	"deagle_points: " + (Ask "deagle_points" $ListDone)
+	"levels: " + ((Read-Levels).GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join " "
+	"levels raw: $script:LevelsRaw"
 	"perks.json: " + $(if (Test-Path $PerksPath) { "$(@((Get-Content $PerksPath -Raw -Encoding UTF8 | ConvertFrom-Json).alchemy).Count) alchemy perks" } else { "missing" })
 	return
 }
@@ -200,8 +229,8 @@ $form.ForeColor = [System.Drawing.Color]::FromArgb(236, 226, 205)
 $gold = [System.Drawing.Color]::FromArgb(201, 162, 39)
 
 $top = New-Object System.Windows.Forms.Label
-$top.Text = "Free perk points per skill. Change a number and press Set; Reset takes that skill's perks off and gives their points back. Reopen the perk screen to see changes."
-$top.Location = "14,10"; $top.Size = "500,40"
+$top.Text = "Level: type a higher level, press Raise (only up, max 30; level-ups give their perk points). Points: Set changes free perk points. Reset gives a skill's perk points back. Reopen the perk screen to see changes."
+$top.Location = "14,10"; $top.Size = "680,40"
 $form.Controls.Add($top)
 
 $refresh = New-Object System.Windows.Forms.Button
@@ -210,23 +239,46 @@ $refresh.FlatStyle = "Flat"; $refresh.FlatAppearance.BorderColor = $gold
 $form.Controls.Add($refresh)
 
 $status = New-Object System.Windows.Forms.Label
-$status.Location = "124,59"; $status.Size = "390,24"; $status.ForeColor = $gold; $status.AutoEllipsis = $true
+$status.Location = "124,59"; $status.Size = "570,24"; $status.ForeColor = $gold; $status.AutoEllipsis = $true
 $form.Controls.Add($status)
 
 $boxes = @{}
-$y = 96
+$levels = @{}
+$hdr = New-Object System.Windows.Forms.Label
+$hdr.Text = "Level                         Points"; $hdr.Location = "180,92"; $hdr.Size = "300,20"; $hdr.ForeColor = $gold
+$form.Controls.Add($hdr)
+$y = 116
 foreach ($r in $Rows) {
 	$key = $r[0]; $name = $r[1]
 	$lab = New-Object System.Windows.Forms.Label
 	$lab.Text = $name; $lab.Location = "14,$($y + 4)"; $lab.Size = "160,24"
 	$form.Controls.Add($lab)
+	$lv = New-Object System.Windows.Forms.NumericUpDown
+	$lv.Minimum = 0; $lv.Maximum = 30; $lv.Location = "180,$y"; $lv.Size = "56,26"
+	$lv.BackColor = [System.Drawing.Color]::FromArgb(52, 45, 38); $lv.ForeColor = $form.ForeColor
+	$form.Controls.Add($lv)
+	$levels[$key] = $lv
+	$up = New-Object System.Windows.Forms.Button
+	$up.Text = "Raise"; $up.Location = "242,$($y - 1)"; $up.Size = "70,28"; $up.Tag = @($key, $name)
+	$up.FlatStyle = "Flat"; $up.FlatAppearance.BorderColor = $gold
+	$up.Add_Click({
+		$k = $this.Tag[0]; $n = $this.Tag[1].TrimEnd(' ', '*')
+		$to = [int]$levels[$k].Value
+		$now = $levels[$k].Tag
+		if ($null -ne $now -and $to -le $now) { $status.Text = "$n is level ${now}: the game can only raise levels"; $levels[$k].Value = $now; return }
+		$status.Text = "raising $n to $to..."
+		$a = Raise-Level $k $to
+		$status.Text = $(if ($a -match "^lvlset $k (\d+)$") { "$n now level $($matches[1])" } else { "$n`: $a" })
+		Refresh-All
+	})
+	$form.Controls.Add($up)
 	$num = New-Object System.Windows.Forms.NumericUpDown
-	$num.Minimum = 0; $num.Maximum = 999; $num.Location = "180,$y"; $num.Size = "70,26"
+	$num.Minimum = 0; $num.Maximum = 999; $num.Location = "330,$y"; $num.Size = "70,26"
 	$num.BackColor = [System.Drawing.Color]::FromArgb(52, 45, 38); $num.ForeColor = $form.ForeColor
 	$form.Controls.Add($num)
 	$boxes[$key] = $num
 	$set = New-Object System.Windows.Forms.Button
-	$set.Text = "Set"; $set.Location = "262,$($y - 1)"; $set.Size = "70,28"; $set.Tag = $key
+	$set.Text = "Set"; $set.Location = "406,$($y - 1)"; $set.Size = "70,28"; $set.Tag = $key
 	$set.FlatStyle = "Flat"; $set.FlatAppearance.BorderColor = $gold
 	$set.Add_Click({
 		$k = $this.Tag
@@ -236,7 +288,7 @@ foreach ($r in $Rows) {
 	$form.Controls.Add($set)
 	if (-not $key.StartsWith("stat")) {
 		$rs = New-Object System.Windows.Forms.Button
-		$rs.Text = "Reset perks"; $rs.Location = "344,$($y - 1)"; $rs.Size = "120,28"; $rs.Tag = @($key, $name)
+		$rs.Text = "Reset perks"; $rs.Location = "488,$($y - 1)"; $rs.Size = "120,28"; $rs.Tag = @($key, $name)
 		$rs.FlatStyle = "Flat"; $rs.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(160, 60, 50)
 		$rs.Add_Click({
 			$k = $this.Tag[0]; $n = $this.Tag[1]
@@ -249,7 +301,7 @@ foreach ($r in $Rows) {
 		$form.Controls.Add($rs)
 	}
 	$pk = New-Object System.Windows.Forms.Button
-	$pk.Text = "Perks..."; $pk.Location = "476,$($y - 1)"; $pk.Size = "90,28"; $pk.Tag = @($key, $name)
+	$pk.Text = "Perks..."; $pk.Location = "620,$($y - 1)"; $pk.Size = "90,28"; $pk.Tag = @($key, $name)
 	$pk.FlatStyle = "Flat"; $pk.FlatAppearance.BorderColor = $gold
 	$pk.Add_Click({ Show-Perks $this.Tag[0] $this.Tag[1] })
 	$form.Controls.Add($pk)
@@ -260,7 +312,7 @@ $note.Text = "* which stat slot is which: from the game's stat table, not yet ch
 $note.Location = "14,$($y + 4)"; $note.Size = "500,22"; $note.ForeColor = [System.Drawing.Color]::FromArgb(150, 140, 120)
 $note.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $form.Controls.Add($note)
-$form.ClientSize = "580,$($y + 34)"
+$form.ClientSize = "724,$($y + 34)"
 
 function Refresh-All {
 	$status.Text = "reading..."
@@ -268,6 +320,8 @@ function Refresh-All {
 	$h = Parse-List $line
 	if ($null -eq $h) { $status.Text = $line; return }
 	foreach ($k in $boxes.Keys) { $boxes[$k].Value = $(if ($h.ContainsKey($k)) { [Math]::Min(999, $h[$k]) } else { 0 }) }
+	$lh = Read-Levels
+	foreach ($k in $levels.Keys) { if ($lh.ContainsKey($k)) { $levels[$k].Value = [Math]::Min(30, $lh[$k]); $levels[$k].Tag = $lh[$k] } }
 	$status.Text = "read at $(Get-Date -Format HH:mm:ss)"
 }
 $refresh.Add_Click({ Refresh-All })
@@ -275,6 +329,7 @@ $refresh.Add_Click({ Refresh-All })
 if ($Shot) {
 	$sample = @{ stealth = 2; horse_riding = 2; alchemy = 6; survival = 1; stat0 = 1; stat2 = 1; stat3 = 1 }
 	foreach ($k in $boxes.Keys) { $boxes[$k].Value = $(if ($sample.ContainsKey($k)) { $sample[$k] } else { 0 }) }
+	foreach ($k in $levels.Keys) { $levels[$k].Value = 12 }
 	$status.Text = "sample values (screenshot)"
 	$form.Show(); [System.Windows.Forms.Application]::DoEvents()
 	$bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
