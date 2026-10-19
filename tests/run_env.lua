@@ -141,7 +141,8 @@ local dryVol = tonumber(M.native[#M.native]:match("^%[DN%] ron ([%d%.]+) "))
 check(string.format("dry fire raised to be heard: x%.2f", dryVol or 0), dryVol and math.abs(dryVol - 10 ^ ((-22 + 40) / 20)) < 0.05, dryVol)
 -- Ready or Not's own MK V (Claude 1's import, RoN's own animations; a stand-in gun here): RoN's full-length action events
 -- at its own notify times, nothing else
-Deagle:RegisterGun("ron_grizzly", { ronOnly = true, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire" }, cues = {} })
+local realGrizzly = Deagle.guns.ron_grizzly   -- the real gun when its file is staged, else a stand-in
+if not realGrizzly then Deagle:RegisterGun("ron_grizzly", { ronOnly = true, ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire" }, cues = {} }) end
 dofile("src/Scripts/Deagle/guns/ron_handling.lua")
 -- every Ready or Not handling cue can start early enough for its click to land on its moment, and every event that
 -- lands by its click has a click time (an event started at RoN's own action time needs none)
@@ -185,9 +186,14 @@ do
 	local tac, chk = Deagle:RonCues("reload") or {}, Deagle:RonCues("inspect") or {}
 	check("RoN MK V tac reload keeps its mag (no drop), mag check is Ammo Check", #tac == 1 and tac[1][2]:find("Grizzly Reload Tac$") ~= nil
 		and #chk == 1 and chk[1][2]:find("Grizzly Ammo Check$") ~= nil, tac[1] and tac[1][2])
+	local spd, ads, first = Deagle:RonCues("reloadSpeed") or {}, Deagle:RonCues("reloadEmptyAds") or {}, Deagle:RonCues("drawFirst") or {}
+	check("RoN MK V speed reload drops its mag, aimed empty reload = the empty one, first draw = First Draw",
+		#spd == 2 and spd[1][2]:find("Grizzly Reload Speed$") ~= nil and spd[2][2]:find("^ronfeet:.*Pistol Mag Drop$") ~= nil
+		and #ads == 2 and ads[1][2] == re[1][2] and #first == 1 and first[1][2]:find("Grizzly First Draw$") ~= nil
+		and Deagle:RonCues("dryFire") == nil, spd[1] and spd[1][2])
 	Deagle.cfg.sounds = "original"
 	check("RoN MK V: its own RoN sounds with deagle_sounds original too (it has no others)", Deagle:RonSounds() == g.ron, Deagle:RonSounds())
-	Deagle.cfg.sounds = "ron"; Deagle.gun = saved; Deagle.guns.ron_grizzly = nil
+	Deagle.cfg.sounds = "ron"; Deagle.gun = saved; if not realGrizzly then Deagle.guns.ron_grizzly = nil end
 end
 -- an impact: RoN's event, its distance left to the plugin (from the listener, the free camera too) as PropagateDistance=@
 n0 = #M.native

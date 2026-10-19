@@ -87,9 +87,13 @@ local grizzly = {
 	draw_first = { { 0.005, G .. "First Draw", start = true } },           -- 1.5 s
 	holster = { { 0.180, S .. "Pistols Shared/Pistol Holster", start = true } },
 }
-local grizzlyRoles = { reload = grizzly.tac_reload, reloadEmpty = grizzly.spd_reload_empty, inspect = grizzly.mag_check,
-	inspectEmpty = grizzly.mag_check, draw = grizzly.draw, drawEmpty = grizzly.draw, holster = grizzly.holster,
-	holsterEmpty = grizzly.holster }
+-- Aimed reloads (tac_reload_ads_b 2.5 s, spd_reload_empty_b_ads 2.0 s) play the same events: RoN has no TP aimed
+-- reload, and the gun runs the same weapon montage aimed or not, so its mag lands where the event has it. A dry fire
+-- has no notify (fp_fiveseven_add_dryfire): its click is the code's (weapon.lua, ron.dry), never a cue here.
+local grizzlyRoles = { reload = grizzly.tac_reload, reloadAds = grizzly.tac_reload, reloadSpeed = grizzly.spd_reload,
+	reloadEmpty = grizzly.spd_reload_empty, reloadEmptyAds = grizzly.spd_reload_empty, inspect = grizzly.mag_check,
+	inspectEmpty = grizzly.mag_check, draw = grizzly.draw, drawEmpty = grizzly.draw, drawFirst = grizzly.draw_first,
+	holster = grizzly.holster, holsterEmpty = grizzly.holster }
 if Deagle.guns.deagle then Deagle.guns.deagle.ronCues = deagle end
 if Deagle.guns.ron_grizzly then Deagle.guns.ron_grizzly.ronCues = grizzlyRoles end
 if Deagle.guns.glock_17 then Deagle.guns.glock_17.ronCues = glock end
