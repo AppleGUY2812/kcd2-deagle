@@ -41,7 +41,7 @@ function Read-Answer([long]$from, [string]$done, [int]$ms = 3000) {
 			if ($fs.Length -gt $from) {
 				$fs.Seek($from, 'Begin') | Out-Null
 				$text = (New-Object IO.StreamReader($fs)).ReadToEnd()
-				$found = @($text -split "`r?`n" | Where-Object { $_ -match '\[Deagle\] points: ' } | ForEach-Object { ($_ -split '\[Deagle\] points: ', 2)[1] })
+				$found = @($text -split "`r?`n" | Where-Object { $_ -match '\[Deagle\] points: ' } | ForEach-Object { ($_ -split '\[Deagle\] points: ', 2)[1].Trim().Trim('"') })   # the plugin's answers come in quotes
 				if ($found | Where-Object { $_ -match $done }) { return $found }
 			}
 		} finally { $fs.Close() }
@@ -71,6 +71,103 @@ function Parse-List([string]$line) {
 	return $h
 }
 
+# Perk picker: perks.json (tools/gen_perklist.py, next to this script) lists every perk that costs a point. The
+# window runs Lua in the game (deagle_lua dofile of a file written here): soul:AddPerk / RemovePerk, a perk's sub-perks
+# with it. It can't show which perks Henry has: soul:HasPerk answers false for every skill-tree perk (true only for
+# hidden script sub-perks; checked over all 945 perks in game 2026-10-19). Exclusive pairs (Roadrunner / Wildrider...):
+# the perk screen refuses the second one, AddPerk isn't asked; what the game does with both is untested.
+$Here = Split-Path -Parent $PSCommandPath
+$PerksPath = Join-Path $Here "perks.json"
+$LuaPath = Join-Path $Here "perk_q.lua"
+$Perks = $null
+
+function Run-Lua([string]$code, [string]$done, [int]$ms = 4000) {
+	[IO.File]::WriteAllText($LuaPath, $code)
+	return Ask ("deagle_lua dofile([[" + ($LuaPath -replace '\\', '/') + "]])") $done $ms
+}
+
+function Lua-List($ids) { "{" + (($ids | ForEach-Object { "'$_'" }) -join ",") + "}" }
+
+# add or remove one perk (and its sub-perks); "perkset ok" / "perkset failed ..." or the game's silence
+function Set-Perk($p, [bool]$on) {
+	$ids = @($p.id) + @(@($p.subs) | Where-Object { $_ })
+	$fn = $(if ($on) { "AddPerk" } else { "RemovePerk" })
+	$code = "local s = player and player.soul; local bad = {}`n" +
+		"for _, id in ipairs($(Lua-List $ids)) do local ok, e = pcall(function() s:$fn(id) end); if not ok then bad[#bad + 1] = tostring(e) end end`n" +
+		"System.LogAlways('[Deagle] points: perkset ' .. (#bad == 0 and 'ok' or ('failed ' .. table.concat(bad, '; '))))"
+	return Run-Lua $code '^perkset '
+}
+
+function Show-Perks([string]$key, [string]$title) {
+	if (-not $script:Perks) {
+		if (-not (Test-Path $PerksPath)) { $status.Text = "perks.json missing next to the script (tools/gen_perklist.py)"; return }
+		$script:Perks = Get-Content $PerksPath -Raw -Encoding UTF8 | ConvertFrom-Json
+	}
+	$list = @($script:Perks.$key)
+	if ($list.Count -eq 0) { $status.Text = "no perks listed for $title"; return }
+	$byId = @{}; foreach ($g in $script:Perks.PSObject.Properties) { foreach ($p in $g.Value) { $byId[$p.id] = $p } }
+
+	$d = New-Object System.Windows.Forms.Form
+	$d.Text = "$title perks"; $d.StartPosition = "CenterParent"; $d.FormBorderStyle = "FixedSingle"; $d.MaximizeBox = $false
+	$d.Font = $form.Font; $d.BackColor = $form.BackColor; $d.ForeColor = $form.ForeColor
+	$info = New-Object System.Windows.Forms.Label
+	$info.Text = "Pick a perk, then Add or Remove. Gold = exclusive pair: Remove the one you have, then Add the other. Hover for what it does. Reopen the perk screen to see changes."
+	$info.Location = "12,8"; $info.Size = "640,40"
+	$d.Controls.Add($info)
+	$lv = New-Object System.Windows.Forms.ListView
+	$lv.View = "Details"; $lv.FullRowSelect = $true; $lv.MultiSelect = $false; $lv.ShowItemToolTips = $true; $lv.HideSelection = $false
+	$lv.Location = "12,50"; $lv.Size = "640,400"
+	$lv.BackColor = [System.Drawing.Color]::FromArgb(52, 45, 38); $lv.ForeColor = $form.ForeColor
+	[void]$lv.Columns.Add("Lvl", 46); [void]$lv.Columns.Add("Perk", 230); [void]$lv.Columns.Add("Exclusive with", 340)
+	foreach ($p in $list) {
+		$it = New-Object System.Windows.Forms.ListViewItem([string]$p.level)
+		[void]$it.SubItems.Add($p.name)
+		[void]$it.SubItems.Add((@($p.excl) | Where-Object { $_ } | ForEach-Object { $byId[$_].name }) -join ", ")
+		$it.Tag = $p; $it.ToolTipText = $p.desc
+		if (@($p.excl | Where-Object { $_ }).Count) { $it.ForeColor = $gold }
+		[void]$lv.Items.Add($it)
+	}
+	$d.Controls.Add($lv)
+	$pay = New-Object System.Windows.Forms.CheckBox
+	$pay.Text = "Use $title points (Add takes 1, Remove gives 1 back: only Remove a perk you have)"; $pay.Checked = $true
+	$pay.Location = "12,458"; $pay.Size = "640,26"
+	$d.Controls.Add($pay)
+	$ps = New-Object System.Windows.Forms.Label
+	$ps.Location = "12,490"; $ps.Size = "440,40"; $ps.ForeColor = $gold
+	$d.Controls.Add($ps)
+	$addB = New-Object System.Windows.Forms.Button
+	$addB.Text = "Add"; $addB.Location = "462,492"; $addB.Size = "90,30"; $addB.FlatStyle = "Flat"; $addB.FlatAppearance.BorderColor = $gold
+	$d.Controls.Add($addB)
+	$remB = New-Object System.Windows.Forms.Button
+	$remB.Text = "Remove"; $remB.Location = "562,492"; $remB.Size = "90,30"; $remB.FlatStyle = "Flat"
+	$remB.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(160, 60, 50)
+	$d.Controls.Add($remB)
+	$d.ClientSize = "664,534"
+	$act = {
+		param([bool]$on)
+		if ($lv.SelectedItems.Count -eq 0) { $ps.Text = "pick a perk first"; return }
+		$p = $lv.SelectedItems[0].Tag
+		$free = [int]$boxes[$key].Value
+		if ($on -and $pay.Checked -and $free -lt 1) {
+			$ok = [System.Windows.Forms.MessageBox]::Show("$title has no free points. Add $($p.name) for free?", "No points", "YesNo", "Question")
+			if ($ok -ne "Yes") { return }
+		}
+		$ps.Text = $(if ($on) { "adding" } else { "removing" }) + " $($p.name)..."
+		$a = Set-Perk $p $on
+		if ($a -ne "perkset ok") { $ps.Text = "$($p.name): $a"; return }
+		$msg = $(if ($on) { "added" } else { "removed" }) + " $($p.name)"
+		if ($pay.Checked) {
+			$target = $(if ($on) { [Math]::Max(0, $free - 1) } else { $free + 1 })
+			if ($target -ne $free) { $msg += "; points: " + (Ask "deagle_points $key $target" "^$key \d+ -> |not found|nothing changed|isn't|must") }
+		}
+		$ps.Text = $msg
+		Refresh-All
+	}
+	$addB.Add_Click({ & $act $true })
+	$remB.Add_Click({ & $act $false })
+	[void]$d.ShowDialog($form)
+}
+
 $ListDone = '^(no unspent points|[a-z_0-9]+ \d+(, [a-z_0-9]+ \d+)*$|.*(not found|nothing changed|isn''t))'
 
 if ($Test) {
@@ -79,6 +176,7 @@ if ($Test) {
 	"echo through the console: " + (Ask "deagle_lua System.LogAlways('[Deagle] points: stealth 2, alchemy 6')" $ListDone)
 	"parsed: " + ((Parse-List "stealth 2, alchemy 6").GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join " "
 	"deagle_points: " + (Ask "deagle_points" $ListDone)
+	"perks.json: " + $(if (Test-Path $PerksPath) { "$(@((Get-Content $PerksPath -Raw -Encoding UTF8 | ConvertFrom-Json).alchemy).Count) alchemy perks" } else { "missing" })
 	return
 }
 
@@ -142,6 +240,11 @@ foreach ($r in $Rows) {
 		})
 		$form.Controls.Add($rs)
 	}
+	$pk = New-Object System.Windows.Forms.Button
+	$pk.Text = "Perks..."; $pk.Location = "476,$($y - 1)"; $pk.Size = "90,28"; $pk.Tag = @($key, $name)
+	$pk.FlatStyle = "Flat"; $pk.FlatAppearance.BorderColor = $gold
+	$pk.Add_Click({ Show-Perks $this.Tag[0] $this.Tag[1] })
+	$form.Controls.Add($pk)
 	$y += 34
 }
 $note = New-Object System.Windows.Forms.Label
@@ -149,7 +252,7 @@ $note.Text = "* which stat slot is which: from the game's stat table, not yet ch
 $note.Location = "14,$($y + 4)"; $note.Size = "500,22"; $note.ForeColor = [System.Drawing.Color]::FromArgb(150, 140, 120)
 $note.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $form.Controls.Add($note)
-$form.ClientSize = "530,$($y + 34)"
+$form.ClientSize = "580,$($y + 34)"
 
 function Refresh-All {
 	$status.Text = "reading..."
