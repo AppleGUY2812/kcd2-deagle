@@ -91,7 +91,9 @@ function Lua-List($ids) { "{" + (($ids | ForEach-Object { "'$_'" }) -join ",") +
 # Levels: soul:GetSkillLevel / GetStatLevel read them; AdvanceToSkillLevel / AdvanceToStatLevel (what the game's own
 # player.lua and FeatureTests use) raise them through XP, so the level-ups give their perk points as in play. The soul
 # has no call that lowers a level (SetStatLevel / SetSkillLevel are nil in game, checked 2026-10-19). Stats go by full
-# name (strength...; "str" is nil). Max 30.
+# name (strength...; "str" is nil). Max 30. The Main level (the menu's ui_derivstat_mainlevel) is the derived stat "lvl"
+# (soul:GetDerivedStat('lvl'), 17.17 in game 2026-10-19): the game grows it from the four stats, quests and the main story
+# and has no Lua call that sets it, so the window shows it and it moves when a stat is raised.
 $StatNames = @{ stat0 = "strength"; stat1 = "agility"; stat2 = "vitality"; stat3 = "speech" }
 function Lvl-Call([string]$key) {
 	if ($StatNames.ContainsKey($key)) { return @("Stat", $StatNames[$key]) } else { return @("Skill", $key) }
@@ -99,11 +101,12 @@ function Lvl-Call([string]$key) {
 function Read-Levels {
 	$parts = $Rows | ForEach-Object { $c = Lvl-Call $_[0]; "'$($_[0])=' .. tostring(s:Get$($c[0])Level('$($c[1])'))" }
 	$code = "local s = player and player.soul; if not s then System.LogAlways('[Deagle] points: levels none') return end`n" +
-		"System.LogAlways('[Deagle] points: levels ' .. " + ($parts -join " .. ' ' .. ") + ")"
+		"System.LogAlways('[Deagle] points: levels ' .. " + ($parts -join " .. ' ' .. ") + " .. ' main=' .. string.format('%.2f', s:GetDerivedStat('lvl') or -1))"
 	$a = Run-Lua $code '^levels ' 6000
 	$script:LevelsRaw = $a
 	$h = @{}
 	foreach ($m in [regex]::Matches($a, '([a-z_0-9]+)=(\d+)')) { $h[$m.Groups[1].Value] = [int]$m.Groups[2].Value }
+	if ($a -match ' main=([\d.]+)') { $script:MainLevel = $matches[1] }
 	return $h
 }
 # raise one skill / stat to $to; answers "lvlset <key> <level now>" half a second later (the XP lands first)
@@ -213,6 +216,7 @@ if ($Test) {
 	"deagle_points: " + (Ask "deagle_points" $ListDone)
 	"levels: " + ((Read-Levels).GetEnumerator() | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join " "
 	"levels raw: $script:LevelsRaw"
+	"main level: $script:MainLevel"
 	"perks.json: " + $(if (Test-Path $PerksPath) { "$(@((Get-Content $PerksPath -Raw -Encoding UTF8 | ConvertFrom-Json).alchemy).Count) alchemy perks" } else { "missing" })
 	return
 }
@@ -242,6 +246,11 @@ $status = New-Object System.Windows.Forms.Label
 $status.Location = "124,59"; $status.Size = "570,24"; $status.ForeColor = $gold; $status.AutoEllipsis = $true
 $form.Controls.Add($status)
 
+$main = New-Object System.Windows.Forms.Label
+$main.Location = "14,92"; $main.Size = "160,20"; $main.ForeColor = $gold
+$form.Controls.Add($main)
+$mainTip = New-Object System.Windows.Forms.ToolTip
+$mainTip.SetToolTip($main, "The game grows it from Strength, Agility, Vitality, Speech, quests and the main story; nothing sets it directly. Raise a stat to raise it.")
 $boxes = @{}
 $levels = @{}
 $hdr = New-Object System.Windows.Forms.Label
@@ -322,6 +331,7 @@ function Refresh-All {
 	foreach ($k in $boxes.Keys) { $boxes[$k].Value = $(if ($h.ContainsKey($k)) { [Math]::Min(999, $h[$k]) } else { 0 }) }
 	$lh = Read-Levels
 	foreach ($k in $levels.Keys) { if ($lh.ContainsKey($k)) { $levels[$k].Value = [Math]::Min(30, $lh[$k]); $levels[$k].Tag = $lh[$k] } }
+	if ($script:MainLevel) { $main.Text = "Main level: $script:MainLevel" }
 	$status.Text = "read at $(Get-Date -Format HH:mm:ss)"
 }
 $refresh.Add_Click({ Refresh-All })
@@ -330,6 +340,7 @@ if ($Shot) {
 	$sample = @{ stealth = 2; horse_riding = 2; alchemy = 6; survival = 1; stat0 = 1; stat2 = 1; stat3 = 1 }
 	foreach ($k in $boxes.Keys) { $boxes[$k].Value = $(if ($sample.ContainsKey($k)) { $sample[$k] } else { 0 }) }
 	foreach ($k in $levels.Keys) { $levels[$k].Value = 12 }
+	$main.Text = "Main level: 17.17"
 	$status.Text = "sample values (screenshot)"
 	$form.Show(); [System.Windows.Forms.Application]::DoEvents()
 	$bmp = New-Object System.Drawing.Bitmap $form.Width, $form.Height
