@@ -313,17 +313,19 @@ function Deagle:UpdateAim(blend)
 	end
 end
 
--- zoom in / out over adsBlend (smoothstep) instead of snapping. A Ready or Not gun zooms like Ready or Not: an FInterpTo
--- at its ADSZoomInSpeed / ADSZoomOutSpeed (the Grizzly 5 / 6 a second), on game time, done within 0.1 % of the target.
+-- zoom in / out over adsBlend (smoothstep) instead of snapping. A Ready or Not gun zooms like Ready or Not (its
+-- PlayerCharacter FOV update): iron sights to AdsFov (0.75) of the FOV, an FInterpTo in at the gun's ADSZoomInSpeed (the
+-- Grizzly 5 a second) and out at FovOutRate (10), on game time, snapped within 1e-4 deg.
 function Deagle:EaseFov(on)
 	local s = self.state
 	local R = self.gun.ronStats and self.ronStats and self.ronStats[self.gun.ronStats]
 	try("aim fov", function()
 		if (on or self.zoom) and not s.baseFov then s.baseFov = System.GetViewCameraFov() end
 		if not s.baseFov then return end
-		local to = s.baseFov * (on and self.cfg.aimFovScale or 1) / (self.zoom or 1)
+		local P = R and self.ronPlayer
+		local to = s.baseFov * (on and (P and P.AdsFov or self.cfg.aimFovScale) or 1) / (self.zoom or 1)
 		local from, t0 = s.fovNow or s.baseFov, System.GetCurrTime()
-		local rate = R and (on and R.ADSZoomInSpeed or R.ADSZoomOutSpeed)
+		local rate = P and (on and R.ADSZoomInSpeed or P.FovOutRate)
 		local last = t0
 		self.fovToken = (self.fovToken or 0) + 1
 		local tok = self.fovToken
@@ -334,7 +336,7 @@ function Deagle:EaseFov(on)
 				local cur = s.fovNow or from
 				cur = cur + (to - cur) * math.min(1, (now - last) * rate)
 				last = now
-				k = math.abs(to - cur) <= 0.001 * math.abs(to - from) and 1 or 0
+				k = math.abs(math.deg(to - cur)) < 1e-4 and 1 or 0
 				s.fovNow = k == 1 and to or cur
 			else
 				k = math.min(1, (now - t0) / math.max(0.01, Deagle.cfg.vm.adsBlend))

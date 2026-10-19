@@ -884,7 +884,8 @@ end
 
 -- Ready or Not's aim on its guns: always on (whatever deagle_ads says), procedural (the plugin moves the gun: "aim 1"
 -- goes to it and the base layer keeps idle, no ads clip), its aimed shot / reload clips where the gun has them (stand-ins
--- here), aimed through a reload, the zoom an FInterpTo at ADSZoomInSpeed (Grizzly 5 / s: 63 % after 0.2 s)
+-- here), aimed through a reload, the zoom to 0.75 of the FOV, an FInterpTo at ADSZoomInSpeed (Grizzly 5 / s: 63 % after
+-- 0.2 s), out at 10 / s
 if g.ronStats then
 	local A = Deagle.cfg.vm.anims
 	local added = {}
@@ -902,7 +903,7 @@ if g.ronStats then
 	for i = n0 + 1, #M.native do if M.native[i]:find("%] aim 1") then aimSent = true end end
 	local R = Deagle.ronStats[g.ronStats]
 	local base = 1.1011
-	local want = base + (base * Deagle.cfg.aimFovScale - base) * (1 - (1 - R.ADSZoomInSpeed / 60) ^ 12)
+	local want = base + (base * Deagle.ronPlayer.AdsFov - base) * (1 - (1 - R.ADSZoomInSpeed / 60) ^ 12)
 	check(string.format("RoN aim on with deagle_ads 0: aiming %s, plugin told %s, base layer %s, fov %.4f (want %.4f)",
 		tostring(s.aiming), tostring(aimSent), tostring(base0()), M.fov or -1, want),
 		s.aiming and aimSent and base0() == A.idle[1] and M.fov and math.abs(M.fov - want) < 0.003, M.fov)
@@ -964,6 +965,14 @@ if g.ronStats then
 		lowKey == A.lowUp[1] and lowBlend == Deagle.cfg.lowReady.blend and not fired and not aimed and wallK and math.abs(wallK - 0.4545) < 0.002, lowKey)
 	wallAt = nil; M.advance(0.5)
 	local upKey, upBlend = base0(), M.anims[#M.anims].blend
+	-- an older plugin (no lowready) hears nothing of the wall (it would log every value as an unknown key)
+	Deagle.nativeCaps.lowready = nil
+	local nOld = #M.native
+	wallAt = 0.3; M.advance(0.2); wallAt = nil; M.advance(0.5)
+	local oldWall = false
+	for i = nOld + 1, #M.native do if M.native[i]:find("ronp wall") then oldWall = true end end
+	Deagle.nativeCaps.lowready = true
+	check("RoN wall with an older plugin: no ronp wall sent (" .. tostring(oldWall) .. ")", not oldWall, oldWall)
 	check(string.format("RoN wall gone: %s over %.2f s, plugin wall %s", tostring(upKey), upBlend or -1, tostring(lastNative("ronp wall ([%d.]+)"))),
 		upKey == A.idle[1] and upBlend == Deagle.cfg.lowReady.blend and tonumber(lastNative("ronp wall ([%d.]+)")) == 0, upKey)
 	-- sprint

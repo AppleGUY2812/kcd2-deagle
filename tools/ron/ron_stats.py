@@ -36,9 +36,12 @@ SHAKES = {
 }
 # the player's side (BasePlayer DATA P / PlayerCharacter CODE, docs/ron/ron_recoil_code.md 3, 6): the camera kick's
 # rate (/s), the gun offset's interp (8 x 0.8 /s), its clamps (cm, component: right, forward, up), the pending kick's
-# push on the gun offset (MeshspaceRecoilMovementMultiplier / MinMax, MeshSpaceMovementMultiplier1P, the ADS terms)
+# push on the gun offset (MeshspaceRecoilMovementMultiplier / MinMax, MeshSpaceMovementMultiplier1P, the ADS terms);
+# the aim zoom (PlayerCharacter FOV update FUN_144b3bc30, every tick): iron sights x AdsFov of the FOV (hardcoded 0.75,
+# linear on the angle), in at the weapon's ADSZoomInSpeed, out at DefaultFovInterpTime (10; ADSZoomOutSpeed isn't read)
 PLAYER = {"KickRate": 7.0, "MeshInterp": 6.4, "OffsetMin": [-10.0, 2.0, -10.0], "OffsetMax": [10.0, 10.0, 10.0],
-          "KickMove": [2.0, 2.0, 2.0], "KickMoveMax": [2.0, 2.0, 2.0], "MoveMul1P": 0.5, "AdsKickBack": 2.5, "AdsKickBackMax": 2.5}
+          "KickMove": [2.0, 2.0, 2.0], "KickMoveMax": [2.0, 2.0, 2.0], "MoveMul1P": 0.5, "AdsKickBack": 2.5, "AdsKickBackMax": 2.5,
+          "AdsFov": 0.75, "FovOutRate": 10.0}
 
 
 def quat(hexstr):

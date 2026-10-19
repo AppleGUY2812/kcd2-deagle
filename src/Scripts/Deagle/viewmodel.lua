@@ -497,18 +497,18 @@ function Deagle:LowReadyTick()
 	local crouched = self.motionIn and self.motionIn.crouched
 	local sprint = a.sprint ~= nil and speed > (self.vmSprint and L.sprintOut or L.sprintIn) and not s.aimHeld and not crouched
 	local low = nil
-	local len = self:GunLength()
+	local push = self.native and self.nativeCaps and self.nativeCaps.lowready
+	local len = (a.lowUp or a.lowDown or push) and self:GunLength()   -- no poses and no pushback: no rays
 	if len then
-		local block, push = len + L.rangeOffset, len + L.pushRange
-		local d = self:WallDistance(math.max(block, push), self.vmLow and L.radiusLow or L.radius, -1)
+		local block, pushAt = len + L.rangeOffset, len + L.pushRange
+		local d = self:WallDistance(math.max(block, pushAt), self.vmLow and L.radiusLow or L.radius, -1)
 		if d <= block and (a.lowUp or a.lowDown) then
 			local f = System.GetViewCameraDir()
 			low = math.deg(math.asin(math.max(-1, math.min(1, f.z)))) > L.pitch and "up" or "down"
 			if not a[low == "up" and "lowUp" or "lowDown"] then low = low == "up" and "down" or "up" end   -- the one it has
 		end
-		local k = math.max(0, math.min(1, (push - d) / push))
-		if self.native and self.nativeCaps and self.nativeCaps.lowready
-			and (self.wallSent == nil or math.abs(k - self.wallSent) > 0.01 or (k == 0 and self.wallSent ~= 0)) then
+		local k = math.max(0, math.min(1, (pushAt - d) / pushAt))
+		if push and (self.wallSent == nil or math.abs(k - self.wallSent) > 0.01 or (k == 0 and self.wallSent ~= 0)) then
 			self.wallSent = k
 			self:Native(string.format("ronp wall %.3f", k))
 		end
