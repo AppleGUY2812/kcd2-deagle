@@ -648,6 +648,31 @@ static bool SafeSetMaxSpin(uintptr_t entity, float maxw) {
 		return setParams && setParams(pe, p, 0) != 0;   // threadSafe 0, as the Lua binding passes
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// Henry's living physics as it is before flight.lua changes it (flydyn), so the landing puts back exactly that.
+// WHGame 1.5.6 CLivingEntity (vtable RVA 0x3A82570): +0x28 GetParams(pe_player_dynamics: type 4, 0x74 bytes, its
+// constructor 0x1804A96A0) gives kAirControl (+0xC) and kAirResistance (+0x10) as SetParams (+0x20) stores them, but
+// its gravity (+0x14) is the entity's +0x174, not the setting: SetParams keeps the setting at +0x18C, and Lua's
+// PLAYERDYN gravity g (the binding 0x180B35634 puts it in gravity.z, x left unused) lands there as (0, 0, -g). So
+// that one is read where SetParams put it. (That binding reads k_inertia, k_air_control, gravity, bSwimming, mass,
+// surface_idx, is_active, max_vel_ground: not k_air_resistance.)
+struct FlyDyn { float set[3], airControl, airRes, got[3]; };
+static int SafeFlyDyn(uintptr_t entity, uintptr_t livingVt, FlyDyn& o) {
+	__try {
+		auto getPhys = (uintptr_t(__fastcall*)(uintptr_t))VFn(entity, 0x278);
+		uintptr_t pe = getPhys ? getPhys(entity) : 0;
+		if (!pe) return -1;
+		if (*(uintptr_t*)pe != livingVt) return -2;
+		alignas(8) uint8_t pd[0x80] = {};
+		*(int*)pd = 4;
+		auto getParams = (int(__fastcall*)(uintptr_t, void*))VFn(pe, 0x28);
+		if (!getParams || !getParams(pe, pd)) return -3;
+		memcpy(&o.airControl, pd + 0xC, 4);
+		memcpy(&o.airRes, pd + 0x10, 4);
+		memcpy(o.got, pd + 0x14, 12);
+		memcpy(o.set, (const void*)(pe + 0x18C), 12);
+		return 1;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return -4; }
+}
 // Live particle library reload (fxreload): the engine never re-reads a loaded library nor replaces an existing effect
 // (LoadLibrary returns early, LoadEffect returns the old one), so each <Particles> node of the file is serialized into
 // its existing effect. WHGame 1.5.6: ISystem (gEnv+0xC0) +0x410 LoadXmlFromBuffer(XmlNodeRef* ret, buf, len, false,
@@ -892,7 +917,7 @@ static void Command(const char* line) {
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
 			// lean: only with the SetViewCamera hook in (freecam.cpp leans the view there; without it only the gun would)
-			g_console.push_back(Freecam_Hooked() ? "deagle_native_caps files fxr smoke ronvm lowready lweight lean" : "deagle_native_caps files fxr smoke ronvm lowready lweight");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint
+			g_console.push_back(Freecam_Hooked() ? "deagle_native_caps files fxr smoke ronvm lowready lweight flydyn lean" : "deagle_native_caps files fxr smoke ronvm lowready lweight flydyn");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint; lweight; flydyn (flight.lua); lean (freecam hook)
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
@@ -1153,6 +1178,22 @@ static void Command(const char* line) {
 		else if (sscanf_s(strncmp(id, "0x", 2) ? id : id + 2, "%llx", &v) != 1 || !g_env || !ReadPtr(g_env + 0xA0, es) || !es
 			|| !(e = SafeGetEntity(es, (uint32_t)v)) || !SafeSetMaxSpin(e, w)) { static int bad = 0; if (bad++ < 5) Log("casespin %s: no physical entity", id); }
 		else if (logged++ < 3) Log("casespin %s: cap %.0f rad/s", id, w);
+	}
+	else if (!strcmp(cmd, "flydyn")) {   // flydyn <player entity id hex>: Henry's living physics (SafeFlyDyn) for flight.lua
+		static const char* kWhy[] = { "", "no_physics", "not_living", "getparams_failed", "exception" };
+		char id[32] = {}, c[96]; unsigned long long v = 0; uintptr_t es = 0, e = 0; FlyDyn d = {}; int r = 0;
+		const char* why = nullptr;
+		if (sscanf_s(rest, "%31s", id, (unsigned)sizeof(id)) != 1 || sscanf_s(strncmp(id, "0x", 2) ? id : id + 2, "%llx", &v) != 1) why = "bad_command";
+		else if (!g_env || !ReadPtr(g_env + 0xA0, es) || !es || !(e = SafeGetEntity(es, (uint32_t)v))) why = "no_entity";
+		else if ((r = SafeFlyDyn(e, (uintptr_t)GetModuleHandleA("WHGame.dll") + 0x3A82570, d)) < 1) why = kWhy[-r];
+		else if (!Finite(d.set, 3) || !Finite(&d.airControl, 2)) why = "not_finite";
+		else if (d.set[0] != 0 || d.set[1] != 0) why = "gravity_not_vertical";   // Lua's gravity can only set (0, 0, -g)
+		if (why) snprintf(c, sizeof(c), "deagle_flydyn fail %s", why);
+		else snprintf(c, sizeof(c), "deagle_flydyn %.4f %.4f %.4f", -d.set[2], d.airControl, d.airRes);
+		Log("flydyn %s: %s (setting %.3f %.3f %.3f, GetParams gravity %.3f %.3f %.3f)", id, c + 14, d.set[0], d.set[1], d.set[2],
+			d.got[0], d.got[1], d.got[2]);
+		std::lock_guard<std::mutex> lk(g_consoleMu);
+		g_console.push_back(c);
 	}
 	else if (!strcmp(cmd, "probe")) Probe_Command(rest);   // probe <name> ...: architecture step 1 checks (probe.cpp, Claude 5)
 	else if (!strcmp(cmd, "rounds")) Rounds_Command(rest);   // rounds bind | stats: the native round sim (rounds.cpp, Claude 5)

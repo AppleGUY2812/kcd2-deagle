@@ -850,3 +850,11 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   Head" doesn't exist).
 - The plugin's deagle_native_caps arrives after deagle_native_ok, i.e. after the hello's MotionParams / RonParams:
   anything gated on a capability has to be sent later (the per-frame ticks do it).
+- Henry's living physics (flydyn, for flight.lua; WHGame 1.5.6, Ghidra): CLivingEntity vtable RVA 0x3A82570, +0x20
+  SetParams, +0x28 GetParams. pe_player_dynamics is type 4, 0x74 bytes (constructor 0x1804A96A0): kInertia +4,
+  kInertiaAccel +8, kAirControl +0xC, kAirResistance +0x10, gravity Vec3 +0x14, nodSpeed +0x20. SetParams keeps the
+  gravity SETTING at the entity's +0x18C, but GetParams returns +0x174 (another vector), so a GetParams round trip
+  doesn't give the setting back: the plugin reads +0x18C. Lua's SetPhysicParams(PHYSICPARAM_PLAYERDYN) (binding
+  0x180B35634) puts its float `gravity` g in gravity.z with x unused; SetParams then stores (0, 0, -g). That binding
+  reads only k_inertia, k_air_control, gravity, bSwimming, mass, surface_idx, is_active, max_vel_ground:
+  k_air_resistance is silently ignored.

@@ -327,8 +327,8 @@ function M.console(name, arg)
 	local f, err = loadstring(code)
 	if not f then table.insert(M.errors, "compile " .. name .. ": " .. err) return end
 	local ok, e = pcall(f); if not ok then table.insert(M.errors, "cmd " .. name .. ": " .. tostring(e)) end
-	-- the plugin follows its hello with what it can do (native/src/main.cpp: deagle_native_caps files fxr smoke ronvm lowready lweight lean)
-	if name == "deagle_native_ok" and M.cmds.deagle_native_caps then M.console("deagle_native_caps", "files fxr smoke ronvm lowready lweight lean") end
+	-- the plugin follows its hello with what it can do (native/src/main.cpp: deagle_native_caps files fxr smoke ronvm lowready lweight flydyn lean)
+	if name == "deagle_native_ok" and M.cmds.deagle_native_caps then M.console("deagle_native_caps", "files fxr smoke ronvm lowready lweight flydyn lean") end
 end
 for _, lib in ipairs({ "System", "Script", "Game", "Particle", "Physics", "ActionMapManager", "UIAction", "AudioUtils" }) do
 	for k, v in pairs(_G[lib]) do
