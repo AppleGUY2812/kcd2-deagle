@@ -50,8 +50,7 @@ function Deagle:MotionParams(gun)
 	for k, v in pairs(self.motionGuns[gun.id or ""] or {}) do p[k] = v end
 	for k, v in pairs(self:RonMotion(gun)) do p[k] = v end
 	for k, v in pairs(gun.motion or {}) do p[k] = v end
-	-- a gun with its own sprint clips (viewmodel.lua LowReadyTick) has no procedural sprint pose (a plugin with lowready)
-	if self.nativeCaps and self.nativeCaps.lowready then p.sprint = gun.anims and gun.anims.sprint and 0 or 1 end
+	self.sprintSent = nil   -- the reset puts the plugin's sprint pose back at 1: LowReadyTick sends the gun's again
 	for k, v in pairs(self.motionOverride) do p[k] = v end
 	local keys = {}
 	for k in pairs(p) do keys[#keys + 1] = k end

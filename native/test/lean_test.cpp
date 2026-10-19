@@ -1,4 +1,5 @@
-// Offline check of native/src/lean.cpp. Built and run by tests/run_all.sh:
+// Offline check of native/src/lean.cpp against Ready or Not's quick lean (docs/ron/ron_grizzly_interactions.md).
+// Built and run by tests/run_all.sh:
 //   g++ -O2 -std=c++17 native/test/lean_test.cpp native/src/lean.cpp -o lean_test && ./lean_test
 #include "../src/lean.h"
 #include <cmath>
@@ -11,40 +12,46 @@ static void check(const char* what, bool ok, double got) {
 }
 
 int main() {
-	// a camera at (10, 20, 1.6) looking along +Y: right +X, forward +Y, up +Z
-	const float cam[12] = { 1, 0, 0, 10,  0, 1, 0, 20,  0, 0, 1, 1.6f };
+	const float dt = 1.0f / 60;
+	// a camera at (10, 20, 1.6) looking along +Y, 30 deg down: right +X, forward (0, cos, -sin), up (0, sin, cos)
+	const float c30 = cosf(0.5236f), s30 = sinf(0.5236f);
+	const float cam[12] = { 1, 0, 0, 10,  0, c30, s30, 20,  0, -s30, c30, 1.6f };
 	float out[12];
 	LeanReset();
-	LeanParam("side", 0.3f); LeanParam("down", 0.05f); LeanParam("roll", 10); LeanParam("in", 8); LeanParam("out", 10);
-	check("upright: nothing applied", !LeanApply(cam, out), 0);
-	// full right lean
-	LeanSet(1); LeanStep(10.0f);
-	check("full lean reached (dt x speed >= 1)", fabsf(lean.now - 1) < 1e-6f, lean.now);
-	bool ok = LeanApply(cam, out);
-	check("right lean: 0.3 m right", ok && fabsf(out[3] - 10.3f) < 1e-5f && fabsf(out[7] - 20) < 1e-5f, out[3]);
-	check("            0.05 m down", fabsf(out[11] - 1.55f) < 1e-5f, out[11]);
-	// roll: up tilts toward +X (right) by 10 deg, right tilts down
-	check("            view top toward the right by 10 deg", fabsf(out[2] - sinf(10 * 3.14159265f / 180)) < 1e-5f && out[10] < 1, out[2]);
-	check("            right axis tilts down", out[8] < 0, out[8]);
-	check("            forward untouched", out[1] == 0 && out[5] == 1 && out[9] == 0, out[5]);
-	float dot = out[0] * out[2] + out[4] * out[6] + out[8] * out[10];
-	float lr = sqrtf(out[0] * out[0] + out[4] * out[4] + out[8] * out[8]);
-	check("            still orthonormal", fabsf(dot) < 1e-6f && fabsf(lr - 1) < 1e-6f, dot);
-	// left lean mirrors
-	LeanSet(-1); LeanStep(10.0f); LeanApply(cam, out);
-	check("left lean: 0.3 m left, 0.05 down, top to the left", fabsf(out[3] - 9.7f) < 1e-5f && fabsf(out[11] - 1.55f) < 1e-5f && out[2] < 0, out[3]);
-	// interpolation: in at 8 / s (FInterpTo), out at 10 / s
-	LeanReset(); LeanSet(1);
-	for (int i = 0; i < 6; i++) LeanStep(1.0f / 60);
-	float want = 1 - powf(1 - 8.0f / 60, 6);
-	check("in at 8 / s: 1 - (1 - 8/60)^6 after 0.1 s", fabsf(lean.now - want) < 1e-5f, lean.now);
-	lean.now = 1; LeanSet(0);
-	for (int i = 0; i < 6; i++) LeanStep(1.0f / 60);
-	want = powf(1 - 10.0f / 60, 6);
-	check("out at 10 / s", fabsf(lean.now - want) < 1e-5f, lean.now);
-	// a wall cut the target to 0.4 mid-lean: it settles there
-	LeanSet(0.4f); for (int i = 0; i < 600; i++) LeanStep(1.0f / 60);
-	check("settles on a cut target 0.4", fabsf(lean.now - 0.4f) < 1e-6f, lean.now);
+	check("upright: nothing applied", !LeanApply(cam, out, true), 0);
+	// E: the quick lean runs to 15 cm at 400 cm/s (2.25 frames at 60 fps)
+	LeanSet(15);
+	LeanStep(dt);
+	check("quick lean 400 cm/s: 6.67 cm after a frame", fabsf(lean.q - 400 * dt) < 1e-4f, lean.q);
+	LeanStep(dt); LeanStep(dt);
+	check("  15 cm by the third frame", lean.q == 15, lean.q);
+	for (int i = 0; i < 600; i++) LeanStep(dt);
+	check("view settles 15 cm right, 7.5 cm down", fabsf(lean.side - 15) < 1e-3f && fabsf(lean.down - 7.5f) < 1e-3f, lean.side);
+	check("arms cant 15 deg", fabsf(lean.cant - 15) < 1e-3f, lean.cant);
+	bool ok = LeanApply(cam, out, false);
+	check("the view: 0.15 m along its level right, 0.075 m straight down (even looking down)",
+		ok && fabsf(out[3] - 10.15f) < 1e-5f && fabsf(out[7] - 20) < 1e-5f && fabsf(out[11] - 1.525f) < 1e-5f, out[11]);
+	check("  no roll", out[0] == 1 && out[2] == 0 && out[10] == c30, out[2]);
+	LeanApply(cam, out, true);
+	check("the gun's camera: rolled 15 deg, top to the right", fabsf(out[2] - sinf(15 * 3.14159265f / 180)) < 1e-5f && out[8] < 0, out[2]);
+	float dot = out[0] * out[2] + out[4] * out[6] + out[8] * out[10], dot2 = out[0] * out[1] + out[4] * out[5] + out[8] * out[9];
+	check("  still orthonormal", fabsf(dot) < 1e-6f && fabsf(dot2) < 1e-6f, dot);
+	// the camera follows at VInterpTo 8: from 0, one frame of 1/60 s covers 8/60 of the gap to the target
+	LeanReset(); LeanSet(15); LeanStep(dt);
+	check("view VInterpTo 8 / s behind the quick lean", fabsf(lean.side - 400 * dt * 8 * dt) < 1e-4f, lean.side);
+	// a wall: the target drops to 5 cm: taken at once
+	for (int i = 0; i < 600; i++) LeanStep(dt);
+	LeanSet(5); LeanStep(dt);
+	check("a wall cuts the quick lean to 5 cm at once", lean.q == 5, lean.q);
+	// let go: back at FInterpTo 30
+	LeanSet(0); LeanStep(dt);
+	check("let go: FInterpTo 30 / s", fabsf(lean.q - 5 * (1 - 30 * dt)) < 1e-4f, lean.q);
+	// Q from a right lean: through 0 to -15 at 400 cm/s
+	LeanReset(); LeanSet(15); for (int i = 0; i < 600; i++) LeanStep(dt);
+	LeanSet(-15); LeanStep(dt);
+	check("E to Q: 400 cm/s through the middle", fabsf(lean.q - (15 - 400 * dt)) < 1e-4f, lean.q);
+	for (int i = 0; i < 600; i++) LeanStep(dt);
+	check("  settles 15 cm left, cant -15", fabsf(lean.side + 15) < 1e-3f && fabsf(lean.cant + 15) < 1e-3f && fabsf(lean.down - 7.5f) < 1e-3f, lean.side);
 	printf("LEAN %s\n", fails ? "FAIL" : "PASS");
 	return fails ? 1 : 0;
 }

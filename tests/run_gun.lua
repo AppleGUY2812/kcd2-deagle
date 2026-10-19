@@ -994,6 +994,7 @@ if g.ronStats then
 		k1 == A.sprintStart[1] and k2 == A.sprint[1] and not sprintFired and k3 == A.sprintStop[1] and k4 == A.idle[1], k2)
 	local n0 = #M.native
 	Deagle:MotionParams(g)
+	M.advance(0.05)   -- the next viewmodel frame sends the gun's sprint pose strength (MotionParams' reset put it at 1)
 	local sp
 	for i = n0 + 1, #M.native do sp = sp or M.native[i]:match("mparams sprint ([%d.]+)") end
 	check("RoN gun with sprint clips: the plugin's sprint pose off (mparams sprint " .. tostring(sp) .. ")", tonumber(sp) == 0, sp)

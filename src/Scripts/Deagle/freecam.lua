@@ -73,3 +73,59 @@ function Deagle:FreecamTick(token)
 	end
 	Script.SetTimer(0, function() Deagle:FreecamTick(token) end)
 end
+
+-- ---------------------------------------------------------------------------
+-- lean (Q / E held, a gun out; Ready or Not's quick lean: cfg.lean). The plugin leans the view itself (lean.cpp: the
+-- camera the shots, Lua and the render use slides and dips, the gun on it cants); this sends it the target in cm, cut
+-- short where a wall is in the way: Ready or Not's capsule from the chest (Spine3) to that side, as three rays (its top,
+-- middle and bottom) past foliage like a round.
+-- While leaning is on, Q and E are ours with a gun out: KCD2's chat maps are held off and its own no_interaction filter
+-- keeps E from using or talking (the user's choice, 2026-10-19).
+-- ---------------------------------------------------------------------------
+function Deagle:LeanOn()
+	local L = self.cfg.lean
+	return L.on and self.native and self.nativeCaps and self.nativeCaps.lean and true or false
+end
+
+function Deagle:LeanParams()
+	local L = self.cfg.lean
+	local v = { ["in"] = L.rateIn, out = L.outSpeed, cam = L.camSpeed, dip = L.dip, cant = L.cantSpeed, cantmax = L.cantMax }
+	for _, k in ipairs({ "in", "out", "cam", "dip", "cant", "cantmax" }) do self:Native(string.format("leanp %s %.4f", k, v[k])) end
+	self.leanParamsSent = true
+end
+
+local CAPSULE = { -1, 0, 1 }   -- the rays: the capsule's bottom, middle, top (x its half height less its radius)
+function Deagle:LeanTick()   -- every viewmodel frame
+	if not self:LeanOn() then return end
+	if not self.leanParamsSent then self:LeanParams() end
+	local L, k = self.cfg.lean, self.leanKeys or {}
+	local side = (k.right and 1 or 0) - (k.left and 1 or 0)
+	local want = side * L.amount
+	if side ~= 0 then
+		local p = self:Player()
+		local ok, chest = pcall(p.GetBonePos, p, "Spine3")
+		if ok and chest then
+			local _, _, right = U.camBasis()
+			local move = vscale(right, side * ((L.amount + L.margin) / 100 + L.radius))
+			local near = math.huge
+			for _, h in ipairs(CAPSULE) do
+				local hit = self:FlightHit({ x = chest.x, y = chest.y, z = chest.z + h * (L.half - L.radius) }, move)
+				if hit and hit.dist < near then near = hit.dist end
+			end
+			if near < math.huge then   -- the capsule's travel: the ray's less its radius
+				local d = (near - L.radius) * 100
+				want = side * math.max(0, math.min(L.margin, d - L.margin))
+			end
+		end
+	end
+	if self.leanSent == nil or math.abs(want - self.leanSent) > 0.1 or (want == 0 and self.leanSent ~= 0) then
+		self.leanSent = want
+		self:Native(string.format("lean %.2f", want))
+	end
+end
+
+function Deagle:LeanStop()   -- the gun put away: upright, keys let go
+	self.leanKeys = nil
+	if self.native and self.leanSent and self.leanSent ~= 0 then self:Native("lean 0") end
+	self.leanSent = 0
+end

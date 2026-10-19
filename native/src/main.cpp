@@ -1097,7 +1097,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "notorch")) g_filters[F_NO_TORCH].want = atoi(rest) != 0 ? 1 : 0;
 	else if (!strcmp(cmd, "nocamera")) g_filters[F_NO_CAMERA].want = atoi(rest) != 0 ? 1 : 0;   // the freecam's mouse look
 	else if (!strcmp(cmd, "nointeract")) g_filters[F_NO_INTERACT].want = atoi(rest) != 0 ? 1 : 0;   // E leans with a gun out
-	else if (!strcmp(cmd, "lean")) LeanSet((float)atof(rest));   // lean <-1..1>: the view lean's target (lean.cpp)
+	else if (!strcmp(cmd, "lean")) LeanSet((float)atof(rest));   // lean <cm, + right>: the quick lean's target (lean.cpp)
 	else if (!strcmp(cmd, "leanp")) {    // leanp <key> <value>: the lean's numbers (lean.h LeanParams)
 		char key[32] = {}; float v = 0;
 		if (sscanf_s(rest, "%31s %f", key, (unsigned)sizeof(key), &v) == 2) { if (!LeanParam(key, v)) Log("leanp: unknown key %s", key); }
@@ -1199,9 +1199,9 @@ static void OnCamera(uintptr_t camera) {
 		llast = now;
 		LeanStep(float((ldt < 0.1 ? ldt : 0.1) * g_gameSpeed));
 	}
-	{   // the gun sits on the leaned view, as the render does (freecam.cpp AfterSetView leans CSystem's camera)
+	{   // the gun sits on the leaned view (freecam.cpp AfterSetView moves CSystem's camera the same), canted
 		float lc[12];
-		if (Freecam_Hooked() && !Freecam_Active() && LeanApply(g_cam, lc)) memcpy(g_cam, lc, sizeof(lc));
+		if (Freecam_Hooked() && !Freecam_Active() && LeanApply(g_cam, lc, true)) memcpy(g_cam, lc, sizeof(lc));
 	}
 	if (!newFrame) {
 		g_repeats++;

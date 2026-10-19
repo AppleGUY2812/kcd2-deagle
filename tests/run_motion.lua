@@ -143,9 +143,8 @@ Deagle:MotionParams(Deagle.guns.deagle)
 local sent = {}
 for i = from, #M.native do local k, v = M.native[i]:match("^%[DN%] mparams (%S+) ?(%S*)") if k then sent[k] = tonumber(v) or true end end
 local nkeys = 0 for _ in pairs(Deagle.motionDefaults) do nkeys = nkeys + 1 end
-nkeys = nkeys + 1   -- sprint (a plugin with lowready: the sprint pose's strength, 1 for a gun without sprint clips)
 local got = 0 for k in pairs(sent) do if k ~= "reset" then got = got + 1 end end
-check(string.format("MotionParams(deagle): reset + %d keys, sprint %s", nkeys, tostring(sent.sprint)), sent.reset and got == nkeys and sent.sprint == 1, got)
+check(string.format("MotionParams(deagle): reset + %d keys", nkeys), sent.reset and got == nkeys, got)
 check("deagle: drag_aim_loc 0.875, hang_k 80, land 1.2 (RoN .357 Python)", sent.drag_aim_loc == 0.875 and sent.hang_k == 80 and sent.land == 1.2, tostring(sent.drag_aim_loc))
 from = #M.native + 1
 Deagle:MotionParams(Deagle.guns.glock_17)

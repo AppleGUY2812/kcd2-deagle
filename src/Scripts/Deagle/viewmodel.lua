@@ -3,6 +3,7 @@
 -- Split out of deagle_main.lua (2026-10-15), which loads it (Deagle:LoadModule); its helpers come from Deagle.U.
 local U = Deagle.U
 local DRAWING, GAME_MAPS_OFF, HOLDS_AIM, HOLDS_TOGGLE, INSPECTS, REST, SHOTS, log = U.DRAWING, U.GAME_MAPS_OFF, U.HOLDS_AIM, U.HOLDS_TOGGLE, U.INSPECTS, U.REST, U.SHOTS, U.log
+local LEAN_MAPS_OFF = U.LEAN_MAPS_OFF
 -- a Ready or Not gun's aimed shots have the hip shot's one cue (the gunshot at the trigger)
 local CUES_OF = { shootAds = "shoot", shootEmptyAds = "shootEmpty" }
 -- the poses a Ready or Not gun rests in while lowered (LowReadyTick): blended in and out over cfg.lowReady.blend
@@ -225,6 +226,10 @@ end
 function Deagle:HoldGameMapsOff()
 	if not self.state.drawn then return end
 	for _, map in ipairs(GAME_MAPS_OFF) do ActionMapManager.EnableActionMap(map, false) end
+	if self:LeanOn() then   -- Q leans (KCD2's chat); turned back on at the holster only if we turned it off
+		self.leanMapsOff = true
+		for _, map in ipairs(LEAN_MAPS_OFF) do ActionMapManager.EnableActionMap(map, false) end
+	end
 end
 
 function Deagle:VmTick(token)
@@ -239,6 +244,7 @@ function Deagle:VmTick(token)
 	self:CueTick()
 	self:ReloadKeyTick()
 	self:LowReadyTick()
+	self:LeanTick()
 	self:EnvTick()
 	self:CaseTick()
 	self:BarrelHeatTick()
@@ -490,6 +496,15 @@ function Deagle:LowReadyTick()
 	local g = self.gun
 	if not g.ronStats or not self.vmShown then return end
 	local L, a, s = self.cfg.lowReady, self.cfg.vm.anims, self.state
+	-- a gun with its own sprint clips has no procedural sprint pose (mparams sprint: a plugin with lowready; sent from
+	-- here, since its capabilities arrive after MotionParams at a hello)
+	-- and its recoil / offset numbers (the wall pushback needs them before the first shot, recoil.lua RonParams)
+	if self.native and self.nativeCaps and self.nativeCaps.ronvm and self.ronParamsFor ~= g.id then self:RonParams(g) end
+	local sp = a.sprint and 0 or 1
+	if self.native and self.nativeCaps and self.nativeCaps.lowready and self.sprintSent ~= sp then
+		self.sprintSent = sp
+		self:Native("mparams sprint " .. sp)
+	end
 	local p = self:Player()
 	if not p then return end
 	local ok, v = pcall(p.GetVelocity, p)
@@ -570,6 +585,7 @@ function Deagle:VmHide()
 	self.vmShown, self.vmZoomHidden = false, false
 	self.vmSprint, self.vmLow = nil, nil
 	if (self.wallSent or 0) ~= 0 then self.wallSent = 0; if self.native then self:Native("ronp wall 0") end end
+	self:LeanStop()
 	self:FlashDisarm()
 	self:BarrelSmokeStop()
 	self.vmToken = (self.vmToken or 0) + 1
@@ -652,6 +668,11 @@ function Deagle:Toggle()
 	-- native maps on our keys stay off while the pistol is out: "combat" turns left click into a fist attack,
 	-- "draw_holster_torch" takes the torch out on R (reload)
 	for _, map in ipairs(GAME_MAPS_OFF) do try(map .. " map", ActionMapManager.EnableActionMap, map, not s.drawn) end
+	if s.drawn and self:LeanOn() or not s.drawn and self.leanMapsOff then   -- Q / E lean: KCD2's chat maps, E's use
+		self.leanMapsOff = s.drawn or nil
+		for _, map in ipairs(LEAN_MAPS_OFF) do try(map .. " map", ActionMapManager.EnableActionMap, map, not s.drawn) end
+	end
+	if self:LeanOn() or not s.drawn then self:Native("nointeract " .. (s.drawn and "1" or "0")) end
 	-- and R: the game's own no_torch filter while the gun is out (plugin; returning true from OnAction for
 	-- toggle_torch didn't stop it: the game takes the torch out elsewhere too, in game 2026-10-12)
 	self:Native("notorch " .. (s.drawn and "1" or "0"))

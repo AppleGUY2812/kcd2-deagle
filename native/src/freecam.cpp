@@ -185,12 +185,13 @@ void AfterSetView() {
 		g_voApplied = false;
 		if (!memcmp(m, g_voShaken, sizeof(g_voShaken))) { memcpy(m, g_voReal, sizeof(g_voReal)); SafeSetFov(cam, g_voRealFov); }
 	}
-	// the lean, into the camera CSystem keeps (not put back after Render: Lua, the shots and the render all see the
-	// leaned eye). Not on a copy of the leaned one, not under the free camera.
+	// the lean's view offset (no roll: Ready or Not cants only the arms), into the camera CSystem keeps (not put back
+	// after Render: Lua, the shots and the render all see the leaned eye). Not on a copy of the leaned one, not under the
+	// free camera.
 	if (!g_on && !(g_leanApplied && !memcmp(m, g_leanOut, sizeof(m)))) {
 		float lm[12];
 		g_leanApplied = false;
-		if (LeanApply(m, lm) && SafeSetMatrix(cam, lm)) { memcpy(m, lm, sizeof(m)); memcpy(g_leanOut, lm, sizeof(lm)); g_leanApplied = true; }
+		if (LeanApply(m, lm, false) && SafeSetMatrix(cam, lm)) { memcpy(m, lm, sizeof(m)); memcpy(g_leanOut, lm, sizeof(lm)); g_leanApplied = true; }
 	}
 	memcpy(g_real, m, sizeof(m));
 	float dt = Tick();

@@ -29,6 +29,14 @@ Deagle.cfg = {
 	-- user, 2026-10-19: low ready = sprint). Lowered it can't fire or aim. blend s into and out of the poses.
 	lowReady = { start = 0.05, rangeOffset = 0.18, pushRange = 0.30, radius = 0.09, radiusLow = 0.11, pitch = -25,
 		blend = 0.2, sprintIn = 4.6, sprintOut = 3.8 },
+	-- Ready or Not's quick lean on Q / E (held) with a gun out (the plugin with "lean"; docs/ron/ron_grizzly_interactions.md,
+	-- its PlayerCharacter code + ANIMBP_Player_FP_Master): a lean of amount cm runs out at rateIn cm/s and back by an
+	-- FInterpTo at outSpeed; the view follows (VInterpTo camSpeed) amount cm to the side and dip x amount down, without
+	-- rolling; the arms and gun cant the same number of degrees (up to cantMax, RInterpTo cantSpeed). Its wall trace: a
+	-- capsule (radius, half height m) from the chest to that side, amount + margin cm long; a hit at d cm leaves
+	-- clamp(d - margin, 0, margin). on = 0: Q and E stay KCD2's.
+	lean = { on = true, amount = 15, margin = 15, rateIn = 400, outSpeed = 30, camSpeed = 8, dip = 0.5, cantSpeed = 8,
+		cantMax = 25, radius = 0.05, half = 0.40 },
 	heatPerShot = 0.35,       -- degrees of extra spread per shot; cools at heatDecay deg/s (rapid fire opens the cone)
 	heatDecay = 4.0,
 	kickPitchVar = 0.0,
@@ -444,6 +452,8 @@ local SHOTS = { shoot = true, shootEmpty = true, shootBurst = true, shootAds = t
 local RELOADS = { reload = true, reloadEmpty = true, reloadSpeed = true, reloadAds = true, reloadEmptyAds = true }
 local INSPECTS = { inspect = true, inspectEmpty = true }
 local GAME_MAPS_OFF = { "combat" }   -- KCD2 action maps on our keys, off while the gun is out (the torch: OnAction)
+-- and with the plugin's lean: Q (KCD2's chat). E's use / talk live in an include map: the plugin's no_interaction filter
+local LEAN_MAPS_OFF = { "chat_init", "chat_init_interactor" }
 
 -- ---------------------------------------------------------------------------
 -- helpers
@@ -538,6 +548,7 @@ Deagle.U = { log = log, try = try, vadd = vadd, vsub = vsub, vscale = vscale, vl
 local U = Deagle.U
 U.DRAWING = DRAWING
 U.GAME_MAPS_OFF = GAME_MAPS_OFF
+U.LEAN_MAPS_OFF = LEAN_MAPS_OFF
 U.HOLDS_AIM = HOLDS_AIM
 U.HOLDS_TOGGLE = HOLDS_TOGGLE
 U.INSPECTS = INSPECTS
@@ -578,6 +589,7 @@ function Deagle:Native(cmd) System.LogAlways("[DN] " .. cmd) end
 
 function Deagle:NativeHello()
 	self.native, self.ronParamsFor = false, nil   -- the plugin forgets a Ready or Not gun's numbers at hello
+	self.leanSent, self.leanParamsSent, self.sprintSent, self.wallSent = nil, nil, nil, nil   -- and the lean's, upright
 	self:Native("hello")
 end
 
@@ -650,6 +662,11 @@ function Deagle:OnAction(action, activation, value)
 		return true
 	elseif action == "deagle_reload" then
 		self:ReloadKey(activation == "press")
+		return true
+	elseif action == "deagle_lean_left" or action == "deagle_lean_right" then
+		if not self:LeanOn() then return false end   -- no lean: the key is KCD2's
+		self.leanKeys = self.leanKeys or {}
+		self.leanKeys[action == "deagle_lean_left" and "left" or "right"] = activation == "press"
 		return true
 	end
 	return false
@@ -734,6 +751,7 @@ function Deagle:OnGameplayStarted()
 	self:EnsureInit()
 	self.vmId, self.casePools, self.caseThrow, self.flashUntil = nil, nil, nil, nil   -- a load ends the old world: its ids may now name other entities
 	self.drawnOnce, self.rKey = nil, nil                        -- the first draw after a load is the gun's drawFirst
+	self.leanKeys, self.leanSent, self.leanParamsSent = nil, nil, nil
 	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	self.paths, self.pathsToken = nil, nil
