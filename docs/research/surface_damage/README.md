@@ -28,4 +28,4 @@ Engine claims come from the public CryEngine 5 mirror (ValtoGameEngines/CryEngin
 ## Staged plan (estimates)
 S0 0.5 d: crater test + Ghidra check; S1 1-2 d: POM mesh-decal holes; S2 2-4 d: crater stamps; S3 2-3 d: footprints;
 S4 optional 1-3 weeks: heightmap writes or render-target tessellated patches.
-Building destruction: ../destruction_buildings.md (Lead A).
+Building destruction: ../destruction_buildings.md (Lead A); its feel requirements (no stiff pieces, parts hanging on like sinew): ../destruction_feel.md.
