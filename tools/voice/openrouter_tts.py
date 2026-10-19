@@ -19,7 +19,9 @@ import urllib.error
 import urllib.request
 
 PRICE = {"elevenlabs/eleven-v4": 40, "fish-audio/s2.1-pro": 15, "fish-audio/drama-3": 2}  # $ per million characters
-DEFAULT = list(PRICE)
+# 2026-10-19: only the Fish models clone here; ElevenLabs v3/v4/v4-turbo, MiniMax 2.8 HD and Voxtral answer 404
+# "No endpoints supporting voice cloning found for this model"
+DEFAULT = ["fish-audio/s2.1-pro", "fish-audio/drama-3"]
 voice = sys.argv[1]
 models = sys.argv[2:] or DEFAULT
 W = f"/mnt/e/Tools/deagle-work/voice/{voice}"
