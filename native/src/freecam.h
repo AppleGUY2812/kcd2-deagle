@@ -21,6 +21,8 @@ void Freecam_Command(const char* args);
 void Freecam_Reset(const char* why);
 
 bool Freecam_Active();
+// both hooks are in (the free camera, the view offset and the lean work)
+bool Freecam_Hooked();
 // The matrix the render uses this frame (Matrix34 rows, translation in [3],[7],[11]); false while off.
 bool Freecam_Matrix(float out12[12]);
 

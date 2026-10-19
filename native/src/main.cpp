@@ -14,6 +14,7 @@
 #include "settings.h"
 #include "freecam.h"
 #include "ronvm.h"
+#include "lean.h"
 #include "invtime.h"
 #include "ron.h"
 #include "probe.h"
@@ -790,8 +791,9 @@ static void HitReact(const char* rest) {
 // (Scanning gEnv for CCryAction found nothing in game 2026-10-12: it isn't a gEnv member in KCD2.)
 static const uint8_t kFilterKey = 0xDE;
 struct OurFilter { const char* name; int want; bool on; };
-static OurFilter g_filters[] = { { "no_torch", -1, false }, { "no_move", -1, false }, { "no_camera", -1, false } };
-enum { F_NO_TORCH = 0, F_NO_MOVE = 1, F_NO_CAMERA = 2 };
+static OurFilter g_filters[] = { { "no_torch", -1, false }, { "no_move", -1, false }, { "no_camera", -1, false },
+	{ "no_interaction", -1, false } };
+enum { F_NO_TORCH = 0, F_NO_MOVE = 1, F_NO_CAMERA = 2, F_NO_INTERACT = 3 };   // no_interaction: use / talk / pickpocket on E
 static uintptr_t g_amm = 0;
 static uintptr_t SafeGetter(uintptr_t obj, int off) {   // no C++ objects here: MSVC forbids __try next to unwinding
 	auto get = (uintptr_t(__fastcall*)(uintptr_t))VFn(obj, off);
@@ -859,13 +861,15 @@ static void Command(const char* line) {
 		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1; g_nSmokes = 0;
 		g_heldN = 0; g_heldHead = 0; g_nTraces = 0;   // the same for impact pieces and tracer emitters (Claude 3's audit)
 		RvmReset();   // a Ready or Not gun's recoil: Lua sends its numbers again (recoil.lua RonParams)
+		LeanReset();  // upright (Lua sends the lean's numbers again: weapon.lua LeanParams)
 		PreloadTracers();
 		// the handshake, then the player's saved settings (settings.cpp)
 		std::vector<std::string> saved = SettingsReplay();
 		{
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
-			g_console.push_back("deagle_native_caps files fxr smoke ronvm lowready");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint
+			// lean: only with the SetViewCamera hook in (freecam.cpp leans the view there; without it only the gun would)
+			g_console.push_back(Freecam_Hooked() ? "deagle_native_caps files fxr smoke ronvm lowready lean" : "deagle_native_caps files fxr smoke ronvm lowready");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
@@ -1092,6 +1096,13 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "notorch")) g_filters[F_NO_TORCH].want = atoi(rest) != 0 ? 1 : 0;
 	else if (!strcmp(cmd, "nocamera")) g_filters[F_NO_CAMERA].want = atoi(rest) != 0 ? 1 : 0;   // the freecam's mouse look
+	else if (!strcmp(cmd, "nointeract")) g_filters[F_NO_INTERACT].want = atoi(rest) != 0 ? 1 : 0;   // E leans with a gun out
+	else if (!strcmp(cmd, "lean")) LeanSet((float)atof(rest));   // lean <-1..1>: the view lean's target (lean.cpp)
+	else if (!strcmp(cmd, "leanp")) {    // leanp <key> <value>: the lean's numbers (lean.h LeanParams)
+		char key[32] = {}; float v = 0;
+		if (sscanf_s(rest, "%31s %f", key, (unsigned)sizeof(key), &v) == 2) { if (!LeanParam(key, v)) Log("leanp: unknown key %s", key); }
+		else Log("bad leanp command: %s", rest);
+	}
 	else if (!strcmp(cmd, "vol")) { g_masterVol = (float)atof(rest); if (RonReady()) RonVolume(0.5f * g_masterVol); }
 	else if (!strcmp(cmd, "aim")) mo.aiming = atoi(rest) != 0;
 	else if (!strcmp(cmd, "motion")) { float v = (float)atof(rest); mo.enabled = v > 0; if (v > 0) mo.scale = v; Log("motion %.2f", v); }
@@ -1182,6 +1193,16 @@ static void OnCamera(uintptr_t camera) {
 	double gap = lastEnd.QuadPart ? (now.QuadPart - lastEnd.QuadPart) * 1000.0 / (double)freq.QuadPart : 1e9;
 	bool newFrame = gap >= 2.0;
 	memcpy(g_cam, cam, sizeof(cam));
+	if (newFrame) {   // the view lean moves on once a frame (game seconds, as ronvm)
+		static LARGE_INTEGER llast{};
+		double ldt = llast.QuadPart ? double(now.QuadPart - llast.QuadPart) / freq.QuadPart : 0;
+		llast = now;
+		LeanStep(float((ldt < 0.1 ? ldt : 0.1) * g_gameSpeed));
+	}
+	{   // the gun sits on the leaned view, as the render does (freecam.cpp AfterSetView leans CSystem's camera)
+		float lc[12];
+		if (Freecam_Hooked() && !Freecam_Active() && LeanApply(g_cam, lc)) memcpy(g_cam, lc, sizeof(lc));
+	}
 	if (!newFrame) {
 		g_repeats++;
 		if (g_follow && g_vmId && g_env) SafePlace(g_cam, false);

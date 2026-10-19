@@ -20,6 +20,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "freecam.h"
+#include "lean.h"
 
 namespace {
 
@@ -95,6 +96,8 @@ float Tick() {
 // the view offset (Freecam_ViewOffset): this frame's, and whether CSystem's camera holds it now (with the real fov)
 float g_voRot[3] = {}, g_voLoc[3] = {}, g_voFov = 0;
 bool g_voApplied = false; float g_voReal[12] = {}, g_voShaken[12] = {}, g_voRealFov = 0;
+// the lean (lean.cpp) last written into CSystem's camera: a second SetViewCamera copied from it already has it
+float g_leanOut[12] = {}; bool g_leanApplied = false;
 constexpr int kCamFov = 0x30;             // CCamera::m_fov (vertical, radians), as main.cpp's CopyCamera reads it
 
 bool SafeSetFov(uintptr_t cam, float fov) {
@@ -181,6 +184,13 @@ void AfterSetView() {
 	if (g_voApplied) {   // the same for the view offset: a copy of the offset view is the real one again
 		g_voApplied = false;
 		if (!memcmp(m, g_voShaken, sizeof(g_voShaken))) { memcpy(m, g_voReal, sizeof(g_voReal)); SafeSetFov(cam, g_voRealFov); }
+	}
+	// the lean, into the camera CSystem keeps (not put back after Render: Lua, the shots and the render all see the
+	// leaned eye). Not on a copy of the leaned one, not under the free camera.
+	if (!g_on && !(g_leanApplied && !memcmp(m, g_leanOut, sizeof(m)))) {
+		float lm[12];
+		g_leanApplied = false;
+		if (LeanApply(m, lm) && SafeSetMatrix(cam, lm)) { memcpy(m, lm, sizeof(m)); memcpy(g_leanOut, lm, sizeof(lm)); g_leanApplied = true; }
 	}
 	memcpy(g_real, m, sizeof(m));
 	float dt = Tick();
@@ -359,6 +369,8 @@ void Freecam_Reset(const char* why) {
 }
 
 bool Freecam_Active() { return g_on; }
+
+bool Freecam_Hooked() { return g_installed; }
 
 bool Freecam_Matrix(float out12[12]) {
 	if (!g_on) return false;
