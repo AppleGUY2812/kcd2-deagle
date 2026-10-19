@@ -89,13 +89,17 @@ function Run-Lua([string]$code, [string]$done, [int]$ms = 4000) {
 function Lua-List($ids) { "{" + (($ids | ForEach-Object { "'$_'" }) -join ",") + "}" }
 
 # add or remove one perk (and its sub-perks); "perkset ok" / "perkset failed ..." or the game's silence
-function Set-Perk($p, [bool]$on) {
+# AddPerk refuses a perk while its exclusive partner is owned, silently: pcall says ok, nothing is added (in game
+# 2026-10-19). So $drop (the partners, with their sub-perks) come off first and the add follows 0.5 s later.
+function Set-Perk($p, [bool]$on, $drop = @()) {
 	$ids = @($p.id) + @(@($p.subs) | Where-Object { $_ })
 	$fn = $(if ($on) { "AddPerk" } else { "RemovePerk" })
 	$code = "local s = player and player.soul; local bad = {}`n" +
-		"for _, id in ipairs($(Lua-List $ids)) do local ok, e = pcall(function() s:$fn(id) end); if not ok then bad[#bad + 1] = tostring(e) end end`n" +
-		"System.LogAlways('[Deagle] points: perkset ' .. (#bad == 0 and 'ok' or ('failed ' .. table.concat(bad, '; '))))"
-	return Run-Lua $code '^perkset '
+		"local function run(fn, ids) for _, id in ipairs(ids) do local ok, e = pcall(function() s[fn](s, id) end); if not ok then bad[#bad + 1] = tostring(e) end end end`n" +
+		"local function main() run('$fn', $(Lua-List $ids)); System.LogAlways('[Deagle] points: perkset ' .. (#bad == 0 and 'ok' or ('failed ' .. table.concat(bad, '; ')))) end`n" +
+		"local drop = $(Lua-List $drop)`n" +
+		"if #drop > 0 then run('RemovePerk', drop); Script.SetTimer(500, main) else main() end"
+	return Run-Lua $code '^perkset ' 6000
 }
 
 function Show-Perks([string]$key, [string]$title) {
@@ -111,7 +115,7 @@ function Show-Perks([string]$key, [string]$title) {
 	$d.Text = "$title perks"; $d.StartPosition = "CenterParent"; $d.FormBorderStyle = "FixedSingle"; $d.MaximizeBox = $false
 	$d.Font = $form.Font; $d.BackColor = $form.BackColor; $d.ForeColor = $form.ForeColor
 	$info = New-Object System.Windows.Forms.Label
-	$info.Text = "Pick a perk, then Add or Remove. Gold = exclusive pair: Remove the one you have, then Add the other. Hover for what it does. Reopen the perk screen to see changes."
+	$info.Text = "Pick a perk, then Add or Remove. Gold = exclusive pair: Add swaps (the other one comes off first; the game won't give both), no point change. Hover for what it does. Reopen the perk screen to see changes."
 	$info.Location = "12,8"; $info.Size = "640,40"
 	$d.Controls.Add($info)
 	$lv = New-Object System.Windows.Forms.ListView
@@ -152,11 +156,15 @@ function Show-Perks([string]$key, [string]$title) {
 			$ok = [System.Windows.Forms.MessageBox]::Show("$title has no free points. Add $($p.name) for free?", "No points", "YesNo", "Question")
 			if ($ok -ne "Yes") { return }
 		}
-		$ps.Text = $(if ($on) { "adding" } else { "removing" }) + " $($p.name)..."
-		$a = Set-Perk $p $on
+		# an exclusive perk swaps: its partner comes off first (the game won't add it beside the partner), no point change
+		$partners = @(@($p.excl) | Where-Object { $_ } | ForEach-Object { $byId[$_] })
+		$swap = $on -and $partners.Count -gt 0
+		$drop = @($partners | ForEach-Object { $_.id; @($_.subs) | Where-Object { $_ } })
+		$ps.Text = $(if ($swap) { "swapping in" } elseif ($on) { "adding" } else { "removing" }) + " $($p.name)..."
+		$a = Set-Perk $p $on $(if ($swap) { $drop } else { @() })
 		if ($a -ne "perkset ok") { $ps.Text = "$($p.name): $a"; return }
-		$msg = $(if ($on) { "added" } else { "removed" }) + " $($p.name)"
-		if ($pay.Checked) {
+		$msg = $(if ($swap) { "removed " + (($partners | ForEach-Object { $_.name }) -join ", ") + ", added" } elseif ($on) { "added" } else { "removed" }) + " $($p.name)"
+		if ($pay.Checked -and -not $swap) {
 			$target = $(if ($on) { [Math]::Max(0, $free - 1) } else { $free + 1 })
 			if ($target -ne $free) { $msg += "; points: " + (Ask "deagle_points $key $target" "^$key \d+ -> |not found|nothing changed|isn't|must") }
 		}
