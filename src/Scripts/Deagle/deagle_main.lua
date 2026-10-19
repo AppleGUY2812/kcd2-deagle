@@ -577,7 +577,7 @@ function Deagle:LoadModule(path)
 	return ok
 end
 -- the systems, one file each (their helpers from Deagle.U above; a file only uses what the ones before it made)
-for _, f in ipairs({ "surfaces", "physics", "effects", "sound", "flash", "debug", "recoil", "hits", "npc", "tracers", "shells", "weapon", "viewmodel", "freecam" }) do
+for _, f in ipairs({ "surfaces", "physics", "effects", "sound", "flash", "debug", "recoil", "hits", "npc", "tracers", "shells", "weapon", "viewmodel", "freecam", "flight" }) do
 	Deagle:LoadModule("Scripts/Deagle/" .. f .. ".lua")
 end
 

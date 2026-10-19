@@ -16,7 +16,7 @@ local function sent(prefix)
 end
 
 Deagle:OnGameplayStarted(); M.console("deagle_native_ok")
-check("no Flight mod: no flykeys sent", not sent("flykeys"), "sent")
+check("flight.lua (our flight) makes the Flight table: the plugin is asked for its keys", sent("flykeys 1"), "not sent")   -- before flight.lua (2026-10-19): no Flight mod = no flykeys
 
 -- the Flight mod's globals as Mods/flight's Scripts/mods/flight.lua makes them
 local said = {}
