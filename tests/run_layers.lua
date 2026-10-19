@@ -32,9 +32,9 @@ p.GetVelocity = function() return { x = vel.x, y = vel.y, z = vel.z } end
 p.actor.IsFlying = function() return air end
 act("deagle_toggle"); M.advance(2.0)
 local vm = System.GetEntity(Deagle.vmId)
-check("drawn: breathing on layer 2 at 1, the shake on 7 at 0.2", vm.layers[2] == A.breathe[1] and weight(2) == 1
-	and vm.layers[7] == A.shake[1] and weight(7) == 0.2, tostring(vm.layers[2]) .. " " .. tostring(weight(2)))
-check("the plugin's own jump / land / bob off (the clips are Ready or Not's)", last("mparams jump (%d)") == "0"
+check("drawn: breathing on layer 2 at 1, the shake on 7 at 0.05 (its idle)", vm.layers[2] == A.breathe[1] and weight(2) == 1
+	and vm.layers[7] == A.shake[1] and weight(7) == 0.05, tostring(vm.layers[2]) .. " " .. tostring(weight(7)))
+check("the plugin's own jump / land / bob off (Ready or Not has none)", last("mparams jump (%d)") == "0"
 	and last("mparams land (%d)") == "0" and last("mparams bob (%d)") == "0", last("mparams bob (%d)"))
 
 -- aiming: breathing to 0.2 by an FInterpTo at 10, the aim kick at 0.2
@@ -73,6 +73,18 @@ check(string.format("roll: right key -> time %.3f (want ~1), weight %.3f (0.525)
 	vm.layers[4] == A.roll[1] and (vm.layerTime[4] or 0) > 0.99 and math.abs((weight(4) or 0) - 0.525) < 0.005, vm.layerTime[4])
 act("moveright", "release"); M.advance(0.5)
 check("  let go: back to the middle (0.5)", math.abs((vm.layerTime[4] or 0) - 0.5) < 0.01, vm.layerTime[4])
+-- rc kept the idle reference frame (4 frames): left, centre, right are frames 1-3 of 0-3
+A.roll[2] = 4; M.advance(0.5)
+check(string.format("  4-frame roll clip (reference kept): centre at %.3f (2/3)", vm.layerTime[4] or -1),
+	math.abs((vm.layerTime[4] or 0) - 2 / 3) < 0.01, vm.layerTime[4])
+A.roll[2] = 3
+
+-- sprinting puts the shake at 0.1, and it stays there (Ready or Not's bug, copied)
+clip("sprint", 20)
+vel = { x = 0, y = 6, z = 0 }; M.advance(0.3)
+vel = { x = 0, y = 0, z = 0 }; M.advance(1.0)
+A.sprint = nil
+check("after a sprint the shake stays at 0.1", weight(7) == 0.1, weight(7))
 
 -- jump
 air = true; M.advance(0.05)

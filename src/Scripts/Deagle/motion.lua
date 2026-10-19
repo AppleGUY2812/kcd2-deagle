@@ -123,17 +123,19 @@ System.AddCCommand("deagle_mparam", "local s = ([[%line]]):gsub('\"', '') local 
 --             direction (up to 150 cm/s locoM at speed / 150; to 200 locoM, backwards locoF, at speed / 250; above
 --             locoF at speed / 310; a new direction over 0.3 s), moveStop on stopping (0.05 s; weight 0.4 aiming), out
 --             over 0.1 s
---   roll      one 3-frame clip (left, centre, right) scrubbed by the strafe keys smoothed by an FInterpTo at 15, weight
---             AimInterp x 0.7 (its blend from weapon_right down at 0.75 is in the clip)
+--   roll      one clip of the left, centre and right poses (after the idle reference frame if rc kept it) scrubbed by
+--             the strafe keys smoothed by an FInterpTo at 15, weight AimInterp x 0.7 x 0.75 (its bone blend from
+--             weapon_right down; the clip has the arms too: ours follow the gun by baked FK, not IK)
 --   jump      start (0.05 s in) -> loop with 0.1 s of start left -> end on landing (0.05 s) -> out (0.2 s), AimInterp
 --   crouch    crouchIn / crouchOut on a stance change (0.25 s), out with 0.2 s left, AimInterp
---   shake     its loop at 0.2
+--   shake     its loop at FirstPersonShakeAmount: 0.05 (DefaultIdleShake), 0.1 once sprinting, and it stays 0.1 after
+--             (Ready or Not writes it only while sprinting: its bug, copied); reset at a load
 --   ads       the aim kicks: adsIn at 0.2 (in 0.05 s), adsOut at 0.35 (in 0.2 s), out with 0.1 s left
 -- Layers 0 (base) and 1 (aimed recoil on other guns) stay as they are.
 -- ---------------------------------------------------------------------------
 local AL = { breathe = 2, loco = 3, roll = 4, jump = 5, crouch = 6, shake = 7, ads = 8 }
 Deagle.ronLayerCfg = { aimAds = 0.2, aimRate = 10, moving = 10, dirBlend = 0.3, rollRate = 15, rollW = 0.7 * 0.75,
-	shakeW = 0.2, adsInW = 0.2, adsOutW = 0.35, stopAdsW = 0.4 }
+	shakeIdle = 0.05, shakeSprint = 0.1, adsInW = 0.2, adsOutW = 0.35, stopAdsW = 0.4 }
 
 local function clipLen(a) return a and math.max(1, a[2] - 1) / (a[3] or Deagle.cfg.vm.fps) or 0 end
 
@@ -181,17 +183,22 @@ function Deagle:RonLayersTick()
 		L = { gun = self.gun.id, vm = self.vmId, w = {}, clip = {}, aim = s.aiming and C.aimAds or 1, roll = 0, t = now }
 		self.ronLayers = L
 		if a.breathe and self:LayerPlay(AL.breathe, "breathe", 0, 1, true) then self:LayerFade(AL.breathe, L.aim, 0) end
-		if a.shake and self:LayerPlay(AL.shake, "shake", 0, 1, true) then self:LayerFade(AL.shake, C.shakeW, 0) end
+		if a.shake and self:LayerPlay(AL.shake, "shake", 0, 1, true) then self:LayerFade(AL.shake, self.ronShake or C.shakeIdle, 0) end
 	end
 	local dt = math.max(0, math.min(0.1, now - L.t))
 	L.t = now
-	-- what these clips replace in the plugin's procedural motion (motion.cpp): its jump / land offsets (Ready or Not
-	-- has none: its jump clips) and its walk bob (modelled on Ready or Not's jog loop, which the loco clips now are)
-	local want = (a.jumpStart and "j0" or "j1") .. ((a.locoMFwd or a.locoFFwd) and "b0" or "b1")
+	-- the plugin's procedural motion (motion.cpp) that Ready or Not hasn't: no walk bob on its guns (its WeaponBob code
+	-- runs with every tuning field 0: the bob seen is the loco clips), no jump / land offsets once the jump clips play
+	local want = a.jumpStart and "j0" or "j1"
 	if self.motionLazy ~= want then
 		self.motionLazy = want
-		local j, b = a.jumpStart and 0 or 1, (a.locoMFwd or a.locoFFwd) and 0 or 1
-		self:Native("mparams jump " .. j); self:Native("mparams land " .. j); self:Native("mparams bob " .. b)
+		local j = a.jumpStart and 0 or 1
+		self:Native("mparams jump " .. j); self:Native("mparams land " .. j); self:Native("mparams bob 0")
+	end
+	-- the shake: up to its sprint value for good once sprinting (viewmodel.lua LowReadyTick's vmSprint)
+	if a.shake then
+		if self.vmSprint then self.ronShake = C.shakeSprint end
+		self:LayerFade(AL.shake, self.ronShake or C.shakeIdle, 0)
 	end
 	-- AimInterp
 	L.aim = L.aim + ((s.aiming and C.aimAds or 1) - L.aim) * math.min(1, dt * C.aimRate)
@@ -249,8 +256,11 @@ function Deagle:RonLayersTick()
 		local want = (k.right and 1 or 0) - (k.left and 1 or 0)
 		L.roll = L.roll + (want - L.roll) * math.min(1, dt * C.rollRate)
 		if not L.clip[AL.roll] then self:LayerPlay(AL.roll, "roll", 0, 0, true) end
+		-- left, centre, right are its last 3 frames (a 4th, first, is the idle reference if rc kept it)
+		local frames = a.roll[2]
+		local first = math.max(0, frames - 3)
 		local vm = self:VmEntity()
-		if vm then pcall(vm.SetAnimationTime, vm, 0, AL.roll, (L.roll + 1) / 2) end
+		if vm then pcall(vm.SetAnimationTime, vm, 0, AL.roll, (first + L.roll + 1) / math.max(1, frames - 1)) end
 		self:LayerFade(AL.roll, C.rollW * L.aim, 0)
 	end
 	-- jump

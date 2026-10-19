@@ -16,7 +16,13 @@ KEY = {"idle": "idle", "idle_empty": "idleEmpty", "draw": "draw", "draw_empty": 
        "draw_first": "drawFirst", "reload_speed": "reloadSpeed", "shoot_ads": "shootAds", "shoot_empty_ads": "shootEmptyAds",
        "reload_ads": "reloadAds", "reload_empty_ads": "reloadEmptyAds", "dry_fire": "dryFire", "low_up": "lowUp",
        "low_up_empty": "lowUpEmpty", "low_down": "lowDown", "low_down_empty": "lowDownEmpty",
-       "sprint_start": "sprintStart", "sprint": "sprint", "sprint_stop": "sprintStop"}
+       "sprint_start": "sprintStart", "sprint": "sprint", "sprint_stop": "sprintStop",
+       # Ready or Not's additive layers (motion.lua RonLayersTick), baked additive like shoot_add
+       "breathe_add": "breathe", "shake_add": "shake", "move_start_add": "moveStart", "move_stop_add": "moveStop",
+       "loco_m_fwd_add": "locoMFwd", "loco_m_l_add": "locoML", "loco_m_r_add": "locoMR", "loco_m_bwd_add": "locoMBwd",
+       "loco_f_fwd_add": "locoFFwd", "loco_f_l_add": "locoFL", "loco_f_r_add": "locoFR", "loco_f_bwd_add": "locoFBwd",
+       "roll_add": "roll", "jump_start_add": "jumpStart", "jump_loop_add": "jumpLoop", "jump_end_add": "jumpEnd",
+       "crouch_in_add": "crouchIn", "crouch_out_add": "crouchOut", "ads_in_add": "adsIn", "ads_out_add": "adsOut"}
 CUES_FROM = {"draw_empty": "draw", "inspect_empty": "inspect"}   # derived clips reuse their source clip's sounds
 sounds = {}
 def snd(rel):

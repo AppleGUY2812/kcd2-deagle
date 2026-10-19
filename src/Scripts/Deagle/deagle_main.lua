@@ -756,6 +756,7 @@ function Deagle:OnGameplayStarted()
 	self.vmId, self.casePools, self.caseThrow, self.flashUntil = nil, nil, nil, nil   -- a load ends the old world: its ids may now name other entities
 	self.drawnOnce, self.rKey = nil, nil                        -- the first draw after a load is the gun's drawFirst
 	self.leanKeys, self.leanSent, self.leanParamsSent = nil, nil, nil
+	self.ronShake = nil                                         -- Ready or Not's shake back at its idle 0.05
 	self.flashArmed = nil                                       -- the plugin forgets its live flash at the hello
 	self.rounds, self.roundsToken = nil, nil                    -- rounds in flight belong to the old world too
 	self.paths, self.pathsToken = nil, nil
