@@ -836,3 +836,17 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   exposure compensation): an exposure-independent glow needs one .mtl per exposure step (ron_grizzly_ev9/_ev8/_ev7).
 - rc presets by suffix (KCD2Mod Tools/rc/rc.ini): _diff Albedo sRGB BC1, _spec Reflectance sRGB BC1, _ddna BC5s +
   BC4 alpha with glossfromnormals. tools/ron/mk_grizzly_tex.py, commit ebe1064.
+
+## 2026-10-19: animation layer weights, the view lean, Lua's caps timing (Claude 4)
+- KCD2's Lua has no layer weight (its entity binding lists StartAnimation / StopAnimation / SetAnimationSpeed /
+  SetAnimationTime / GetAnimationTime ..., no SetLayerBlendWeight: listed live). The engine has it: ScriptBind
+  SetAnimationSpeed (0x180ab2f44) = GetCharacter(slot) -> ICharacterInstance +0x28 GetISkeletonAnim -> +0xB8
+  SetLayerPlaybackScale(layer, max(0, s)) (float at layer x 0x40 + 0x50); CSkeletonAnim vtable 0x183a711e0 +0xB0 =
+  SetLayerBlendWeight(layer < 16, w) (float at layer x 0x40 + 0x5C), +0xC0 GetLayerPlaybackScale. The plugin's
+  "lweight <layer> <w>" sets it every frame (GetEntity +0x70 -> GetCharacter +0x328, as gore.cpp).
+- The view lean goes into CSystem's view camera right after SetViewCamera and is never put back (unlike the free
+  camera / fire shake), so Lua's System.GetViewCamera*, our shots and the render see it; CView's own camera is never
+  written. Henry's bones for it: "Head" (13 cm behind and 4 cm under the eye), "Spine3" (1.13 m over the feet; "Bip01
+  Head" doesn't exist).
+- The plugin's deagle_native_caps arrives after deagle_native_ok, i.e. after the hello's MotionParams / RonParams:
+  anything gated on a capability has to be sent later (the per-frame ticks do it).

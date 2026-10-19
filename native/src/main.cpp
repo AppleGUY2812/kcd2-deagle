@@ -446,6 +446,28 @@ static bool SafePlace(const float* cam, bool newFrame) {
 	__try { return PlaceViewmodel(cam, newFrame); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+// ---- animation layer weights on the viewmodel: Lua's StartAnimation has no weight, and Ready or Not's additive loops
+// (breathing, walk / run, look) blend in by speed and aim. ISkeletonAnim::SetLayerBlendWeight, WHGame 1.5.6 (MODLOG
+// 2026-10-19): IEntitySystem +0x70 GetEntity -> IEntity +0x328 GetCharacter(0) -> ICharacterInstance +0x28
+// GetISkeletonAnim -> +0xB0 SetLayerBlendWeight(layer 0-15, w) (the float at layer x 0x40 + 0x5C; its +0xB8 is
+// SetLayerPlaybackScale, what Lua's SetAnimationSpeed calls). Set again every frame: a layer's new clip may reset it.
+using SkelFn = uintptr_t(__fastcall*)(uintptr_t chr);
+using LayerWeightFn = void(__fastcall*)(uintptr_t skel, int layer, float w);
+static float g_layerW[16] = {};
+static uint32_t g_layerSet = 0;   // bit per layer Lua weighted ("lweight <layer> <w>"; w < 0 lets it go at weight 1)
+static bool ApplyLayerWeights() {
+	if (!g_layerSet || !g_vmId || !g_env) return true;
+	__try {
+		uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
+		auto getEntity = (GetEntityFn)VFn(es, 0x70); uintptr_t e = getEntity ? getEntity(es, g_vmId) : 0; if (!e) return false;
+		auto getChr = (uintptr_t(__fastcall*)(uintptr_t, int))VFn(e, 0x328); uintptr_t chr = getChr ? getChr(e, 0) : 0; if (!chr) return false;
+		auto getSkel = (SkelFn)VFn(chr, 0x28); uintptr_t skel = getSkel ? getSkel(chr) : 0; if (!skel) return false;
+		auto setW = (LayerWeightFn)VFn(skel, 0xB0); if (!setW) return false;
+		for (int l = 0; l < 16; l++) if (g_layerSet & (1u << l)) setW(skel, l, g_layerW[l]);
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
 static void RunConsole(const char* cmd) {
 	uintptr_t con; if (!ReadPtr(g_env + 0xA8, con) || !con) return;
 	if (auto exec = (ExecFn)VFn(con, 0x118)) exec(con, cmd, true, false);
@@ -861,7 +883,8 @@ static void Command(const char* line) {
 		g_follow = false; g_vmId = 0; mo.aiming = false; g_nFlashes = 0; g_haveVmTM = false; g_live = 0; g_liveFrame = -1; g_nSmokes = 0;
 		g_heldN = 0; g_heldHead = 0; g_nTraces = 0;   // the same for impact pieces and tracer emitters (Claude 3's audit)
 		RvmReset();   // a Ready or Not gun's recoil: Lua sends its numbers again (recoil.lua RonParams)
-		LeanReset();  // upright (Lua sends the lean's numbers again: weapon.lua LeanParams)
+		LeanReset();  // upright (Lua sends the lean's numbers again: freecam.lua LeanParams)
+		g_layerSet = 0;   // a new viewmodel: Lua weights its layers again
 		PreloadTracers();
 		// the handshake, then the player's saved settings (settings.cpp)
 		std::vector<std::string> saved = SettingsReplay();
@@ -869,7 +892,7 @@ static void Command(const char* line) {
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
 			// lean: only with the SetViewCamera hook in (freecam.cpp leans the view there; without it only the gun would)
-			g_console.push_back(Freecam_Hooked() ? "deagle_native_caps files fxr smoke ronvm lowready lean" : "deagle_native_caps files fxr smoke ronvm lowready");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint
+			g_console.push_back(Freecam_Hooked() ? "deagle_native_caps files fxr smoke ronvm lowready lweight lean" : "deagle_native_caps files fxr smoke ronvm lowready lweight");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
@@ -1098,6 +1121,13 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "nocamera")) g_filters[F_NO_CAMERA].want = atoi(rest) != 0 ? 1 : 0;   // the freecam's mouse look
 	else if (!strcmp(cmd, "nointeract")) g_filters[F_NO_INTERACT].want = atoi(rest) != 0 ? 1 : 0;   // E leans with a gun out
 	else if (!strcmp(cmd, "lean")) LeanSet((float)atof(rest));   // lean <cm, + right>: the quick lean's target (lean.cpp)
+	else if (!strcmp(cmd, "lweight")) {   // lweight <layer> <w>: a viewmodel animation layer's weight (w < 0: back to 1, ours no more)
+		int l = -1; float w = 0;
+		if (sscanf_s(rest, "%d %f", &l, &w) == 2 && l >= 0 && l < 16) {
+			if (w < 0) { g_layerW[l] = 1; ApplyLayerWeights(); g_layerSet &= ~(1u << l); }
+			else { g_layerW[l] = w; g_layerSet |= 1u << l; ApplyLayerWeights(); }
+		} else Log("bad lweight command: %s", rest);
+	}
 	else if (!strcmp(cmd, "leanp")) {    // leanp <key> <value>: the lean's numbers (lean.h LeanParams)
 		char key[32] = {}; float v = 0;
 		if (sscanf_s(rest, "%31s %f", key, (unsigned)sizeof(key), &v) == 2) { if (!LeanParam(key, v)) Log("leanp: unknown key %s", key); }
@@ -1219,6 +1249,7 @@ static void OnCamera(uintptr_t camera) {
 		Freecam_ViewOffset(rvm.shakeRot, rvm.shakeLoc, rvm.shakeFov);
 	}
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam, true)) g_placed++;
+	if (!ApplyLayerWeights()) { static int said = 0; if (said++ < 5) Log("lweight: setting the viewmodel's layer weights failed"); }
 	{   // our sounds are heard from where the view is: the free camera while it's on, else Henry's eye
 		float fc[12];
 		const float* ear = Freecam_Matrix(fc) ? fc : g_cam;
