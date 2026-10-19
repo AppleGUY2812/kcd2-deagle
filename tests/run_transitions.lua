@@ -20,7 +20,7 @@ end
 local function reset(ammo) Deagle.state.ammo = ammo or 7; M.advance(3.0) end
 
 local m = mark(); act("deagle_toggle"); M.advance(0.3); act("deagle_fire"); act("deagle_reload"); act("deagle_inspect"); M.advance(1.6)
-expect("draw blocks fire / reload / inspect", since(m), "draw/0.08 idle1/0.10")   -- ends where it settles: 0.1 s blend
+expect("draw blocks fire / reload / inspect", since(m), "draw/0.00 idle1/0.10")   -- from hidden: its own first frame   -- ends where it settles: 0.1 s blend
 expect("  ...nothing else started", tostring(select(2, since(m):gsub("/", ""))), "2")
 
 reset(7); m = mark(); act("deagle_fire"); M.advance(0.25); act("deagle_fire"); M.advance(2.0)
@@ -40,7 +40,7 @@ expect("holster waits for the reload, swap first", since(m), "reload/0.08 idle1/
 expect("  ...and the gun is away", tostring(Deagle.vmShown), "false")
 
 m = mark(); act("deagle_toggle"); M.advance(0.5); act("deagle_toggle"); M.advance(1.2)
-expect("holster asked mid-draw waits for the draw", since(m), "draw/0.08 holster/0.08")
+expect("holster asked mid-draw waits for the draw", since(m), "draw/0.00 holster/0.08")
 M.advance(1.0); m = mark(); act("deagle_toggle"); M.advance(0.3); act("deagle_toggle"); M.advance(0.3); act("deagle_toggle"); M.advance(2.5)
 expect("draw/holster double-tap ends where asked", tostring(Deagle.state.drawn) .. " " .. tostring(Deagle.vmShown), "true true")
 
@@ -49,7 +49,7 @@ expect("empty gun: inspect_empty, back to empty idle", since(m), "inspect_empty/
 m = mark(); act("deagle_toggle"); M.advance(1.5)
 expect("empty gun: holster_empty", since(m), "holster_empty/")
 m = mark(); act("deagle_toggle"); M.advance(1.8)
-expect("empty gun: draw_empty -> idle_empty", since(m), "draw_empty/0.08 idle_empty/0.10")
+expect("empty gun: draw_empty -> idle_empty", since(m), "draw_empty/0.00 idle_empty/0.10")
 m = mark(); act("deagle_reload"); M.advance(3.2)
 expect("empty reload settles into idle", since(m), "reload_empty/0.08 idle1/0.10")
 
@@ -86,13 +86,42 @@ m = mark(); act("deagle_toggle"); M.advance(1.5)
 expect("holster from ADS blends 0.2", since(m), "holster/0.20")
 act("deagle_aim", "release"); M.advance(0.2)
 m = mark(); act("deagle_toggle"); M.advance(0.2); act("deagle_aim"); M.advance(1.6)
-expect("aim held through draw hands over at 0.2", since(m), "draw/0.08 ads/0.20")
+expect("aim held through draw hands over at 0.2", since(m), "draw/0.00 ads/0.20")
 act("deagle_aim", "release"); M.advance(0.5)
 reset(7); m = mark(); act("deagle_fire"); M.advance(0.1); act("deagle_aim"); M.advance(0.5)
 expect("aim cuts a hip shot over 0.2", since(m), "/0.00 ads/0.20")
 act("deagle_aim", "release"); M.advance(0.5)
 reset(7); m = mark(); act("deagle_inspect"); M.advance(1.0); act("deagle_aim"); M.advance(0.5)
 expect("aim cuts inspect over 0.3", since(m), "inspect/0.08 ads/0.30")
+
+-- the holster hides the gun before its clip's last key: a finished base-layer clip drops to the rest pose (the idle
+-- gun), shown for a frame when the hide came on a timer (the user, 2026-10-19). Frame by frame at 60 and 30 fps.
+Deagle.cfg.vm.ads = false
+local function holsterEnd(fps)
+	reset(7)
+	if not Deagle.state.drawn then act("deagle_toggle"); M.advance(2.0) end
+	local vm = System.GetEntity(Deagle.vmId)
+	act("deagle_toggle")
+	local pop, last = 0, 0
+	for _ = 1, 2 * fps do
+		M.advance(1 / fps, fps)
+		local t = vm:GetAnimationTime(0, 0)
+		if not vm.hidden and tostring(vm.layers[0]):find("holster") then
+			last = t
+			if t >= 1 then pop = pop + 1 end
+		end
+	end
+	return string.format("%d rest-pose frames, last frame shown at %.3f, hidden %s", pop, last, tostring(vm.hidden)), last
+end
+for _, fps in ipairs({ 60, 30 }) do
+	local got, last = holsterEnd(fps)
+	expect("holster ends hidden at " .. fps .. " fps, no rest pose", got, "0 rest-pose frames")
+	-- hidden for its last 2 frames (HOLSTER_AHEAD): the last one shown is at most 3 frames of the clip before its end
+	local a, c = Deagle.cfg.vm.anims.holster, Deagle.cfg.vm
+	local span = (a[2] - 1) / (a[3] or c.fps) / (c.holsterSpeed * Deagle:Rate("holster"))
+	expect("  ...and shows the clip to its last 3 frames", tostring(last and last >= 1 - 3.01 / (fps * span)), "true")
+	print("     " .. got)
+end
 
 print(string.format("\n%d/%d transition checks pass; script errors: %d", n - fails, n, #M.errors))
 for _, e in ipairs(M.errors) do print("  " .. e) end

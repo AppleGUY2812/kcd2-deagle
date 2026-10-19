@@ -244,6 +244,10 @@ function Deagle:VmTick(token)
 		self.vmZoomHidden = self.zoom ~= nil
 	end
 	self:FlashFollow()
+	if self.vmHolstering and self:HolsterTick() then
+		self:HolsterDone(self.vmHolster.tok)
+		if token ~= self.vmToken or not self.vmShown then return end   -- hidden (or drawn again: a new tick runs)
+	end
 	local a = self.vmAnim
 	if a and not a.loop and System.GetCurrTime() >= a.ends and not self.vmHolstering then self:VmReturn() end
 	Script.SetTimer(0, function() Deagle:VmTick(token) end)
@@ -420,15 +424,20 @@ end
 -- ---------------------------------------------------------------------------
 -- draw / holster
 -- ---------------------------------------------------------------------------
+-- frames ahead of the holster's end the gun hides: 1 if the playhead Lua reads is the one this frame renders, 2 if
+-- the animation updates after the script timers (the frame renders one step further)
+local HOLSTER_AHEAD = 2
+-- The draw starts on its own first frame (blend 0): the gun was hidden (or is a new entity), and a blend began from the
+-- layer's last pose, the rest pose (the idle gun) for its first frames (the user, 2026-10-19).
 function Deagle:VmShow()
 	self.vmShownAt = System.GetCurrTime()
-	self.vmHolstering = false
+	self.vmHolstering, self.vmHolster = false, nil
 	local vm = self:VmEntity()
 	if not vm then return end
 	self.vmShown = true
-	pcall(vm.Hide, vm, 0)
 	self:VmPlace()
-	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or "draw", false)
+	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or "draw", false, 1.0, 0)
+	pcall(vm.Hide, vm, 0)
 	self.vmRoundsShown = nil
 	self:VmRounds(self:MagRounds())
 	if self.state.magOut and self.gun.mags then pcall(vm.HideAttachment, vm, 0, "vm_mag1", true, true) end
@@ -459,21 +468,52 @@ function Deagle:ShowInHand()
 	self:VmShow()
 end
 
--- holster: play the reversed draw, then hide
+-- holster: play the reversed draw, then hide on its last frame. A finished clip on the base layer drops to the rest pose
+-- (the idle gun), and a timer missed that frame: timers run on game time while the clip runs on its own clock (F9 slow
+-- motion runs it ~1.5x faster), and frames / fps is one frame past its last key. The idle gun showed for a frame before
+-- the hide (the user, 2026-10-19). So VmTick hides it by the clip's own playhead (HolsterTick); the timer only ends a
+-- holster whose viewmodel stopped ticking.
 function Deagle:HideInHand()
 	if self.vmShown and not self.vmHolstering then
 		self.vmHolstering = true
-		local len = self:VmPlay(self.state.ammo == 0 and "holsterEmpty" or "holster", false, self.cfg.vm.holsterSpeed)
-		Script.SetTimer(math.floor(len * 1000), function()
-			Deagle.vmHolstering = false
-			if not Deagle.state.drawn then Deagle:VmHide(); Deagle:NativeSyncVm() end
-			if Deagle.pendingToggle then Deagle.pendingToggle = false; Deagle:Toggle() end   -- drawn again meanwhile
-		end)
+		local key = self.state.ammo == 0 and "holsterEmpty" or "holster"
+		local blend = self:VmBlendFor(key)
+		local len = self:VmPlay(key, false, self.cfg.vm.holsterSpeed, blend)
+		local a, speed = self.cfg.vm.anims[key], self.cfg.vm.holsterSpeed * self:Rate(key)
+		self.vmHolsterTok = (self.vmHolsterTok or 0) + 1
+		local tok = self.vmHolsterTok
+		self.vmHolster = { tok = tok, key = key, from = System.GetCurrTime(), blend = blend,
+			span = math.max(1, a[2] - 1) / (a[3] or self.cfg.vm.fps) / speed }   -- s from its first key to its last
+		Script.SetTimer(math.floor(len * 1000), function() Deagle:HolsterDone(tok) end)
 		return
 	end
-	self.vmHolstering = false
+	self.vmHolstering, self.vmHolster = false, nil
 	self:VmHide()
 	self:NativeSyncVm()
+end
+
+function Deagle:HolsterDone(tok)
+	if not (self.vmHolstering and self.vmHolster and self.vmHolster.tok == tok) then return end
+	self.vmHolstering, self.vmHolster = false, nil
+	if not self.state.drawn then self:VmHide(); self:NativeSyncVm() end
+	if self.pendingToggle then self.pendingToggle = false; self:Toggle() end   -- drawn again meanwhile
+end
+
+-- every viewmodel frame while holstering: true once the clip's playhead (GetAnimationTime, 0..1) would pass its end by
+-- the next frame. One frame of the clip = the last frame's playhead step (its own clock), at least the game-time one.
+function Deagle:HolsterTick()
+	local h, a = self.vmHolster, self.vmAnim
+	if not (h and self.vmHolstering and a and a.key == h.key) then return false end
+	if System.GetCurrTime() - h.from < h.blend then return false end   -- the layer may still report the clip it leaves
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	local ok, t = false, nil
+	if vm then ok, t = pcall(vm.GetAnimationTime, vm, 0, self.cfg.vm.layer) end
+	if not ok or type(t) ~= "number" then return h.t ~= nil end      -- read before, gone now: the clip is over
+	if h.t and t < h.t then return true end                           -- back to the start: the clip is over
+	local step = (self.frameDt or 1 / 60) / h.span
+	if h.t then step = math.max(step, t - h.t) end
+	h.t = t
+	return t + HOLSTER_AHEAD * step >= 1
 end
 
 -- Draw / holster. Asked for during a draw, holster or reload, it waits for that to finish (no mid-way jumps).
