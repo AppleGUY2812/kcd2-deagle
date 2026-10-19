@@ -19,6 +19,27 @@ def qrot(q, v):   # rotate vector v by unit quaternion q
     return 2 * np.dot(u, v) * u + (w * w - np.dot(u, u)) * np.array(v) + 2 * w * np.cross(u, v)
 
 
+def dense(keys, n, rot):
+    """sparse [frame, value] keys -> one value per frame (linear between keys; rotations nlerp the short way)"""
+    out, j = [], 0
+    for f in range(n):
+        while j + 1 < len(keys) and keys[j + 1][0] <= f:
+            j += 1
+        f0, a = keys[j]
+        if f <= f0 or j + 1 >= len(keys):
+            out.append(list(a)); continue
+        f1, b = keys[j + 1]
+        t = (f - f0) / max(1, f1 - f0)
+        if rot and sum(x * y for x, y in zip(a, b)) < 0:
+            b = [-x for x in b]
+        v = [x + (y - x) * t for x, y in zip(a, b)]
+        if rot:
+            m = math.sqrt(sum(x * x for x in v)) or 1.0
+            v = [x / m for x in v]
+        out.append(v)
+    return out
+
+
 class Skel:
     def __init__(self, D):
         self.bones = [b[0] for b in D['skeleton']['bones']]
@@ -26,6 +47,11 @@ class Skel:
         self.ref = [(np.array(p[0], float), np.array(p[1], float), np.array(p[2], float)) for p in D['skeleton']['pose']]
         self.index = {n.lower(): i for i, n in enumerate(self.bones)}
         self.clips = D['clips']
+        for c in self.clips.values():   # animdec (AnimCompress_PerTrackCompression) tracks are sparse [frame, value] keys
+            for tr in c['tracks'].values():
+                for ch, keys in tr.items():
+                    if keys and isinstance(keys[0], list) and len(keys[0]) == 2 and isinstance(keys[0][1], list):
+                        tr[ch] = dense(keys, c['frames'], ch == 'R')
 
     def frames(self, name):
         return self.clips[name]['frames']
@@ -38,14 +64,15 @@ class Skel:
         for bone, tr in C.items():
             i = self.index.get(bone.lower())
             if i is None: continue
-            k = min(f, len(tr['R']) - 1)
-            r, t, s = np.array(tr['R'][k]), np.array(tr['T'][k]), np.array(tr['S'][k])
+            q0, t0, s0 = pose[i]
+            # a channel the clip doesn't key (animdec tracks can have T only) leaves the base / reference as it is
+            ch = {c: (np.array(tr[c][min(f, len(tr[c]) - 1)]) if tr.get(c) else None) for c in 'RTS'}
+            r, t, s = ch['R'], ch['T'], ch['S']
             if add:
-                q0, t0, s0 = pose[i]
-                q = qmul(r, q0); q /= np.linalg.norm(q)
-                pose[i] = (q, t0 + t, s0 * (1 + s))
+                q = q0 if r is None else qmul(r, q0); q = q / np.linalg.norm(q)
+                pose[i] = (q, t0 if t is None else t0 + t, s0 if s is None else s0 * (1 + s))
             else:
-                pose[i] = (r / np.linalg.norm(r), t, s)
+                pose[i] = (q0 if r is None else r / np.linalg.norm(r), t0 if t is None else t, s0 if s is None else s)
         return pose
 
     def world(self, pose):
