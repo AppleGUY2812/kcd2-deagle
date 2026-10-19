@@ -5,6 +5,9 @@ local U = Deagle.U
 local DRAWING, GAME_MAPS_OFF, HOLDS_AIM, HOLDS_TOGGLE, INSPECTS, REST, SHOTS, log = U.DRAWING, U.GAME_MAPS_OFF, U.HOLDS_AIM, U.HOLDS_TOGGLE, U.INSPECTS, U.REST, U.SHOTS, U.log
 -- a Ready or Not gun's aimed shots have the hip shot's one cue (the gunshot at the trigger)
 local CUES_OF = { shootAds = "shoot", shootEmptyAds = "shootEmpty" }
+-- the poses a Ready or Not gun rests in while lowered (LowReadyTick): blended in and out over cfg.lowReady.blend
+local LOWERED = { lowUp = true, lowDown = true, lowUpEmpty = true, lowDownEmpty = true, sprint = true }
+local SPRINTS = { sprintStart = true, sprint = true, sprintStop = true }
 local matToAngles, try, vadd, vcross, vlen, vnorm, vscale = U.matToAngles, U.try, U.vadd, U.vcross, U.vlen, U.vnorm, U.vscale
 
 -- ---------------------------------------------------------------------------
@@ -235,6 +238,7 @@ function Deagle:VmTick(token)
 	self:FlashMeshTick()
 	self:CueTick()
 	self:ReloadKeyTick()
+	self:LowReadyTick()
 	self:EnvTick()
 	self:CaseTick()
 	self:BarrelHeatTick()
@@ -294,6 +298,12 @@ end
 function Deagle:VmRestKey()
 	local s = self.state
 	local empty = s.ammo == 0 and not s.reloading
+	local a = self.cfg.vm.anims
+	if self.vmSprint then return "sprint" end
+	if self.vmLow then
+		local k = self.vmLow == "up" and "lowUp" or "lowDown"
+		return empty and a[k .. "Empty"] and k .. "Empty" or k
+	end
 	if s.aiming and not self.gun.ronStats then return empty and "adsEmpty" or "ads" end
 	return empty and "idleEmpty" or "idle"
 end
@@ -310,7 +320,14 @@ function Deagle:VmReturn(trimmed)
 		-- rest pose has the main one there and a blend would fly both: switch, the image is the same to 3 mm)
 		local cur = self.vmAnim
 		local swap = cur and self.gun.swapTail and self.gun.swapTail[cur.key]
-		self:VmPlay(self:VmRestKey(), true, 1.0, (trimmed and not swap) and self.cfg.vm.trimBlend or 0)
+		local rest = self:VmRestKey()
+		if rest == "sprint" and not (cur and cur.key == "sprintStart") and self.cfg.vm.anims.sprintStart then
+			self:VmPlay("sprintStart", false, 1.0, self.cfg.lowReady.blend)   -- still sprinting: down again
+		elseif LOWERED[rest] and not (cur and cur.key == "sprintStart") then
+			self:VmPlay(rest, true, 1.0, self.cfg.lowReady.blend)
+		else
+			self:VmPlay(rest, true, 1.0, (trimmed and not swap) and self.cfg.vm.trimBlend or 0)
+		end
 	end
 end
 
@@ -332,6 +349,7 @@ end
 function Deagle:VmBlendFor(key)
 	local c, cur = self.cfg.vm, self.vmAnim
 	if not cur then return c.blend end
+	if LOWERED[cur.key] and key ~= "sprintStop" then return self.cfg.lowReady.blend end
 	if self:VmBusy() then
 		if INSPECTS[cur.key] then return c.inspectCutBlend end
 		if SHOTS[cur.key] and SHOTS[key] then return c.refireBlend end
@@ -434,6 +452,84 @@ function Deagle:VmDryFire()
 end
 
 -- ---------------------------------------------------------------------------
+-- Ready or Not's low ready (cfg.lowReady): against walls and while sprinting
+-- ---------------------------------------------------------------------------
+-- the gun's length as Ready or Not measures it: its root bone to its muzzle + 5 cm (no attachments here); per viewmodel
+function Deagle:GunLength()
+	local g = self.gun
+	if self.gunLen and self.gunLen.vm == self.vmId and self.gunLen.gun == g.id then return self.gunLen.len end
+	local root, muzzle = g.bones.root and self:VmBone(g.bones.root), self:VmBone(g.bones.muzzle)
+	if not (root and muzzle) then return nil end
+	local len = vlen({ x = muzzle.x - root.x, y = muzzle.y - root.y, z = muzzle.z - root.z }) + 0.05
+	self.gunLen = { vm = self.vmId, gun = g.id, len = len }
+	return len
+end
+
+-- how far ahead of the eye (from start m in front of it) the first solid thing is, up to far m: a ring of rays of radius
+-- r round the view line and its centre (a stand-in for Ready or Not's sphere sweep), past foliage and invisible blockers
+-- like a round (FlightHit). math.huge when nothing.
+local RING = { { 0, 0 }, { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 } }
+function Deagle:WallDistance(far, r, stopAt)
+	local pos, f, right, up = U.camBasis()
+	local L = self.cfg.lowReady
+	local move = vscale(f, far)
+	local best = math.huge
+	for _, o in ipairs(RING) do
+		local from = vadd(vadd(pos, vscale(f, L.start)), vadd(vscale(right, o[1] * r), vscale(up, o[2] * r)))
+		local hit = self:FlightHit(from, move)
+		if hit and hit.dist < best then best = hit.dist end
+		if best <= stopAt then break end
+	end
+	return best
+end
+
+-- every viewmodel frame on a Ready or Not gun: is it lowered (a wall: "up" / "down"; a sprint), and how near the wall
+-- (the plugin's pushback). A change plays the new pose now if the base layer rests; a clip running (reload, shot,
+-- inspect, draw) finishes first and VmReturn lands in it.
+function Deagle:LowReadyTick()
+	local g = self.gun
+	if not g.ronStats or not self.vmShown then return end
+	local L, a, s = self.cfg.lowReady, self.cfg.vm.anims, self.state
+	local p = self:Player()
+	if not p then return end
+	local ok, v = pcall(p.GetVelocity, p)
+	local speed = ok and type(v) == "table" and math.sqrt((v.x or 0) ^ 2 + (v.y or 0) ^ 2) or 0
+	local crouched = self.motionIn and self.motionIn.crouched
+	local sprint = a.sprint ~= nil and speed > (self.vmSprint and L.sprintOut or L.sprintIn) and not s.aimHeld and not crouched
+	local low = nil
+	local len = self:GunLength()
+	if len then
+		local block, push = len + L.rangeOffset, len + L.pushRange
+		local d = self:WallDistance(math.max(block, push), self.vmLow and L.radiusLow or L.radius, -1)
+		if d <= block and (a.lowUp or a.lowDown) then
+			local f = System.GetViewCameraDir()
+			low = math.deg(math.asin(math.max(-1, math.min(1, f.z)))) > L.pitch and "up" or "down"
+			if not a[low == "up" and "lowUp" or "lowDown"] then low = low == "up" and "down" or "up" end   -- the one it has
+		end
+		local k = math.max(0, math.min(1, (push - d) / push))
+		if self.native and self.nativeCaps and self.nativeCaps.lowready
+			and (self.wallSent == nil or math.abs(k - self.wallSent) > 0.01 or (k == 0 and self.wallSent ~= 0)) then
+			self.wallSent = k
+			self:Native(string.format("ronp wall %.3f", k))
+		end
+	end
+	if sprint then low = nil end
+	local was = self.vmSprint
+	if sprint == (was or false) and low == self.vmLow then return end
+	local lowWas = self.vmLow
+	self.vmSprint, self.vmLow = sprint or nil, low
+	if (low == nil) ~= (lowWas == nil) and s.aimHeld then self:UpdateAim() end   -- down at a wall: out of the aim; up: back in
+	if self.vmHolstering or (self:VmBusy() and not SPRINTS[self.vmAnim.key]) then return end
+	if sprint and not was then
+		self:VmPlay(a.sprintStart and "sprintStart" or "sprint", not a.sprintStart, 1.0, self:VmBlendFor("sprintStart"))
+	elseif was and not sprint and a.sprintStop then
+		self:VmPlay("sprintStop", false)
+	else
+		self:VmPlay(self:VmRestKey(), true, 1.0, L.blend)
+	end
+end
+
+-- ---------------------------------------------------------------------------
 -- draw / holster
 -- ---------------------------------------------------------------------------
 -- frames ahead of the holster's end the gun hides: 1 if the playhead Lua reads is the one this frame renders, 2 if
@@ -444,6 +540,7 @@ local HOLSTER_AHEAD = 2
 function Deagle:VmShow()
 	self.vmShownAt = System.GetCurrTime()
 	self.vmHolstering, self.vmHolster = false, nil
+	self.vmSprint, self.vmLow = nil, nil
 	local vm = self:VmEntity()
 	if not vm then return end
 	self.vmShown = true
@@ -471,6 +568,8 @@ end
 
 function Deagle:VmHide()
 	self.vmShown, self.vmZoomHidden = false, false
+	self.vmSprint, self.vmLow = nil, nil
+	if (self.wallSent or 0) ~= 0 then self.wallSent = 0; if self.native then self:Native("ronp wall 0") end end
 	self:FlashDisarm()
 	self:BarrelSmokeStop()
 	self.vmToken = (self.vmToken or 0) + 1

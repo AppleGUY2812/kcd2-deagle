@@ -74,6 +74,7 @@ end
 function Deagle:Fire(force, burstRound)
 	local s = self.state
 	if self:VmDrawing() or self.vmHolstering then return end
+	if self.vmLow or self.vmSprint then return end   -- a Ready or Not gun lowered (a wall, a sprint) doesn't fire
 	if s.reloading and (burstRound or 1) > 1 then return end   -- a burst's later rounds never cancel a reload
 	if s.reloading then
 		-- the new mag is in: the shot goes off the moment the gun is back up
@@ -289,7 +290,7 @@ end
 -- A Ready or Not gun stays aimed through its reloads (Ready or Not has aimed reload clips); draws and holsters still
 -- hold the aim.
 function Deagle:AimBlocked()
-	if self.vmHolstering or not self.state.drawn then return true end
+	if self.vmHolstering or not self.state.drawn or self.vmLow then return true end   -- lowered at a wall: no aim
 	local a = self.vmAnim
 	if not (a and not a.loop and HOLDS_AIM[a.key]) or (self.gun.ronStats and RELOADS[a.key]) then return false end
 	return System.GetCurrTime() < (a.ends or 0) - self.cfg.vm.adsLead

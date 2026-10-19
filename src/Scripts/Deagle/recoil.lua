@@ -224,6 +224,11 @@ function Deagle:RonParams(gun)
 		move1p = P.MoveMul1P, adsback = P.AdsKickBack, adsbackmax = P.AdsKickBackMax,
 		krate = P.KickRate, kret = r.RecoilReturnPercentage, kretspd = r.RecoilReturnInterpSpeed,
 	}
+	if self.nativeCaps.lowready then   -- near a wall (viewmodel.lua LowReadyTick sends how near)
+		local bk = t3(r.MeshspaceTransform_Back)
+		v.bkf, v.bkr, v.bku = bk[1], bk[2], bk[3]
+		self.wallSent = nil                -- the reset forgot it: sent again by the next tick
+	end
 	if S then
 		v.sdur, v.sin, v.sout = S.Duration, S.BlendIn, S.BlendOut
 		local axes = { S.Rot[1], S.Rot[2], S.Rot[3], S.Loc[1], S.Loc[2], S.Loc[3], S.FOV }

@@ -84,7 +84,7 @@ bool MotionParam(const char* key, float v) {
 		{ "move_scale_x", &p.moveScale[0], 0, 40 }, { "move_scale_y", &p.moveScale[1], 0, 40 }, { "move_scale_z", &p.moveScale[2], 0, 40 },
 		{ "move_rot_p", &p.moveRotP, -120, 120 }, { "mesh_interp", &p.meshInterp, 5, 120 },
 		{ "hang_k", &p.hangK, 10, 400 }, { "hang_c", &p.hangC, 1, 60 }, { "hang_ads", &p.hangAds, 0, 1 },
-		{ "sprint_ron", &p.sprintRon, 0, 1 },
+		{ "sprint_ron", &p.sprintRon, 0, 1 }, { "sprint", &p.sprintScale, 0, 2 },
 		{ "sprint_x", &p.sprintPose[0], -0.2f, 0.2f }, { "sprint_y", &p.sprintPose[1], -0.2f, 0.2f }, { "sprint_z", &p.sprintPose[2], -0.2f, 0.2f },
 		{ "sprint_pitch", &p.sprintPose[3], -60, 60 }, { "sprint_roll", &p.sprintPose[4], -60, 60 }, { "sprint_yaw", &p.sprintPose[5], -60, 60 },
 		{ "jump", &p.jumpScale, 0, 3 }, { "land", &p.landScale, 0, 3 }, { "crouch", &p.crouchScale, 0, 3 }, { "dodge", &p.dodgeScale, 0, 3 },
@@ -179,7 +179,7 @@ void MotionStep(const float* cam, float dt) {
 	float bobX = sinf(mo.phase) * 0.006f * a, bobZ = -fabsf(cosf(mo.phase)) * 0.005f * a;
 	float bobP = sinf(2 * mo.phase) * 0.6f * a, bobY = sinf(mo.phase) * 0.9f * a;   // new: RoN jog-loop rotations
 	// sprint pose: RoN's pistol loop mean + stride wobble, or the old pose
-	float s = clampf(mo.sprint.x, -0.2f, 1.2f), r = P.sprintRon;
+	float s = clampf(mo.sprint.x, -0.2f, 1.2f) * P.sprintScale, r = P.sprintRon;
 	const float oldPose[6] = { 0.015f, -0.01f, -0.03f, -14.0f, 12.0f, 6.0f };
 	float sp[6];
 	for (int c = 0; c < 6; c++) sp[c] = s * (r * P.sprintPose[c] + (1 - r) * oldPose[c]);

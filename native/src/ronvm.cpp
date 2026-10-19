@@ -42,6 +42,9 @@ void MeshTarget(bool aiming, float* t, float* r) {
 		t[0] -= clampf(P.adsBack * (pp + py), 0, P.adsBackMax);
 		t[1] += py;
 	}
+	// 6.2: near a wall, the Back transform x 4 x how near (its forward -40 cm runs into the forward clamp: the gun
+	// comes back to 2 cm)
+	for (int i = 0; i < 3; i++) t[i] += P.back[i] * P.backMul * rvm.wall;
 	// its clamps, in the arms' component space (X = left, forward, up): ours right, forward, up
 	t[0] = clampf(t[0], P.lo[1], P.hi[1]);
 	t[1] = clampf(t[1], P.lo[0], P.hi[0]);
@@ -67,6 +70,7 @@ bool RvmParam(const char* k, float v) {
 		{ "kmf", &P.kickMove[0] }, { "kmr", &P.kickMove[1] }, { "kmu", &P.kickMove[2] },
 		{ "kxf", &P.kickMax[0] }, { "kxr", &P.kickMax[1] }, { "kxu", &P.kickMax[2] },
 		{ "move1p", &P.move1P }, { "adsback", &P.adsBack }, { "adsbackmax", &P.adsBackMax },
+		{ "bkf", &P.back[0] }, { "bkr", &P.back[1] }, { "bku", &P.back[2] }, { "bkmul", &P.backMul },
 		{ "krate", &P.kickRate }, { "kret", &P.retShare }, { "kretspd", &P.retSpeed },
 		{ "sdur", &P.shakeDur }, { "sin", &P.shakeIn }, { "sout", &P.shakeOut },
 		{ "sa0", &P.shakeA[0] }, { "sa1", &P.shakeA[1] }, { "sa2", &P.shakeA[2] }, { "sa3", &P.shakeA[3] }, { "sa4", &P.shakeA[4] }, { "sa5", &P.shakeA[5] }, { "sa6", &P.shakeA[6] },
@@ -74,6 +78,7 @@ bool RvmParam(const char* k, float v) {
 	};
 	if (!strcmp(k, "on")) { P.on = v != 0; rvm.msStarted = false; return true; }
 	if (!strcmp(k, "hasb")) { P.hasBuild = v != 0; return true; }
+	if (!strcmp(k, "wall")) { rvm.wall = clampf(v, 0, 1); return true; }
 	for (auto& e : keys) if (!strcmp(k, e.key)) { *e.f = v; return true; }
 	return false;
 }

@@ -922,6 +922,79 @@ if g.ronStats then
 	for _, k in ipairs(added) do A[k] = nil end
 end
 
+
+-- Ready or Not's low ready on its guns (cfg.lowReady): something within the gun's length (root to muzzle + 5 cm) + 18 cm
+-- of the eye lowers it (lowUp looking level), it won't fire or aim, the plugin hears how near (ronp wall); clear, it comes
+-- back up over 0.2 s; sprinting plays sprintStart, the sprint loop, sprintStop; the plugin's own sprint pose is off for it
+if g.ronStats then
+	local A = Deagle.cfg.vm.anims
+	local added = {}
+	for k, v in pairs({ lowUp = { id .. "_vm_low_up", 2, 30 }, lowDown = { id .. "_vm_low_down", 2, 30 },
+		sprintStart = { id .. "_vm_sprint_start", 12, 30 }, sprint = { id .. "_vm_sprint", 20, 30 }, sprintStop = { id .. "_vm_sprint_stop", 12, 30 } }) do
+		if not A[k] then A[k] = v; added[#added + 1] = k end
+	end
+	local s = Deagle.state
+	if not s.drawn then act("deagle_toggle"); M.advance(2.0) end
+	s.ammo = g.magSize; M.advance(1.0)
+	local vm = System.GetEntity(Deagle.vmId)
+	local bonePos, ray, vel = vm.GetBonePos, Physics.RayWorldIntersection, nil
+	vm.GetBonePos = function(e, b)   -- the gun 20 cm from its root to its muzzle (length 25 cm with Ready or Not's 5)
+		local p = bonePos(e, b)
+		if b == g.bones.muzzle then p = { x = p.x, y = p.y + 0.2, z = p.z } end
+		return p
+	end
+	Deagle.gunLen = nil
+	local wallAt = nil
+	Physics.RayWorldIntersection = function(from, move, n, flags, s1, s2, hits)
+		if wallAt then hits[1] = { dist = wallAt, pos = from, normal = { x = 0, y = -1, z = 0 } } return 1 end
+		return 0
+	end
+	local function base0() return vm.layers[0] end
+	local function lastNative(pat) for i = #M.native, 1, -1 do local v = M.native[i]:match(pat) if v then return v end end end
+	local m0 = #M.anims
+	wallAt = 0.3; M.advance(0.1)
+	local lowKey, lowBlend = base0(), M.anims[#M.anims].blend
+	local ammo0 = s.ammo
+	act("deagle_fire"); act("deagle_fire", "release"); act("deagle_aim"); M.advance(0.3)
+	local fired, aimed = s.ammo ~= ammo0, s.aiming
+	act("deagle_aim", "release")
+	local wallK = tonumber(lastNative("ronp wall ([%d.]+)"))
+	check(string.format("RoN wall 30 cm ahead: %s over %.2f s, no shot (%s), no aim (%s), plugin wall %.3f (want %.3f)",
+		tostring(lowKey), lowBlend or -1, tostring(fired), tostring(aimed), wallK or -1, (0.55 - 0.3) / 0.55),
+		lowKey == A.lowUp[1] and lowBlend == Deagle.cfg.lowReady.blend and not fired and not aimed and wallK and math.abs(wallK - 0.4545) < 0.002, lowKey)
+	wallAt = nil; M.advance(0.5)
+	local upKey, upBlend = base0(), M.anims[#M.anims].blend
+	check(string.format("RoN wall gone: %s over %.2f s, plugin wall %s", tostring(upKey), upBlend or -1, tostring(lastNative("ronp wall ([%d.]+)"))),
+		upKey == A.idle[1] and upBlend == Deagle.cfg.lowReady.blend and tonumber(lastNative("ronp wall ([%d.]+)")) == 0, upKey)
+	-- sprint
+	local p = Deagle:Player()
+	local gv = p.GetVelocity
+	p.GetVelocity = function() return { x = 0, y = vel or 0, z = 0 } end
+	vel = 6; M.advance(0.05)
+	local k1 = base0()
+	M.advance(0.6)
+	local k2 = base0()
+	ammo0 = s.ammo
+	act("deagle_fire"); act("deagle_fire", "release"); M.advance(0.05)
+	local sprintFired = s.ammo ~= ammo0
+	vel = 2; M.advance(0.05)
+	local k3 = base0()
+	M.advance(1.0)
+	local k4 = base0()
+	check(string.format("RoN sprint: %s -> %s, no shot (%s), then %s -> %s", tostring(k1), tostring(k2), tostring(sprintFired), tostring(k3), tostring(k4)),
+		k1 == A.sprintStart[1] and k2 == A.sprint[1] and not sprintFired and k3 == A.sprintStop[1] and k4 == A.idle[1], k2)
+	local n0 = #M.native
+	Deagle:MotionParams(g)
+	local sp
+	for i = n0 + 1, #M.native do sp = sp or M.native[i]:match("mparams sprint ([%d.]+)") end
+	check("RoN gun with sprint clips: the plugin's sprint pose off (mparams sprint " .. tostring(sp) .. ")", tonumber(sp) == 0, sp)
+	p.GetVelocity, vm.GetBonePos, Physics.RayWorldIntersection = gv, bonePos, ray
+	Deagle.gunLen = nil
+	for _, k in ipairs(added) do A[k] = nil end
+	Deagle:MotionParams(g)
+	M.advance(1.0)
+end
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))
 os.exit(fails == 0 and 0 or 1)

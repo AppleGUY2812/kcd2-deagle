@@ -34,7 +34,7 @@ Deagle:RegisterGun("ron_grizzly", {
 	},
 	shotSounds = {  },
 	ron = { fire = "event:/Weapons/Grizzly/1P Grizzly Fire", fire3p = "event:/Weapons/Grizzly/3P Grizzly Fire", dry = "event:/Weapons/FN57/FN57 Dry Fire", adsIn = "event:/Weapons/Shared/ADS/ADS Pistol Start", adsOut = "event:/Weapons/Shared/ADS/ADS Pistol Stop", shell = "event:/Weapons/Shared/9mmShell" },   -- Ready or Not's events (its engine plays them)
-	bones = { muzzle = "tag_muzzle", brass = "tag_brass" },
+	bones = { muzzle = "tag_muzzle", brass = "tag_brass", root = "J_Gun" },
 	rounds = 4,   -- rounds modelled in the magazine (attachments vm_round_1..)
 	mags = true,   -- magazines are their own attachments (vm_mag1, vm_mag2)
 	swapTail = { reload = 0.817, reloadEmpty = 0.883 },

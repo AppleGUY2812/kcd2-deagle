@@ -22,6 +22,8 @@ struct RonParams {
 	float lo[3] = { -10, 2, -10 }, hi[3] = { 10, 10, 10 }; // clamps, ours: right, forward, up (cm)
 	float kickMove[3] = { 2, 2, 2 }, kickMax[3] = { 2, 2, 2 };   // forward, right, up: x pending kick deg -> cm
 	float move1P = 0.5f, adsBack = 2.5f, adsBackMax = 2.5f;
+	// near a wall (6.2): MeshspaceTransform_Back (forward, right, up cm) x backMul x the wall factor (RonVm::wall)
+	float back[3] = {}, backMul = 4.0f;
 	// its copy of the camera kick (recoil.lua): rate /s, return share and speed
 	float kickRate = 7.0f, retShare = 0.0f, retSpeed = 0.0f;
 	// fire camera shake: duration, blend in / out (s); axes 0-6 = rot pitch, yaw, roll (deg), loc forward, right, up
@@ -40,6 +42,9 @@ struct RonVm {
 	float msT[3] = {}, msR[3] = {}; bool msStarted = false;
 	// shake
 	float shakeLeft = 0, shakeAge = 0, shakePh[7] = {};
+	// how near a wall, 0..1: (item length + 30 cm - distance) / (item length + 30 cm), from Lua (viewmodel.lua
+	// LowReadyTick: "ronp wall <f>")
+	float wall = 0;
 	// results, ours: off (m: right, forward, up) and rot (deg: pitch, roll, yaw) about pivot (viewmodel-local m);
 	// shakeRot (deg: pitch up, yaw right, roll), shakeLoc (m: right, forward, up), shakeFov (deg, horizontal)
 	float off[3] = {}, outRot[3] = {}, pivot[3] = {};

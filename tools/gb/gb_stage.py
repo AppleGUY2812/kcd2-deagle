@@ -53,6 +53,8 @@ shot_files = [snd(f) for f in prof.get("shotSounds", [])]
 t = build.get("timing", {})
 swap = {KEY[k]: v for k, v in t.get("swapTail", {}).items()}
 bones = build.get("bones", {})
+# the gun's root bone: root -> muzzle is its length (Ready or Not's wall low ready, viewmodel.lua LowReadyTick)
+root_part = f", root = {lua(bones['gun'])}" if bones.get("gun") else ""
 title = prof.get("title") or SLUG
 src = prof.get("source") or {}
 # Ready or Not's own events for this gun (played live by its engine in the plugin, docs/ron_live_spec.md)
@@ -84,7 +86,7 @@ Deagle:RegisterGun({lua(SLUG)}, {{
 {chr(10).join(cues)}
 	}},
 	shotSounds = {{ {", ".join(lua(f) for f in shot_files if f)} }},
-{ron_line}	bones = {{ muzzle = {lua(bones.get("muzzle", "tag_flash"))}, brass = {lua(bones.get("brass", "tag_brass"))} }},
+{ron_line}	bones = {{ muzzle = {lua(bones.get("muzzle", "tag_flash"))}, brass = {lua(bones.get("brass", "tag_brass"))}{root_part} }},
 	rounds = {build.get("rounds", 0) or "false"},   -- rounds modelled in the magazine (attachments vm_round_1..)
 	mags = {str(bool(build.get("mags"))).lower()},   -- magazines are their own attachments (vm_mag1, vm_mag2)
 	swapTail = {{ {", ".join(f"{k} = {v}" for k, v in swap.items())} }},

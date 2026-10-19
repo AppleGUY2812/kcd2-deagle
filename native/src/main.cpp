@@ -865,7 +865,7 @@ static void Command(const char* line) {
 		{
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
-			g_console.push_back("deagle_native_caps files fxr smoke ronvm");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp)
+			g_console.push_back("deagle_native_caps files fxr smoke ronvm lowready");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());

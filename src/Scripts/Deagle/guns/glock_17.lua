@@ -36,7 +36,7 @@ Deagle:RegisterGun("glock_17", {
 	},
 	shotSounds = { "guns/glock_17/X12-1.wav", "guns/glock_17/X12-2.wav", "guns/glock_17/X12-3.wav" },
 	ron = { fire = "event:/Weapons/G19 New/1P G19 Fire", fire3p = "event:/Weapons/G19 New/3P G19 Fire", dry = "event:/Weapons/G19/G19 Dryfire Old", adsIn = "event:/Weapons/Shared/ADS/ADS Pistol Start", adsOut = "event:/Weapons/Shared/ADS/ADS Pistol Stop", shell = "event:/Weapons/Shared/9mmShell" },   -- Ready or Not's events (its engine plays them)
-	bones = { muzzle = "tag_flash", brass = "tag_brass" },
+	bones = { muzzle = "tag_flash", brass = "tag_brass", root = "tag_weapon" },
 	rounds = 2,   -- rounds modelled in the magazine (attachments vm_round_1..)
 	mags = true,   -- magazines are their own attachments (vm_mag1, vm_mag2)
 	swapTail = { reload = 0.917, reloadEmpty = 1.283 },

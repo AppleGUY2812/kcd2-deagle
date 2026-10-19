@@ -23,6 +23,7 @@ struct MotionParams {
 	float meshInterp = 55;                               // RoN MeshSpaceAimInterp (omega = /5)
 	float hangK = 100, hangC = 8, hangAds = 0.3f;        // RoN LazySpringBone SpringStiffness / Damping; share kept in ADS
 	float sprintRon = 1;                                 // 1 = RoN's pistol sprint pose + stride wobble, 0 = the old pose
+	float sprintScale = 1;                               // the sprint pose's strength; 0 for a gun with its own sprint clips
 	float sprintPose[6] = { -0.008f, -0.031f, -0.118f, -8.7f, -35.5f, 1.2f };   // off xyz m, rot pitch/roll/yaw deg
 	float jumpScale = 1, landScale = 1, crouchScale = 1, dodgeScale = 1, bobScale = 1;
 	float testRoll = 0;                                  // deg: constant roll for the sign check (design section 5.1)

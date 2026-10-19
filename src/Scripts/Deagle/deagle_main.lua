@@ -21,6 +21,14 @@ Deagle.cfg = {
 	-- (keeps the magazine) tap s after the press, a second press within double s of the first reloads fast (drops the
 	-- magazine), holding past hold s checks the magazine instead (its inspect). Real seconds (F9 slow motion too).
 	reloadKey = { tap = 0.25, double = 0.2, hold = 0.2 },
+	-- Ready or Not's low ready on its guns (docs/ron/ron_grizzly_interactions.md 3, its FUN_144b436f0): rays from start m
+	-- ahead of the eye, a ring of radius m round the view line (radiusLow once lowered: it stays down a little longer).
+	-- Something within the gun's length (root bone to muzzle + 5 cm) + rangeOffset m lowers it: its lowUp pose while the
+	-- view pitch is above pitch deg, lowDown below. Within its length + pushRange m the plugin pulls it back (its Back
+	-- transform). Sprinting (over sprintIn m/s, back under sprintOut, not aiming or crouched) plays its sprint clips (the
+	-- user, 2026-10-19: low ready = sprint). Lowered it can't fire or aim. blend s into and out of the poses.
+	lowReady = { start = 0.05, rangeOffset = 0.18, pushRange = 0.30, radius = 0.09, radiusLow = 0.11, pitch = -25,
+		blend = 0.2, sprintIn = 4.6, sprintOut = 3.8 },
 	heatPerShot = 0.35,       -- degrees of extra spread per shot; cools at heatDecay deg/s (rapid fire opens the cone)
 	heatDecay = 4.0,
 	kickPitchVar = 0.0,

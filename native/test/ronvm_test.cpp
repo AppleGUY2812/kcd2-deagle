@@ -73,6 +73,12 @@ int main() {
 	for (int i = 0; i < 12; i++) RvmStep(dt, true);   // 0.1 s into the aim: 1 - (1 - 6.4/120)^12 = 48 % of the way
 	float frac = (rvm.off[1] - f0) / (0.10f - f0);
 	check("aim-in at 6.4/s: 48 % of the way after 0.1 s", fabsf(frac - (1 - powf(1 - 6.4f / 120, 12))) < 0.01f, frac);
+	// near a wall: Back (-40, 3, -2) x 4 x 0.5 -> forward into its 2 cm clamp, 6 cm right, 4 cm down of the hip target
+	grizzly();
+	RvmParam("bkf", -40); RvmParam("bkr", 3); RvmParam("bku", -2); RvmParam("wall", 0.5f);
+	RvmStep(dt, false);
+	check("wall 0.5: forward 2 cm (clamped), right -0.3 + 6, up -0.3 - 4", fabsf(rvm.off[1] * 100 - 2) < 0.01f &&
+		fabsf(rvm.off[0] * 100 - 5.7f) < 0.01f && fabsf(rvm.off[2] * 100 + 4.3f) < 0.01f, rvm.off[0] * 100);
 	// off: nothing moves
 	RvmReset(); RvmStep(dt, false);
 	check("off: no offset", rvm.off[0] == 0 && rvm.off[1] == 0 && rvm.off[2] == 0, rvm.off[1]);
