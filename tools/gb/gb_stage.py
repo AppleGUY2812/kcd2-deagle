@@ -61,8 +61,9 @@ ron = prof.get("ron") or {}
 modes_line = ("\tmodes = { " + ", ".join(lua(m) for m in prof["modes"]) + " },   -- fire modes (else its CS2 weapon's)\n") if prof.get("modes") else ""
 # a Ready or Not gun: its handling numbers (guns/ron_stats.lua, tools/ron/ron_stats.py), its flash set ("large" = the
 # Grizzly's V3, "small" = the G19's V2; else picked by the cartridge's blast) and its own casing model
-ron_opt = "".join(f"\t{k} = {lua(prof[k])},{c}\n" for k, c in (
+ron_opt = "".join(f"\t{k} = {'true' if prof[k] is True else lua(prof[k])},{c}\n" for k, c in (
     ("ronStats", "   -- Ready or Not's handling numbers (guns/ron_stats.lua)"),
+    ("ronOnly", "   -- only Ready or Not's sounds, whatever deagle_sounds says (sound.lua RonSounds)"),
     ("flashRon", "   -- Ready or Not flash set: large = V3 (Grizzly), small = V2 (G19)"),
     ("caseModel", "   -- its spent casing")) if prof.get(k))
 ron_line = ("\tron = { " + ", ".join(f"{k} = {lua(v)}" for k, v in ron.items()) + " },   -- Ready or Not's events (its engine plays them)\n") if ron else ""

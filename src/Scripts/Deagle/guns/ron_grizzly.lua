@@ -9,6 +9,7 @@ Deagle:RegisterGun("ron_grizzly", {
 	cycle = 0.295,   -- the mod's own seconds between shots (weapon script cycletime)
 	modes = { "semi" },   -- fire modes (else its CS2 weapon's)
 	ronStats = "BP_Secondary_LARGrizzly",   -- Ready or Not's handling numbers (guns/ron_stats.lua)
+	ronOnly = true,   -- only Ready or Not's sounds, whatever deagle_sounds says (sound.lua RonSounds)
 	flashRon = "large",   -- Ready or Not flash set: large = V3 (Grizzly), small = V2 (G19)
 	caseModel = "objects/manmade/weapons/ron_grizzly/ron_grizzly_casing.cgf",   -- its spent casing
 	cdf = "objects/manmade/weapons/guns/ron_grizzly/ron_grizzly_vm.cdf",
