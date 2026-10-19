@@ -54,6 +54,7 @@ rng = random.Random(7)
 rng.shuffle(calm)
 rng.shuffle(loud)
 zs = {}
+used = set()  # pak paths already in a reference
 
 
 def pull(entry, dst):
@@ -76,6 +77,7 @@ for name, pool, target in (("calm", calm, 20.0), ("excited", loud, 15.0)):
         d = pull(e, dst)
         if 1.2 < d < 9:
             chosen.append((dst, e[2]))
+            used.add(e[1])
             tot += d
         if tot >= target:
             break
@@ -85,6 +87,24 @@ for name, pool, target in (("calm", calm, 20.0), ("excited", loud, 15.0)):
                     f"{W}/{slug}_ref_{name}.wav"], check=True)
     open(f"{W}/{slug}_ref_{name}.txt", "w").write(" ".join(t for _, t in chosen))
     print(f"  ref {name}: {len(chosen)} clips {tot:.1f} s")
+# ElevenLabs Instant Voice Clone sample: it copies the samples' performance, wants 1-2 min, consistent style.
+# Mostly energetic lines (the clone must be able to shout), then some plain dialog: ~60 s + ~30 s, one mp3.
+clone = []
+for name, pool, target in (("excited", loud, 60.0), ("calm", calm, 30.0)):
+    tot = 0.0
+    for i, e in enumerate([e for e in pool if e[1] not in used][:200]):
+        dst = f"{W}/ref/clone_{name}_{i:03d}.ogg"
+        d = pull(e, dst)
+        if 0.8 < d < 9:
+            clone.append(dst)
+            tot += d
+        if tot >= target:
+            break
+    print(f"  clone {name}: {tot:.1f} s")
+lst = f"{W}/ref/clone_list.txt"
+open(lst, "w").write("".join(f"file '{f}'\nfile '{sil}'\n" for f in clone))
+subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", lst, "-ac", "1", "-ar", "44100",
+                "-af", "loudnorm=I=-20:TP=-3", "-c:a", "libmp3lame", "-b:a", "192k", f"{W}/{slug}_clone.mp3"], check=True)
 lines = json.load(open(lines_path))
 lines += [{"id": k, "kind": "heldout", "text": e[2], "source": e[1]} for k, e in held.items()]
 json.dump({"voice": abbr, "slug": slug, "lines": lines}, open(f"{W}/pilot_lines.json", "w"), indent=1)
