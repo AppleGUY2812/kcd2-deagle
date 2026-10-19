@@ -52,7 +52,6 @@ function Deagle:Shoot(force)
 	self:ShotHeard(self:ShotPhysics())
 	if c.gunFx then self:MuzzleFlash(System.GetViewCameraDir()); self:BarrelHeatShot() end
 	self:Recoil()
-	if c.gunFx then self:EjectCase() end
 
 	local phys = self:ShotPhysics()
 	if phys then                    -- a round that flies (speed, drop, drag) and its tracer
@@ -66,6 +65,10 @@ function Deagle:Shoot(force)
 			log("$4raycast failed: " .. tostring(n))
 		end
 	end
+	-- the casing after the round: placed at the port first (a physical body at once), the round's first ray from the
+	-- eye hit it (user 2026-10-19, the Grizzly's port sits just under the sight line). The round's first step runs in
+	-- LaunchRound (frameDt at full speed, metres), so it is past the gun before the casing exists
+	if c.gunFx then self:EjectCase() end
 	if s.ammo == 0 then self:ShowAmmo() end
 	return true
 end

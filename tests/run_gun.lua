@@ -1005,6 +1005,21 @@ if g.ronStats then
 	M.advance(1.0)
 end
 
+-- the round's first step goes out before the shot's casing is placed: a casing put at the port first is a physical body
+-- at once, and the round's ray from the eye hit it (user 2026-10-19, the Grizzly)
+do
+	local s = Deagle.state
+	if not s.drawn then act("deagle_toggle"); M.advance(2.0) end
+	s.ammo = math.max(s.ammo, 2); M.advance(1.0)
+	local order, ej, lr = {}, Deagle.EjectCase, Deagle.LaunchRound
+	Deagle.EjectCase = function(self, ...) order[#order + 1] = "case" return ej(self, ...) end
+	Deagle.LaunchRound = function(self, ...) order[#order + 1] = "round" return lr(self, ...) end
+	act("deagle_fire"); act("deagle_fire", "release"); M.advance(0.05)
+	Deagle.EjectCase, Deagle.LaunchRound = ej, lr
+	check("the round goes out before its casing is placed (" .. table.concat(order, ",") .. ")", order[1] == "round" and order[2] == "case",
+		table.concat(order, ","))
+end
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))
 os.exit(fails == 0 and 0 or 1)
