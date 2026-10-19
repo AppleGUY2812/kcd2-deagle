@@ -881,6 +881,47 @@ if g.ronStats then
 	for _, k in ipairs(added) do A[k] = nil end
 end
 
+
+-- Ready or Not's aim on its guns: always on (whatever deagle_ads says), procedural (the plugin moves the gun: "aim 1"
+-- goes to it and the base layer keeps idle, no ads clip), its aimed shot / reload clips where the gun has them (stand-ins
+-- here), aimed through a reload, the zoom an FInterpTo at ADSZoomInSpeed (Grizzly 5 / s: 63 % after 0.2 s)
+if g.ronStats then
+	local A = Deagle.cfg.vm.anims
+	local added = {}
+	for k, v in pairs({ shootAds = { id .. "_vm_shoot_ads", 21, 30 }, reloadAds = { id .. "_vm_reload_ads", 76, 30 } }) do
+		if not A[k] then A[k] = v; added[#added + 1] = k end
+	end
+	local function base0() local vm = System.GetEntity(Deagle.vmId) return vm and vm.layers[0] end
+	local s, adsWas = Deagle.state, Deagle.cfg.vm.ads
+	Deagle.cfg.vm.ads = false
+	if not s.drawn then act("deagle_toggle"); M.advance(2.0) end
+	s.ammo = g.magSize; M.advance(1.0)
+	local n0, fov0 = #M.native, M.fov
+	act("deagle_aim"); M.advance(0.2)
+	local aimSent = false
+	for i = n0 + 1, #M.native do if M.native[i]:find("%] aim 1") then aimSent = true end end
+	local R = Deagle.ronStats[g.ronStats]
+	local base = 1.1011
+	local want = base + (base * Deagle.cfg.aimFovScale - base) * (1 - (1 - R.ADSZoomInSpeed / 60) ^ 12)
+	check(string.format("RoN aim on with deagle_ads 0: aiming %s, plugin told %s, base layer %s, fov %.4f (want %.4f)",
+		tostring(s.aiming), tostring(aimSent), tostring(base0()), M.fov or -1, want),
+		s.aiming and aimSent and base0() == A.idle[1] and M.fov and math.abs(M.fov - want) < 0.003, M.fov)
+	M.advance(1.0)
+	act("deagle_fire"); act("deagle_fire", "release"); M.advance(0.02)
+	check("RoN aimed shot: its ADS clip (" .. tostring(base0()) .. ")", base0() == A.shootAds[1], base0())
+	M.advance(1.0)
+	act("deagle_reload"); M.advance(0.05); act("deagle_reload", "release"); M.advance(0.3)
+	local rKey, aimedIn = base0(), s.aiming
+	M.advance(1.5)
+	check(string.format("RoN aimed reload: %s, still aimed half way (%s)", tostring(rKey), tostring(s.aiming and aimedIn)),
+		rKey == A.reloadAds[1] and s.aiming and aimedIn, rKey)
+	M.advance(3.0)
+	act("deagle_aim", "release"); M.advance(2.0)
+	check("RoN aim off: fov back (" .. tostring(M.fov) .. ")", not s.aiming and M.fov and math.abs(M.fov - base) < 0.002, M.fov)
+	Deagle.cfg.vm.ads = adsWas
+	for _, k in ipairs(added) do A[k] = nil end
+end
+
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))
 print(string.format("%s: %d/%d checks pass", id, n - fails, n))
 os.exit(fails == 0 and 0 or 1)

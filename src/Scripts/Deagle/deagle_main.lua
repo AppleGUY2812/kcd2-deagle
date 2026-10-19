@@ -431,8 +431,9 @@ local SHOT_CUE = { { 0, "shot" } }
 local REST = { idle = true, idleEmpty = true, ads = true, adsEmpty = true }   -- looping rest poses
 local HOLDS_AIM = { draw = true, drawEmpty = true, drawFirst = true, holster = true, holsterEmpty = true, reload = true, reloadEmpty = true, reloadSpeed = true }   -- aim waits for these; shots and inspect it cuts
 local DRAWING = { draw = true, drawEmpty = true, drawFirst = true }        -- no shooting, reloading or inspecting until the gun is up
-local HOLDS_TOGGLE = { draw = true, drawEmpty = true, drawFirst = true, reload = true, reloadEmpty = true, reloadSpeed = true }   -- a holster asked for meanwhile waits
-local SHOTS = { shoot = true, shootEmpty = true, shootBurst = true }
+local HOLDS_TOGGLE = { draw = true, drawEmpty = true, drawFirst = true, reload = true, reloadEmpty = true, reloadSpeed = true, reloadAds = true, reloadEmptyAds = true }   -- a holster asked for meanwhile waits
+local SHOTS = { shoot = true, shootEmpty = true, shootBurst = true, shootAds = true, shootEmptyAds = true }
+local RELOADS = { reload = true, reloadEmpty = true, reloadSpeed = true, reloadAds = true, reloadEmptyAds = true }
 local INSPECTS = { inspect = true, inspectEmpty = true }
 local GAME_MAPS_OFF = { "combat" }   -- KCD2 action maps on our keys, off while the gun is out (the torch: OnAction)
 
@@ -533,6 +534,7 @@ U.HOLDS_AIM = HOLDS_AIM
 U.HOLDS_TOGGLE = HOLDS_TOGGLE
 U.INSPECTS = INSPECTS
 U.REST = REST
+U.RELOADS = RELOADS
 U.SHOTS = SHOTS
 U.SHOT_CUE = SHOT_CUE
 U.camBasis = camBasis

@@ -10,7 +10,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 |---|---|
 | H | draw / holster (works holstered) |
 | Left mouse | fire (hold for full auto) |
-| Right mouse | aim down sights, off by default (`deagle_ads 1` turns it on) |
+| Right mouse | aim down sights, off by default (`deagle_ads 1` turns it on). Ready or Not guns (Grizzly) always aim, Ready or Not's way: the gun slides to your eye, the view zooms at its speed, aimed shots and reloads use its aimed clips and a reload keeps you aimed |
 | R | reload (a shot before the new mag clicks cancels it, see "Reloads"). Ready or Not guns (Grizzly) use Ready or Not's R: tap = tactical reload (keeps the magazine, starts 0.25 s after the press), tap twice fast = speed reload (drops the magazine and its rounds), hold = magazine check |
 | Y | inspect |
 | B | fire mode (semi / burst / auto, on guns that have them) |

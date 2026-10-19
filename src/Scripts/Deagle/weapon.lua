@@ -1,7 +1,7 @@
 -- The gun (Claude 4): Shoot / Fire, ammo, reloads, aiming, inspect, fire modes, CS2 accuracy.
 -- Split out of deagle_main.lua (2026-10-15), which loads it (Deagle:LoadModule); its helpers come from Deagle.U.
 local U = Deagle.U
-local HOLDS_AIM, SHOTS, camBasis, coneDir, csDir, log, try, unquote = U.HOLDS_AIM, U.SHOTS, U.camBasis, U.coneDir, U.csDir, U.log, U.try, U.unquote
+local HOLDS_AIM, RELOADS, SHOTS, camBasis, coneDir, csDir, log, try, unquote = U.HOLDS_AIM, U.RELOADS, U.SHOTS, U.camBasis, U.coneDir, U.csDir, U.log, U.try, U.unquote
 local vadd, vnorm, vscale = U.vadd, U.vnorm, U.vscale
 
 -- one shot: ray, effects, ammo. Returns true when a round was fired.
@@ -105,6 +105,11 @@ function Deagle:Fire(force, burstRound)
 			if burstRound == 1 then self:VmPlay("shootBurst", false, (self.gun.burstGap or self.cfg.burstShotGap) / self.cfg.burstShotGap) end
 			self:PlayCues("shoot")                                       -- every round's gunshot (the clip has none)
 		end
+	elseif self.gun.ronStats then
+		-- a Ready or Not gun aims procedurally: every shot is a whole clip on the base layer, its ADS one when aimed
+		local key = wasLast and "shootEmpty" or "shoot"
+		if aimed and anims[key .. "Ads"] then key = key .. "Ads" end
+		self:VmPlay(key, false)
 	elseif aimed or (self:FireMode() ~= "semi" and anims.shootAdd) then
 		-- rapid fire stacks recoil on the rest pose; a clip still playing (inspect, a reload's settle) is cut first
 		if self:VmBusy() and not SHOTS[self.vmAnim.key] then self:VmPlay(self:VmRestKey(), true, 1.0) end
@@ -203,6 +208,10 @@ function Deagle:Reload(kind)
 		return
 	end
 	local key = s.ammo == 0 and "reloadEmpty" or (kind == "speed" and "reloadSpeed") or "reload"
+	local drop = key == "reloadSpeed"
+	-- a Ready or Not gun reloads aimed with its ADS clip, where it has one (none for its speed reload: Ready or Not's
+	-- G19 spd_reload_ads doesn't decode), and stays aimed
+	if s.aiming and self.gun.ronStats and c.vm.anims[key .. "Ads"] then key = key .. "Ads" end
 	local a = c.vm.anims[key]
 	local len = a[2] / (a[3] or c.vm.fps) / self:Rate(key)
 	local seat = math.min(self:ClipTime(key, "seat") or len, len)
@@ -212,7 +221,7 @@ function Deagle:Reload(kind)
 	s.reloadEnd = now + ready
 	s.reloadCancel = now + (self:ClipTime(key, "cancel") or 0)
 	s.reloadOut = now + (self:ClipTime(key, "out") or self:ClipTime(key, "cancel") or 0)
-	s.reloadTarget, s.reloadDrop = capacity, key == "reloadSpeed"
+	s.reloadTarget, s.reloadDrop = capacity, drop
 	local this = s.reloadEnd
 	local function mine() return Deagle.state.reloading and Deagle.state.reloadEnd == this end
 	self:Notify("Desert Eagle  reloading...")
@@ -221,7 +230,7 @@ function Deagle:Reload(kind)
 	Script.SetTimer(math.floor(ready * 1000) + 20, function() self:FinishReload() end)
 	self:VmPlay(key, false)
 	self:UpdateAim()
-	if key == "reloadEmpty" and self.gun.newMagAt then
+	if (key == "reloadEmpty" or key == "reloadEmptyAds") and self.gun.newMagAt then
 		Script.SetTimer(math.floor(self.gun.newMagAt / self:Rate(key) * 1000), function()
 			if mine() then Deagle:VmMagIn(); Deagle:VmRounds(Deagle.cfg.magSize) end   -- a full magazine in the hand
 		end)
@@ -270,15 +279,20 @@ end
 
 -- Aim input. Aiming (zoom + ADS pose) follows the button, except while a reload / draw / holster runs: those finish
 -- first and hand over to ADS in their last moments. Hip shots and inspect are cut by it.
+-- A Ready or Not gun always aims (the user, 2026-10-19: "and ads"); its aim is procedural, so it needs no ads clip.
 function Deagle:SetAim(on)
-	self.state.aimHeld = on and self.cfg.vm.ads and self.cfg.vm.anims.ads ~= nil or false
+	local can = self.gun.ronStats or (self.cfg.vm.ads and self.cfg.vm.anims.ads ~= nil)
+	self.state.aimHeld = on and can and true or false
 	self:UpdateAim()
 end
 
+-- A Ready or Not gun stays aimed through its reloads (Ready or Not has aimed reload clips); draws and holsters still
+-- hold the aim.
 function Deagle:AimBlocked()
 	if self.vmHolstering or not self.state.drawn then return true end
 	local a = self.vmAnim
-	return a and not a.loop and HOLDS_AIM[a.key] and System.GetCurrTime() < (a.ends or 0) - self.cfg.vm.adsLead or false
+	if not (a and not a.loop and HOLDS_AIM[a.key]) or (self.gun.ronStats and RELOADS[a.key]) then return false end
+	return System.GetCurrTime() < (a.ends or 0) - self.cfg.vm.adsLead
 end
 
 function Deagle:UpdateAim(blend)
@@ -292,26 +306,40 @@ function Deagle:UpdateAim(blend)
 		local ron = self:RonSounds()
 		if ron and (want and ron.adsIn or not want and ron.adsOut) then self:RonHere(want and ron.adsIn or ron.adsOut) end
 	end
-	if self.vmShown and not blocked then
+	-- the ADS pose clip (a Ready or Not gun has none: the plugin moves it, and a running clip keeps playing)
+	if self.vmShown and not blocked and not self.gun.ronStats then
 		self:VmPlay(self:VmRestKey(), true, 1.0, blend or (not self:VmBusy() and self.cfg.vm.adsBlend or nil))
 	end
 end
 
--- zoom in / out over adsBlend (smoothstep) instead of snapping
+-- zoom in / out over adsBlend (smoothstep) instead of snapping. A Ready or Not gun zooms like Ready or Not: an FInterpTo
+-- at its ADSZoomInSpeed / ADSZoomOutSpeed (the Grizzly 5 / 6 a second), on game time, done within 0.1 % of the target.
 function Deagle:EaseFov(on)
 	local s = self.state
+	local R = self.gun.ronStats and self.ronStats and self.ronStats[self.gun.ronStats]
 	try("aim fov", function()
 		if (on or self.zoom) and not s.baseFov then s.baseFov = System.GetViewCameraFov() end
 		if not s.baseFov then return end
 		local to = s.baseFov * (on and self.cfg.aimFovScale or 1) / (self.zoom or 1)
 		local from, t0 = s.fovNow or s.baseFov, System.GetCurrTime()
+		local rate = R and (on and R.ADSZoomInSpeed or R.ADSZoomOutSpeed)
+		local last = t0
 		self.fovToken = (self.fovToken or 0) + 1
 		local tok = self.fovToken
 		local function step()
 			if Deagle.fovToken ~= tok then return end
-			local k = math.min(1, (System.GetCurrTime() - t0) / math.max(0.01, Deagle.cfg.vm.adsBlend))
-			k = k * k * (3 - 2 * k)
-			s.fovNow = from + (to - from) * k
+			local now, k = System.GetCurrTime(), nil
+			if rate then
+				local cur = s.fovNow or from
+				cur = cur + (to - cur) * math.min(1, (now - last) * rate)
+				last = now
+				k = math.abs(to - cur) <= 0.001 * math.abs(to - from) and 1 or 0
+				s.fovNow = k == 1 and to or cur
+			else
+				k = math.min(1, (now - t0) / math.max(0.01, Deagle.cfg.vm.adsBlend))
+				k = k * k * (3 - 2 * k)
+				s.fovNow = from + (to - from) * k
+			end
 			System.SetViewCameraFov(s.fovNow)
 			if k < 1 then Script.SetTimer(0, step)
 			elseif not on and not Deagle.zoom then s.baseFov, s.fovNow = nil, nil end   -- fully out: read the game's FOV again next time

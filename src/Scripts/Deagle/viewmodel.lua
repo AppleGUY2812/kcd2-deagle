@@ -3,6 +3,8 @@
 -- Split out of deagle_main.lua (2026-10-15), which loads it (Deagle:LoadModule); its helpers come from Deagle.U.
 local U = Deagle.U
 local DRAWING, GAME_MAPS_OFF, HOLDS_AIM, HOLDS_TOGGLE, INSPECTS, REST, SHOTS, log = U.DRAWING, U.GAME_MAPS_OFF, U.HOLDS_AIM, U.HOLDS_TOGGLE, U.INSPECTS, U.REST, U.SHOTS, U.log
+-- a Ready or Not gun's aimed shots have the hip shot's one cue (the gunshot at the trigger)
+local CUES_OF = { shootAds = "shoot", shootEmptyAds = "shootEmpty" }
 local matToAngles, try, vadd, vcross, vlen, vnorm, vscale = U.matToAngles, U.try, U.vadd, U.vcross, U.vlen, U.vnorm, U.vscale
 
 -- ---------------------------------------------------------------------------
@@ -287,11 +289,12 @@ end
 -- viewmodel animation
 -- ---------------------------------------------------------------------------
 -- rest loop: aiming wins (a reload that ends while aiming lands in ADS); slide-locked poses only when the mag is
--- empty and no reload is about to refill it
+-- empty and no reload is about to refill it. A Ready or Not gun aims procedurally (the plugin's ronvm moves the whole
+-- gun to its sights): its rest clip stays idle.
 function Deagle:VmRestKey()
 	local s = self.state
 	local empty = s.ammo == 0 and not s.reloading
-	if s.aiming then return empty and "adsEmpty" or "ads" end
+	if s.aiming and not self.gun.ronStats then return empty and "adsEmpty" or "ads" end
 	return empty and "idleEmpty" or "idle"
 end
 
@@ -377,7 +380,7 @@ function Deagle:VmPlay(key, loop, speed, blend)
 	self.vmAnim = { key = key, name = name, loop = loop, ends = now + stop, full = now + len,
 		ready = now + math.min(plain and self:ClipTime(key, "ready") or stop, stop) }
 	if not loop then
-		self:PlayCues(key, blend, speed)
+		self:PlayCues(CUES_OF[key] or key, blend, speed)
 		if HOLDS_AIM[key] and key ~= "reload" and key ~= "reloadSpeed" and stop > c.adsLead then   -- reloads: at their end (mag swap)
 			Script.SetTimer(math.floor((stop - c.adsLead) * 1000), function()
 				if Deagle.vmAnimToken == tok and Deagle.vmShown and Deagle.state.aimHeld then Deagle:UpdateAim(c.adsLead) end
