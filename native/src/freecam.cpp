@@ -250,9 +250,20 @@ void AfterSetView() {
 	else { TurnOff("writing the view camera faulted"); SafeSetMatrix(cam, g_real); }
 }
 
+// kcd2_render.asi (the other session's render mod) renders reflection cube faces inside RenderEnd and calls SetViewCamera
+// for each face and again to restore: those cameras pass through untouched (no free camera / lean offset, no capture of
+// g_real / g_voReal mid-frame). It exports KRender_InProbe (volatile LONG), 1 only around a face render on the main
+// thread. Looked up until the module is there (GetModuleHandleA, ~1 us a call, a few calls a frame), then cached.
+static volatile LONG* RenderProbeFlag() {
+	static volatile LONG* flag = nullptr;
+	if (!flag) if (HMODULE h = GetModuleHandleA("kcd2_render.asi")) flag = (volatile LONG*)GetProcAddress(h, "KRender_InProbe");
+	return flag;
+}
+
 uintptr_t __fastcall HkSetView(uintptr_t sys, uintptr_t camera, uintptr_t a3, uintptr_t a4) {
 	uintptr_t r = g_origSetView(sys, camera, a3, a4);
-	if (sys == g_sys) AfterSetView();
+	volatile LONG* probe = RenderProbeFlag();
+	if (sys == g_sys && !(probe && *probe)) AfterSetView();
 	return r;
 }
 
