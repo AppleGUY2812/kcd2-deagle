@@ -858,3 +858,34 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   0x180B35634) puts its float `gravity` g in gravity.z with x unused; SetParams then stores (0, 0, -g). That binding
   reads only k_inertia, k_air_control, gravity, bSwimming, mass, surface_idx, is_active, max_vel_ground:
   k_air_resistance is silently ignored.
+
+## 2026-10-20: hand IK on Ready or Not's guns: CryEngine's animation-driven IK (Claude 4)
+- Cause of "the gun shifts in the hands" (Grizzly, user 2026-10-20): RoN's gun hangs on `weapon_right` (parent
+  `spine_3`), not on a hand; RoN keeps the hands on it with two LegIK nodes after every layer
+  (ANIMBP_Player_FP_Master: `ik_hand_weapon_static_RI` -> `hand_RI`, `_LE` -> `hand_LE`, 2-bone limbs, alpha 1; UE's
+  LegIK also copies the target's rotation onto the hand). We had no IK, so the additive layers slid the gun in the
+  hands: offline over the idle base, breathing 0.4-1.4 mm, shake 1.3-3.5, walk 3.5, run 6.8 (left), roll 14, jump
+  16, crouch 24, ADS-in 14 mm. RoN's idle poses have hand = target exactly (0 mm, 0 deg); `fp_grizzly_idle_high_ready`
+  has them 164 mm apart (not used yet: check before the wall "up" pose uses it).
+- KCD2 (WHGame 1.5.6) still has CryEngine's chrparams IK: `<IK_Definition>` (parser 0x180B77F80) with
+  `<LimbIK_Definition><IK Handle Solver="2BIK" Root EndEffector/>` (0x180B7CBC8: Root must be the end effector's
+  grandparent, Root index < EndEffector index; optional nMaxInteration, DisableRotationIK) and
+  `<Animation_Driven_IK_Targets><ADIKTarget Handle Target Weight/>` (0x181653B20; Handle = CRC of the limb's handle,
+  Target / Weight joint index > 0). Solve 0x180A82BAC, a command of the animation command buffer (0x10, 0x1806D5974;
+  gated by ca_useADIKTargets, default 1): after the layers, per target: blend = the Weight joint's RELATIVE t.x
+  (0x180A8466C) x BlendMultiplier, clamped 0..1; the limb's end effector goes to the Target joint's absolute position
+  (2BIK / 3BIK / CCDX / MRDX by Solver) and takes its rotation (nlerp by the blend). Warhorse's per-target runtime
+  state (0x58 bytes at skeleton pose +0xB30; default 0x180ABD6A8): enabled 1, TargetOverride off, rotation on,
+  BlendMultiplier 1, BlendOverride off. So no code at run time: ron_import.py adds `adik_weight_RI/LE` (under root,
+  1 m along CryEngine's x), gb_stage.py writes the IK block. Unverified in game: two gates in 0x1806D5974 (skeleton
+  +0x7B4 bit 0x20 clear, +0x5C0 non-zero). `tools/ik_probe.lua` measures hand-to-target in game.
+
+## 2026-10-20: reflections on the Grizzly's mirror skin (deagle-game-todo-notion)
+- The KCD2 toolkit's DAE export never wrote custom normals (tools/bcry_normals.py fixes it; see 6f316b8): the Grizzly
+  looked faceted. Ready or Not's ORM.R (baked AO) is never sampled by RoN, but it's a good specular-occlusion source.
+- KCD2 renders its reflection probes at runtime (WHGame 1.5.6, Ghidra): CEnvironmentProbeBatchRendererWH fills a
+  texture array "$TiledSpecProbeTexArr" (FUN_180b3e00c; 0x180 slices, format 0x1d, mips log2(size)-1) whose face size
+  is wh_r_ProbeCubemapTexSize (int at 0x1850dbdb8, registered in FUN_181011768, REQUIRE_APP_RESTART; system.cfg sets
+  128). Off-screen reflections (a gun's side) come from these: blurry at 128. user.cfg (game root) now sets 512
+  (untested: whether it applies over system.cfg / sys_spec, and its cost). Live: r_SSReflections 2, r_SSReflHalfRes 0,
+  r_TexMaxAnisotropy 16.
