@@ -673,6 +673,78 @@ static int SafeFlyDyn(uintptr_t entity, uintptr_t livingVt, FlyDyn& o) {
 		return 1;
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return -4; }
 }
+// The flight keys as the keybind menu has them (flykeys). zzz_keybind_merge's superactions flight_<key> drive the
+// actions flight_<key>_keyboard of the action map "flight_action", and KCD2's keybind code (0x180A111BC) writes the
+// bound keys into those actions' inputs, so the live binding is read there. WHGame 1.5.6: CCryAction +0xE0
+// GetIActionMapManager (its vtable RVA 0x4048018), +0xA0 GetActionMap(name); IActionMap +0x20 GetAction(const
+// ActionId&); IActionMapAction +0x28 GetActionInput(device 1 = keyboard and mouse, index) -> SActionInput, its key
+// name (CryEngine's: "f4", "lshift", "mouse4") a char* at +0x18. ActionId is a CCryName (an interned string pointer),
+// made by its constructor 0x1808E5AEC and kept for good.
+static const char* const kFlyNames[] = { "toggle", "forward", "back", "left", "right", "up", "down", "fast", "slow" };
+constexpr int kFlyN = sizeof(kFlyNames) / sizeof(kFlyNames[0]), kFlyMaxKeys = 4;
+struct FlyBind { int vk[kFlyMaxKeys]; char name[kFlyMaxKeys][16]; int n; char keys[64]; };
+static FlyBind g_flyBind[kFlyN] = {};
+static int VkOfKey(const char* k) {   // CryEngine's key name -> the Windows virtual key GetAsyncKeyState reads (0: none)
+	if (!k[1] && k[0] >= 'a' && k[0] <= 'z') return 'A' + (k[0] - 'a');
+	if (!k[1] && k[0] >= '0' && k[0] <= '9') return k[0];
+	if (k[0] == 'f' && k[1] >= '1' && k[1] <= '9') { int n = atoi(k + 1); if (n >= 1 && n <= 24) return VK_F1 + n - 1; }
+	if (!strncmp(k, "np_", 3) && k[3] >= '0' && k[3] <= '9' && !k[4]) return VK_NUMPAD0 + (k[3] - '0');
+	if (!strncmp(k, "mouse", 5) && k[5] >= '1' && k[5] <= '5' && !k[6]) {
+		static const int m[] = { VK_LBUTTON, VK_RBUTTON, VK_MBUTTON, VK_XBUTTON1, VK_XBUTTON2 };
+		return m[k[5] - '1'];
+	}
+	static const struct { const char* n; int vk; } t[] = {
+		{ "lshift", VK_LSHIFT }, { "rshift", VK_RSHIFT }, { "lctrl", VK_LCONTROL }, { "rctrl", VK_RCONTROL },
+		{ "lalt", VK_LMENU }, { "ralt", VK_RMENU }, { "space", VK_SPACE }, { "tab", VK_TAB }, { "enter", VK_RETURN },
+		{ "backspace", VK_BACK }, { "capslock", VK_CAPITAL }, { "escape", VK_ESCAPE }, { "up", VK_UP }, { "down", VK_DOWN },
+		{ "left", VK_LEFT }, { "right", VK_RIGHT }, { "insert", VK_INSERT }, { "delete", VK_DELETE }, { "home", VK_HOME },
+		{ "end", VK_END }, { "pgup", VK_PRIOR }, { "pgdn", VK_NEXT }, { "tilde", VK_OEM_3 }, { "minus", VK_OEM_MINUS },
+		{ "equals", VK_OEM_PLUS }, { "lbracket", VK_OEM_4 }, { "rbracket", VK_OEM_6 }, { "backslash", VK_OEM_5 },
+		{ "semicolon", VK_OEM_1 }, { "apostrophe", VK_OEM_7 }, { "comma", VK_OEM_COMMA }, { "period", VK_OEM_PERIOD },
+		{ "slash", VK_OEM_2 }, { "oem_102", VK_OEM_102 }, { "np_add", VK_ADD }, { "np_subtract", VK_SUBTRACT },
+		{ "np_multiply", VK_MULTIPLY }, { "np_divide", VK_DIVIDE }, { "np_period", VK_DECIMAL }, { "np_enter", VK_RETURN },
+		{ "numlock", VK_NUMLOCK }, { "scrolllock", VK_SCROLL }, { "pause", VK_PAUSE }, { "print", VK_SNAPSHOT },
+		{ "lwin", VK_LWIN }, { "rwin", VK_RWIN }, { "apps", VK_APPS } };
+	for (auto& e : t) if (!strcmp(k, e.n)) return e.vk;
+	return 0;
+}
+// Reads every flight key's inputs into out (keys "f4" / "a,left"; an unknown name kept with a '?'). 0 = read, else why not.
+static const char* SafeFlyBinds(FlyBind out[kFlyN]) {
+	static uintptr_t ids[kFlyN] = {};   // the actions' ActionIds (CCryName), made once
+	__try {
+		uintptr_t fw = 0, base = g_game.base;
+		if (!g_cryActionThis || !ReadPtr(g_cryActionThis, fw) || !fw) return "no_framework";
+		auto getAmm = (uintptr_t(__fastcall*)(uintptr_t))VFn(fw, 0xE0);
+		uintptr_t amm = getAmm ? getAmm(fw) : 0, vt = 0;
+		if (!amm || !ReadPtr(amm, vt) || vt != base + 0x4048018) return "not_whgame_1.5.6";
+		static const uint8_t kCtor[] = { 0x48, 0x89, 0x5C, 0x24, 0x10, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x33, 0xDB, 0x48, 0x8B, 0xF9, 0x48, 0x85, 0xD2 };
+		if (memcmp((const void*)(base + 0x8E5AEC), kCtor, sizeof(kCtor))) return "not_whgame_1.5.6";
+		auto getMap = (uintptr_t(__fastcall*)(uintptr_t, const char*))VFn(amm, 0xA0);
+		uintptr_t map = getMap(amm, "flight_action");
+		if (!map) return "no_flight_action_map";   // zzz_keybind_merge isn't loaded
+		auto cryName = (uintptr_t*(__fastcall*)(uintptr_t*, const char*))(base + 0x8E5AEC);
+		for (int i = 0; i < kFlyN; i++) {
+			FlyBind& b = out[i];
+			b.n = 0; b.keys[0] = 0;
+			if (!ids[i]) { char a[48]; snprintf(a, sizeof(a), "flight_%s_keyboard", kFlyNames[i]); cryName(&ids[i], a); }
+			auto getAction = (uintptr_t(__fastcall*)(uintptr_t, uintptr_t*))VFn(map, 0x20);
+			uintptr_t act = ids[i] ? getAction(map, &ids[i]) : 0;
+			if (!act) continue;
+			auto getInput = (uintptr_t(__fastcall*)(uintptr_t, int, int))VFn(act, 0x28);
+			for (int j = 0; j < 8; j++) {
+				uintptr_t in = getInput(act, 1, j), sp = 0;
+				if (!in) break;
+				const char* k = ReadPtr(in + 0x18, sp) ? (const char*)sp : nullptr;
+				if (!k || !*k || strnlen(k, 32) >= 32 || !strcmp(k, "_keybinds_ref_")) continue;
+				int vk = VkOfKey(k);
+				size_t len = strlen(b.keys);
+				snprintf(b.keys + len, sizeof(b.keys) - len, "%s%s%s", len ? "," : "", k, vk ? "" : "?");
+				if (vk && b.n < kFlyMaxKeys) { strncpy_s(b.name[b.n], k, _TRUNCATE); b.vk[b.n++] = vk; }
+			}
+		}
+		return nullptr;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return "exception"; }
+}
 // Live particle library reload (fxreload): the engine never re-reads a loaded library nor replaces an existing effect
 // (LoadLibrary returns early, LoadEffect returns the old one), so each <Particles> node of the file is serialized into
 // its existing effect. WHGame 1.5.6: ISystem (gEnv+0xC0) +0x410 LoadXmlFromBuffer(XmlNodeRef* ret, buf, len, false,
@@ -1310,25 +1382,64 @@ static void OnCamera(uintptr_t camera) {
 			g_console.push_back(fc ? "deagle_freecam_state 1" : "deagle_freecam_state 0");
 		}
 	}
-	{   // flykeys: the keyboard for the Flight mod (Mods/flight, Scripts/mods/flight.lua). While Henry carries a body KCD2
-		// sends no key actions to Lua at all (logged live 2026-10-18), so with flykeys on its keys come from here, sent
-		// on each change (deagle_flykey <flight.lua's key name> 0|1); Lua then drops Flight's own key actions
-		static const struct { int vk; const char* name; } kFly[] = { { VK_F4, "toggle" }, { 'W', "forward" }, { 'S', "back" },
-			{ 'A', "left" }, { 'D', "right" }, { VK_SPACE, "up" }, { VK_LMENU, "down" }, { VK_LSHIFT, "fast" }, { VK_LCONTROL, "slow" } };
-		static bool flyWas[sizeof(kFly) / sizeof(kFly[0])] = {};
+	{   // flykeys: the keyboard for flight (flight.lua). While Henry carries a body KCD2 sends no key actions to Lua at
+		// all (logged live 2026-10-18), so with flykeys on its keys come from here, sent on each change (deagle_flykey
+		// <flight.lua's key name> 0|1); Lua then drops the flight actions. The keys are the keybind menu's (SafeFlyBinds),
+		// read again every 0.5 s so a rebind counts at once; a change is logged and sent (deagle_flykey keys ...), and a
+		// key on two flight actions is named (deagle_flykey clash <key> <action>+<action>): both act on it.
+		static bool flyWas[kFlyN] = {};
+		static DWORD readAt = 0;
+		static std::string sentKeys, sentWhy;
 		bool focus = false;
 		if (g_flyKeys) {
 			HWND w = GetForegroundWindow();
 			DWORD pid = 0;
 			if (w) GetWindowThreadProcessId(w, &pid);
 			focus = pid == GetCurrentProcessId();
+			DWORD now = GetTickCount();
+			if (!readAt || now - readAt >= 500) {
+				readAt = now;
+				FlyBind b[kFlyN] = {};
+				LARGE_INTEGER t0, t1, f;
+				QueryPerformanceCounter(&t0);
+				const char* why = SafeFlyBinds(b);
+				QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&f);
+				std::string keys, clash;
+				if (!why) {
+					memcpy(g_flyBind, b, sizeof(b));
+					for (int i = 0; i < kFlyN; i++) keys += std::string(i ? " " : "") + kFlyNames[i] + "=" + (b[i].keys[0] ? b[i].keys : "-");
+					for (int i = 0; i < kFlyN; i++) for (int a = 0; a < b[i].n; a++) for (int j = i + 1; j < kFlyN; j++)
+						for (int c = 0; c < b[j].n; c++) if (b[i].vk[a] == b[j].vk[c]) {
+							char s[64]; snprintf(s, sizeof(s), "|%s %s+%s", b[i].name[a], kFlyNames[i], kFlyNames[j]); clash += s;
+						}
+				} else memset(g_flyBind, 0, sizeof(g_flyBind));   // no binding read: no flight keys (the log says why)
+				std::string state = why ? std::string(why) : keys + clash;
+				if (state != (why ? sentWhy : sentKeys)) {
+					(why ? sentWhy : sentKeys) = state;
+					(why ? sentKeys : sentWhy).clear();
+					Log("flykeys: %s%s (read in %.1f us)", why ? "can't read the keybinds: " : "", state.c_str(),
+						(t1.QuadPart - t0.QuadPart) * 1e6 / (double)f.QuadPart);
+					std::lock_guard<std::mutex> lk(g_consoleMu);
+					if (why) g_console.push_back(std::string("deagle_flykey nobind ") + why);
+					else {
+						g_console.push_back("deagle_flykey keys " + keys);
+						size_t p = 0;
+						while ((p = clash.find('|', p)) != std::string::npos) {
+							size_t e = clash.find('|', p + 1);
+							g_console.push_back("deagle_flykey clash " + clash.substr(p + 1, e == std::string::npos ? std::string::npos : e - p - 1));
+							p = e;
+						}
+					}
+				}
+			}
 		}
-		for (size_t i = 0; i < sizeof(kFly) / sizeof(kFly[0]); i++) {
-			bool d = focus && (GetAsyncKeyState(kFly[i].vk) & 0x8000) != 0;   // out of focus: every key let go
+		for (int i = 0; i < kFlyN; i++) {
+			bool d = false;
+			for (int k = 0; focus && k < g_flyBind[i].n; k++) d = d || (GetAsyncKeyState(g_flyBind[i].vk[k]) & 0x8000) != 0;   // out of focus: let go
 			if (d == flyWas[i]) continue;
 			flyWas[i] = d;
 			char c[48];
-			snprintf(c, sizeof(c), "deagle_flykey %s %d", kFly[i].name, d ? 1 : 0);
+			snprintf(c, sizeof(c), "deagle_flykey %s %d", kFlyNames[i], d ? 1 : 0);
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.push_back(c);
 		}

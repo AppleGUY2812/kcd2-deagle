@@ -712,8 +712,26 @@ function Deagle:FlyLink()
 	if type(Flight) ~= "table" or type(Flight.Keys) ~= "table" then return end
 	self:Native("flykeys 1")   -- the plugin answers deagle_flykey linked 1; until then Flight keeps its own keys
 end
+-- The plugin reads the keys the keybind menu gives the Flight rows (zzz_keybind_merge): keys = what it read (on a
+-- change), clash = one key on two flight actions (both act on it), nobind = it can't read them (flight has no keys)
 function Deagle:FlyKey(line)
-	local name, v = tostring(self.Arg(line)):match("^(%a+)%s+(%d)")
+	local arg = tostring(self.Arg(line))
+	local kind, rest = arg:match("^(%a+)%s+(.+)$")
+	if kind == "keys" then log("flight keys (the keybind menu's): " .. rest) return end
+	if kind == "clash" then
+		local key, a, b = rest:match("^(%S+)%s+(%a+)%+(%a+)$")
+		if key then
+			log("$6flight keys: " .. key .. " is on both " .. a .. " and " .. b)
+			self:Notify(string.format("Flight keys: %s is on both %s and %s. Rebind one in Controls > Flight", key, a, b))
+		end
+		return
+	end
+	if kind == "nobind" then
+		log("$6flight keys: the plugin can't read the keybinds (" .. rest .. "): flight has no keys")
+		self:Notify("Flight keys: can't read the keybinds (" .. rest .. "), so F4 and the flight keys do nothing")
+		return
+	end
+	local name, v = arg:match("^(%a+)%s+(%d)")
 	if not name or type(Flight) ~= "table" or type(Flight.Keys) ~= "table" then return end
 	if name == "linked" then
 		self.flyKeys = v == "1"

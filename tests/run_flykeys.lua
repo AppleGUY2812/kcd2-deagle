@@ -40,6 +40,16 @@ M.console("deagle_flykey", "toggle 1")
 check("F4 again turns it off", Flight.active == false and said[#said] == "Flight Off", Flight.active)
 M.console("deagle_flykey", "bogus 1"); M.console("deagle_flykey", "")
 check("an unknown key or empty line adds nothing", Flight.Keys.bogus == nil, Flight.Keys.bogus)
+-- the keybind menu's keys (the plugin reads them live): logged; a key on two flight actions or no read is said on screen
+local function shown(pat) return tostring(M.info):find(pat) ~= nil end
+M.console("deagle_flykey", "keys toggle=lshift forward=w,up back=s,down left=a,left right=d,right up=space down=lalt fast=lshift slow=lctrl")
+local logged = false
+for _, l in ipairs(M.logs) do if l:find("flight keys %(the keybind menu's%): toggle=lshift") then logged = true end end
+check("the menu's flight keys are logged", logged, "not logged")
+M.console("deagle_flykey", "clash lshift toggle+fast")
+check("a key on two flight actions is named on screen", shown("lshift is on both toggle and fast"), "not shown")
+M.console("deagle_flykey", "nobind no_flight_action_map")
+check("no keybinds read: said on screen, with why", shown("can't read the keybinds %(no_flight_action_map%)"), "not shown")
 M.console("deagle_flykey", "linked 0")
 check("plugin lets go: Flight's own actions pass again", Deagle:OnAction("flight_forward_keyboard", "press", 1) ~= true, "taken")
 
