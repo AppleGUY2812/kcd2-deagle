@@ -877,7 +877,7 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   (2BIK / 3BIK / CCDX / MRDX by Solver) and takes its rotation (nlerp by the blend). Warhorse's per-target runtime
   state (0x58 bytes at skeleton pose +0xB30; default 0x180ABD6A8): enabled 1, TargetOverride off, rotation on,
   BlendMultiplier 1, BlendOverride off. So no code at run time: ron_import.py adds `adik_weight_RI/LE` (under root,
-  1 m along CryEngine's x), gb_stage.py writes the IK block. Unverified in game: two gates in 0x1806D5974 (skeleton
+  2 m along CryEngine's x: the DAE puts root at the eye, 1 m read 0.94), gb_stage.py writes the IK block. Unverified in game: two gates in 0x1806D5974 (skeleton
   +0x7B4 bit 0x20 clear, +0x5C0 non-zero). `tools/ik_probe.lua` measures hand-to-target in game.
 
 ## 2026-10-20: reflections on the Grizzly's mirror skin (deagle-game-todo-notion)

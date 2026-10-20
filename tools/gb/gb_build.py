@@ -422,6 +422,10 @@ for b in arm.data.bones:
     if "." in b.name or " " in b.name:
         new = re.sub(r"[^A-Za-z0-9_]", "_", b.name); renamed[b.name] = new; b.name = new
 info["bones"] = {r: renamed.get(n, n) for r, n in B.items()}
+# Ready or Not's hand IK (ron_import.py ADIK): hand, limb root, target and weight joint per hand, for gb_stage's chrparams
+_adik = (("hand_RI", "upperarm_RI", "ik_hand_weapon_static_RI", "adik_weight_RI"),
+         ("hand_LE", "upperarm_LE", "ik_hand_weapon_static_LE", "adik_weight_LE"))
+info["adik"] = [list(c) for c in _adik if all(n in arm.data.bones for n in c)]
 arm.name = NAME
 mats, slot = [], {}
 for o in meshes:
@@ -496,11 +500,14 @@ for role, nm in (("mag", "mag1"), ("mag2", "mag2")):
         if m:
             mag_objs.append(m)
 info["mags"] = len(mag_objs) == 2
-pm = bpy.data.meshes.new(f"{NAME}_proxy"); pm.from_pydata([(0, 0, 0), (0.001, 0, 0), (0, 0, 0.001)], [], [(0, 1, 2)])
+# the chr's proxy triangle (the .chr needs a mesh): 0.01 mm, inside the gun on its own bone. At the root it showed on
+# Ready or Not's guns, whose root is the eye: a small black right triangle in the view's top left (user 2026-10-20)
+pbone = info["bones"].get("gun") or next(b.name for b in arm.data.bones if not b.parent)
+ph = arm.data.bones[pbone].head_local
+pm = bpy.data.meshes.new(f"{NAME}_proxy"); pm.from_pydata([tuple(ph), tuple(ph + Vector((1e-5, 0, 0))), tuple(ph + Vector((0, 0, 1e-5)))], [], [(0, 1, 2)])
 pm.materials.append(bpy.data.materials[f"{NAME}__01__{info['materials'][0]['sub']}__physNone"])
 proxy = bpy.data.objects.new(f"{NAME}_proxy", pm); scene.collection.objects.link(proxy); proxy.parent = arm
-root = next(b.name for b in arm.data.bones if not b.parent)
-vg = proxy.vertex_groups.new(name=root); vg.add([0, 1, 2], 1.0, "REPLACE")
+vg = proxy.vertex_groups.new(name=pbone); vg.add([0, 1, 2], 1.0, "REPLACE")
 md = proxy.modifiers.new("Armature", "ARMATURE"); md.object = arm
 bpy.ops.object.select_all(action="DESELECT"); arm.select_set(True); proxy.select_set(True); bpy.context.view_layer.objects.active = proxy
 bpy.ops.bcry.add_cry_export_node("EXEC_DEFAULT", node_type="chr", node_name=NAME)

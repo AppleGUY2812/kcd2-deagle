@@ -48,11 +48,24 @@ scene = bpy.context.scene
 A_psk, G_psk = psk.read(CFG["arms_psk"]), psk.read(CFG["gun_psk"])
 A_sk, W_sk = ron_bake.load(CFG["arms_clips"]), ron_bake.load(CFG["weapon_clips"])
 MOUNT = "weapon_right"
+# Ready or Not keeps both hands on the gun with two LegIK nodes after all its layers (ANIMBP_Player_FP_Master:
+# ik_hand_weapon_static_RI -> hand_RI, _LE -> hand_LE, 2-bone limbs at alpha 1, the hand taking the target's rotation;
+# fp_cdo.json); without them the additive layers (breathing, steps, jump, crouch) slide the gun 1-24 mm in the hands.
+# KCD2 does the same with the chrparams' animation-driven IK (gb_stage.py writes LimbIK 2BIK + ADIKTarget): its blend
+# is a weight joint's local translation x, clamped to 0..1 (WHGame 1.5.6 FUN_180a8466c). One weight joint per hand under
+# root 2 m along CryEngine's x (RoN's -X here, gb_build's turn), keyed in every clip at that rest offset: the DAE puts
+# root at the eye, so 1 m came out 0.94 (94 % IK); the blend is clamped, so 1.94 is full IK
+ADIK = (("hand_RI", "upperarm_RI", "ik_hand_weapon_static_RI", "adik_weight_RI"),
+        ("hand_LE", "upperarm_LE", "ik_hand_weapon_static_LE", "adik_weight_LE"))
 
 # ---------------------------------------------------------------- armature (rest = the arms' bind pose)
 arm_names = [b[0] for b in A_psk["bones"]]
 arm_parent = [b[1] for b in A_psk["bones"]]
 arm_rest_ue = fk(A_psk["bones"])
+_root = arm_parent.index(-1)
+for *_, w in ADIK:
+    arm_names.append(w); arm_parent.append(_root)
+    arm_rest_ue.append((arm_rest_ue[_root][0], arm_rest_ue[_root][1] + np.array([-200.0, 0.0, 0.0])))
 mount_i = [n.lower() for n in arm_names].index(MOUNT.lower())
 gun_names = [b[0] for b in G_psk["bones"]]
 gun_rest_local = fk(G_psk["bones"])          # J_Gun space (J_Gun = identity in the ref pose)

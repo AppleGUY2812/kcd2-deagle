@@ -129,11 +129,28 @@ open(os.path.join(odir, f"{NAME}.cdf"), "w").write(f'''<CharacterDefinition>
   </AttachmentList>
 </CharacterDefinition>
 ''')
+# Ready or Not's hand IK (ron_import.py ADIK): CryEngine's animation-driven IK runs after every animation layer in the
+# same frame (WHGame 1.5.6: the 2BIK limb from the parser FUN_180b7cbc8 needs Root = the hand's grandparent; ADIKTarget
+# FUN_181653b20; the solve FUN_180a82bac moves the hand to the target joint and takes its rotation, blended by the
+# weight joint's local x), so the hands stay on the gun under breathing, steps, jumps, crouching and the plugin's layers
+ik = ""
+if build.get("adik"):
+    limbs = "".join(f'\n      <IK Handle="adik{i}" Solver="2BIK" Root="{root}" EndEffector="{hand}" />'
+                    for i, (hand, root, _, _) in enumerate(build["adik"]))
+    targets = "".join(f'\n      <ADIKTarget Handle="adik{i}" Target="{tgt}" Weight="{w}" />'
+                      for i, (_, _, tgt, w) in enumerate(build["adik"]))
+    ik = f'''
+  <IK_Definition>
+    <LimbIK_Definition>{limbs}
+    </LimbIK_Definition>
+    <Animation_Driven_IK_Targets>{targets}
+    </Animation_Driven_IK_Targets>
+  </IK_Definition>'''
 open(os.path.join(odir, f"{NAME}.chrparams"), "w").write(f'''<Params>
   <AnimationList>
     <Animation name="#filepath" path="Animations/guns/{NAME}" />
     <Animation name="*" path="*.caf" />
-  </AnimationList>
+  </AnimationList>{ik}
 </Params>
 ''')
 for rel, base in sounds.items():
