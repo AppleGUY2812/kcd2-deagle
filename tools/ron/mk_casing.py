@@ -23,6 +23,8 @@ Configuration.rc_path = RC
 Configuration.texture_rc_path = RC
 bpy.ops.wm.read_factory_settings(use_empty=True)
 addon_utils.enable("io_KCD2_Blender_Toolkit", default_set=True)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import bcry_normals; bcry_normals.install()   # keep RoN's custom normals (the toolkit recomputes them otherwise)
 
 m = psk.read(SRC)
 pts = [(-x * 0.01, y * 0.01, z * 0.01) for x, y, z in m["points"]]

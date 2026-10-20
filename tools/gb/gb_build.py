@@ -402,6 +402,8 @@ bpy.ops.wm.save_as_mainfile(filepath=os.path.join(GUN, f"{NAME}_roles.blend"), c
 addon_utils.enable("io_KCD2_Blender_Toolkit", default_set=True)
 from io_KCD2_Blender_Toolkit.bcry_exporter.configuration import Configuration
 Configuration.rc_path = RC; Configuration.texture_rc_path = RC
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import bcry_normals; bcry_normals.install()   # the meshes' own normals (RoN's), not the toolkit's recompute
 for a in [a for a in A if a.name.startswith("src@")]:
     A.remove(a)
 meshes = [o for o in scene.objects if o.type == "MESH"]
