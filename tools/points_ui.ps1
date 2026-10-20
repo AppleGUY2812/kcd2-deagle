@@ -274,10 +274,14 @@ foreach ($r in $Rows) {
 		$k = $this.Tag[0]; $n = $this.Tag[1].TrimEnd(' ', '*')
 		$to = [int]$levels[$k].Value
 		$now = $levels[$k].Tag
-		if ($null -ne $now -and $to -le $now) { $status.Text = "$n is level ${now}: the game can only raise levels"; $levels[$k].Value = $now; return }
+		# Stats: the shown level includes buffs (GetStatLevel = base + modifiers, capped at 30), but AdvanceToStatLevel
+		# compares against the BASE (docs/whgame_re/stat_base.md), so a stat can't be refused here: a target at or
+		# below the base is a no-op in the game itself.
+		$isStat = $k.StartsWith("stat")
+		if (-not $isStat -and $null -ne $now -and $to -le $now) { $status.Text = "$n is level ${now}: the game can only raise levels"; $levels[$k].Value = $now; return }
 		$status.Text = "raising $n to $to..."
 		$a = Raise-Level $k $to
-		$status.Text = $(if ($a -match "^lvlset $k (\d+)$") { "$n now level $($matches[1])" } else { "$n`: $a" })
+		$status.Text = $(if ($a -match "^lvlset $k (\d+)$") { $(if ($isStat) { "$n raised to base $to (shown with buffs: $($matches[1])); check the perk points" } else { "$n now level $($matches[1])" }) } else { "$n`: $a" })
 		Refresh-All
 	})
 	$form.Controls.Add($up)
@@ -317,7 +321,7 @@ foreach ($r in $Rows) {
 	$y += 34
 }
 $note = New-Object System.Windows.Forms.Label
-$note.Text = "* which stat slot is which: from the game's stat table, not yet checked on the perk screen"
+$note.Text = "* levels show base + buffs (base 25 +5 shows 30); Raise still raises the base. Points slot order: from the stat table, unchecked"
 $note.Location = "14,$($y + 4)"; $note.Size = "500,22"; $note.ForeColor = [System.Drawing.Color]::FromArgb(150, 140, 120)
 $note.Font = New-Object System.Drawing.Font("Segoe UI", 8.5)
 $form.Controls.Add($note)
