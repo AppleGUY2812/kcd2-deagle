@@ -1,0 +1,72 @@
+-- Gun skins (deagle-game-todo-notion, 2026-10-19): Ready or Not's other finishes on the same model, swapped in by
+-- material. The Grizzly MK V ships two in RoN: the black one (MI_PIS_GRIZZLY_Body) and Silver (MI_PIS_GRIZZLY_Body_Silver,
+-- its own SK_PIS_GRIZZLY_SILVER but the same UV layout: the textures line up on our mesh). tools/ron/ron_vm_mtl.py
+-- writes <slug>_vm_silver.mtl beside <slug>_vm.mtl with the same sub-material order.
+--   deagle_skin            lists the current gun's skins
+--   deagle_skin silver     that skin, kept (deagle_set skin silver; "main" is the gun as built)
+-- The skin goes on every attachment that wears the gun's material; a watch puts it back when the viewmodel is rebuilt
+-- (gun switch, respawn, load), since Lua can't hook viewmodel.lua's VmEntity from here.
+local U = Deagle.U
+local log = U.log
+
+Deagle.SKINS = { ron_grizzly = { main = "", silver = "_silver" } }
+local PARTS = { "vm_mesh", "vm_mag1", "vm_mag2", "vm_round_1", "vm_round_2", "vm_round_3", "vm_round_4" }
+if Deagle.cfg.skin == nil then Deagle.cfg.skin = "main" end
+
+-- the material path of a skin on the current gun (nil: the gun has no such skin)
+function Deagle:SkinMtl(name)
+	local skins = self.gun and self.SKINS[self.gun.id]
+	local cdf = self.cfg.vm and self.cfg.vm.cdf
+	if not skins or skins[name] == nil or type(cdf) ~= "string" then return nil end
+	return (cdf:gsub("%.cdf$", "")) .. skins[name]
+end
+
+function Deagle:SkinApply()
+	local vm = self.vmId and System.GetEntity(self.vmId)
+	if not vm then return end
+	local want = tostring(self.cfg.skin or "main")
+	local key = tostring(self.vmId) .. "|" .. tostring(self.gun and self.gun.id) .. "|" .. want
+	if self.skinApplied == key then return end
+	self.skinApplied = key
+	local mtl = self:SkinMtl(want) or self:SkinMtl("main")
+	if not mtl then return end   -- a gun without skins keeps its own material
+	local n = 0
+	for _, part in ipairs(PARTS) do
+		local ok, r = pcall(vm.ChangeAttachmentMaterial, vm, part, mtl)
+		if ok and r ~= false then n = n + 1 end
+	end
+	log(string.format("skin %s on %s: %s (%d parts)", want, tostring(self.gun.id), mtl, n))
+end
+
+function Deagle:SkinCmd(arg)
+	local skins = self.gun and self.SKINS[self.gun.id]
+	local names = {}
+	for k in pairs(skins or {}) do names[#names + 1] = k end
+	table.sort(names)
+	if arg == "" then
+		local msg = skins and ("skins for " .. self.gun.id .. ": " .. table.concat(names, ", ") .. " (now " .. tostring(self.cfg.skin) .. ")")
+			or ("no skins for " .. tostring(self.gun and self.gun.id))
+		log(msg); self:Notify(msg) return
+	end
+	if not skins or skins[arg] == nil then
+		local msg = "no skin " .. arg .. (skins and (" (" .. table.concat(names, ", ") .. ")") or (" for " .. tostring(self.gun and self.gun.id)))
+		log(msg); self:Notify(msg) return
+	end
+	self:Set("skin " .. arg)   -- kept, set again at every load
+	self:SkinApply()
+	self:Notify("skin " .. arg)
+end
+
+-- the watch: the viewmodel is rebuilt on gun switches, respawns and loads (a load drops timers: the setting replay at
+-- every load restarts it through SkinWatchKick)
+function Deagle:SkinWatch()
+	self.skinWatchAt = System.GetCurrTime()
+	pcall(self.SkinApply, self)
+	Script.SetTimer(300, function() Deagle:SkinWatch() end)
+end
+function Deagle:SkinWatchKick()
+	if not self.skinWatchAt or math.abs(System.GetCurrTime() - self.skinWatchAt) > 1 then self:SkinWatch() end
+end
+Deagle:SkinWatchKick()
+
+System.AddCCommand("deagle_skin", "Deagle:SkinWatchKick(); Deagle:SkinCmd(Deagle.Arg([[%1]]))", "deagle_skin [name]: the gun's finish (Grizzly: main, silver), kept; no name lists them")

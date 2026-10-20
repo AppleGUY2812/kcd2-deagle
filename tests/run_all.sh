@@ -38,6 +38,7 @@ luajit tests/run_env.lua >/dev/null || { echo "FAIL run_env"; fail=1; }
 luajit tests/run_flykeys.lua >/dev/null || { echo "FAIL run_flykeys"; fail=1; }
 luajit tests/run_lean.lua >/dev/null || { echo "FAIL run_lean"; fail=1; }
 luajit tests/run_flight.lua >/dev/null || { echo "FAIL run_flight"; fail=1; }
+luajit tests/run_skin.lua >/dev/null || { echo "FAIL run_skin"; fail=1; }
 luajit tests/run_layers.lua >/dev/null || { echo "FAIL run_layers"; fail=1; }
 luajit tests/run_perf.lua >/dev/null || { echo "FAIL run_perf"; fail=1; }
 luajit tests/run_effects.lua >/dev/null || { echo "FAIL run_effects"; fail=1; }

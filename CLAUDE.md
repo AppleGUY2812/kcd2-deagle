@@ -36,7 +36,7 @@ script file needs an owner here: `tests/run_all.sh` fails otherwise, or when thi
   `weapon.lua`, `viewmodel.lua`, `hits.lua` (and the `hole` column of `surfaces.lua`), `npc.lua`, `tracers.lua`,
   `shells.lua`, `freecam.lua`, `physics.lua`, `debug.lua`, `motion.lua`, and the rest of `native/`.
 - 🟫 Flight (the "deagle-game-todo-notion" session): `flight.lua` (and `tests/run_flight.lua`): Henry flies by physics
-  velocity, never SetPos (the Flight mod's crash).
+  velocity, never SetPos (the Flight mod's crash). Also `skin.lua` (gun finishes, `deagle_skin`).
 - Commit only your own hunks (never `git commit -a`, check `git diff --cached --stat` first), keep
   `bash tests/run_all.sh` passing after every edit (a hot reload loads every session's work), and tell the owner before
   touching their file or functions.
