@@ -191,6 +191,9 @@ player.soul = {}
 -- skill XP the player gets (soul:AddSkillXP), recorded per skill
 M.xp = {}
 function player.soul:AddSkillXP(skill, xp) M.xp[skill] = (M.xp[skill] or 0) + xp end
+M.buffs = {}   -- buffs on Henry by guid (soul:AddBuff / RemoveAllBuffsByGuid)
+function player.soul:AddBuff(id) M.buffs[id] = (M.buffs[id] or 0) + 1 end
+function player.soul:RemoveAllBuffsByGuid(id) M.buffs[id] = nil end
 player.this = { id = player.id }
 _G.g_localActor = player
 _G.Player = { OnAction = function() end }

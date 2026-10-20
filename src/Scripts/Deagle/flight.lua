@@ -19,12 +19,25 @@ Deagle.flightCfg = Deagle.flightCfg or {
 	landSpeed = 6,      -- m/s down while landing after F4 off
 	landGap = 0.25,     -- m above the ground where landing ends
 	landMax = 30,       -- s: landing gives up (gravity back) after this
+	-- KCD2 measures a fall by HEIGHT from the last ground contact, frozen for the whole flight (docs/whgame_re/fall_damage.md:
+	-- FUN_1809d36f0 keeps det+0x14 at the take-off Z, FUN_1807243b0 scales the drop by the FallDamageMultiplier stat), so any
+	-- landing 1.5 m under the take-off point hurt however slow. The game's own "fall_damage" buff (buff.xml, fdm=0) zeroes
+	-- that multiplier: worn while flying and for buffLinger s after the landing. It is persistent (a save mid-flight keeps
+	-- it), so it's also removed at every script load and whenever flight is off.
+	fallBuff = "4bc0b081-a57e-4e6e-8297-6d9db58b39b2",
+	buffLinger = 1,     -- s after gravity is back before the buff goes
 }
 -- What Henry's physics gets back when flight ends: read from his own pe_player_dynamics before anything changes
 -- (the plugin's "flydyn <entity hex>": his living entity's set gravity, +0x18C, and GetParams' kAirControl, answered
 -- by deagle_flydyn <gravity> <kAirControl> <kAirResistance>, or deagle_flydyn fail <token>). No read, no flight: no constants guessed (a stance or a mod may have changed them).
 -- (k_air_resistance isn't read by KCD2's PLAYERDYN binding, 0x180B35634: air drag stays, small between the per-frame sets)
 local FLYING = { gravity = 0, k_air_control = 0 }
+
+local function fallBuff(p, on)
+	local soul, id = p and p.soul, Deagle.flightCfg.fallBuff
+	if not soul then return end
+	if on then pcall(soul.AddBuff, soul, id) else pcall(soul.RemoveAllBuffsByGuid, soul, id) end
+end
 
 Flight = Flight or {}
 Flight.Keys = Flight.Keys or { forward = false, back = false, left = false, right = false, up = false, down = false, fast = false, slow = false }
@@ -102,6 +115,8 @@ function Deagle:FlightDyn(line)
 	local okv, v = pcall(p.GetVelocity, p)
 	if okv and type(v) == "table" and v.x then self.flight.v = { x = v.x, y = v.y, z = v.z } end   -- no jolt at the start
 	dyn(p, FLYING)
+	self.flightBuffOff = nil
+	fallBuff(p, true)
 	local tok = self.flight.token
 	Script.SetTimer(0, function() Deagle:FlightTick(tok) end)
 end
@@ -115,6 +130,11 @@ function Deagle:FlightStop(now)
 	end
 	self.flight = nil
 	if p then dyn(p, F.living) end
+	-- the landing itself is the fall the game measures: keep the buff until it's over
+	local tok = {}; self.flightBuffOff = tok
+	Script.SetTimer(math.floor(self.flightCfg.buffLinger * 1000), function()
+		if Deagle.flightBuffOff == tok and not Deagle.flight then fallBuff(Deagle:Player(), false) end
+	end)
 end
 
 function Deagle:FlightTick(token)
@@ -171,6 +191,7 @@ function Deagle:FlightWatch()
 	Script.SetTimer(50, function() Deagle:FlightWatch() end)
 end
 Deagle:FlightWatchKick()
+if not Deagle.flight then fallBuff(Deagle:Player(), false) end   -- a load mid-flight brought the persistent buff along
 
 System.AddCCommand("deagle_fly", "Flight.active = not Flight.active; Flight.log(Flight.active and 'Flight On' or 'Flight Off')", "deagle_fly: flight on / off (F4)")
 System.AddCCommand("deagle_flydyn", "Deagle:FlightDyn([[%line]])", "internal: the plugin's read of Henry's pe_player_dynamics (gravity, air control, air resistance)")

@@ -114,5 +114,18 @@ M.console("deagle_flykey", "toggle 1"); M.console("deagle_flykey", "toggle 0"); 
 local asked = false; for i = #M.native, 1, -1 do if M.native[i]:find("^%[DN%] flydyn") then asked = true break end end
 M.console("deagle_flydyn", "11.5000 0.2000 0.4000"); step(0.2)
 check("after a load wiped the timers, F4 still flies", asked and Deagle.flight ~= nil, tostring(asked) .. " " .. tostring(Deagle.flight))
+-- fall damage: KCD2 measures the drop from the take-off Z, frozen through the flight (docs/whgame_re/fall_damage.md), so
+-- the game's own fall_damage buff (multiplier 0) is worn while flying and for a second after the landing
+local BUFF = Deagle.flightCfg.fallBuff
+check("flying: the fall_damage buff is on Henry", Deagle.flight ~= nil and M.buffs[BUFF] ~= nil, tostring(M.buffs[BUFF]))
+P.pos.z = 10; Flight.active = false; step(0.3)
+check("F4 off in the air: still on while he sinks", Deagle.flight ~= nil and Deagle.flight.landing and M.buffs[BUFF] ~= nil, tostring(M.buffs[BUFF]))
+for _ = 1, 100 do if not Deagle.flight then break end step(0.1) end   -- sinks at up to 6 m/s: ~2 s from 10 m
+check("landed: gravity back, the buff stays for the linger", Deagle.flight == nil and M.buffs[BUFF] ~= nil, tostring(Deagle.flight) .. " " .. tostring(M.buffs[BUFF]))
+step(1.5)
+check("a second later: the buff is gone", M.buffs[BUFF] == nil, tostring(M.buffs[BUFF]))
+M.buffs[BUFF] = 1   -- a save made mid-flight keeps the persistent buff: a script load takes it off
+dofile("src/Scripts/Deagle/flight.lua")
+check("a script load removes a leftover buff", M.buffs[BUFF] == nil, tostring(M.buffs[BUFF]))
 print(string.format("flight: %d/%d", n - fails, n))
 os.exit(fails == 0 and 0 or 1)
