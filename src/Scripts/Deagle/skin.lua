@@ -25,7 +25,8 @@ function Deagle:SkinApply()
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if not vm then return end
 	local want = tostring(self.cfg.skin or "main")
-	local key = tostring(self.vmId) .. "|" .. tostring(self.gun and self.gun.id) .. "|" .. want
+	-- the entity's script table too: a rebuilt viewmodel can get the old one's freed id back (UseGun always respawns it)
+	local key = tostring(self.vmId) .. "|" .. tostring(vm) .. "|" .. tostring(self.gun and self.gun.id) .. "|" .. want
 	if self.skinApplied == key then return end
 	self.skinApplied = key
 	local mtl = self:SkinMtl(want) or self:SkinMtl("main")
