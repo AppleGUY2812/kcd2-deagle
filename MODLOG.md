@@ -892,3 +892,15 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   removed before any restart. CEnvironmentProbeBatchRendererWH is the editor's bake tool (no console / Lua path).
   So off-screen reflections (a gun's side) stay at 128 px: an engine limit. Live: r_SSReflections 2,
   r_SSReflHalfRes 0, r_TexMaxAnisotropy 16.
+
+## 2026-10-20: KCD2 fall damage is by height from the last ground contact (KNW for flight.lua)
+- Full notes: docs/whgame_re/fall_damage.md. Every damage path ends in C_RPGMovement vt+0xd0 (0x183d19018 ->
+  FUN_180725220 -> FUN_1807243b0): h' = FallDamageMultiplier(stat 0x4E) x drop / Fatal(+0x37c); health damage when
+  h' > Harmless(+0x374)/Fatal, leg injury when h' > Injuring(+0x378)/Fatal. The drop = max(startZ - Z, 0) from
+  C_ActorActionLand. The fall detector FUN_1809d36f0 writes det+0x14 = Z every grounded frame and freezes it in the
+  air; a fall starts at vz < -3.5 m/s (pl_movement.ground_velocityToFall) after 0.5 s airborne. Only ground contact or
+  the FallDisabled context (actor+0x990 -> +0x238, sources 4-6 unused: FUN_1809d3894) resets the start.
+- pl_fallDamage_SpeedBias / _Normal_SpeedFatal / _Normal_SpeedSafe, pl_debugFallDamage and pl_fallHeight have no
+  reader in the binary: dead cvars.
+- The game's own buff "fall_damage" (guid 4bc0b081-a57e-4e6e-8297-6d9db58b39b2, buff.xml, buff_params fdm=0) sets the
+  multiplier to 0; it's persistent (survives a save). flight.lua wears it while flying (ef02981).
