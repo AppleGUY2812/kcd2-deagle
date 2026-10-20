@@ -904,3 +904,19 @@ it's behind other windows; the game kept running unfocused this time: timers fir
   reader in the binary: dead cvars.
 - The game's own buff "fall_damage" (guid 4bc0b081-a57e-4e6e-8297-6d9db58b39b2, buff.xml, buff_params fdm=0) sets the
   multiplier to 0; it's persistent (survives a save). flight.lua wears it while flying (ef02981).
+
+## 2026-10-20: KCD2's input system: key presses from the plugin (Claude 4, for the AFK walk)
+Lua's `SimulateOnAction("moveforward"/"xi_movey", ...)` moves Henry 0 m, focused and unpaused (the other session's
+probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses):
+- Pausing in the background is the cvar `wh_ui_PauseGameOnFocusLoss` ("Pause game when player switches focus to
+  another window. Default true"): that's why the game sometimes ran unfocused (MODLOG 2026-10-12) and sometimes not.
+- IInput is a CDXInput (RTTI); vtable +0x58 EnableEventPosting (byte +0xD8), +0x68 PostInputEvent(event, bForce).
+  Devices are shared pointers in a vector at +0x110 (lock +0x128). CKeyboard's symbols are a static
+  `SInputSymbol* Symbol[256]` by DirectInput scan code; keyId = scan code - 1 for the main block (w 16, a 29, s 30, d 31).
+- SInputSymbol: keyId +0x00, name (char*) +0x08, state +0x14 (1 pressed, 2 released, 4 down, 8 changed), value +0x1C,
+  deviceType +0x24. SInputEvent (0x30): deviceType +0x00 (byte), state +0x04, keyName +0x08, keyId +0x10, modifiers
+  +0x14, value +0x18, pSymbol +0x20, deviceIndex +0x28.
+- PostInputEvent: listeners first, then a pressed symbol turns Down and joins the hold list, which repeats it each frame
+  until a release. Pressing a key that is already down again would add it twice: keys.cpp never does.
+- `[DN] key <name> down|up|hold`, `key allup` post exactly what the keyboard posts. `hold` presses it again whenever
+  KCD2 lets go while the window is in the background. Untested in game.

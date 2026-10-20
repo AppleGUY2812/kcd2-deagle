@@ -21,6 +21,7 @@
 #include "rounds.h"
 #include "perkpoints.h"
 #include "fx.h"
+#include "keys.h"
 #include <deque>
 #include <mutex>
 #include <string>
@@ -981,6 +982,7 @@ static void Command(const char* line) {
 		g_heldN = 0; g_heldHead = 0; g_nTraces = 0;   // the same for impact pieces and tracer emitters (Claude 3's audit)
 		RvmReset();   // a Ready or Not gun's recoil: Lua sends its numbers again (recoil.lua RonParams)
 		LeanReset();  // upright (Lua sends the lean's numbers again: freecam.lua LeanParams)
+		Keys_Reset();   // let go of the keys Lua pressed (keys.cpp)
 		g_layerSet = 0;   // a new viewmodel: Lua weights its layers again
 		PreloadTracers();
 		// the handshake, then the player's saved settings (settings.cpp)
@@ -989,7 +991,7 @@ static void Command(const char* line) {
 			std::lock_guard<std::mutex> lk(g_consoleMu);
 			g_console.clear(); g_console.push_back("deagle_native_ok");
 			// lean: only with the SetViewCamera hook in (freecam.cpp leans the view there; without it only the gun would)
-			g_console.push_back(Freecam_Hooked() ? "deagle_native_caps files fxr smoke ronvm lowready lweight flydyn lean" : "deagle_native_caps files fxr smoke ronvm lowready lweight flydyn");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint; lweight; flydyn (flight.lua); lean (freecam hook)
+			g_console.push_back(Freecam_Hooked() ? "deagle_native_caps files fxr smoke ronvm lowready lweight flydyn keys lean" : "deagle_native_caps files fxr smoke ronvm lowready lweight flydyn keys");   // ron3 / ron play "file:<path>" sounds (ron.cpp); fxr tracers; smokefx; ronp / ronfire (ronvm.cpp); lowready: ronp wall / bk*, mparams sprint; lweight; flydyn (flight.lua); lean (freecam hook)
 			for (auto& c : saved) g_console.push_back(c);
 		}
 		Log("hello from Lua (%zu settings to replay)", saved.size());
@@ -1217,6 +1219,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "notorch")) g_filters[F_NO_TORCH].want = atoi(rest) != 0 ? 1 : 0;
 	else if (!strcmp(cmd, "nocamera")) g_filters[F_NO_CAMERA].want = atoi(rest) != 0 ? 1 : 0;   // the freecam's mouse look
 	else if (!strcmp(cmd, "nointeract")) g_filters[F_NO_INTERACT].want = atoi(rest) != 0 ? 1 : 0;   // E leans with a gun out
+	else if (!strcmp(cmd, "key")) Keys_Command(rest);   // key <name> down|up|hold, key allup (keys.h)
 	else if (!strcmp(cmd, "lean")) LeanSet((float)atof(rest));   // lean <cm, + right>: the quick lean's target (lean.cpp)
 	else if (!strcmp(cmd, "lweight")) {   // lweight <layer> <w>: a viewmodel animation layer's weight (w < 0: back to 1, ours no more)
 		int l = -1; float w = 0;
@@ -1370,6 +1373,7 @@ static void OnCamera(uintptr_t camera) {
 		if (RonReady()) RonUpdate(ear);
 	}
 	ApplyFilters();
+	Keys_Frame();   // key presses Lua asked for (keys.cpp: the AFK walk)
 	TouchPieces();
 	ReleaseOldPieces(false);
 	TraceStep();
@@ -1532,7 +1536,8 @@ static DWORD WINAPI Init(LPVOID) {
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Freecam_Install(g_env, (void*)g_origFrustum);   // free camera (freecam.cpp, johnpork-18)
 	if (g_env) Probe_Install(g_env, g_game.base);   // architecture step 1 probes (probe.cpp, Claude 5)
-	if (g_env) Rounds_Install(g_env, g_game.base);   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
+	if (g_env) Rounds_Install(g_env, g_game.base);
+	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
 	if (g_env) {
 		static const struct { int off; const char* what; } members[] = {
 			{ 0x08, "3DEngine" }, { 0x30, "PhysicalWorld" }, { 0x68, "ParticleManager" }, { 0x80, "Timer" },
