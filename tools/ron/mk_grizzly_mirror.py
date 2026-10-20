@@ -12,6 +12,9 @@ dull. Mirror, on those metal texels only:
 - roughness 0.03 + 0.45 x (RoN's - 0.30), so its wear pattern stays (RoN 0.30-0.59 -> 0.03-0.16, median 0.07), plus a
   fine polish grain (blurred noise, +-0.015): a single flat roughness (v1: RoN's x 0.12, 0.036-0.071) mirrored the
   world as one smooth gradient and read as chrome-painted plastic (the user 2026-10-20: "less plastic looking");
+- specular occlusion from Ready or Not's own baked AO (ORM.R, which RoN never samples): a mirror lights up its cavities
+  and the inside of the slide with the sky otherwise, a plastic giveaway. Frostbite's approximation (Lagarde & de
+  Rousiers, "Moving Frostbite to PBR" 2014: so = sat((NdotV + ao)^exp2(-16 r - 1) - 1 + ao)) baked at NdotV 0.5;
 - the normal map unchanged (the engraving is in it);
 - metallic 1 (no diffuse).
 The black parts (sights, grip screws: ORM.B < 0.5) stay exactly as the Silver converts. The sight dots' emissive is the
@@ -46,20 +49,23 @@ def convert():
     m = np.where(metal, 1.0, np.minimum(o[..., 2], cap))[..., None]
     lum = base.mean(-1)
     detail = np.clip(lum / lum[metal].mean(), 0.6, 1.1)[..., None]
-    spec = np.where(metal[..., None], F0 * detail, 0.04 * (1 - m) + base * m)
     rng = np.random.default_rng(20261020)   # fixed: the same grain every build
     grain = blur(rng.standard_normal(metal.shape), GRAIN_SIGMA)
     grain *= GRAIN / max(grain.std() * 2, 1e-9)
     polished = np.clip(ROUGH_BASE + ROUGH_GAIN * (o[..., 1] - ROUGH_FROM) + grain, 0.02, 0.3)
     rough = np.where(metal, polished, o[..., 1])
+    ao = o[..., 0]
+    so = np.clip((0.5 + ao) ** np.exp2(-16 * polished - 1) - 1 + ao, 0, 1)[..., None]
+    spec = np.where(metal[..., None], F0 * detail * so, 0.04 * (1 - m) + base * m)
     g.save(g.srgb(base * (1 - m)), 'ron_grizzly_mirror_diff', 'RGB')
     g.save(g.srgb(spec), 'ron_grizzly_mirror_spec', 'RGB')
     nm = g.load(n)
     nm[..., 1] = 1 - nm[..., 1]                                    # UE green-down -> CryEngine green-up
     g.save(np.dstack([nm, 1 - rough]), 'ron_grizzly_mirror_ddna', 'RGBA')
-    print('TEX mirror: metal %.3f, reflectance mean %.3f (silver %.3f), smoothness mean on metal %.3f (silver %.3f)' % (
+    print('TEX mirror: metal %.3f, reflectance mean %.3f (silver %.3f), smoothness mean on metal %.3f (silver %.3f), '
+          'specular occlusion mean on metal %.3f (%.0f %% under 0.5)' % (
         metal.mean(), spec[metal].mean(), (0.04 * 0.1 + base * 0.9)[metal].mean(), 1 - rough[metal].mean(),
-        1 - o[..., 1][metal].mean()))
+        1 - o[..., 1][metal].mean(), so[..., 0][metal].mean(), 100 * (so[..., 0][metal] < 0.5).mean()))
 
 
 def write_mtls():
