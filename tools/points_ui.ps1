@@ -325,13 +325,14 @@ $form.ClientSize = "724,$($y + 34)"
 
 function Refresh-All {
 	$status.Text = "reading..."
-	$line = Ask "deagle_points" $ListDone
-	$h = Parse-List $line
-	if ($null -eq $h) { $status.Text = $line; return }
-	foreach ($k in $boxes.Keys) { $boxes[$k].Value = $(if ($h.ContainsKey($k)) { [Math]::Min(999, $h[$k]) } else { 0 }) }
+	# levels first: they come from Lua and don't depend on the plugin's points read, which can refuse (several lists)
 	$lh = Read-Levels
 	foreach ($k in $levels.Keys) { if ($lh.ContainsKey($k)) { $levels[$k].Value = [Math]::Min(30, $lh[$k]); $levels[$k].Tag = $lh[$k] } }
-	if ($script:MainLevel) { $main.Text = "Main level: $script:MainLevel" }
+	$main.Text = $(if ($script:MainLevel) { "Main level: $script:MainLevel" } else { "Main level: ?" })
+	$line = Ask "deagle_points" $ListDone
+	$h = Parse-List $line
+	if ($null -eq $h) { $status.Text = "levels read; points: $line"; return }
+	foreach ($k in $boxes.Keys) { $boxes[$k].Value = $(if ($h.ContainsKey($k)) { [Math]::Min(999, $h[$k]) } else { 0 }) }
 	$status.Text = "read at $(Get-Date -Format HH:mm:ss)"
 }
 $refresh.Add_Click({ Refresh-All })
