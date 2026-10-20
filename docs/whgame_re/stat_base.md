@@ -118,8 +118,8 @@ the user's own saves, which were read only. VAs use image base 0x180000000. Noth
 2. **Showing the base live** needs native code. Add a DN function to deagle_native that reads `*(u32*)(soul+0x56c+8*stat)` (level)
    and `*(u32*)(soul+0x570+8*stat)/128` (XP in level). Or it can call FUN_180469d7c(soul, stat).
    - Get the soul the way the game does: Lua passes `player.soul`; the native reads its `__ThisWUID` (a handle) and calls
-     `FUN_181f985d0(*(*(DAT_1853322a0)+0x80)+0x38, &wuid)`.
-   - FUN_18041ed20 (RVA 0x41ED20) is a 60-byte function holding both the global and the call. An AOB for it gives both by rel32 decode.
+     `FUN_181f985d0(*(u64*)(G+0x80)+0x38, &wuid)`, with G = the qword at VA 0x1853322a0.
+   - FUN_18041ed20 (RVA 0x41ED20) is a short function holding both the global and the call. An AOB for it gives both by rel32 decode.
    - Untested; needs one in-game check against the stat screen.
 3. **Showing the base from the save** (what the user asked for; exact as of the save, stale after any Raise or level-up since):
    ```python
