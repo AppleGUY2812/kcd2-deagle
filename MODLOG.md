@@ -883,9 +883,12 @@ it's behind other windows; the game kept running unfocused this time: timers fir
 ## 2026-10-20: reflections on the Grizzly's mirror skin (deagle-game-todo-notion)
 - The KCD2 toolkit's DAE export never wrote custom normals (tools/bcry_normals.py fixes it; see 6f316b8): the Grizzly
   looked faceted. Ready or Not's ORM.R (baked AO) is never sampled by RoN, but it's a good specular-occlusion source.
-- KCD2 renders its reflection probes at runtime (WHGame 1.5.6, Ghidra): CEnvironmentProbeBatchRendererWH fills a
-  texture array "$TiledSpecProbeTexArr" (FUN_180b3e00c; 0x180 slices, format 0x1d, mips log2(size)-1) whose face size
-  is wh_r_ProbeCubemapTexSize (int at 0x1850dbdb8, registered in FUN_181011768, REQUIRE_APP_RESTART; system.cfg sets
-  128). Off-screen reflections (a gun's side) come from these: blurry at 128. user.cfg (game root) now sets 512
-  (untested: whether it applies over system.cfg / sys_spec, and its cost). Live: r_SSReflections 2, r_SSReflHalfRes 0,
-  r_TexMaxAnisotropy 16.
+- KCD2's reflection probes are NOT rendered while playing (corrects an earlier note; docs/whgame_re/live_probe.md):
+  about 28-34k pre-baked 128 x 128 BC6H cubemaps, 6 mips, one per probe per time-of-day key
+  (Textures/cubemaps/<level>/<probe>/<hh>_<mm>_cm.dds in IPL_Textures-part0/1.pak; spot-checked 5 headers). The
+  runtime atlas "$TiledSpecProbeTexArr" (FUN_180b3e00c, 384 slices) has faces of wh_r_ProbeCubemapTexSize (int at
+  0x1850dbdb8, REQUIRE_APP_RESTART; system.cfg 128), and a probe smaller than the atlas is refused ("TiledShading:
+  Unsupported texture properties", FUN_182231c1a): raising it to 512 would drop every probe. user.cfg's 512 was
+  removed before any restart. CEnvironmentProbeBatchRendererWH is the editor's bake tool (no console / Lua path).
+  So off-screen reflections (a gun's side) stay at 128 px: an engine limit. Live: r_SSReflections 2,
+  r_SSReflHalfRes 0, r_TexMaxAnisotropy 16.
