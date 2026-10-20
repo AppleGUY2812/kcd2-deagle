@@ -9,7 +9,7 @@
 local U = Deagle.U
 local log = U.log
 
-Deagle.SKINS = { ron_grizzly = { main = "", silver = "_silver" } }
+Deagle.SKINS = { ron_grizzly = { main = "", silver = "_silver", mirror = "_mirror" } }   -- mirror: the Silver polished (tools/ron/mk_grizzly_mirror.py)
 local PARTS = { "vm_mesh", "vm_mag1", "vm_mag2", "vm_round_1", "vm_round_2", "vm_round_3", "vm_round_4" }
 if Deagle.cfg.skin == nil then Deagle.cfg.skin = "main" end
 
@@ -70,4 +70,4 @@ function Deagle:SkinWatchKick()
 end
 Deagle:SkinWatchKick()
 
-System.AddCCommand("deagle_skin", "Deagle:SkinWatchKick(); Deagle:SkinCmd(Deagle.Arg([[%1]]))", "deagle_skin [name]: the gun's finish (Grizzly: main, silver), kept; no name lists them")
+System.AddCCommand("deagle_skin", "Deagle:SkinWatchKick(); Deagle:SkinCmd(Deagle.Arg([[%1]]))", "deagle_skin [name]: the gun's finish (Grizzly: main, silver, mirror), kept; no name lists them")

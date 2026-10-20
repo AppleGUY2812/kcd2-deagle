@@ -25,6 +25,8 @@ check("a rebuilt viewmodel gets silver again", M.attachMtl.vm_mesh == base .. "_
 M.attachMtl = {}
 M.console("deagle_skin", "gold"); step(0.1)
 check("an unknown skin: refused, nothing changed", Deagle.cfg.skin == "silver" and M.attachMtl.vm_mesh == nil, Deagle.cfg.skin)
+M.console("deagle_skin", "mirror"); step(0.1)
+check("deagle_skin mirror: the polished set", M.attachMtl.vm_mesh == base .. "_mirror" and Deagle.cfg.skin == "mirror", M.attachMtl.vm_mesh)
 M.console("deagle_skin", "main"); step(0.1)
 check("deagle_skin main: back to the gun as built", M.attachMtl.vm_mesh == base, M.attachMtl.vm_mesh)
 M.attachMtl = {}
