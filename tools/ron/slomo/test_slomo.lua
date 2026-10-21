@@ -15,22 +15,23 @@ EngineTickAvailable = true
 ExecuteInGameThreadAfterFrames = function(n, fn) after = { n = n, fn = fn } end
 print = function() end
 dofile(dir .. "main.lua")
-local function press(k) binds[k]() end
+local keys = dofile(dir .. "config.lua").keys
+local function press(action) binds[keys[action]]() end   -- by action, so the test follows config.lua's keys
 local function check(name, want) local ok = math.abs(td - want) < 1e-9
 	io.write((ok and "PASS " or "FAIL ") .. name .. string.format(" (%g, want %g)\n", td, want)); if not ok then fails = fails + 1 end end
 
-press("F8"); check("toggle on = start speed", 0.05)
-press("F8"); check("toggle off", 1.0)
-press("F9"); check("slower turns on one step down", 0.02)
-press("F10"); press("F10"); check("faster twice", 0.1)
-press("HOME"); check("freeze", 0.0001)
-press("END"); check("step runs at step_speed", 0.1)
+press("toggle"); check("toggle on = start speed", 0.05)
+press("toggle"); check("toggle off", 1.0)
+press("slower"); check("slower turns on one step down", 0.02)
+press("faster"); press("faster"); check("faster twice", 0.1)
+press("freeze"); check("freeze", 0.0001)
+press("step"); check("step runs at step_speed", 0.1)
 after.fn(); check("refreezes after the frame", 0.0001)
-press("HOME"); check("unfreeze back to the slow speed", 0.1)
-td = 1.0; press("F8"); check("new map (time reset to 1): toggle turns on", 0.1)
-press("END"); check("step while running freezes first", 0.0001)
-for _ = 1, 20 do press("F9") end; check("slower clamps at the list end", 0.005)
-for _ = 1, 20 do press("F10") end; check("faster clamps at the list start", 0.5)
+press("freeze"); check("unfreeze back to the slow speed", 0.1)
+td = 1.0; press("toggle"); check("new map (time reset to 1): toggle turns on", 0.1)
+press("step"); check("step while running freezes first", 0.0001)
+for _ = 1, 20 do press("slower") end; check("slower clamps at the list end", 0.005)
+for _ = 1, 20 do press("faster") end; check("faster clamps at the list start", 0.5)
 print = io.write
 if fails > 0 then os.exit(1) end
 io.write("SLOMO PASS\n")
