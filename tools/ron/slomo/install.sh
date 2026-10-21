@@ -28,9 +28,10 @@ echo "$ZIP_SHA  $CACHE/$ZIP_NAME" | sha256sum -c --quiet || { echo "UE4SS zip ch
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 unzip -q "$CACHE/$ZIP_NAME" -d "$tmp"
-# Ready or Not is UE 5.3: naming it skips UE4SS's version scan
-sed -i -e 's/^MajorVersion = *$/MajorVersion = 5/' -e 's/^MinorVersion = *$/MinorVersion = 3/' "$tmp/ue4ss/UE4SS-settings.ini"
-if ! grep -q '^MajorVersion = 5' "$tmp/ue4ss/UE4SS-settings.ini" || ! grep -q '^MinorVersion = 3' "$tmp/ue4ss/UE4SS-settings.ini"; then
+# Ready or Not is UE 5.3: naming it skips UE4SS's version scan (the ini has CRLF line endings: keep them)
+sed -i -e 's/^MajorVersion = *\(\r\?\)$/MajorVersion = 5\1/' -e 's/^MinorVersion = *\(\r\?\)$/MinorVersion = 3\1/' "$tmp/ue4ss/UE4SS-settings.ini"
+ini=$(tr -d '\r' < "$tmp/ue4ss/UE4SS-settings.ini")
+if ! grep -qx 'MajorVersion = 5' <<< "$ini" || ! grep -qx 'MinorVersion = 3' <<< "$ini"; then
 	echo "UE4SS-settings.ini: version lines not found" >&2; exit 1
 fi
 cp -r "$here/RonSlowMo" "$tmp/ue4ss/Mods/"
