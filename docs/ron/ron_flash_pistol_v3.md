@@ -24,7 +24,7 @@ in docs/ron_extraction.md); the raw dump is the appendix. Owner: Claude 1, 2026-
 | brick | value |
 |---|---|
 | material | `MI_MuzzleFlash_SMG`: additive, texture `Rifle_MuzzleFlash_Macro_Rifle_-_Copy__2_` (4×4) |
-| spawn | 1 at t = 0 (count low 0: 1 always) |
+| spawn | **0-1** at t = 0 (burst CountLow 0, Count 1: on about half the shots; flash_ref.py, and the user's RoN clip 2026-10-20 has shots with and without it: big fireballs at #735, #853, #974, core-only shots at #376, #621; corrected 2026-10-20, it said "1 always") |
 | lifetime | **0.04 s** |
 | start position | 25 cm in front of the muzzle |
 | velocity | 250 cm/s forward |
