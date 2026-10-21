@@ -4,6 +4,16 @@ Clips (user's, private): `Desktop\Deagle Progress\mkv sound clips\`
 - `2026-10-20 21-11-46.mkv`: Ready or Not, Grizzly, RonSlowMo, 22.3 s, 1080p60, ~8 shots.
 - `2026-10-20 20-43-01.mkv`: KCD2, our Grizzly, Deagle slowmo (cfg.slowmo 0.01), 9.2 s, 2 shots.
 - `2026-10-20 20-48-58.mkv`: Ready or Not at normal speed (flash = frame 83 only, 1 frame).
+**Correction (Claude 4, 2026-10-20 21:2x): the two clips are NOT at the same speed.** RonSlowMo ran at ~0.05 (RoN's
+0.04 s fireball is on screen ~46 frames), ours at deagle_slowmo 0.01, so everything of ours is ~5x longer on screen.
+Points "Ours 1" (size) and "Ours 2" (envelope) below were judged across that mismatch: RoN's fireball is about as big
+on screen as ours (2/3 of a 900 px crop), and most of the "holds ~120 frames" is the 0.01 speed. The orange haze also
+shows in RoN while its light is on (#376-410). The real differences (Claude 4's list): RoN re-draws the flipbook frame
+and core colour every rendered frame (ours: 2 baked stages held still); RoN's light fades with the particle and
+re-rolls brightness every frame, on 80 % of shots (ours: full then off); flashChance 1 in the user's settings vs RoN
+0.65 removes the smoke-only shots; smoke is already RoN's (deagle.muzzle_smoke_ron). Compare next at 0.05 on both
+(`deagle_slowmo 0.05`; RonSlowMo starts at 0.05).
+
 User verdict: "all the flashes are different, some shots had no flash just the smoke, and ours is completely off;
 even the heat distortion from the barrel you didn't add".
 
