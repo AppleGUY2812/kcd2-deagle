@@ -920,3 +920,23 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   until a release. Pressing a key that is already down again would add it twice: keys.cpp never does.
 - `[DN] key <name> down|up|hold`, `key allup` post exactly what the keyboard posts. `hold` presses it again whenever
   KCD2 lets go while the window is in the background. Untested in game.
+
+## 2026-10-20: Henry's perk list from his soul, no memory scan (Claude 4, deagle_points)
+- Why: `deagle_points` scanned all memory for the C_PerkList vtable: 2-21 s and 6.3 GB per call. On 2026-10-20 it
+  found 4 points blocks (3 before) and refused to write ("deagle_points alchemy 4").
+- **PROVEN (static, WHGame 1.5.6):** the soul layout.
+  - The C_Soul ctor (0x1803f1c7c) builds a struct at soul+0x498 (ctor 0x18070f31c).
+  - That struct holds two stat/skill/perk sets (ctor 0x18070f3e8): the live one at soul+0x560 and the template at soul+0x840.
+  - Each set holds its soul at +0 and a C_PerkList at +0x1f8; the list's +8 is the soul again.
+  - So Henry's live list is **soul+0x758**, and the template's list is soul+0xa38.
+  - This confirms fact 11 in docs/whgame_re/stat_base.md.
+- **PROVEN (static):** WUID -> soul is FUN_181f985d0, called as `(*(G)+0x80)+0x38, &wuid` with G the qword at 0x1853322a0.
+  - It is a pure table read: top byte 5 = soul, a generation check, and `soul+0x30 == wuid`.
+  - The plugin finds it through FUN_18041ed20, the soul Lua bindings' `__ThisWUID` read (an AOB, unique).
+- **PROVEN in game:** `tostring(player.soul.__ThisWUID)` is `userdata: 0500000000000251`, the same value as `player.this.id`.
+- Now Lua sends `[DN] points_soul <that>` before every points / respec call. The plugin then:
+  1. looks up the soul and checks its RTTI (C_Soul);
+  2. checks the list at +0x758 (C_PerkList RTTI, +8 = soul) and the points block (+0x58, back pointer);
+  3. writes that one block.
+  The per-call time goes to the plugin log.
+- **Untested in game:** whether the perk screen follows a write to the live block alone. The old code wrote all 3 copies.

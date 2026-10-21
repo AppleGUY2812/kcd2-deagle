@@ -1272,7 +1272,8 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "probe")) Probe_Command(rest);   // probe <name> ...: architecture step 1 checks (probe.cpp, Claude 5)
 	else if (!strcmp(cmd, "rounds")) Rounds_Command(rest);   // rounds bind | stats: the native round sim (rounds.cpp, Claude 5)
-	else if (!strcmp(cmd, "points")) {   // deagle_points: Henry's unspent perk points (perkpoints.cpp, Claude 1)
+	else if (!strcmp(cmd, "points_soul")) Points_Soul(rest);   // Henry's soul handle, sent before points / respec
+	else if (!strcmp(cmd, "points")) {   // deagle_points: Henry's unspent perk points (perkpoints.cpp)
 		std::string said = Points_Command(rest);
 		std::lock_guard<std::mutex> lk(g_consoleMu);
 		g_console.push_back("deagle_points_said " + said);
@@ -1536,8 +1537,9 @@ static DWORD WINAPI Init(LPVOID) {
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Freecam_Install(g_env, (void*)g_origFrustum);   // free camera (freecam.cpp, johnpork-18)
 	if (g_env) Probe_Install(g_env, g_game.base);   // architecture step 1 probes (probe.cpp, Claude 5)
-	if (g_env) Rounds_Install(g_env, g_game.base);
-	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
+	if (g_env) Rounds_Install(g_env, g_game.base);   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
+	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)
+	Points_Install(g_game);   // the game's WUID -> soul lookup for deagle_points / deagle_respec (perkpoints.cpp)
 	if (g_env) {
 		static const struct { int off; const char* what; } members[] = {
 			{ 0x08, "3DEngine" }, { 0x30, "PhysicalWorld" }, { 0x68, "ParticleManager" }, { 0x80, "Timer" },

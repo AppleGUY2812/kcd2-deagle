@@ -1,21 +1,18 @@
-// deagle_points: Henry's unspent perk points, per skill and per stat. Owner: Claude 1 (found in game 2026-10-18).
+// deagle_points: Henry's unspent perk points, per skill and per stat. Found in game by Claude 1 2026-10-18; owner now Claude 4 (🟪).
 //   wh::rpgmodule::C_PerkList (RTTI ".?AVC_PerkList@rpgmodule@wh@@", vtable in WHGame.dll .rdata) +0x58 -> a small
 //   heap block of points:  +0x10 uint16[4] stat points,  +0x24 uint16[] skill points indexed by skill_id
 //   (Libs/Tables/rpg/skill.xml: stealth 0 ... alchemy 6 ... houndmaster 34).
-//   Every soul has a C_PerkList (about 3000 in a town); only the player's three have a points block (the game keeps
-//   two copies in sync with the real one). Writing alchemy's u16 in the real block showed on the perk screen at once;
-//   writing a copy alone didn't (the copy is refreshed from the real one). So we write every block, and only when all
-//   blocks agree: blocks that differ could mean an NPC with its own points, and then we write nothing.
-//   A block counts only if its +0x08 points back at its C_PerkList (true for all three in game 2026-10-18): a stray
-//   qword that equals the vtable can't pass that, even when its +0x58 lands in zeroed memory that "agrees" with
-//   Henry's all-zero points (Claude 4's review). More than 3 blocks: nothing is written, the addresses are listed.
+//   Every soul has a C_PerkList; Henry's has the points block. Found from his soul since 2026-10-20 (Claude 4): Lua sends
+//   tostring(player.soul.__ThisWUID) ("points_soul"), the game's own WUID -> soul lookup gives the C_Soul, and his live
+//   list is soul+0x758 (HenryList has the layout). Before, a scan of all memory for the C_PerkList vtable took 2-21 s
+//   and 6 GB per call and refused once a 4th points block appeared (2026-10-20); the scan and its "all copies agree"
+//   rule are gone. The live list is the one the game reads (the earlier finding: writing the real block showed at once,
+//   a copy alone didn't, and copies follow the real one).
 // deagle_respec <skill>: the owned perks are C_PerkList +0x40..+0x48, an array of perk object pointers (C_BuffPerk,
 // C_MetaPerk, C_SoulAbilityPerk...), the perk's GUID at object +0x10 (in game 2026-10-18 it held exactly the save's
 // bought perks plus free ones like Lab Dweller; +0x28..+0x30 held the not-yet-owned buyable ones). Lua removes them
-// (soul:RemovePerk, which works), then respec_refund counts how many are really gone and adds that many points: one
-// point per perk, as the Lethean Water refund was (alchemy 0 -> 7 for 7 perks). All 3 player lists are read: before
-// removing, they must agree; after, the refund counts the list where the most came off (Claude 4's review: a copy may
-// lag the real one). Lua asks for the refund 0.5 s later, not in the same call (RemovePerk's effect on +0x40 timing
+// (soul:RemovePerk, which works), then respec_refund counts how many are really gone from the live list and adds that
+// many points: one point per perk, as the Lethean Water refund was (alchemy 0 -> 7 for 7 perks). Lua asks for the refund 0.5 s later, not in the same call (RemovePerk's effect on +0x40 timing
 // is unmeasured). If fewer come off than were asked, the reply says how many were asked and how to add them by hand. perkdefs.inc says which perks cost a
 // point and their sub-perks (tools/gen_perkdefs.py).
 // Skill ids 0..34 only (skill.xml's highest id is 34; in game the u16 after id 35 already held other data), and only
@@ -50,8 +47,9 @@ const Alias kAliases[] = {   // the menu's names for a few skills
 	{ "lockpicking", "thievery" }, { "reading", "scholarship" }, { "dog", "houndmaster" }, { "warfare", "fencing" },
 	{ "defence", "defense" }, { "polearms", "weapon_large" },   // the menu says Warfare for fencing (text_ui_soul.xml)
 };
-const int kStatOff = 0x10, kSkillOff = 0x24, kBlockPtr = 0x58, kBackPtr = 0x08, kMaxBlocks = 3;
+const int kStatOff = 0x10, kSkillOff = 0x24, kBlockPtr = 0x58, kBackPtr = 0x08;
 const int kOwnedBegin = 0x40, kOwnedEnd = 0x48, kPerkGuid = 0x10, kMaxOwned = 4000;
+const int kLiveList = 0x758, kTemplateList = 0xa38, kListSoul = 0x08;   // soul+0x560+0x1f8, soul+0x840+0x1f8; C_PerkList+8 = its soul
 
 struct PerkDef { int kind, idx; const char* guid; const char* subs[4]; };
 const PerkDef kPerks[] = {
@@ -70,55 +68,13 @@ bool GuidBytes(const char* g, uint8_t out[16]) {
 }
 
 Module g_game;
-uintptr_t g_vtable = 0;
+using SoulLookupFn = uintptr_t(__fastcall*)(uintptr_t registry, const uint64_t* wuid);
+uintptr_t g_soulGlobal = 0;        // the qword at VA 0x1853322a0 (1.5.6): +0x80 -> the soul registry, +0x38 its table
+SoulLookupFn g_soulLookup = nullptr;   // FUN_181f985d0: WUID -> C_Soul* (pure table read: type byte 5, generation, soul+0x30)
+uint64_t g_wuid = 0;               // Henry's soul WUID, from Lua (points_soul) before every points / respec call
 
-// RTTI type name -> the class's primary vtable: TypeDescriptor (name - 0x10) <- CompleteObjectLocator (signature 1,
-// offset 0, its own RVA at +20) <- the qword before the vtable. Only reads WHGame.dll's own image.
-uintptr_t FindVtable(const Module& m, const char* name) {
-	size_t len = strlen(name);
-	auto dos = (IMAGE_DOS_HEADER*)m.base;
-	auto nt = (IMAGE_NT_HEADERS*)(m.base + dos->e_lfanew);
-	auto first = IMAGE_FIRST_SECTION(nt);
-	int nsec = nt->FileHeader.NumberOfSections;
-	uintptr_t td = 0;
-	for (int i = 0; i < nsec && !td; i++) {
-		auto s = first + i;
-		if (s->Characteristics & IMAGE_SCN_MEM_EXECUTE) continue;
-		auto p = (const char*)(m.base + s->VirtualAddress);
-		size_t n = s->Misc.VirtualSize;
-		for (size_t o = 0; o + len < n; o++) if (p[o] == name[0] && !memcmp(p + o, name, len + 1)) { td = (uintptr_t)(p + o) - 0x10; break; }
-	}
-	if (!td) return 0;
-	uint32_t tdRva = (uint32_t)(td - m.base);
-	for (int i = 0; i < nsec; i++) {
-		auto s = first + i;
-		if (s->Characteristics & IMAGE_SCN_MEM_EXECUTE) continue;
-		auto p = (const uint8_t*)(m.base + s->VirtualAddress);
-		size_t n = s->Misc.VirtualSize;
-		for (size_t o = 0; o + 24 <= n; o += 4) {
-			auto u = (const uint32_t*)(p + o);
-			if (u[0] != 1 || u[1] != 0 || u[3] != tdRva || u[5] != (uint32_t)((uintptr_t)(p + o) - m.base)) continue;
-			uintptr_t col = (uintptr_t)(p + o);
-			for (int j = 0; j < nsec; j++) {   // the qword holding the COL's address sits right before the vtable
-				auto t = first + j;
-				if (t->Characteristics & IMAGE_SCN_MEM_EXECUTE) continue;
-				auto q = (const uint8_t*)(m.base + t->VirtualAddress);
-				size_t qn = t->Misc.VirtualSize;
-				for (size_t k = 0; k + 16 <= qn; k += 8) if (*(const uintptr_t*)(q + k) == col) return (uintptr_t)(q + k + 8);
-			}
-		}
-	}
-	return 0;
-}
-
-// one committed region: every 8-aligned qword equal to vt; faults (a region freed meanwhile) end the region quietly
-void ScanRegion(uintptr_t start, size_t size, uintptr_t vt, uintptr_t* out, int cap, int* n) {
-	__try {
-		auto q = (const uintptr_t*)start;
-		size_t count = size / 8;
-		for (size_t i = 0; i < count; i++) if (q[i] == vt && *n < cap) out[(*n)++] = start + i * 8;
-	} __except (EXCEPTION_EXECUTE_HANDLER) {}
-}
+const char* kSoulRtti = ".?AVC_Soul@rpgmodule@wh@@";
+const char* kListRtti = ".?AVC_PerkList@rpgmodule@wh@@";
 
 bool ReadBlock(uintptr_t list, uintptr_t* block, uint16_t* stats, uint16_t* skills) {
 	__try {
@@ -131,46 +87,54 @@ bool ReadBlock(uintptr_t list, uintptr_t* block, uint16_t* stats, uint16_t* skil
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+uintptr_t CallLookup(uint64_t wuid) {
+	__try { return g_soulLookup(*(uintptr_t*)(*(uintptr_t*)g_soulGlobal + 0x80) + 0x38, &wuid); }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+uintptr_t Qword(uintptr_t a) { uintptr_t v = 0; __try { v = *(uintptr_t*)a; } __except (EXCEPTION_EXECUTE_HANDLER) { v = 0; } return v; }
+
 bool WriteU16(uintptr_t addr, uint16_t v) {
 	__try { *(uint16_t*)addr = v; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
 struct Block { uintptr_t addr, list; uint16_t stats[4]; uint16_t skills[35]; };
 
-struct ScanStats { int lists = 0, regions = 0; double gb = 0, ms = 0; };
-
-// the player's points blocks: every C_PerkList in private read-write memory whose +0x58 block points back at it
-std::vector<Block> FindBlocks(ScanStats* st) {
-	std::vector<Block> blocks;
-	if (!g_game.base) g_game = GetModule("WHGame.dll");
-	if (!g_vtable && g_game.base) {
-		g_vtable = FindVtable(g_game, ".?AVC_PerkList@rpgmodule@wh@@");
-		Log("points: C_PerkList vtable %p (WHGame+0x%llx)", (void*)g_vtable, (unsigned long long)(g_vtable ? g_vtable - g_game.base : 0));
-	}
-	if (!g_vtable) return blocks;
-	static std::vector<uintptr_t> hits(20000);
-	int n = 0;
-	LARGE_INTEGER f, t0, t1;
-	QueryPerformanceFrequency(&f); QueryPerformanceCounter(&t0);
-	MEMORY_BASIC_INFORMATION mbi{};
-	for (uintptr_t a = 0x10000; VirtualQuery((void*)a, &mbi, sizeof(mbi)) == sizeof(mbi); a = (uintptr_t)mbi.BaseAddress + mbi.RegionSize) {
-		if (mbi.State == MEM_COMMIT && mbi.Type == MEM_PRIVATE && mbi.Protect == PAGE_READWRITE) {
-			ScanRegion((uintptr_t)mbi.BaseAddress, mbi.RegionSize, g_vtable, hits.data(), (int)hits.size(), &n);
-			st->regions++; st->gb += mbi.RegionSize / 1073741824.0;
-		}
-		if ((uintptr_t)mbi.BaseAddress + mbi.RegionSize <= a) break;
-	}
-	QueryPerformanceCounter(&t1);
-	st->ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
-	st->lists = n;
-	for (int i = 0; i < n; i++) {
-		Block b{};
-		if (ReadBlock(hits[i], &b.addr, b.stats, b.skills)) { b.list = hits[i]; blocks.push_back(b); }
-	}
-	return blocks;
+double Ms(const LARGE_INTEGER& t0) {
+	LARGE_INTEGER t1, f;
+	QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&f);
+	return (t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart;
 }
 
-bool Same(const Block& a, const Block& b) { return !memcmp(a.stats, b.stats, sizeof(a.stats)) && !memcmp(a.skills, b.skills, sizeof(a.skills)); }
+// Henry's live perk list and its points block: soul (from his WUID) + 0x758, every link checked. No memory scan.
+//   C_Soul ctor 0x1803f1c7c: soul+0x498 struct (ctor 0x18070f31c) holds two stat/skill/perk sets (ctor 0x18070f3e8):
+//   the live one at soul+0x560 (stats at +0xc: soul+0x56c, the base getter's) and the template at soul+0x840 (Storm's
+//   starting values, docs/whgame_re/stat_base.md fact 2). Each set has its owner soul at +0 and a C_PerkList at +0x1f8
+//   whose +8 is the soul again. So the live list is soul+0x758; the template's (soul+0xa38) is only logged.
+bool HenryList(Block* out, std::string* err) {
+	if (!g_soulLookup) { *err = "Henry's perks not found: the plugin didn't find the game's soul lookup (log: points:)"; return false; }
+	if (!g_wuid) { *err = "Henry's perks not found: no soul handle from Lua (update the Deagle pak, or load a save first)"; return false; }
+	uintptr_t soul = CallLookup(g_wuid);
+	if (!soul) { *err = "Henry's perks not found: his soul isn't loaded (load a save first)"; return false; }
+	if (RttiName(g_game, Qword(soul)) != kSoulRtti) { *err = "Henry's perks not found: the soul handle gave something else, nothing changed"; return false; }
+	uintptr_t list = soul + kLiveList;
+	if (RttiName(g_game, Qword(list)) != kListRtti || Qword(list + kListSoul) != soul) {
+		*err = "Henry's perks not found: no perk list at soul+0x758 (game update?), nothing changed"; return false;
+	}
+	Block b{};
+	if (!ReadBlock(list, &b.addr, b.stats, b.skills)) { *err = "Henry's points not found: his perk list has no points block, nothing changed"; return false; }
+	b.list = list;
+	*out = b;
+	static uintptr_t saidSoul = 0;
+	if (soul != saidSoul) {   // once per soul: where things are, and whether the template list has a points block
+		saidSoul = soul;
+		Block t{};
+		bool tpl = ReadBlock(soul + kTemplateList, &t.addr, t.stats, t.skills);
+		Log("points: Henry's soul %p (WUID %016llx), live perk list %p, points block %p; template list %s", (void*)soul,
+			(unsigned long long)g_wuid, (void*)list, (void*)b.addr, tpl ? "has a points block too" : "has no points block");
+	}
+	return true;
+}
 
 std::string List(const Block& b) {
 	std::string s;
@@ -204,31 +168,22 @@ bool ReadOwned(uintptr_t list, uint8_t (*out)[16], int cap, int* n) {
 std::vector<int> g_pending;   // kPerks indexes Lua was asked to remove (respec), counted by respec_refund
 int g_pendKind = -1, g_pendIdx = -1;
 
-// kPerks indexes of one skill / stat that each player perk list owns now, one vector per list (the real list and its
-// copies: which one is real isn't known from the outside, and a copy may lag behind it)
-bool OwnedOf(int kind, int idx, std::vector<std::vector<int>>* perList, std::string* err) {
-	ScanStats st;
-	std::vector<Block> blocks = FindBlocks(&st);
-	Log("points: respec scan %d perk lists, %zu with points (%.1f ms)", st.lists, blocks.size(), st.ms);
-	if (blocks.empty()) { *err = "Henry's perks not found (load a save first)"; return false; }
-	if ((int)blocks.size() > kMaxBlocks) { *err = "more perk-point copies than the 3 seen in game, nothing changed"; return false; }
+// kPerks indexes of one skill / stat that Henry's live perk list owns now
+bool OwnedOf(int kind, int idx, std::vector<int>* found, std::string* err) {
+	LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
+	Block b{};
+	if (!HenryList(&b, err)) return false;
 	static uint8_t owned[kMaxOwned][16];
-	perList->clear();
-	std::string counts;
-	for (auto& b : blocks) {
-		int n = 0;
-		if (!ReadOwned(b.list, owned, kMaxOwned, &n)) { *err = "Henry's owned-perk list didn't read, nothing changed"; return false; }
-		std::vector<int> found;
-		for (int i = 0; i < (int)(sizeof(kPerks) / sizeof(kPerks[0])); i++) {
-			if (kPerks[i].kind != kind || kPerks[i].idx != idx) continue;
-			uint8_t g[16];
-			if (!GuidBytes(kPerks[i].guid, g)) continue;
-			for (int k = 0; k < n; k++) if (!memcmp(owned[k], g, 16)) { found.push_back(i); break; }
-		}
-		char c[48]; snprintf(c, sizeof(c), " [%p: %d owned, %zu of this skill]", (void*)b.list, n, found.size()); counts += c;
-		perList->push_back(found);
+	int n = 0;
+	if (!ReadOwned(b.list, owned, kMaxOwned, &n)) { *err = "Henry's owned-perk list didn't read, nothing changed"; return false; }
+	found->clear();
+	for (int i = 0; i < (int)(sizeof(kPerks) / sizeof(kPerks[0])); i++) {
+		if (kPerks[i].kind != kind || kPerks[i].idx != idx) continue;
+		uint8_t g[16];
+		if (!GuidBytes(kPerks[i].guid, g)) continue;
+		for (int k = 0; k < n; k++) if (!memcmp(owned[k], g, 16)) { found->push_back(i); break; }
 	}
-	Log("points: respec lists%s", counts.c_str());
+	Log("points: respec read: %d owned, %zu of this skill (%.3f ms)", n, found->size(), Ms(t0));
 	return true;
 }
 
@@ -241,6 +196,36 @@ std::string PointsCommand(const char* rest);
 
 }  // namespace
 
+void Points_Install(const Module& game) {
+	g_game = game;
+	// FUN_18041ed20 (the soul Lua bindings' "which soul": the table's __ThisWUID, then the registry lookup):
+	// lea rdx,"__ThisWUID"; mov [rsp+30h],rbx; call GetValue; test al,al; je; mov rax,[rsp+30h]; lea rdx,[rsp+30h];
+	// mov [rsp+30h],rax; mov rax,[G]; mov rcx,[rax+80h]; add rcx,38h; call lookup
+	uintptr_t a = FindUnique(game, "48 8D 15 ?? ?? ?? ?? 48 89 5C 24 30 E8 ?? ?? ?? ?? 84 C0 74 ?? 48 8B 44 24 30 48 8D 54 24 30 "
+		"48 89 44 24 30 48 8B 05 ?? ?? ?? ?? 48 8B 88 80 00 00 00 48 83 C1 38 E8");
+	if (a) {
+		g_soulGlobal = RipTarget(a + 0x24, 3, 7);
+		g_soulLookup = (SoulLookupFn)RipTarget(a + 0x36, 1, 5);
+	}
+	Log("points: soul registry global %p, lookup %p", (void*)g_soulGlobal, (void*)g_soulLookup);
+}
+
+// "userdata: 0500000000012345" (Lua's tostring of the soul's __ThisWUID, a light userdata) -> the WUID
+void Points_Soul(const char* rest) {
+	const char* p = strrchr(rest, ':');
+	p = p ? p + 1 : rest;
+	while (*p == ' ') p++;
+	char* end = nullptr;
+	uint64_t w = _strtoui64(p, &end, 16);
+	if (end == p || (w >> 56) != 5) {   // the lookup only takes type 5 (a soul) in the top byte
+		if (g_wuid) Log("points: bad soul handle '%s', forgot the old one", rest);
+		else { static int said = 0; if (said++ < 5) Log("points: bad soul handle '%s'", rest); }
+		g_wuid = 0;
+		return;
+	}
+	g_wuid = w;
+}
+
 std::string Points_Command(const char* rest) { return Said(PointsCommand(rest)); }
 
 std::string Respec_Command(const char* rest) {
@@ -248,12 +233,10 @@ std::string Respec_Command(const char* rest) {
 	bool isStat = false;
 	int idx = sscanf_s(rest, "%47s", name, (unsigned)sizeof(name)) == 1 ? Lookup(name, &isStat) : -1;
 	if (idx < 0) return Said(std::string("usage: deagle_respec <skill> (e.g. alchemy); '") + name + "' isn't one");
-	std::vector<std::vector<int>> lists;
+	std::vector<int> found;
 	std::string err;
-	if (!OwnedOf(isStat ? 1 : 0, idx, &lists, &err)) return Said(err);
+	if (!OwnedOf(isStat ? 1 : 0, idx, &found, &err)) return Said(err);
 	const char* label = isStat ? kStats[idx] : kSkills[idx];
-	for (auto& l : lists) if (l != lists[0]) return Said(std::string("the copies of Henry's perk list disagree about ") + label + ", nothing changed (try again in a moment)");
-	std::vector<int> found = lists[0];
 	if (found.empty()) return Said(std::string("no ") + label + " perks to reset");
 	g_pending = found; g_pendKind = isStat ? 1 : 0; g_pendIdx = idx;
 	std::string cmd = std::string("REMOVE ") + label;   // main.cpp turns this into deagle_respec_remove
@@ -273,16 +256,11 @@ std::string Respec_Refund() {
 	int asked = (int)g_pending.size();
 	char fix[160];
 	snprintf(fix, sizeof(fix), " (%d were asked to come off; if they're gone from the perk screen, deagle_points %s +%d gives the points)", asked, label, asked);
-	std::vector<std::vector<int>> lists;
+	std::vector<int> still;
 	std::string err;
-	if (!OwnedOf(kind, idx, &lists, &err)) return Said("respec: " + err + fix);
-	// the most that came off in any one list: the real list updates first, a lagging copy would only count fewer
+	if (!OwnedOf(kind, idx, &still, &err)) return Said("respec: " + err + fix);
 	int gone = 0;
-	for (auto& still : lists) {
-		int g = 0;
-		for (int i : g_pending) { bool kept = false; for (int k : still) if (k == i) kept = true; if (!kept) g++; }
-		if (g > gone) gone = g;
-	}
+	for (int i : g_pending) { bool kept = false; for (int k : still) if (k == i) kept = true; if (!kept) gone++; }
 	if (!gone) return Said(std::string("respec ") + label + ": no perk came off by the list, no points added" + fix);
 	char arg[64];
 	snprintf(arg, sizeof(arg), "%s +%d", label, gone);
@@ -296,7 +274,10 @@ std::string Respec_Refund() {
 
 namespace {
 
+// replies keep the shapes tools/points_ui.ps1 parses: the list ("alchemy 6, survival 2" / "no unspent points"),
+// "<key> <old> -> <new> ...", and refusals containing "not found" / "nothing changed" / "isn't"
 std::string PointsCommand(const char* rest) {
+	LARGE_INTEGER t0; QueryPerformanceCounter(&t0);
 	char name[48] = {}, val[16] = {};
 	int got = sscanf_s(rest, "%47s %15s", name, (unsigned)sizeof(name), val, (unsigned)sizeof(val));
 	bool isStat = false;
@@ -306,35 +287,25 @@ std::string PointsCommand(const char* rest) {
 		if (idx < 0) return std::string("unknown skill or stat '") + name + "' (e.g. alchemy, survival, horsemanship, sword, stat0)";
 		if (got < 2) return "usage: deagle_points [<skill|stat> <n> | +n | -n]";
 	}
-	ScanStats st;
-	std::vector<Block> blocks = FindBlocks(&st);
-	char head[96];
-	snprintf(head, sizeof(head), "%d perk lists, %zu with points", st.lists, blocks.size());
-	Log("points: %s (scan %.1f ms, %d regions, %.2f GB)", head, st.ms, st.regions, st.gb);
-	if (blocks.empty()) return std::string(head) + ": Henry's points not found (load a save first)";
-	if ((int)blocks.size() > kMaxBlocks) {
-		std::string s = std::string(head) + ", more than the 3 seen in game, nothing changed:";
-		for (auto& c : blocks) { char a[32]; snprintf(a, sizeof(a), " %p", (void*)c.addr); s += a; }
-		return s;
-	}
-	for (auto& b : blocks) if (!Same(b, blocks[0])) {
-		std::string s = std::string(head) + " that DIFFER, nothing changed:";
-		for (auto& c : blocks) { char a[32]; snprintf(a, sizeof(a), " [%p] ", (void*)c.addr); s += a + List(c); }
-		return s;
-	}
-	if (got < 1) return List(blocks[0]);
-	uint16_t old = isStat ? blocks[0].stats[idx] : blocks[0].skills[idx];
+	Block b{};
+	std::string err;
+	if (!HenryList(&b, &err)) { Log("points: %s (%.3f ms)", err.c_str(), Ms(t0)); return err; }
+	if (got < 1) { std::string l = List(b); Log("points: list: %s (%.3f ms)", l.c_str(), Ms(t0)); return l; }
+	uint16_t old = isStat ? b.stats[idx] : b.skills[idx];
 	char* end = nullptr;
 	long v = strtol(val, &end, 10);
 	if (end == val || *end) return std::string("'") + val + "' isn't a number (e.g. 7, +2, -1); nothing changed";
 	if (val[0] == '+' || val[0] == '-') v += old;
 	if (v < 0 || v > 999) return "points must end up between 0 and 999";
-	int wrote = 0;
-	for (auto& b : blocks) if (WriteU16(b.addr + (isStat ? kStatOff : kSkillOff) + idx * 2, (uint16_t)v)) wrote++;
 	const char* label = isStat ? kStats[idx] : kSkills[idx];
-	Log("points: %s %u -> %ld in %d of %zu blocks", label, old, v, wrote, blocks.size());
+	if (!WriteU16(b.addr + (isStat ? kStatOff : kSkillOff) + idx * 2, (uint16_t)v)) {
+		Log("points: %s write to %p FAILED", label, (void*)b.addr);
+		return std::string(label) + ": the write failed, nothing changed";
+	}
+	double ms = Ms(t0);
+	Log("points: %s %u -> %ld (block %p, %.3f ms)", label, old, v, (void*)b.addr, ms);
 	char out[160];
-	snprintf(out, sizeof(out), "%s %u -> %ld (%d of %zu copies written); reopen the perk screen", label, old, v, wrote, blocks.size());
+	snprintf(out, sizeof(out), "%s %u -> %ld; reopen the perk screen (%.2f ms)", label, old, v, ms);
 	return out;
 }
 
