@@ -105,8 +105,11 @@ the user's own saves, which were read only. VAs use image base 0x180000000. Noth
     - That fits one window Raise of Strength to 25: AdvanceToStatLevel added T(25) - T(18) = 6300 XP, i.e. 7 levels.
     - 25 + 6.34 clamps to 30, and the stat screen shows that as "25 (+5)", the cap minus the base.
     - Line 824 reloaded autosave378, so live Strength is 18 again unless the user has played and saved since.
-11. **INFERRED, not used:** the 3 "perk lists" perkpoints.cpp finds are probably the live list (soul+0x560+0x1f8) and the template list
-    (soul+0x840+0x1f8) plus one more. That is not checked, so do not derive the soul pointer from them.
+11. **PROVEN statically (Claude 4, df59127, 2026-10-20):** the live C_PerkList is at soul+0x560+0x1f8 = soul+0x758
+    (RTTI C_PerkList, its +8 = the soul), the template list at soul+0x840+0x1f8 (soul ctor chain in MODLOG). The
+    plugin now resolves the soul from Lua's `player.soul.__ThisWUID` through the game's WUID->soul table and writes
+    only the live list's points block; no memory scan. Untested in game: whether the perk screen follows a write to
+    the live block alone.
 
 ## Recommendation
 1. **Raise (Lua only, works now):** call `player.soul:AdvanceToStatLevel('<stat>', to)` without the window's
