@@ -196,5 +196,11 @@ Tests (stand in the same spot, wait 10 s, open the inventory 5 times, before vs 
   after KCD2's idle trim threw them out on close. The gate hook cannot touch it; the levers are the streaming budget /
   idle trim (VRAM cost) or preloading the room.
 - `user.cfg`: `wh_ui_ApseCameraChangeTime 0.15` (default 0.5), `wh_ui_ApseOpenFaderFadeInDuration 0`,
-  `wh_ui_ApseUnloadMode 0`, `wh_cc_LRUCache 1`, `wh_cc_MaxSkinLoaderJobs 4`. Verified live with the console
+  `wh_cc_LRUCache 1`, `wh_cc_MaxSkinLoaderJobs 4`. Verified live with the console
   (`wh_ui_ApseCameraChangeTime = 0.15`).
+- **`wh_ui_ApseUnloadMode 0` was pulled on 2026-10-23** (the game's default 2 is back). First report of the inventory
+  going blank and unresponsive right after selling with G came while it was on: with every Apse movie kept alive, the
+  movie (and the weight map's cached side / data references) survives the trade screen instead of being reloaded
+  fresh, so a sale can leave the inventory list drawing against a dead data model. It only ever bought tab switches,
+  so it is not worth the risk; put it back only with a reason and a test of "sell one thing, close the trade, open the
+  inventory" behind it.
