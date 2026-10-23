@@ -183,3 +183,18 @@ Tests (stand in the same spot, wait 10 s, open the inventory 5 times, before vs 
   `wh_cc_LRUCache 1` (2nd open on should be faster if the skins stay cached), then `wh_cc_MaxSkinLoaderJobs 4`. If a
   cvar only applies at start, it goes in `user.cfg`. `deagle_invtime 2` (the gate skipped, a test, save first) tells
   whether the readiness wait (it watches clothing too) just takes the time over.
+
+## Measured in game (2026-10-23): what helped, what did not
+- `deagle_invtime 2` (gate told ready at once): open -> fade in **1.12 s -> ~0.65 s**, over 5+ opens. This is the win
+  that shipped: `invtime` is now a kept setting, default **2**, applied from `NativeHello` at every load
+  (`deagle_set invtime 0` turns it off, `1` only logs).
+- `deagle_invtime 3` (readiness mask `0x81` passed as 0): no faster than `2` - the fade still came ~460 ms after the
+  wait was removed.
+- `deagle_invtime 4` (`IsReady(0x81)` forced to 1): no gain either, 677 / 670 / 702 / 672 / 686 / 932 / 829 / 813 ms
+  against 647-657 ms for `2`/`3`. The readiness wait was never the bottleneck.
+- What is left (~460-490 ms) is the Apse room's ~434 MB of textures streaming in at `r_TexturesStreamingMaxRequestedMB 4`
+  after KCD2's idle trim threw them out on close. The gate hook cannot touch it; the levers are the streaming budget /
+  idle trim (VRAM cost) or preloading the room.
+- `user.cfg`: `wh_ui_ApseCameraChangeTime 0.15` (default 0.5), `wh_ui_ApseOpenFaderFadeInDuration 0`,
+  `wh_ui_ApseUnloadMode 0`, `wh_cc_LRUCache 1`, `wh_cc_MaxSkinLoaderJobs 4`. Verified live with the console
+  (`wh_ui_ApseCameraChangeTime = 0.15`).
