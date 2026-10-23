@@ -192,6 +192,31 @@ Read with `tools/loadtime.py`. One session, so far (Ryzen 5 3600 / RTX 3070 Ti /
 The 22 s is the number to beat on "saves load slower": it is a save into a loaded level with every mod in, and it is
 the first one measured with timestamps. Boot and level are one sample each. Fast travel has no sample yet.
 
+### What the load is doing (sampled 2026-10-23, `tools/loadprofile.ps1`, 1 s rows)
+
+The log is silent from `Loading saved game` to `[Deagle] gameplay started`, so the load was sampled from outside while
+it ran (boot 14:29:27 -> controllable 14:31:02, 95 s):
+
+| | during the load | after |
+|---|---|---|
+| game CPU | up to **5 cores** (peaks 5.0/s), then ~2.5 | 2.6-3.0 |
+| disk read | **130-200 MB/s** sustained, spikes to 204 | 0.3-2 |
+| GPU | 3-40 % | ~37 |
+| VRAM | 2.3 -> **6.2 GB** | 6.2 GB flat |
+| log | `Terrain: Waiting for 14153 async loaders...` then `DONE` | |
+
+So it is mixed, not one bottleneck: a serialized stretch (entity deserialize, world build), a 14k-chunk terrain
+stream, and 130-200 MB/s of pak reads. It is not VRAM-starved at the end (6.2 / 8.2 GB) and not GPU-bound.
+
+**Hardware placement is the biggest lever and it is bad right now:** `E:` - where the game, its 93 GB of paks, the
+workshop mods and the saves all live - is a **Samsung 870 EVO SATA SSD** (disk 0), while both NVMe drives are the OS
+(`C:`, WDC SN550, 51 GB free) and data (`D:`, Crucial P3, 39 GB free). Neither has room for the 93 GB game; `F:` (2 TB
+HDD) has 1.5 TB free to offload to. Moving KCD2 to an NVMe is worth more than anything in `user.cfg`.
+
+Tried 2026-10-23, live: `wh_cc_RequiredPostLoadReadyManagers` 35 -> 10 and `wh_cc_RequiredPostLoadReadyTime` 0.5 -> 0.2
+(the game waits for that many NPC characters to be ready before it hands control over). Measurement pending; revert to
+35 / 0.5 if arrivals show empty or T-posed NPCs.
+
 ## Sources
 
 [1] Unreal Animation Budget Allocator: https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-budget-allocator-in-unreal-engine
