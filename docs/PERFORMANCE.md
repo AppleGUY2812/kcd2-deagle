@@ -213,15 +213,14 @@ workshop mods and the saves all live - is a **Samsung 870 EVO SATA SSD** (disk 0
 (`C:`, WDC SN550, 51 GB free) and data (`D:`, Crucial P3, 39 GB free). Neither has room for the 93 GB game; `F:` (2 TB
 HDD) has 1.5 TB free to offload to. Moving KCD2 to an NVMe is worth more than anything in `user.cfg`.
 
-Tried 2026-10-23, live: `wh_cc_RequiredPostLoadReadyManagers` 35 -> 10 and `wh_cc_RequiredPostLoadReadyTime` 0.5 -> 0.2
-(the game waits for that many NPC characters to be ready before it hands control over). Same session, same level
-already up, same 22 mods: save load **22 s -> 7 s** (autosave584 14:12:00-14:12:22, autosave586 14:33:15-14:33:22) and
-the boot load 19 s. Apse opens in the same session: 143 / 288 / 182 / 373 ms.
+Tried, and **it was not the cvars**: `wh_cc_RequiredPostLoadReadyManagers` 35 -> 10 and `...ReadyTime` 0.5 -> 0.2
+measured 7 s for a save load, but flipping back to the game's own 35 / 0.5 and loading again in the same session
+measured **8 s** (14:42:38-14:42:46). Both values are back at the game's defaults and neither is in `user.cfg`.
 
-Caveat, so this does not become folklore: the 22 s sample was the first load after a full level load and this one was
-on an established session, so part of the gap may be warm caches rather than the cvars. An A/B at the same session
-state (35 / 0.5, one load, then back to 10 / 0.2, one load) is still owed before the numbers are quoted as causal.
-Watch arrivals for empty or T-posed NPCs; 35 / 0.5 is the game's own value.
+The 22 s that started this hunt was the **first** load after the whole level had just loaded (shader PSOs, terrain,
+13k entity loaders), not a property of save loading. A save load into a level that is already up is **7-8 s** with
+22 mods on this machine. The honest lesson: measure the same event twice before crediting a change - the 22 s was a
+different event masquerading as the same one.
 
 ## Sources
 
