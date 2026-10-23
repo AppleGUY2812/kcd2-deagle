@@ -13,6 +13,10 @@
 // "state +0x38 == 1", reached once every clothing part in its list has loaded. "invtime 2" (skip): see HkGate.
 // Off by default: "invtime 1" checks every prologue byte for byte (all or none), then hooks; "invtime 0" unhooks.
 // "invtime 2": on, and the inventory gate is skipped (HkGate); "invtime 1" again turns the skip off.
+// "invtime 3": on, gate skipped, and the Apse/shop readiness wait (mask 0x81) passed as 0: the room pops in at once.
+// "invtime 4": 2 + the readiness service itself is told "ready" for mask 0x81 while the screen opens (HkReady), so the
+// observer fires on its next update. 3 measured no better than 2 (mask 0 did not make the observer fire: in game the fade
+// still came ~460 ms after the wait was made), so 4 asks IsReady instead of the observer's argument.
 #include <windows.h>
 #include <intrin.h>
 #include <cstdint>
@@ -32,10 +36,14 @@ using Fn4 = uintptr_t(__fastcall*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 
 struct Site { uint32_t rva; unsigned char bytes[16]; const char* name; void* hook; Fn4* orig; uintptr_t at; };
 
-Fn4 g_open = nullptr, g_gate = nullptr, g_wait = nullptr, g_done = nullptr;
+Fn4 g_open = nullptr, g_gate = nullptr, g_wait = nullptr, g_done = nullptr, g_ready = nullptr;
 LARGE_INTEGER g_t0 = {}, g_freq = {};
 bool g_created = false, g_on = false;
 int g_lastGate = -1;   // the gate's last answer this open (-1: none yet)
+bool g_forceReadyMode = false;   // "invtime 4": tell the readiness service "ready" while the screen opens
+bool g_forceReady = false;       // armed by HkOpen, cleared by HkDone
+bool g_loggedReady = false;
+double g_forceUntil = 0;
 
 double Ms() {
 	LARGE_INTEGER now; QueryPerformanceCounter(&now);
@@ -45,6 +53,11 @@ double Ms() {
 uintptr_t __fastcall HkOpen(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
 	QueryPerformanceCounter(&g_t0);
 	g_lastGate = -1;
+	if (g_forceReadyMode) {   // arm "the service is ready" for the whole open, cleared by HkDone (or after 3 s)
+		g_forceReady = true;
+		g_forceUntil = Ms() + 3000.0;
+		g_loggedReady = false;
+	}
 	Log("invtime open (fade to black) screen %p", (void*)a);
 	uintptr_t r = g_open(a, b, c, d);
 	Log("invtime open returned at %.1f ms", Ms());
@@ -80,7 +93,23 @@ void LogGate(uintptr_t screen) {
 // gate's real ready time isn't logged: compare open -> fade in, skip off vs on, over 5+ opens each
 constexpr uintptr_t kGateCallRet = 0x567e50;
 bool g_skip = false;
+bool g_fastWait = false;   // "invtime 3": also pass the Apse/shop wait mask 0x81 as 0 (no readiness wait)
 uintptr_t g_base = 0;
+
+// 0x8baee0 C_ReadinessService::IsReady(this, u32 mask) -> bool (AL): mov r15d,edx confirms the mask is arg 2.
+// "invtime 4" answers 1 for the inventory's mask (0x81: graphics streaming | clothing system) while the screen is opening,
+// so C_ReadinessObserver fires on its next update instead of when the room's textures and the dummy's clothes are loaded.
+// Scoped by mask + the open window + a 3 s cap, so every other waiter (AI, saves, fast travel) passes through untouched.
+uintptr_t __fastcall HkReady(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+	if (g_forceReady && (uint32_t)b == 0x81u) {
+		if (Ms() > g_forceUntil) g_forceReady = false;   // never armed forever if HkDone is missed
+		else {
+			if (!g_loggedReady) { g_loggedReady = true; Log("invtime fast: IsReady(0x81) -> 1 at %.1f ms", Ms()); }
+			return 1;
+		}
+	}
+	return g_ready(a, b, c, d);
+}
 
 uintptr_t __fastcall HkGate(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
 	uintptr_t ret = (uintptr_t)_ReturnAddress();
@@ -98,11 +127,19 @@ uintptr_t __fastcall HkGate(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) 
 	return r;
 }
 uintptr_t __fastcall HkWait(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
-	if ((b & 0xFFFFFFFF) == 0x81) Log("invtime readiness wait made (mask 0x81) at %.1f ms", Ms());
+	uint32_t mask = (uint32_t)b;
+	if (mask == 0x81) {
+		Log("invtime readiness wait made (mask 0x81) at %.1f ms", Ms());
+		if (g_fastWait) {   // no wait: the room fades in while the dummy / textures are still streaming
+			Log("invtime fast: readiness mask 0x81 -> 0 (no wait) at %.1f ms", Ms());
+			b = 0;
+		}
+	}
 	return g_wait(a, b, c, d);
 }
 uintptr_t __fastcall HkDone(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
 	Log("invtime readiness done, fade in at %.1f ms", Ms());
+	if (g_forceReady) { g_forceReady = false; Log("invtime fast: readiness forcing off at %.1f ms", Ms()); }
 	return g_done(a, b, c, d);
 }
 
@@ -111,6 +148,7 @@ Site g_sites[] = {
 	{ 0x1f4a260, { 0x48,0x83,0xec,0x28,0x48,0x8b,0x49,0x20,0x48,0x85,0xc9,0x74,0x1e,0xe8,0x52,0x24 }, "gate", (void*)&HkGate, &g_gate, 0 },
 	{ 0xfc3ec0,  { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x10,0x49,0x89,0x73,0x20,0x57,0x48,0x83,0xec,0x70 }, "wait", (void*)&HkWait, &g_wait, 0 },
 	{ 0x1f4dc00, { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0x41,0x08,0x48,0x8b }, "done", (void*)&HkDone, &g_done, 0 },
+	{ 0x8baee0,  { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57 }, "ready", (void*)&HkReady, &g_ready, 0 },
 };
 constexpr int kSites = sizeof(g_sites) / sizeof(g_sites[0]);
 
@@ -139,11 +177,19 @@ bool Create() {
 }  // namespace
 
 void Invtime_Command(const char* args) {
-	int n = args ? atoi(args) : 0;   // 0 off, 1 on, 2 on + skip (HkGate)
+	int n = args ? atoi(args) : 0;   // 0 off, 1 on, 2 on + skip (HkGate), 3 on + skip + mask 0x81 passed as 0, 4 = 2 + IsReady forced
 	bool want = n != 0;
-	if (want && (n == 2) != g_skip) {
-		g_skip = n == 2;
+	bool skip = n >= 2;
+	bool fastWait = n == 3;
+	bool forceReady = n >= 4;
+	if (want && (skip != g_skip || fastWait != g_fastWait || forceReady != g_forceReadyMode)) {
+		g_skip = skip;
+		g_fastWait = fastWait;
+		g_forceReadyMode = forceReady;
+		if (!g_forceReadyMode) g_forceReady = false;
 		Log("invtime skip %s", g_skip ? "on: the inventory gate is told ready at once (a test: save first)" : "off");
+		if (g_fastWait) Log("invtime fast: the readiness wait (mask 0x81) is skipped too, so the room pops in while it streams");
+		if (g_forceReadyMode) Log("invtime fast: the readiness service answers ready (mask 0x81) while the screen opens");
 	}
 	if (want == g_on) { Log("invtime already %s", g_on ? "on" : "off"); return; }
 	if (want && !g_created && !(g_created = Create())) return;

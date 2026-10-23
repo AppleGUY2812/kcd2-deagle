@@ -118,6 +118,9 @@ texture mips (and the dummy's gear).
 2. **`wh_r_TexturesStreamingIdleTrimLimitKB 0`** (or a few MB). Data-only. Gain: room mips may stay in VRAM between
    opens → 2nd+ opens near instant, and less blur after closing. Risk: pool stays full, trimming only under pressure;
    needs VRAM headroom (8 GB+ GPUs fine, unverified). Not cheat.
+   > **Pulled 2026-10-23**, together with #1: added to `user.cfg` at 12:12 and removed again before the next
+   > launch. They are a VRAM/IO trade (keep everything resident, stream 4x per frame) on an 8 GB card, and the
+   > open world was already being reported as stuttery. Re-test one at a time once smoothness is settled.
 3. **`wh_ui_ApseOpenFaderFadeInDuration 0`** + **`wh_ui_ApseUnloadMode 0`**. Data-only, safe. Gain: -0.1 s fade,
    no movie reloads (tens of ms, a few MB RAM).
 4. **`wh_sys_ReadinessObserverTimeoutDuration 0.3`**. Gain: hard cap, open ≤ ~0.4 s. Risk: global for C++ fades
