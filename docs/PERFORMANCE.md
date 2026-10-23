@@ -214,8 +214,14 @@ workshop mods and the saves all live - is a **Samsung 870 EVO SATA SSD** (disk 0
 HDD) has 1.5 TB free to offload to. Moving KCD2 to an NVMe is worth more than anything in `user.cfg`.
 
 Tried 2026-10-23, live: `wh_cc_RequiredPostLoadReadyManagers` 35 -> 10 and `wh_cc_RequiredPostLoadReadyTime` 0.5 -> 0.2
-(the game waits for that many NPC characters to be ready before it hands control over). Measurement pending; revert to
-35 / 0.5 if arrivals show empty or T-posed NPCs.
+(the game waits for that many NPC characters to be ready before it hands control over). Same session, same level
+already up, same 22 mods: save load **22 s -> 7 s** (autosave584 14:12:00-14:12:22, autosave586 14:33:15-14:33:22) and
+the boot load 19 s. Apse opens in the same session: 143 / 288 / 182 / 373 ms.
+
+Caveat, so this does not become folklore: the 22 s sample was the first load after a full level load and this one was
+on an established session, so part of the gap may be warm caches rather than the cvars. An A/B at the same session
+state (35 / 0.5, one load, then back to 10 / 0.2, one load) is still owed before the numbers are quoted as causal.
+Watch arrivals for empty or T-posed NPCs; 35 / 0.5 is the game's own value.
 
 ## Sources
 

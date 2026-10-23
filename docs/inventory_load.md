@@ -198,6 +198,9 @@ Tests (stand in the same spot, wait 10 s, open the inventory 5 times, before vs 
 - `user.cfg`: `wh_ui_ApseCameraChangeTime 0.15` (default 0.5), `wh_ui_ApseOpenFaderFadeInDuration 0`,
   `wh_cc_LRUCache 1`, `wh_cc_MaxSkinLoaderJobs 4`. Verified live with the console
   (`wh_ui_ApseCameraChangeTime = 0.15`).
+- **Confirmed in game 2026-10-23:** with the unload mode back at the game's 2, selling with G and reopening the
+  inventory is clean (the shop path logged `shop: armed the amount box, sending the basket click`, the sale went
+  through, the inventory opened normally). The blank inventory did not come back.
 - **`wh_ui_ApseUnloadMode 0` was pulled on 2026-10-23** (the game's default 2 is back). First report of the inventory
   going blank and unresponsive right after selling with G came while it was on: with every Apse movie kept alive, the
   movie (and the weight map's cached side / data references) survives the trade screen instead of being reloaded

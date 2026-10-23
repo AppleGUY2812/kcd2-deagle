@@ -134,7 +134,7 @@ def apse(path):
 
 def report(path, plugin):
     print("== %s" % os.path.basename(path))
-    rows = spans(path) + apse(plugin)
+    rows = spans(path) + (apse(plugin) if plugin else [])
     if all(secs is None for kind, secs, *_ in rows):
         print("   no timestamps in this log (log_IncludeTime was off); %d markers, all without times" % len(rows))
         return
@@ -163,10 +163,11 @@ def main():
         back = os.path.join(GAME, "logbackups")
         logs = sorted((os.path.join(back, f) for f in os.listdir(back) if f.startswith("kcd")),
                       key=os.path.getmtime)
-    else:
-        logs = [os.path.join(GAME, "kcd.log")]
-    for p in logs:
-        report(p, plugin)
+        # the plugin log is the running session's only: it has no date, so it can't be matched to an old log
+        for p in logs:
+            report(p, None)
+        return
+    report(os.path.join(GAME, "kcd.log"), plugin)
 
 
 if __name__ == "__main__":
