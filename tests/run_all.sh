@@ -22,6 +22,9 @@ if command -v g++ >/dev/null; then
   [ -f "$so" ] && { luajit tests/run_round_contract.lua --native "$so" >/dev/null || { echo "FAIL run_round_contract --native"; fail=1; }; }
   # and ballistics.lua's native round path (cfg.roundSim "native", Claude 1) through the DN binding's stand-in
   [ -f "$so" ] && { luajit tests/run_round_contract.lua --dn "$so" >/dev/null || { echo "FAIL run_round_contract --dn"; fail=1; }; }
+  # step 7: the static / dynamic split (one static cast per ~50 m chord, dynamic-only per step)
+  { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/sim_split_test.cpp native/sim/sim.cpp -o native/build/test/sim_split_test &&
+    native/build/test/sim_split_test >/dev/null; } || { echo "FAIL sim_split_test"; fail=1; }
   # Ready or Not's recoil in the plugin (native/src/ronvm.cpp, Claude 4) against its decompiled numbers
   mkdir -p native/build/test
   { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/ronvm_test.cpp native/src/ronvm.cpp -o native/build/test/ronvm_test &&
@@ -43,6 +46,7 @@ luajit tests/run_layers.lua >/dev/null || { echo "FAIL run_layers"; fail=1; }
 luajit tests/run_perf.lua >/dev/null || { echo "FAIL run_perf"; fail=1; }
 luajit tests/run_effects.lua >/dev/null || { echo "FAIL run_effects"; fail=1; }
 python3 tests/test_profile_guess.py >/dev/null || { echo "FAIL test_profile_guess"; fail=1; }
+python3 tests/test_loadtime.py >/dev/null || { echo "FAIL test_loadtime"; fail=1; }
 python3 tools/check_native.py . >/dev/null || { echo "FAIL check_native"; fail=1; }
 python3 tools/check_fx.py . >/dev/null || { echo "FAIL check_fx"; fail=1; }
 python3 tools/fx_hold.py --check >/dev/null || { echo "FAIL fx_hold"; fail=1; }

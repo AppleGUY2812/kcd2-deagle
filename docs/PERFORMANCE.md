@@ -78,6 +78,10 @@ included), viewmodel / HUD / motion 0.2. These are our choice (anchored on [1][2
   per frame, idle vs shooting. The wrapper itself makes a table per call: read the ranking, not absolute ms.
 - `tools/perf/engine_costs.lua`: single engine calls timed in the running game (read-only).
 - `tools/perf/cvars.lua`: which profiling cvars KCD2 kept.
+- `tools/loadtime.py`: the real boot / level / save-load / fast-travel / Apse-open times, read off `kcd.log` (and the
+  plugin log's `invtime` lines). `python3 tools/loadtime.py` = the running session, `--all` = every kept log. It needs
+  `log_IncludeTime 1` (the plugin sends it at start; `tools/live.sh cmd "log_IncludeTime 1"` in a running game), and
+  the Apse rows need `deagle_invtime` on. `tests/test_loadtime.py` keeps its parsing honest.
 - `tests/run_perf.lua`: the gates (section 2, step 8) and a garbage split per function.
 - The plugin log (`deagle_native.log` next to the exe): `ron: update <avg> us avg, <max> max ...` every 3000 updates.
 - PresentMon for frame percentiles and CPU / GPU split [6].
@@ -148,7 +152,7 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 26 | `deagle_stress` double-counts EnvTick / MotionTick / DrawHud inside VmTick and misses VmPlace via OnUpdate | wrong numbers | stress | 🟪 | 🔧 |
 | 27 | Path drawing: shifts 600 entries per line, 600 pcall DrawLines a frame; PathMark builds 9 tables a hit even when off | 1-3 ms a frame while on | debug | 🟪 | 🔧 ring index |
 | 28 | Holes: life 300 s, one per ricochet skip; `CreateMatDecal` never timed; the pool fills in a minute at 15 rounds/s | ❓ | holes | 🟪 | ❓ time it at the test wall; then 60-120 s, no hole past ~80 m |
-| 29 | Far impacts (300-1000 m) get the full effect + hole + sound | wasted pool slots | effects / holes | 🟦🟪 | ✅ effects: none past 250 m x the debug zoom (a34cb45, gated in run_perf); 🔧 holes: none past ~80 m (sounds: ✅ #12) |
+| 29 | Far impacts (300-1000 m) get the full effect + hole + sound | wasted pool slots | effects / holes | 🟦🟪 | ✅ effects: none past 250 m x the debug zoom (a34cb45, gated in run_perf); ✅ holes: none past 100 m x the debug zoom (+0.5 m slack), 2026-10-22, tests/run_hits.lua; the two draws still happen so the physics / golden trace is unchanged (sounds: ✅ #12) |
 | 30 | Muzzle flash lights: 2 per shot, 40 m radius (GPU) | est. 0.2-0.5 ms GPU per light | flash | 🟪 | ❓ compare the look at 20 m (the user approved 40) |
 | 31 | Casing bounce sounds: up to 3 per casing | 45-90 sound starts/s | shells | 🟪🟩 | ✅ 38ad0fb (clinks through `soundBudget.casing`: 12 a second, burst 6, merged within 0.3 m / 0.1 s) |
 | 32 | A plugin without `fxr` falls back to the crash path (an emitter per round per frame) | crash | tracer | 🟪 | 🔧 no tracers + a "restart the game" note |
@@ -159,6 +163,12 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 38 | Our Lua per frame at 250 rounds/s, sky, casings fixed: avg 5.0 ms, p99 14.4 (budget 1.0 / 2.0). Rounds alone avg 2.0 (~64 in flight); tracers + flash + sound + hearing + anim ~1.8; casings ~1.2 (~0.3 ms a casing) | ~0.7 ms of Lua per shot, 0.03 per round in flight a frame | weapon, shells, tracers, flash, ballistics | 🟪🟥 | 🔧 per-function profile next; the high fire-rate mode (ARCHITECTURE 1b) and the native round sim (step 6) carry most of it |
 | 35 | Not perf, found on the way: `deagle_testnpc` dummies still bleed; ArmorHit computes the same wound twice | | | 🟪🟥 | 🔧 |
 
+In-game ray costs (step 7, 2026-10-22; `rounds stats` after 87 min and 396,244 steps): static 5.76 µs (9,682 calls),
+dynamic 0.57 µs (396,244), living 0.70 µs (396,216), tracer 0.83 µs (206,736). At 250 rounds/s that is ~30 µs a frame
+of rays and ~0.2 ms of tracer calls; the 4.9 ms Lua is viewmodel / motion, not rays. A physics-grid "any moving body near
+the path" query would cost about the living query (0.70 µs), more than the 0.57 µs dynamic ray it would skip, so it isn't
+worth adding; `rwi_queue` would save under 0.1 ms a frame at these costs.
+
 ## 6. Results per build
 
 | Date | Build | Scenario | Frame | Mod | Garbage | Peaks |
@@ -166,6 +176,21 @@ Owners: 🟥 Claude 1 (ballistics, penetration, kill cam hooks), 🟦 Claude 2 (
 | 2026-10-15 | fdb7ed9 + fxr working | `deagle_stress` (sky fire, 45 rounds + tracers) | engine 6.6-8 ms flat (was rising to 11.4) | Lua ~0.06 ms per round in the air | | 45 rounds |
 | 2026-10-15 | plugin 0e756ab + 84d806e installed | `deagle_stress` (10 rounds/s, tracers) | 128-140 fps, engine 5.9-6.8 ms flat | Lua 0.6-1.0 ms; 1.6 ms at 46 rounds (over the 1.0 average) | | 49 emitters for 49 rounds |
 | 2026-10-15 | d46d1ff (mock) | `tests/run_perf.lua` | | idle 0 entity queries, 0 rays; shooting 0 queries | idle 3.97 KB, shooting 74.9 KB a frame (TracerBullet 44) | 30 rounds |
+| 2026-10-22 | step 7 split installed | `rounds stats` (87 min, 396,244 steps) | native rays ~30 µs a frame at 250 rounds/s | Lua 4.91 avg / 9.83 p99 (stress) | | static 5.76 µs, dynamic 0.57 µs, living 0.70 µs, tracer 0.83 µs |
+
+## 7. Load and screen times, 2026-10-23 (first numbers with `log_IncludeTime` on)
+
+Read with `tools/loadtime.py`. One session, so far (Ryzen 5 3600 / RTX 3070 Ti / 16 GB @ 3200 / NVMe, 22 mods):
+
+| Span | Time | What it is |
+|---|---|---|
+| boot | **112 s** | launch (14:10:30) to Henry controllable (14:12:22), through the autosave |
+| level `trosecko` | ~28 s | `Loading level trosecko` 14:11:18 to the level's action map 14:11:46 |
+| save load (level already up) | **22 s** | `Loading saved game` 14:12:00 to `[Deagle] gameplay started` 14:12:22 |
+| Apse inventory open | **319 ms** | key to fade-in, one open, with `invtime 2` + `wh_ui_ApseCameraChangeTime 0.15` |
+
+The 22 s is the number to beat on "saves load slower": it is a save into a loaded level with every mod in, and it is
+the first one measured with timestamps. Boot and level are one sample each. Fast travel has no sample yet.
 
 ## Sources
 
