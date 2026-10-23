@@ -77,23 +77,19 @@ Texture streaming (CryEngine): `r_TexturesStreaming`, `r_TexturesStreamPoolSize`
   requests in kcd.log.
 - The `OnUpdatingChanged` true → false span is the tile update time. A UI event listener could log it.
 
-## 4. Applied 2026-10-23 (in the mod, pending one game restart)
-- `src/Libs/UI/TexturePreload.xml`: the game's file plus two lines under `<Common>`:
-  ```xml
-  <Preload file="Libs/UI/Textures/Maps/global_map_trosecko_*"/>
-  <Preload file="Libs/UI/Textures/Maps/global_map_kutnohorsko_*"/>
-  ```
-  The two region maps (68 + 159 files, 25.3 + 61.7 MB) are what the Apse shows on open; without this CryEngine's
-  idle trim drops them between opens and the screen waits on the re-stream at `r_TexturesStreamingMaxRequestedMB 4`.
-  Cost: ~87 MB of VRAM held from level load on, plus that much extra I/O at each level load. Revert: delete
-  `src/Libs/UI/TexturePreload.xml` (the game's own file comes back). Untested in game - first open after a restart tells.
-- `user.cfg` (live, verified with the console): `wh_ui_ApseCameraChangeTime 0.15`, `wh_ui_ApseOpenFaderFadeInDuration 0`,
-  `wh_ui_ApseUnloadMode 0`.
-- Do NOT re-add the streaming cvars (`r_TexturesStreamingMaxRequestedMB` etc.) yet: they were tried and pulled, they
-  raise per-frame streaming I/O and VRAM pressure on an 8 GB card and that is the wrong trade while the open world
-  still hitches.
+## 4. Tried 2026-10-23 and pulled: preloading the region maps
+- The idea: `src/Libs/UI/TexturePreload.xml` = the game's file plus two lines under `<Common>`:
+  `<Preload file="Libs/UI/Textures/Maps/global_map_trosecko_*"/>` and the same for `global_map_kutnohorsko_*`, so
+  the 25.3 + 61.7 MB of region tiles stay resident instead of being re-streamed every open.
+- **It emptied the in-game map.** First session with it: the Apse map came up with no tiles at all (14:43, no error
+  in the log). It also cost 87 MB of VRAM during a period when VRAM was already at 7.5 / 8.2 GB.
+- Why it was never going to work as written: a tile is a base `.dds` **plus six separate mip files** (`.dds.1` ..
+  `.dds.6`), and the wildcard matches all of them (68 files for trosecko, 159 for kutnohorsko). Preloading a mip file
+  as a texture is not the same thing as preloading the texture. If this is ever tried again, list the 27 base `.dds`
+  names explicitly, one line each, and never a `.dds.N`.
+- Pulled the same day; the game's own `TexturePreload.xml` is back (the file is gone from `src/`).
 
-## 5. What's on purpose
+## 5. What's on purpose## 5. What's on purpose
 - The camera pan between Apse panels (0.5 s), the open fade (0.1 s), and the panel light animations (0.05–0.2 s,
   0.15 s light delay) are designed. Together ≈ 0.6–0.8 s, the same on every PC.
 - Anything beyond ~1 s is the "faded out until graphics is ready" wait, i.e. tile streaming. That matches the
