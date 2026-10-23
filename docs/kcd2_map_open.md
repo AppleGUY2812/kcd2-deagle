@@ -77,7 +77,23 @@ Texture streaming (CryEngine): `r_TexturesStreaming`, `r_TexturesStreamPoolSize`
   requests in kcd.log.
 - The `OnUpdatingChanged` true → false span is the tile update time. A UI event listener could log it.
 
-## 4. What's on purpose
+## 4. Applied 2026-10-23 (in the mod, pending one game restart)
+- `src/Libs/UI/TexturePreload.xml`: the game's file plus two lines under `<Common>`:
+  ```xml
+  <Preload file="Libs/UI/Textures/Maps/global_map_trosecko_*"/>
+  <Preload file="Libs/UI/Textures/Maps/global_map_kutnohorsko_*"/>
+  ```
+  The two region maps (68 + 159 files, 25.3 + 61.7 MB) are what the Apse shows on open; without this CryEngine's
+  idle trim drops them between opens and the screen waits on the re-stream at `r_TexturesStreamingMaxRequestedMB 4`.
+  Cost: ~87 MB of VRAM held from level load on, plus that much extra I/O at each level load. Revert: delete
+  `src/Libs/UI/TexturePreload.xml` (the game's own file comes back). Untested in game - first open after a restart tells.
+- `user.cfg` (live, verified with the console): `wh_ui_ApseCameraChangeTime 0.15`, `wh_ui_ApseOpenFaderFadeInDuration 0`,
+  `wh_ui_ApseUnloadMode 0`.
+- Do NOT re-add the streaming cvars (`r_TexturesStreamingMaxRequestedMB` etc.) yet: they were tried and pulled, they
+  raise per-frame streaming I/O and VRAM pressure on an 8 GB card and that is the wrong trade while the open world
+  still hitches.
+
+## 5. What's on purpose
 - The camera pan between Apse panels (0.5 s), the open fade (0.1 s), and the panel light animations (0.05–0.2 s,
   0.15 s light delay) are designed. Together ≈ 0.6–0.8 s, the same on every PC.
 - Anything beyond ~1 s is the "faded out until graphics is ready" wait, i.e. tile streaming. That matches the
