@@ -30,6 +30,15 @@ constexpr int64_t kMerge = 256 << 10;                // neighbouring requests th
 constexpr int64_t kChunk = 4 << 20;                  // ... up to this much per read
 constexpr int64_t kMaxItem = 64ll << 20;
 constexpr int kCheck = 100;                          // copies checked against the game's own read first
+// While a save-load / fast-travel screen waits (readiness.cpp calls Streamahead_SetGate), the readers keep reading below
+// ramgov's take level, at most kGateBytes held, just ahead of the game, until free RAM gets to kGateFloorMb. Why: boot 31
+// (2026-10-24) held nothing through the 9.7 s Settle wait (free RAM 750-1100 MB, under the 1.5 GB take level) while the
+// game's one reader thread sat in NtReadFile for 95 % of its samples, one 128 KB read at a time, ~7,000 listed requests.
+constexpr long long kGateBytes = 64ll << 20;
+constexpr long long kGateFloorMb = 400;
+// in the gate, list items more than this far behind the game's highest one are skipped (not read, copies dropped): the
+// game's reader sorts its ~500 queued requests by disk offset, so its order differs from the list by up to a few hundred
+constexpr size_t kGateBehind = 1024;
 
 int g_mode = 1;
 std::string g_dir;
@@ -126,6 +135,10 @@ std::mutex g_chunkMu;                                // readers pick their next 
 size_t g_cursor = 0;                                 // first list item not handed to a reader yet
 std::atomic<int> g_readersLeft{0};
 std::atomic<size_t> g_servedHi{0};                  // 1 + the highest list index served: RAM is freed above it first
+std::atomic<size_t> g_gameHi{0};                    // 1 + the highest list index the game asked for (served or not)
+std::atomic<bool> g_gate{false};                    // a loading screen waits (Streamahead_SetGate)
+std::atomic<long long> s_gateReads{0}, s_gateSkipped{0}, s_gateDropped{0};
+std::atomic<size_t> g_behindScan{0};                // FreeBehind has looked at every item below this
 std::atomic<long long> s_shedBytes{0}, s_shedTimes{0}, s_shedDropped{0}, s_again2{0};
 std::atomic<int> g_checkLeft{kCheck};
 std::atomic<long long> s_ready{0}, s_readBytes{0}, s_reads{0}, s_failed{0}, s_readTicks{0}, s_waitRam{0};
@@ -190,10 +203,51 @@ void IoPriority(HANDLE h, bool low) {
 	SetFileInformationByHandle(h, FileIoPriorityHintInfo, &p, sizeof p);
 }
 
+// in a gate, below ramgov's take level: the small window just ahead of the game
+bool GateWindow() { return g_gate.load(std::memory_order_relaxed) && ramgov::AvailMb() >= kGateFloorMb; }
+
+// may a reader take another chunk now
+bool MayRead() {
+	if (g_held.load() + kChunk > kCapBytes) return false;
+	if (ramgov::CanTake(kChunk)) return true;
+	return GateWindow() && g_held.load() + kChunk <= kGateBytes && ramgov::AvailMb() - (kChunk >> 20) >= kGateFloorMb;
+}
+
+// bytes to shed now: ramgov's answer, but in a gate the window just ahead of the game stays (above the floor)
+long long ShedWant() {
+	const long long want = ramgov::ShedBytes();
+	if (!want || !GateWindow()) return want;
+	const long long over = g_held.load() - kGateBytes - (long long)kReaders * kChunk;   // the readers' last chunks overshoot
+	return over > 0 ? (want < over ? want : over) : 0;
+}
+
+// in a gate: copies the game went past without asking (list order differs a little per boot) would fill the window;
+// drop them (state 2 -> 3). Called by the readers while they wait.
+void FreeBehind() {
+	const size_t gh = g_gameHi.load();
+	if (gh <= kGateBehind) return;
+	size_t i = g_behindScan.load();
+	const size_t end = gh - kGateBehind;
+	if (i >= end || !g_behindScan.compare_exchange_strong(i, end)) return;   // one reader at a time, each item once
+	for (; i < end; i++) {
+		Item& it = g_items[i];
+		int r = 2;
+		if (!it.state.compare_exchange_strong(r, 3)) continue;
+		free(it.data);
+		it.data = nullptr;
+		g_held -= it.size;
+		s_gateDropped++;
+	}
+}
+
 // next chunk for a reader: the first waiting item and its neighbours in the same pak (state 0 -> 1). false = list done
 bool NextChunk(std::vector<size_t>& chunk, int& pak, int64_t& lo, int64_t& hi) {
 	std::lock_guard<std::mutex> g(g_chunkMu);
 	for (;;) {
+		if (GateWindow() && !ramgov::CanTake(kChunk)) {   // the window: never far behind the game
+			const size_t gh = g_gameHi.load();
+			if (gh > kGateBehind && g_cursor < gh - kGateBehind) { s_gateSkipped += gh - kGateBehind - g_cursor; g_cursor = gh - kGateBehind; }
+		}
 		while (g_cursor < g_n && g_items[g_cursor].state.load() != 0) g_cursor++;
 		if (g_cursor >= g_n) return false;
 		Item& first = g_items[g_cursor];
@@ -259,10 +313,11 @@ DWORD WINAPI Reader(LPVOID) {
 	const long long t0 = Now();
 	while (buf && !g_stop) {
 		bool counted = false;
-		while (!g_stop && (g_held.load() + kChunk > kCapBytes || !ramgov::CanTake(kChunk))) {
+		while (!g_stop && !MayRead()) {
 			if (!counted) { s_waitRam++; counted = true; }
-			if (const long long want = ramgov::ShedBytes()) Shed(want);
-			Sleep(20);
+			if (const long long want = ShedWant()) Shed(want);
+			if (GateWindow()) FreeBehind();
+			Sleep(g_gate.load(std::memory_order_relaxed) ? 2 : 20);
 		}
 		if (g_stop) break;
 		if (low && g_loadSeen.load()) {
@@ -271,7 +326,9 @@ DWORD WINAPI Reader(LPVOID) {
 		}
 		int pak = 0;
 		int64_t lo = 0, hi = 0;
+		const bool inWindow = !ramgov::CanTake(kChunk);
 		if (!NextChunk(chunk, pak, lo, hi)) break;
+		if (inWindow) s_gateReads++;
 		HANDLE& h = hs[pak];
 		if (h == INVALID_HANDLE_VALUE) {
 			h = CreateFileW(Wide(g_listPaks[pak].path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -374,12 +431,12 @@ void Status() {
 	Log("streamahead: read ahead %lld of %zu (%.0f MB in %lld reads, %.1f s, %lld failed, waited for RAM %lld x, freed for RAM "
 	    "%.0f MB in %lld goes: %lld to read again, %lld dropped), held %.0f MB; "
 	    "served %lld (%.0f MB), checked %lld, mismatches %lld; game came first %lld, waited on our read %lld (timeouts %lld), "
-	    "asked again %lld, not listed %lld", s_ready.load(), g_n, s_readBytes.load() / 1e6, s_reads.load(),
+	    "asked again %lld, not listed %lld; in loading-screen windows %lld reads (%lld skipped and %lld copies dropped behind the game)", s_ready.load(), g_n, s_readBytes.load() / 1e6, s_reads.load(),
 	    (double)s_readTicks.load() / g_freq, s_failed.load(), s_waitRam.load(), s_shedBytes.load() / 1e6, s_shedTimes.load(),
 	    s_again2.load(), s_shedDropped.load(),
 	    g_held.load() / 1e6, s_served.load(),
 	    s_servedBytes.load() / 1e6, s_checked.load(), s_bad.load(), s_gameFirst.load(), s_waited.load(), s_timeouts.load(),
-	    s_again.load(), s_notListed.load());
+	    s_again.load(), s_notListed.load(), s_gateReads.load(), s_gateSkipped.load(), s_gateDropped.load());
 }
 
 DWORD WINAPI Writer(LPVOID) {
@@ -403,7 +460,7 @@ DWORD WINAPI Writer(LPVOID) {
 			WriteList();
 		}
 		if (!g_listDone && now - g_start > kRecordMaxMs) { g_listDone = true; FlushTrace(); Log("streamahead: recording stopped (30 minutes, no gameplay start seen)"); }
-		if (g_n && !freed && !g_stop) if (const long long want = ramgov::ShedBytes()) Shed(want);   // readers may be done
+		if (g_n && !freed && !g_stop) if (const long long want = ShedWant()) Shed(want);   // readers may be done
 		if (g_n) {
 			const long long sig = s_ready + s_served * 7 + s_gameFirst * 13 + s_notListed * 17 + s_bad;
 			if (sig != lastSig && (now - g_start) % 2000 < 1000) { lastSig = sig; Status(); }
@@ -430,6 +487,7 @@ int Streamahead_Serve(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t offs
 	Item& it = g_items[f->second];
 	if (it.pak != p.list || it.dataOff != dataOff || it.offset != offset || it.size != want) { s_notListed++; return -1; }
 	g_loadSeen.store(true, std::memory_order_relaxed);
+	for (size_t gh = g_gameHi.load(); gh < f->second + 1 && !g_gameHi.compare_exchange_weak(gh, f->second + 1);) {}
 	int st = it.state.load(std::memory_order_acquire);
 	while (st == 5) { SwitchToThread(); st = it.state.load(std::memory_order_acquire); }   // being freed: back at 0 next
 	if (st == 1) {   // our read of it is under way (one read of up to 4 MB, ~10 ms): wait for it, at most 100 ms
@@ -486,6 +544,12 @@ void Streamahead_Stats(long long* served, long long* gameFirst, long long* notLi
 	*served = s_served.load();
 	*gameFirst = s_gameFirst.load();
 	*notListed = s_notListed.load();
+}
+
+void Streamahead_SetGate(bool open) {
+	if (g_gate.exchange(open) != open && g_n && !g_stop)   // not after the store closed (fast travel later on)
+		Log("streamahead: loading screen %s (%lld MB free, %.0f MB held)", open ? "waits: window of 64 MB ahead of the game"
+		    " while free RAM is >= 400 MB" : "gone: back to the normal free-RAM rule", ramgov::AvailMb(), g_held.load() / 1e6);
 }
 
 void Streamahead_OnLoaded() {

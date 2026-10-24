@@ -4,6 +4,7 @@
 //   streamahead_test serve     reads the list ahead and serves the same requests: every byte checked, most served
 //   streamahead_test shed      RAM gets short after the read-ahead: every copy is freed, the game reads them itself
 //   streamahead_test changed   the pak's write time changed since the list: nothing may be served
+//   streamahead_test gate      RAM short the whole time, but a loading screen waits: the 64 MB window still serves most
 // Exit code 0 = pass.
 #include "../src/streamahead.h"
 #include "../src/ramgov.h"
@@ -89,9 +90,11 @@ int main(int argc, char** argv) {
 	if (h == INVALID_HANDLE_VALUE || g_buffered == INVALID_HANDLE_VALUE) { printf("FAIL: no fake pak (run record first)\n"); return 1; }
 	alignas(16) uint8_t cache[0x1000] = {};
 	*(HANDLE*)(cache + 0x10) = h;
+	// this PC's free RAM doesn't decide the test; "gate": below the take level all along, so only the gate window reads
+	if (mode == "gate") ramgov::SetForTest(1ll << 40, 1ll << 40), Streamahead_SetGate(true);
+	else ramgov::SetForTest(0, -1);
 	Streamahead_Install(nullptr);
 	const std::vector<Req> reqs = Requests();
-	ramgov::SetForTest(0, -1);   // this PC's free RAM doesn't decide the test
 	if (mode != "record") Sleep(3000);   // the reader reads the list meanwhile (the main menu)
 	if (mode == "shed") {        // RAM short: everything held is freed (the writer checks once a second)
 		ramgov::SetForTest(1ll << 40, 1ll << 40);
@@ -111,6 +114,7 @@ int main(int argc, char** argv) {
 		for (int64_t i = 0; i < q.size; i++) if (out[(size_t)i] != Byte(abs + i)) { bad++; break; }
 		for (int i = 0; i < 16; i++) if (out[(size_t)q.size + i] != 0xcc) { bad++; break; }   // nothing past the end
 		Streamahead_Record(cache, entry, q.offset, q.size, 1000);
+		if (mode == "gate") Sleep(2);   // the game's own pace, so the window can stay ahead
 	}
 	{   // a request that isn't listed
 		uint8_t entry[0x20] = {};
@@ -135,6 +139,7 @@ int main(int argc, char** argv) {
 		if (lines != (int)reqs.size() - 47) { printf("FAIL: list size\n"); return 1; }
 	}
 	if (mode == "serve" && served < (long long)(reqs.size() - 47) * 9 / 10) { printf("FAIL: too few served\n"); return 1; }
+	if (mode == "gate" && served < (long long)(reqs.size() - 47) * 7 / 10) { printf("FAIL: the gate window served too few\n"); return 1; }
 	if (mode == "shed" && served) { printf("FAIL: served after everything was freed\n"); return 1; }
 	if (mode == "changed" && served) { printf("FAIL: served from a pak that changed since the list\n"); return 1; }
 	printf("PASS %s\n", mode.c_str());
