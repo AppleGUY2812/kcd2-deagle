@@ -268,15 +268,32 @@ async loaders", 18 s) it does not wait (2% of its samples in a wait), it reads a
 
 At least 7.5 s of the main thread go to zlib + crc32 in those two steps (a lower bound: the sampler sees a busy thread
 on ~60% of ticks). The zlib is 1.2.11 (`inflateInit2_(strm, -15, "1.2.11")` in `FUN_1803d9224`, raw deflate of the pak
-entries) with a modified stream struct (fields at +0x8/+0x10/+0x18/+0x1c, not zlib's layout), so a drop-in zlib-ng
-does not fit; the hook point would be the wrapper `FUN_1803d9224(result*, strm*, window, dst, dstSize, flag,
-src, srcSize, out*)` (2 callers) or its caller. The workers meanwhile pass work through an I/O completion port
+entries). The stream struct is zlib's own Windows layout (0x58 bytes, 4-byte uLong: avail_in +0x8, next_out +0x10,
+avail_out +0x18, total_out +0x1c; an earlier note here called it modified, wrong). The whole-entry unpack is
+`FUN_1807675a8(src, dst, srcSize, dstSize, &outSize, &result, heap)` (called by `FUN_180767540`, CryEngine's
+ZipRawUncompress shape); the streaming engine's block jobs go through `FUN_1803d9064` -> `FUN_1803d9224` instead. The workers meanwhile pass work through an I/O completion port
 (NtRemoveIoCompletion / NtSetIoCompletion) and sleep. In the save load the unpacking is spread over 5+ workers
 (~1.1-1.4 s each), so it is not the critical path there.
 
-Fix candidate: unpack with libdeflate (whole-buffer raw deflate, ~2-3x zlib 1.2.11; crc32 with PCLMUL ~10x) in a
-hook on the wrapper, keeping the zip CRC check and falling back to the game's zlib on any mismatch. Expected: ~4-7 s
-off the 63 s. Not built.
+Libraries on this PC's paks (Ryzen 5 3600, one thread, MB/s of unpacked data; Python bindings, and libdeflate again
+built with MSVC exactly as in the plugin, `native/test/zbench.cpp`):
+
+| | Objects-part0.pak (models) | terrain.pak | level.pak |
+|---|---|---|---|
+| zlib 1.3.1 (the game has 1.2.11) | 248 | 174 | 642 |
+| zlib-ng | 417 | 214 | 923 |
+| ISA-L | 426 | 244 | 1007 |
+| libdeflate (gcc) | 585 | 302 | 1424 |
+| **libdeflate (MSVC, the plugin)** | **589** | **304** | **1629** |
+| crc32: zlib / zlib-ng / ISA-L / libdeflate (MSVC) | 2358 / 9737 / 11276 / 9951 | | |
+
+`/arch:AVX2` made no difference to the unpack (563 / 303 / 1601) and +12% to crc32, so the plugin builds without it.
+GPU unpacking does not fit: entries are tiny (median 2.5 KB) and needed on the CPU, and DirectStorage's GPU path is
+GDeflate, a different format (all 82 GB repacked).
+
+Built: `native/src/fastzip.cpp` hooks `FUN_1807675a8` and the crc32 `FUN_180612300` with libdeflate (mode file
+`deagle_fastzip.txt` next to the plugin: 0 zlib, 1 libdeflate, 2 verify both). Expected ~4-7 s off the 63 s; not yet
+measured in game. Next step after that: unpack ahead on the idle threads (record the main thread's file order).
 
 ## Sources
 
