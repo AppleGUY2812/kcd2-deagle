@@ -87,8 +87,11 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 
 ## Open, by expected gain
 1. Settle gate 8.7 s (kcd2-deagle-66): textures, clothing.
-2. Quest job: off the load path when the menu build is kept. Still 11.5-14 s for loads during play and quick
-   Continue clicks; cheap wins in re_quest_builder.md (rttr sorted insert 0.4-0.8 s, xmlahead spin-wait 0.6-0.9 s).
+2. Quest job: off the load path when the menu build is kept, 11.5-14 s otherwise (loads during play, quick Continue).
+   **Target (user): 5 s or less.** Path (re_quest_builder.md 5 + re_quest_dump_binary.md + re_quest_replay_parallel.md):
+   graph-dump comparator first (exactness check), binary DOM (phase 1 2.3 -> ~0.4 s), replay builder + more cores for
+   2a (6.2 s) and pre-resolved edges for 2b (4.5 s). Step 1 built: questfast (d352a75) rttr sorted insert, expect
+   -0.4-0.8 s on the first build per process; not measured yet.
 3. Apply save 5.3 s: Storm memo ~0.45 s, concept BFS ~0.4 s (re_stepG).
 4. The three build chains end together (quest 14.0, RLT ~14.4, Main 12.3 + E 2.1 s): one alone gains < 1 s; move all
    three to the menu (table above).
