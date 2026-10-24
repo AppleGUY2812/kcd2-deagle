@@ -3,6 +3,7 @@
 #include "animahead.h"
 #include "questprof.h"
 #include "questdump.h"
+#include "questreplay.h"
 #include "log.h"
 #include "xmlahead.h"
 #include "loadwatch.h"
@@ -300,7 +301,7 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 
 // ---- questbench (questmenu.h)
 std::atomic<bool> g_benching{false};
-struct BenchArgs { int n; bool ab, prof, dump; };
+struct BenchArgs { int n; bool ab, prof, dump, rec; };
 uintptr_t ReadMgr() {
 	__try { const uintptr_t mod = Module(); return mod ? *(uintptr_t*)(mod + 0x18) : 0; }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
@@ -336,17 +337,23 @@ DWORD WINAPI Bench(LPVOID arg) {
 			DeleteFileA(dumpPath.c_str());
 			Questdump_Arm(dumpPath.c_str());
 		}
+		const char* rtag = "";
+		if (a.rec) {   // build 1 records phase 2a, the others replay it (questreplay.cpp)
+			const int rm = k == 1 ? 1 : 2;
+			rtag = Questreplay_Arm(rm) ? (rm == 1 ? " [record]" : " [replay]") : " [record / replay could not arm]";
+		}
 		const long long t0 = Now();
 		ok = CallBody(impl, g_mgr);
 		const double s = SecSince(t0);
+		if (a.rec) { Questreplay_Disarm(); if (k > 1 && Questreplay_LastFailed()) rtag = " [replay FAILED]"; }
 		if (a.dump) Questdump_Disarm();
 		if (prof) Questprof_End(k);
 		Loadwatch_QuestTotals(ms1, c1);
 		for (int i = 0; i < 7; i++) d[i] = (ms1[i] - ms0[i]) / 1000.0;
 		done++;
 		Log("questbench: build %d/%d %s in %.2f s: XML + definitions %.2f, 2a nodes %.2f, ports %.2f, edges %.2f, after the "
-		    "projects %.2f s%s; free RAM %llu -> %llu MB", k, a.n, ok ? "OK" : "FAILED (exception)", s, d[2] - d[3] - d[4] - d[5],
-		    d[3], d[4], d[5], d[1] - d[2], a.ab ? (fast ? " [questfast on]" : " [questfast off]") : "", free0, FreeMb());
+		    "projects %.2f s%s%s; free RAM %llu -> %llu MB", k, a.n, ok ? "OK" : "FAILED (exception)", s, d[2] - d[3] - d[4] - d[5],
+		    d[3], d[4], d[5], d[1] - d[2], a.ab ? (fast ? " [questfast on]" : " [questfast off]") : "", rtag, free0, FreeMb());
 		if (!ok) break;
 	}
 	if (a.ab) Questfast_SetOn(true);
@@ -429,7 +436,7 @@ void Questmenu_Bench(const char* args) {
 	char mode[8] = {};
 	const int got = args ? sscanf(args, "%d %7s", &n, mode) : 0;
 	const char* why = nullptr;
-	if (got < 1) why = "usage: questbench N [ab|prof|dump|abdump] (N 1-20)";
+	if (got < 1) why = "usage: questbench N [ab|prof|dump|abdump|rec|recdump] (N 1-20)";
 	else if (n < 1 || n > 20) why = "N must be 1-20";
 	else if (!g_mode) why = "questmenu is off (deagle_questmenu.txt 0)";
 	else if (!g_cacheOk) why = "no deagle_questcache.txt yet (a load writes it)";
@@ -447,10 +454,11 @@ void Questmenu_Bench(const char* args) {
 	ResetEvent(g_built);   // a load or a project-touching concept message waits for the bench, as for the pre-build
 	g_phase = 1;
 	const bool ab = !strcmp(mode, "ab") || !strcmp(mode, "abdump"), prof = !strcmp(mode, "prof"),
-	           dump = !strcmp(mode, "dump") || !strcmp(mode, "abdump");
-	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof, dump }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-	if (t) { CloseHandle(t); Log("questbench: %d builds started%s%s", n, ab ? " (questfast on / off alternating)" : prof ? " (with the inner profile, questprof)" : "",
-	                            dump ? " (graph dump per build: deagle_questdump_<k>.txt)" : ""); }
+	           dump = !strcmp(mode, "dump") || !strcmp(mode, "abdump") || !strcmp(mode, "recdump"),
+	           rec = !strcmp(mode, "rec") || !strcmp(mode, "recdump");
+	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof, dump, rec }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+	if (t) { CloseHandle(t); Log("questbench: %d builds started%s%s%s", n, ab ? " (questfast on / off alternating)" : prof ? " (with the inner profile, questprof)" : "",
+	                            dump ? " (graph dump per build: deagle_questdump_<k>.txt)" : "", rec ? " (build 1 records phase 2a, the others replay it)" : ""); }
 	else { g_phase = 3; g_benching = false; SetEvent(g_built); Log("questbench: could not start the thread"); }
 }
 
