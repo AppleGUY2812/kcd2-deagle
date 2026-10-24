@@ -2,6 +2,7 @@
 #include "loadwatch.h"
 #include "log.h"
 #include <windows.h>
+#include <atomic>
 #include <cstring>
 #include <string>
 #include "MinHook.h"
@@ -46,6 +47,47 @@ void __fastcall HkPoll(void* loaders, uint64_t a2) {   // main thread only
 	g_lastN = n;
 }
 
+// ---- quest load timing (the quest-loader decompile, 2026-10-23: the quest job runs on one job worker, ~12 s, and the
+// main thread waits for it; which phase costs what decides whether it can be made shorter). Times every top-level call
+// (nested calls of the same function count once); calls of 20 ms or more get a log line, at most 80 lines.
+struct QHook { const char* name; uintptr_t rva; unsigned char bytes[10]; void* orig; };
+QHook g_q[] = {
+	{ "job submit", 0x4da314, { 0x48,0x89,0x5c,0x24,0x20,0x55,0x56,0x57,0x41,0x56 }, nullptr },
+	{ "job (ConceptLoadJob body)", 0x1e2b650, { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x54,0x24,0x10 }, nullptr },
+	{ "project (3 phases)", 0x51abb4, { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x20 }, nullptr },
+	{ "phase 2a node building", 0x51ab28, { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x08,0x57,0x48,0x83 }, nullptr },
+	{ "phase 2b CreatePorts", 0x6a03d4, { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18 }, nullptr },
+	{ "phase 2b CreateEdges", 0x698054, { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18 }, nullptr },
+	{ "main thread waits for the job", 0x11414d8, { 0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83,0xec,0x20 }, nullptr },
+};
+constexpr int kQ = sizeof g_q / sizeof g_q[0];
+std::atomic<long long> g_qCalls[kQ], g_qTicks[kQ];
+std::atomic<int> g_qLines{0};
+long long g_t0 = 0;
+using Fn4 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);   // every one takes at most 4 integer args
+
+void QNote(int i, long long a, long long b) {
+	g_qCalls[i]++;
+	g_qTicks[i] += b - a;
+	const double ms = (double)(b - a) * 1000.0 / g_freq;
+	if (ms >= 20.0 && g_qLines++ < 80)
+		Log("loadwatch: quest %s %.0f ms (thread %lu, started %.2f s after the plugin; %lld calls, %.0f ms in all so far)", g_q[i].name,
+		    ms, GetCurrentThreadId(), (double)(a - g_t0) / g_freq, g_qCalls[i].load(), (double)g_qTicks[i].load() * 1000.0 / g_freq);
+}
+
+template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+	thread_local int depth = 0;
+	const long long t = Now();
+	depth++;
+	const uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);
+	depth--;
+	if (depth == 0) QNote(I, t, Now());
+	return r;
+}
+void* const g_qWrap[] = { (void*)&QWrap<0>, (void*)&QWrap<1>, (void*)&QWrap<2>, (void*)&QWrap<3>, (void*)&QWrap<4>,
+                          (void*)&QWrap<5>, (void*)&QWrap<6> };
+static_assert(sizeof g_qWrap / sizeof g_qWrap[0] == kQ, "one wrapper per hook");
+
 }  // namespace
 
 void Loadwatch_Install(uintptr_t base) {
@@ -54,4 +96,14 @@ void Loadwatch_Install(uintptr_t base) {
 	if (memcmp(p, kPollBytes, sizeof kPollBytes)) { Log("loadwatch: code check failed - not installed"); return; }
 	const bool ok = MH_CreateHook(p, (void*)&HkPoll, (void**)&g_orig) == MH_OK && MH_EnableHook(p) == MH_OK;
 	Log("loadwatch: terrain loader wait hook %s", ok ? "on" : "FAILED");
+	g_t0 = Now();
+	int on = 0;
+	std::string off;
+	for (int i = 0; i < kQ; i++) {
+		void* t = (void*)(base + g_q[i].rva);
+		if (memcmp(t, g_q[i].bytes, sizeof g_q[i].bytes) ||
+		    MH_CreateHook(t, g_qWrap[i], &g_q[i].orig) != MH_OK || MH_EnableHook(t) != MH_OK) { off += off.empty() ? "" : ", "; off += g_q[i].name; continue; }
+		on++;
+	}
+	Log("loadwatch: quest load timing %d of %d hooks on%s%s", on, kQ, off.empty() ? "" : "; off: ", off.c_str());
 }
