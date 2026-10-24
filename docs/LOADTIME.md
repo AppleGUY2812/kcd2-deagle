@@ -5,6 +5,10 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
 "Control" = the end of the first gameplay frames. Times in s after the first level file ("level loading").
 
 ## The user's path vs the test boots (M)
+- Best so far, boot 35 (2026-10-24 08:24, menu path, 2910 MB free): **30.6 s** with the quest graph built at the menu
+  and kept (questmenu); boots 34 / 36 without it: 33.8 / 33.7 s. Steps in boot 35: terrain 3.5, level done 12.5 (16.1
+  without), state 4 1.4, apply 5.0, gate 10.6 s. The gate grew from 8.2-9.0 s (boots 32-33) to 10.6-11.7 s in boots
+  34-36 (streamahead 6fb0c4c era; kcd2-deagle-66 told).
 - Menu + Continue (boot 27, 2026-10-24 02:31): **34.4 s from the click** (1.4 s click -> level loading, then 33.0 s).
   With 3b: 34.6 s (boot 29, gate 9.4 s) and 33.4 s (boot 30, + readiness temp 128). The gate varies +-1 s per boot.
 - Auto-load test boots (wh_sys_AutoLoadLastSave; boots 24-26): 38.3-39.4 s. They carry two costs the user's path does
@@ -47,8 +51,16 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
   Mode 1 (at the menu, on Main) froze the menu ~6.2 s: rejected. Since boot 31 it never fires in time: the quest job
   ends earlier (quests first), the RLT is still on its texture precache then, and later points come after the game's
   own sync. Next: PSO creation on worker threads (re_pso_parallel.md).
-- applyfast 5, shaders parsed at the main menu (6a313dd, deagle_menushaders.txt 1): U2 parsed 110 at the menu, 367 in
-  the load; the user clicked Continue ~7 s after the menu came up, so most of the window is the start-up screens.
+- applyfast 5, shaders parsed at the main menu (6a313dd, deagle_menushaders.txt 1): boots 34-36 parsed 457 at the menu,
+  20 in the load: state 4 2.7 -> 0.2 s (1.4 s in boot 35). U2 (user clicked ~7 s after the menu) parsed only 110.
+  re_pso_parallel.md: PSO creation is already on 9 job workers + 4 driver threads; the serial part is the RLT's shader
+  parse (~17.6 ms each) and, under low RAM, its texture precache backlog (U2: 2.28 GB unpacked in state 4). Next if
+  needed: parse on our own thread from launch, not paced by menu frames (R1), and the PSO job graph started from a
+  plugin thread before the quest wait (R2, 2.1-2.7 s per boot of PSO jobs).
+- questmenu (a918236, e6a864a; deagle_questmenu.txt 1 since boot 35): after event 0x24 the game's own job body builds
+  the graph on a plugin thread (11.5 s, free RAM 2710 -> 2030 MB) and the load keeps it (mgr+0x378 = 0, body skipped).
+  Concept messages at the menu during the build: 0x1, 0xc, 0x24; before the load: 0x38, 0x3a (none touch projects).
+  Journal after the load identical to a normal load (boots 35 vs 36). Skips below 1200 MB free.
 - skin cap (kcd2-deagle-66): wh_cc_MaxSkinLoadingInProgress 120 / JobQueueSize 80 (load): clothing 10.2 -> 7.2 s
   (did not repeat in every boot).
 
@@ -58,7 +70,7 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 | unpack (pakahead) | launch +1 s | done; 2 GB cap: 17,650 of 23,338 files ready before the menu |
 | ground meshes (streamahead) | launch +1 s | done; 512 MB held cap |
 | XML parse (xmlahead) | menu idle (~launch +22 s) | capped 3,000 files ahead of the game: 4 workers idle most of the menu; level files wait for level loading |
-| quest graph 13.7 s | save list read (~launch +20 s) | built a918236 (questmenu.cpp); cache recorded in U2; off in the user's folder (deagle_questmenu.txt 0) until a test boot |
+| quest graph 13.7 s | save list read (~launch +20 s) | done (questmenu): boot 35 -3.1 s; on in the user's folder |
 | Main: anim sets 2.2, SmartObjectAnimations 1.43, XGenAI 0.55 s | in the load | RE running: re_menu_main.md |
 | RLT: shader parse 4-8 s, texture precache, PSO | in the load | RE running: re_menu_render.md |
 | save read, mapClouds/Storm, Settle textures at the save's position | in the load | asked kcd2-deagle-66 |
@@ -72,7 +84,8 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 
 ## Open, by expected gain
 1. Settle gate 8.7 s (kcd2-deagle-66): textures, clothing.
-2. Quest job 13.7 s on one worker: nodes 6.0 s + edges 3.3 s are the bulk; XML 2.25 s (workers behind).
+2. Quest job: off the load path when the menu build is kept. Still 11.5-14 s for loads during play and quick
+   Continue clicks; cheap wins in re_quest_builder.md (rttr sorted insert 0.4-0.8 s, xmlahead spin-wait 0.6-0.9 s).
 3. Apply save 5.3 s: Storm memo ~0.45 s, concept BFS ~0.4 s (re_stepG).
 4. The three build chains end together (quest 14.0, RLT ~14.4, Main 12.3 + E 2.1 s): one alone gains < 1 s; move all
    three to the menu (table above).
