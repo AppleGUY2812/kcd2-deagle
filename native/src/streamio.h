@@ -9,7 +9,7 @@
 // in flight gained almost nothing (16 at once = 1 at once).
 // This hook reads each request in ONE positional ReadFile (same handle, same lock) into its own aligned buffer.
 // It sees every stream-engine read, so the terrain step's async mesh loaders too, not only step 5.
-// Mode, read at start from deagle_streamio.txt next to the plugin, set live by "[DN] streamio N":
+// Mode, read at start from fastload_streamio.txt next to the plugin, set live by "[DN] streamio N":
 //   0 the game's reads, counted only (default until mode 1 is proven in game); 1 one read per request;
 //   2 verify: both, the game gets its own bytes, every mismatch is logged.
 //   Mode 1 checks itself first: its first 300 requests run as verify, and one mismatch drops it to 0 for the session.

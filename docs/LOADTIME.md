@@ -2,6 +2,7 @@
 
 Goal 20 s from Continue to control. Owners: steps 1-4 kcd2-deagle-5a, step 5 + first gameplay frame kcd2-deagle-66.
 RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a scratchpad (re_step*.md, re_questearly.md).
+Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt; native/src/fastload_main.cpp).
 "Control" = the end of the first gameplay frames. Times in s after the first level file ("level loading").
 
 ## The user's path vs the test boots (M)
@@ -48,31 +49,31 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 - applyfast facial DBA sort (2195bf8): lists arrive nearly sorted (10 breaks in 40k), 80-95 ms; gain not measurable.
 - applyfast quests first (02c973b, on): quest job starts 3.1-3.3 s earlier; Main's wait 3.3 -> 1.4-1.9 s; state 4
   ~1 s earlier. Quests not yet checked in game.
-- applyfast 3b, PSO precache during the load (e21c93b, default, deagle_psoahead.txt 2): handed to the RLT before
+- applyfast 3b, PSO precache during the load (e21c93b, default, fastload_psoahead.txt 2): handed to the RLT before
   Main's quest wait; state 4 2.4 -> 0.4-0.5 s (boots 29-30). Main now waits 1.7-2.2 s for the RLT's texture precache.
   Mode 1 (at the menu, on Main) froze the menu ~6.2 s: rejected. Since boot 31 it never fires in time: the quest job
   ends earlier (quests first), the RLT is still on its texture precache then, and later points come after the game's
   own sync. Next: PSO creation on worker threads (re_pso_parallel.md).
-- applyfast 5, shaders parsed at the main menu (6a313dd, deagle_menushaders.txt 1): boots 34-36 parsed 457 at the menu,
+- applyfast 5, shaders parsed at the main menu (6a313dd, fastload_menushaders.txt 1): boots 34-36 parsed 457 at the menu,
   20 in the load: state 4 2.7 -> 0.2 s, but no gain on the total: state 4 + gate is 11.0-12.3 s in boots 32-37 and
   state-4 start -> control 17.3-18.7 s in every boot; textures are the long pole and take the time back. U2 (user clicked ~7 s after the menu) parsed only 110.
   re_pso_parallel.md: PSO creation is already on 9 job workers + 4 driver threads; the serial part is the RLT's shader
   parse (~17.6 ms each) and, under low RAM, its texture precache backlog (U2: 2.28 GB unpacked in state 4). Next if
   needed: parse on our own thread from launch, not paced by menu frames (R1), and the PSO job graph started from a
   plugin thread before the quest wait (R2, 2.1-2.7 s per boot of PSO jobs).
-- questmenu (a918236, e6a864a; deagle_questmenu.txt 1 since boot 35): after event 0x24 the game's own job body builds
+- questmenu (a918236, e6a864a; fastload_questmenu.txt 1 since boot 35): after event 0x24 the game's own job body builds
   the graph on a plugin thread (11.5 s, free RAM 2710 -> 2030 MB) and the load keeps it (mgr+0x378 = 0, body skipped).
   Concept messages at the menu during the build: 0x1, 0xc, 0x24; before the load: 0x38, 0x3a (none touch projects).
   Journal after the load identical to a normal load (boots 35 vs 36). Skips below 1200 MB free.
-- questreplay (f9cf471, 9b6805e, f237548, 8a9ca19): the quest build replayed from deagle_questreplay_<level>.bin (29 MB;
+- questreplay (f9cf471, 9b6805e, f237548, 8a9ca19): the quest build replayed from fastload_questreplay_<level>.bin (29 MB;
   key: WHGame.dll, 72 paks / manifests incl. Workshop mods, the job inputs). Phase 2a calls the game's leaf functions in
   the recorded order (same resolver id order, #4838fed6bbbf53ef); phase 1 (21,808 quest XML files) is skipped and
   xmlahead no longer parses them (~250 MB less at the menu). Menu build 14.4 -> 8.43 -> 4.35-4.59 s (2a 2.0, ports 0.37,
   edges 1.35, activation 0.56). A load that builds its own (menu build not kept, a level switch): 6.26 s in the load
-  (boot 45, deagle_questmenu.txt 2; it shares the CPU with the level load). A same-level reload during play runs no
+  (boot 45, fastload_questmenu.txt 2; it shares the CPU with the level load). A same-level reload during play runs no
   quest job at all (boot 43, ~6 s reload). Checked: questdump equal to the game's own build except the quest's random
   roll (as between two game builds); journal identical in boots 41-45. A failed replay drops the file, the game builds.
-- animahead (f71b7da, 7f34635; deagle_animahead.txt 1): female.cdf + male.cdf through the game's LoadAndLockResources on a
+- animahead (f71b7da, 7f34635; fastload_animahead.txt 1): female.cdf + male.cdf through the game's LoadAndLockResources on a
   plugin thread at the menu, after the quest build (2.2 + 1.1 s there); the load's 30+ human skeleton loads hit the
   cache (0 ms). "Loading level" (FUN_180b8f748) waits for a running preload. **Never during the load**: boot 39 ran it on
   Main in the terrain wait and crashed (the global animation header array CM+0x280 has no lock; the terrain loaders on
@@ -112,6 +113,6 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 5. Objects step 8.6 s (re_stepC): entities 2.7 s, CryPak lock waits ~1.8 s.
 
 ## Measuring rules
-- One change per boot; same deagle_cvars.txt (the two wh_cc lines are in it).
+- One change per boot; same fastload_cvars.txt (the two wh_cc lines are in it).
 - Test boots: scratchpad bootrun.sh N (auto-load) or bootmenu.sh N + a Continue click at (1497, 348) client px
   (the user's path). steps.py N... tabulates the steps from the plugin log.

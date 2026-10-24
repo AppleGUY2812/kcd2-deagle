@@ -8,8 +8,8 @@
 // the stack, FUN_180463d38 reads the file through CryPak and parses it (text or binary XML), returns the tree.
 // Self-contained, so idle threads can call it ahead of time; XmlNodeRef = IXmlNode*, vtable +0x18 AddRef, +0x10
 // Release. (XmlParser::ParseFile, FUN_18247cecc, the path with a caller-owned parser, is only counted.)
-// Mode, deagle_xmlahead.txt next to the plugin: 0 off, 1 record (default): deagle_xmlahead_trace.csv (time, thread,
-// file, result, microseconds), first 10 minutes; 2 record + parse ahead: the files of deagle_xmlahead_list.txt
+// Mode, fastload_xmlahead.txt next to the plugin: 0 off, 1 record (default): fastload_xmlahead_trace.csv (time, thread,
+// file, result, microseconds), first 10 minutes; 2 record + parse ahead: the files of fastload_xmlahead_list.txt
 // (tools/xmlahead_list.py, from a recording) are parsed ahead: files outside levels/ by 4 workers once the main menu
 // is idle (1,500+ XML loads done, then none for 3 s: every mod pak is mounted by then), levels/ files by 3 workers
 // from the first request for one (the level paks mount with the load). Workers stay at most 3,000 list files ahead of

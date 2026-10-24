@@ -11,7 +11,7 @@
 // in the background (FUN_18051a8e0 with sync 0, notify 0: the call the game uses for its walk-time prefetch, without
 // the "start an event" notification). The END listener then finds the graphs loaded (or waits for one still loading,
 // never worse than today), tries the same places in the same random order, and unloads what it didn't use, as before.
-// Modes (deagle_ftplaces.txt next to the plugin, `ftplaces 0|1|2`): 0 off, 1 log only (default), 2 log + load ahead.
+// Modes (fastload_ftplaces.txt next to the plugin, `ftplaces 0|1|2`): 0 off, 1 log only (default), 2 log + load ahead.
 // Log: "ftplaces: ..." lines per trip: when each place entered the list (seconds after the walk ended) and what was
 // asked; the arrival's frozen frame itself shows in the hitch: lines (hitch.cpp) and the readiness gate 0x3f91 line.
 void Ftplaces_Install(uintptr_t gameBase, HMODULE self);

@@ -16,7 +16,7 @@ void Questreplay_Phase2a(bool enter);           // loadwatch, around FUN_18051ab
 bool Questreplay_Arm(int mode);                 // 1 = record the next build, 2 = replay the record; false = cannot
 void Questreplay_Disarm();                      // after the build: logs what happened
 bool Questreplay_HaveRecord();
-// the menu build: the record is kept in deagle_questreplay_<level>.bin, keyed by WHGame.dll, the job's inputs, every .pak in Data
+// the menu build: the record is kept in fastload_questreplay_<level>.bin, keyed by WHGame.dll, the job's inputs, every .pak in Data
 // and Mods/*/Data and the Steam Workshop mods (steamapps/workshop/content/1771300/*/Data), the mods' manifests and
 // mod_order.txt. Preload reads it on a thread at plugin start.
 void Questreplay_Preload(const char* pluginDir, const char* level);   // that level's record, read on a thread

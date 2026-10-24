@@ -111,13 +111,13 @@ void Conceptbfs_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string file = path;
-	file = file.substr(0, file.find_last_of('\\') + 1) + "deagle_conceptbfs.txt";
+	file = file.substr(0, file.find_last_of('\\') + 1) + "fastload_conceptbfs.txt";
 	if (FILE* fp = fopen(file.c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1 && (m == 0 || m == 1)) g_mode = m;
 		fclose(fp);
 	}
-	if (!g_mode) { Log("conceptbfs: off (deagle_conceptbfs.txt)"); return; }
+	if (!g_mode) { Log("conceptbfs: off (fastload_conceptbfs.txt)"); return; }
 	void* fn = (void*)(base + kRvaFind);
 	const bool okF = !memcmp(fn, kFindBytes, sizeof kFindBytes);
 	const bool okA = !memcmp((void*)(base + kRvaAddRef), kAddRefBytes, sizeof kAddRefBytes) &&

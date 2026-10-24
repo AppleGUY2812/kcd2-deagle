@@ -1,7 +1,7 @@
 // Outside-the-game test of hitch.cpp (the long-frame sampler), a Windows exe: the "main thread" draws 10 ms frames,
 // then stalls 700 ms in Busy() (CPU) and 600 ms in Sleep() (a wait), then frames again. The sampler must report two
 // long frames, sample the first inside Busy and the second in a wait, and leave short frames alone.
-// Run: hitch_test.exe <dir>   (writes <dir>\hitch_test.log and <dir>\deagle_hitch.csv)
+// Run: hitch_test.exe <dir>   (writes <dir>\hitch_test.log and <dir>\fastload_hitch.csv)
 #include "../src/hitch.h"
 #include "../src/log.h"
 #include "MinHook.h"

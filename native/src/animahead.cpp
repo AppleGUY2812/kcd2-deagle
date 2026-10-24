@@ -169,7 +169,7 @@ void Animahead_Install(uintptr_t base, void* self) {
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string dir = path;
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
-	if (FILE* fp = fopen((dir + "deagle_animahead.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((dir + "fastload_animahead.txt").c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 1 ? 1 : 0;
 		fclose(fp);
@@ -179,6 +179,6 @@ void Animahead_Install(uintptr_t base, void* self) {
 	                                     "Loading level");
 	const bool chr = Hook(kRvaChrparams, kChrparamsBytes, sizeof kChrparamsBytes, (void*)&HkChr, (void**)&g_chr, "LoadCHRPARAMS");
 	const bool skel = Hook(kRvaModelSkel, kModelSkelBytes, sizeof kModelSkelBytes, (void*)&HkSkel, (void**)&g_skel, "LoadModelSKEL");
-	Log("animahead: mode %d (%s; deagle_animahead.txt), level-load gate %s, chrparams log %s, skeleton log %s", g_mode,
+	Log("animahead: mode %d (%s; fastload_animahead.txt), level-load gate %s, chrparams log %s, skeleton log %s", g_mode,
 	    g_mode ? "human animation sets at the main menu" : "off", lvl ? "on" : "OFF", chr ? "on" : "OFF", skel ? "on" : "OFF");
 }

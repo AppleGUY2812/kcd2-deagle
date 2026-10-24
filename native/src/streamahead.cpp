@@ -148,7 +148,7 @@ std::atomic<long long> s_served{0}, s_servedBytes{0}, s_checked{0}, s_bad{0}, s_
 double g_listMb = 0;
 
 bool LoadList() {
-	FILE* f = fopen((g_dir + "deagle_streamahead_list.txt").c_str(), "r");
+	FILE* f = fopen((g_dir + "fastload_streamahead_list.txt").c_str(), "r");
 	if (!f) { Log("streamahead: no list yet (it is written 5 s after gameplay first starts)"); return false; }
 	struct Raw { int pak; uint32_t dataOff; long long offset, size; };
 	std::vector<Raw> raw;
@@ -360,7 +360,7 @@ void FlushTrace() {
 	std::vector<PakFile> paks;
 	{ std::lock_guard<std::mutex> g(g_recMu); recs = g_recs; }
 	{ std::lock_guard<std::mutex> g(g_pakMu); paks = g_recPaks; }
-	const std::string tmp = g_dir + "deagle_streamahead_trace.tmp", out = g_dir + "deagle_streamahead_trace.csv";
+	const std::string tmp = g_dir + "fastload_streamahead_trace.tmp", out = g_dir + "fastload_streamahead_trace.csv";
 	FILE* f = fopen(tmp.c_str(), "w");
 	if (!f) return;
 	for (size_t i = 0; i < paks.size(); i++) fprintf(f, "#pak,%zu,%llu,%llu,%s\n", i, paks[i].size, paks[i].mtime, paks[i].path.c_str());
@@ -377,10 +377,10 @@ void WriteList() {
 	{ std::lock_guard<std::mutex> g(g_pakMu); paks = g_recPaks; }
 	if (recs.size() < 200) { Log("streamahead: only %zu stream requests before gameplay - the list stays as it was", recs.size()); return; }
 	std::unordered_set<uint64_t> seen;
-	const std::string tmp = g_dir + "deagle_streamahead_list.tmp", out = g_dir + "deagle_streamahead_list.txt";
+	const std::string tmp = g_dir + "fastload_streamahead_list.tmp", out = g_dir + "fastload_streamahead_list.txt";
 	FILE* f = fopen(tmp.c_str(), "w");
 	if (!f) return;
-	fprintf(f, "# deagle plugin: the streaming requests of the last boot load, in order (streamahead.cpp). Rewritten every start.\n");
+	fprintf(f, "# fastload plugin: the streaming requests of the last boot load, in order (streamahead.cpp). Rewritten every start.\n");
 	for (size_t i = 0; i < paks.size(); i++) fprintf(f, "#pak\t%zu\t%llu\t%llu\t%s\n", i, paks[i].size, paks[i].mtime, paks[i].path.c_str());
 	size_t n = 0;
 	double bytes = 0;
@@ -584,7 +584,7 @@ void Streamahead_Install(void* self) {
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	g_dir = path;
 	g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
-	if (FILE* fp = fopen((g_dir + "deagle_streamahead.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((g_dir + "fastload_streamahead.txt").c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
 		fclose(fp);
@@ -605,8 +605,8 @@ void Streamahead_Install(void* self) {
 void Streamahead_Command(const char* args) {
 	while (args && *args == ' ') args++;
 	if (args && *args >= '0' && *args <= '2' && (args[1] == 0 || args[1] == ' ')) {
-		if (FILE* f = fopen((g_dir + "deagle_streamahead.txt").c_str(), "w")) { fprintf(f, "%c\n", *args); fclose(f); }
-		Log("streamahead: mode %c from the next start (deagle_streamahead.txt); now %d", *args, g_mode);
+		if (FILE* f = fopen((g_dir + "fastload_streamahead.txt").c_str(), "w")) { fprintf(f, "%c\n", *args); fclose(f); }
+		Log("streamahead: mode %c from the next start (fastload_streamahead.txt); now %d", *args, g_mode);
 		return;
 	}
 	size_t n;

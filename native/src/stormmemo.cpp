@@ -209,13 +209,13 @@ void Stormmemo_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string file = path;
-	file = file.substr(0, file.find_last_of('\\') + 1) + "deagle_stormmemo.txt";
+	file = file.substr(0, file.find_last_of('\\') + 1) + "fastload_stormmemo.txt";
 	if (FILE* fp = fopen(file.c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
 		fclose(fp);
 	}
-	if (!g_mode) { Log("stormmemo: off (deagle_stormmemo.txt)"); return; }
+	if (!g_mode) { Log("stormmemo: off (fastload_stormmemo.txt)"); return; }
 	bool ok = !memcmp((void*)(base + kRvaPass), kPassBytes, sizeof kPassBytes) &&
 	          !memcmp((void*)(base + kRvaWalk), kWalkBytes, sizeof kWalkBytes) &&
 	          !memcmp((void*)(base + kRvaCustom), kCustomBytes, sizeof kCustomBytes);

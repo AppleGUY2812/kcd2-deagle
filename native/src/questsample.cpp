@@ -180,7 +180,7 @@ void Questsample_End(const char* tag) {
 			Log("questsample: %s:   %s: %s", tag, k ? "inclusive" : "self", line.c_str());
 		}
 	}
-	if (FILE* f = fopen((g_dir + "deagle_qsample.csv").c_str(), "a")) {
+	if (FILE* f = fopen((g_dir + "fastload_qsample.csv").c_str(), "a")) {
 		for (const Sample& s : g_s) {
 			fprintf(f, "%s,%d,", tag, s.phase);
 			for (size_t i = 0; i < s.f.size(); i++) fprintf(f, "%s%s", i ? ";" : "", Name(s.f[i]).c_str());

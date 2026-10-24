@@ -1,10 +1,23 @@
-# Installs (or removes with -Remove) the native plugin next to the game exe:
+# Installs (or removes with -Remove) the native plugins next to the game exe:
 #   Bin\Win64MasterMasterSteamPGO\dinput8.dll        Ultimate ASI Loader x64 v9.7.4 (loads *.asi)
-#   Bin\Win64MasterMasterSteamPGO\deagle_native.asi  our plugin
+#   Bin\Win64MasterMasterSteamPGO\deagle_native.asi  the Deagle mod's plugin
+#   Bin\Win64MasterMasterSteamPGO\fastload.asi       the load-time plugin (its own mod; fastload_*.txt settings)
+# The load settings and records used to be deagle_<name>.txt / .bin: the first install copies each to fastload_<name>
+# (the old files stay, nothing is overwritten), so the replay records and settings carry over.
 param([string]$Dist, [switch]$Remove)
 $bin = 'E:\SteamLibrary\steamapps\common\KingdomComeDeliverance2\Bin\Win64MasterMasterSteamPGO'
 if (Get-Process KingdomCome -ErrorAction SilentlyContinue) { "KCD2 is running: close it first"; exit 1 }
-if ($Remove) { Remove-Item "$bin\dinput8.dll","$bin\deagle_native.asi","$bin\deagle_native.log" -ErrorAction SilentlyContinue; "removed"; exit 0 }
+if ($Remove) { Remove-Item "$bin\dinput8.dll","$bin\deagle_native.asi","$bin\deagle_native.log","$bin\fastload.asi","$bin\fastload.log" -ErrorAction SilentlyContinue; "removed"; exit 0 }
+$load = 'animahead','applyfast','conceptbfs','cvars','fastzip','ftplaces','hitch','menushaders','pakahead','psoahead',
+        'questcache','questearly','questfast','questmenu','questreplay','questsample','readiness','stormmemo',
+        'streamahead','streamio','xmlahead'
+Get-ChildItem "$bin\deagle_*" -Include *.txt,*.bin -ErrorAction SilentlyContinue | % {
+	$rest = $_.Name.Substring(7)                                   # after "deagle_"
+	$stem = ($rest -split '[_.]')[0]
+	$new = Join-Path $bin ("fastload_" + $rest)
+	if ($load -contains $stem -and -not (Test-Path $new)) { Copy-Item $_.FullName $new; "carried over " + $_.Name + " -> fastload_" + $rest }
+}
 Copy-Item "$Dist\dinput8.dll" "$bin\dinput8.dll" -Force
 Copy-Item "$Dist\deagle_native.asi" "$bin\deagle_native.asi" -Force
-Get-ChildItem "$bin\dinput8.dll","$bin\deagle_native.asi" | % { "installed " + $_.Name + " " + $_.Length }
+Copy-Item "$Dist\fastload.asi" "$bin\fastload.asi" -Force
+Get-ChildItem "$bin\dinput8.dll","$bin\deagle_native.asi","$bin\fastload.asi" | % { "installed " + $_.Name + " " + $_.Length }

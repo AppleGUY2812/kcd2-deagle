@@ -94,7 +94,7 @@ void Cvars_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string file = path;
-	file = file.substr(0, file.find_last_of('\\') + 1) + "deagle_cvars.txt";
+	file = file.substr(0, file.find_last_of('\\') + 1) + "fastload_cvars.txt";
 	std::string text;
 	if (FILE* f = fopen(file.c_str(), "r")) {
 		char buf[4096]; size_t n;
@@ -103,7 +103,7 @@ void Cvars_Install(uintptr_t base, void* self) {
 	} else {
 		text = kDefaults;
 		if (FILE* o = fopen(file.c_str(), "w")) {
-			fprintf(o, "# deagle plugin: game settings set at registration (native/src/cvars.h). <name> <value> [load]\n"
+			fprintf(o, "# fastload plugin: game settings set at registration (native/src/cvars.h). <name> <value> [load]\n"
 			           "# load = only until gameplay starts. Delete a line to keep the game's own value.\n%s", kDefaults);
 			fclose(o);
 		}

@@ -34,7 +34,7 @@ StreamFn g_origStream = nullptr;
 // whole = the first block held the whole file (libdeflate did it); split = the game's zlib did it (later blocks too)
 std::atomic<long long> s_calls{0}, s_whole{0}, s_split{0}, s_out{0}, s_ticks{0}, s_bad{0}, s_zlibTicks{0}, s_deflTicks{0};
 std::atomic<long long> s_noStrm{0}, s_notFirst{0}, s_stateSet{0}, s_flag{0}, s_overlap{0};   // why not tried
-std::atomic<int> g_streamMode{0};        // deagle_fastzip_stream.txt: 0 game zlib (counts only), 1 libdeflate, 2 verify
+std::atomic<int> g_streamMode{0};        // fastload_fastzip_stream.txt: 0 game zlib (counts only), 1 libdeflate, 2 verify
 std::atomic<bool> s_off{false};          // too few whole files: stop trying (a failed try costs a partial unpack)
 
 using UnpackFn = void(__fastcall*)(const uint8_t* src, uint8_t* dst, uint32_t srcSize, uint32_t dstSize,
@@ -237,7 +237,7 @@ void Fastzip_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	g_modeFile = path;
-	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "deagle_fastzip.txt";
+	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "fastload_fastzip.txt";
 	if (FILE* fp = fopen(g_modeFile.c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;

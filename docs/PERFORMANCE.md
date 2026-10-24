@@ -326,7 +326,7 @@ GPU unpacking does not fit: entries are tiny (median 2.5 KB) and needed on the C
 GDeflate, a different format (all 82 GB repacked).
 
 Built: `native/src/fastzip.cpp` hooks `FUN_1807675a8` and the crc32 `FUN_180612300` with libdeflate (mode file
-`deagle_fastzip.txt` next to the plugin: 0 zlib, 1 libdeflate, 2 verify both). Expected ~4-7 s off the 63 s; not yet
+`fastload_fastzip.txt` next to the plugin: 0 zlib, 1 libdeflate, 2 verify both). Expected ~4-7 s off the 63 s; not yet
 measured in game. Next step after that: unpack ahead on the idle threads (record the main thread's file order).
 
 ## Sources

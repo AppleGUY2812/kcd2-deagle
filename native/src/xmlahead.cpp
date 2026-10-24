@@ -221,7 +221,7 @@ void** __fastcall HkParse(void* parser, void** ret, const char* file, char clean
 void Flush() {
 	std::vector<Rec> recs;
 	{ std::lock_guard<std::mutex> lk(g_mu); recs = g_recs; }
-	const std::string tmp = g_dir + "deagle_xmlahead_trace.tmp", out = g_dir + "deagle_xmlahead_trace.csv";
+	const std::string tmp = g_dir + "fastload_xmlahead_trace.tmp", out = g_dir + "fastload_xmlahead_trace.csv";
 	FILE* f = fopen(tmp.c_str(), "w");
 	if (!f) return;
 	fprintf(f, "t_ms,tid,ok,served,us,file\n");
@@ -267,8 +267,8 @@ DWORD WINAPI Writer(LPVOID) {
 }
 
 bool LoadList() {
-	FILE* f = fopen((g_dir + "deagle_xmlahead_list.txt").c_str(), "r");
-	if (!f) { Log("xmlahead: no deagle_xmlahead_list.txt - nothing to parse ahead"); return false; }
+	FILE* f = fopen((g_dir + "fastload_xmlahead_list.txt").c_str(), "r");
+	if (!f) { Log("xmlahead: no fastload_xmlahead_list.txt - nothing to parse ahead"); return false; }
 	char line[1100];
 	size_t idx = 0;
 	while (fgets(line, sizeof line, f)) {
@@ -320,7 +320,7 @@ void Xmlahead_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	g_dir = path; g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
-	if (FILE* fp = fopen((g_dir + "deagle_xmlahead.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((g_dir + "fastload_xmlahead.txt").c_str(), "r")) {
 		int m = 1; if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m; fclose(fp);
 	}
 	if (g_mode == 0) { Log("xmlahead: off"); return; }

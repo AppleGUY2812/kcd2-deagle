@@ -12,9 +12,9 @@
 //   stream: FUN_1803d9224, the streaming engine's block unpack (textures etc. on the job threads; the save step).
 //           When a file's first block holds the whole file, libdeflate unpacks it in one go; otherwise the game's
 //           zlib does the file block by block as before. After 300 split files, if over 60 % are split, it stops trying.
-//           Own mode, deagle_fastzip_stream.txt: 0 the game's zlib, counts only (default), 1 libdeflate, 2 verify.
+//           Own mode, fastload_fastzip_stream.txt: 0 the game's zlib, counts only (default), 1 libdeflate, 2 verify.
 //           2026-10-23 verify boot: 0 of 127,575 blocks were a first block with a fresh z_stream (counters added).
-// Mode, read at start from deagle_fastzip.txt next to the plugin and set live by "[DN] fastzip N":
+// Mode, read at start from fastload_fastzip.txt next to the plugin and set live by "[DN] fastzip N":
 //   0 the game's zlib (still timed), 1 libdeflate (default), 2 verify: both run on every call, the game gets
 //   zlib's result, every mismatch is logged, and the log shows both libraries' times on the same data.
 // Every 2 s with activity the log gets one "fastzip:" line with the counts and milliseconds so far.

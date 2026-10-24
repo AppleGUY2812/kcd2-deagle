@@ -9,7 +9,7 @@
 // run the game's code; AutoTriggerable nodes' "Set..." path runs the game's code for names that could match it.
 // Only on the quest job's thread (loadwatch marks it). The first 4096 hits, the first 2 of each key and every 64th after
 // also run the game's walk and must give the same definition, or the cache is off for the session.
-// Switched with questfast (deagle_questfast.txt) and questbench's ab.
+// Switched with questfast (fastload_questfast.txt) and questbench's ab.
 void Questports_Install(uintptr_t gameBase);
 void Questports_JobScope(bool enter);    // loadwatch, around the ConceptLoadJob body (any thread)
 void Questports_Report(const char* when);

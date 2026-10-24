@@ -9,8 +9,8 @@
 //     workers sat ~25 % busy.
 // The plugin hooks the game's setting registration (FUN_1823d8168 int, FUN_1823d8b0c float: name, variable pointer,
 // default, flags, help) and writes its own value into the variable right after. user.cfg, read later, still wins.
-// Values from deagle_cvars.txt next to the plugin, one per line: "<name> <value> [load]"; "load" = only until gameplay
+// Values from fastload_cvars.txt next to the plugin, one per line: "<name> <value> [load]"; "load" = only until gameplay
 // starts (Lua sends "loaded" from OnGameplayStarted), then the game's default comes back. Missing file: the defaults in cvars.cpp.
 void Cvars_Install(uintptr_t gameBase, void* selfModule);   // right after MH_Initialize, before the game registers
-void Cvars_OnLoaded();                                       // gameplay started (Lua "loaded")
+void Cvars_OnLoaded();                                       // gameplay started (fastload_main.cpp: the level state back to 0)
 void Cvars_Command(const char* args);                        // "cvars": log what was set

@@ -6,15 +6,26 @@ endif()
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded")   # static CRT: no redistributable needed
 file(GLOB MINHOOK_SRC third_party/minhook/src/*.c third_party/minhook/src/hde/hde64.c)
+# hook.c from src/minhook_shared/: MinHook 1.3.3's with one process-wide mutex around its thread freeze, so that two
+# plugins (deagle_native.asi, fastload.asi) never suspend each other while enabling hooks
+list(FILTER MINHOOK_SRC EXCLUDE REGEX "/minhook/src/hook\\.c$")
+list(APPEND MINHOOK_SRC src/minhook_shared/hook.c)
+set(MINHOOK_INC third_party/minhook/include third_party/minhook/src)
 # libdeflate v1.26 (MIT): unpack + crc32 only, for src/fastzip.cpp
 set(LIBDEFLATE_SRC third_party/libdeflate/lib/deflate_decompress.c third_party/libdeflate/lib/crc32.c
     third_party/libdeflate/lib/utils.c third_party/libdeflate/lib/x86/cpu_features.c)
-add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp src/ftpreload.cpp src/fastzip.cpp src/streamio.cpp src/streamahead.cpp src/readiness.cpp src/hitch.cpp src/ftplaces.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/mainreads.cpp src/loadwatch.cpp src/applyfast.cpp src/conceptbfs.cpp src/stormmemo.cpp src/questmenu.cpp src/questfast.cpp src/animahead.cpp src/questprof.cpp
-    src/questports.cpp src/questdump.cpp src/questreplay.cpp src/questsample.cpp src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
+add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp
+    src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
-target_include_directories(deagle_native PRIVATE third_party/minhook/include third_party/libdeflate src)
+target_include_directories(deagle_native PRIVATE ${MINHOOK_INC} src)
 target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)
 set_target_properties(deagle_native PROPERTIES SUFFIX ".asi" OUTPUT_NAME "deagle_native")
+# fastload.asi: the load-time work as a plugin of its own (src/fastload_main.cpp; docs/LOADTIME.md)
+add_library(fastload SHARED src/fastload_main.cpp src/scan.cpp src/log.cpp src/ftpreload.cpp src/fastzip.cpp src/streamio.cpp src/streamahead.cpp src/readiness.cpp src/hitch.cpp src/ftplaces.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/mainreads.cpp src/loadwatch.cpp src/applyfast.cpp src/conceptbfs.cpp src/stormmemo.cpp src/questmenu.cpp src/questfast.cpp src/animahead.cpp src/questprof.cpp
+    src/questports.cpp src/questdump.cpp src/questreplay.cpp src/questsample.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
+target_include_directories(fastload PRIVATE ${MINHOOK_INC} third_party/libdeflate src)
+target_compile_options(fastload PRIVATE /W3 /EHa /O2)
+set_target_properties(fastload PROPERTIES SUFFIX ".asi" OUTPUT_NAME "fastload")
 # outside-the-game test: KCD2's FMOD 2.02 and Ready or Not's 2.03 in one process (native/test/ron_coexist.cpp)
 add_executable(ron_coexist test/ron_coexist.cpp src/ron.cpp src/log.cpp)
 set_property(TARGET ron_coexist PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
@@ -26,7 +37,7 @@ add_executable(mainreads_test test/mainreads_test.cpp src/mainreads.cpp)
 set_property(TARGET mainreads_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 # outside-the-game test: hitch.cpp's long-frame sampler on a stalling thread (native/test/hitch_test.cpp, runs on Windows)
 add_executable(hitch_test test/hitch_test.cpp src/hitch.cpp src/log.cpp ${MINHOOK_SRC})
-target_include_directories(hitch_test PRIVATE third_party/minhook/include)
+target_include_directories(hitch_test PRIVATE ${MINHOOK_INC})
 target_compile_options(hitch_test PRIVATE /W3 /EHa /O2)   # as the plugin: guarded reads catch inline faults
 set_property(TARGET hitch_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 # outside-the-game test: libdeflate as built for src/fastzip.cpp, on a real pak (native/test/zbench.cpp)

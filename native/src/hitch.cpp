@@ -493,19 +493,19 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self) {
 	GetModuleFileNameA(self, path, MAX_PATH);
 	std::string dir(path);
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
-	if (FILE* sw = fopen((dir + "deagle_hitch.txt").c_str(), "r")) {   // "0": nothing at all (no thread, no hooks)
+	if (FILE* sw = fopen((dir + "fastload_hitch.txt").c_str(), "r")) {   // "0": nothing at all (no thread, no hooks)
 		int m = 1;
 		const bool off = fscanf(sw, "%d", &m) == 1 && m == 0;
 		fclose(sw);
-		if (off) { g_on = false; Log("hitch: off (deagle_hitch.txt says 0: no sampler, no file watch)"); return; }
+		if (off) { g_on = false; Log("hitch: off (fastload_hitch.txt says 0: no sampler, no file watch)"); return; }
 	}
-	const std::string p = dir + "deagle_hitch.csv";
+	const std::string p = dir + "fastload_hitch.csv";
 	if (FILE* fo = fopen(p.c_str(), "w")) {
 		fprintf(fo, "hitch,thread,frame_ms,t_ms,faults,rip,stack\n");
 		fclose(fo);
 		g_csvPath = p;
 	}
-	const std::string pf = dir + "deagle_hitch_files.csv";
+	const std::string pf = dir + "fastload_hitch_files.csv";
 	if (FILE* fo = fopen(pf.c_str(), "w")) {
 		fprintf(fo, "hitch,thread,t_ms,kind,us,status_or_size,path\n");
 		fclose(fo);

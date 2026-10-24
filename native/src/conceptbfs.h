@@ -4,6 +4,6 @@
 // apply step (0.35 s on boot 13) and before it (0.22 s): the game's breadth-first walk keeps its queue in a std::deque
 // of counted pointers (4 AddRef + 4 Release per node, a heap block per 2 pushes). Replaced by conceptbfs_core.h: the
 // same visit order on a plain vector, one AddRef + one Release per node. The first 200 finds also run the game's and
-// must return the same node (a mismatch turns it off for the session). deagle_conceptbfs.txt next to the plugin:
-// 1 on (default), 0 off. conceptbfs: lines in deagle_native.log give finds, nodes looked at and time.
+// must return the same node (a mismatch turns it off for the session). fastload_conceptbfs.txt next to the plugin:
+// 1 on (default), 0 off. conceptbfs: lines in fastload.log give finds, nodes looked at and time.
 void Conceptbfs_Install(uintptr_t base, void* self);

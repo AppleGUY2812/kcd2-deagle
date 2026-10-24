@@ -78,8 +78,8 @@ int main(int argc, char** argv) {
 		FILE* f = fopen(pak.c_str(), "wb");
 		fwrite(data.data(), 1, data.size(), f);
 		fclose(f);
-		DeleteFileA((dir + "deagle_streamahead_list.txt").c_str());
-		if (FILE* m = fopen((dir + "deagle_streamahead.txt").c_str(), "w")) { fprintf(m, "2\n"); fclose(m); }
+		DeleteFileA((dir + "fastload_streamahead_list.txt").c_str());
+		if (FILE* m = fopen((dir + "fastload_streamahead.txt").c_str(), "w")) { fprintf(m, "2\n"); fclose(m); }
 	}
 	if (mode == "changed") {   // touch the pak: same bytes, new write time
 		HANDLE t = CreateFileA(pak.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
 		if (served) { printf("FAIL: served without a list\n"); return 1; }
 		Streamahead_OnLoaded();
 		Sleep(6500);
-		FILE* l = fopen((dir + "deagle_streamahead_list.txt").c_str(), "r");
+		FILE* l = fopen((dir + "fastload_streamahead_list.txt").c_str(), "r");
 		if (!l) { printf("FAIL: no list 5 s after gameplay started\n"); return 1; }
 		int lines = 0; char b[1500];
 		while (fgets(b, sizeof b, l)) if (b[0] != '#') lines++;

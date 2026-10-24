@@ -9,6 +9,6 @@
 // evaluate FUN_1806990f4. Only sets made of the 26 known read-only condition kinds are remembered.
 // Check: the first 100,000 remembered answers, then every 64th, are evaluated again the game's way and must match;
 // a mismatch keeps the game's answer and turns the memo off for the session.
-// deagle_stormmemo.txt next to the plugin: 1 on (default), 0 off, 2 check every remembered answer (no time saved).
-// stormmemo: lines in deagle_native.log: characters, time in Storm per thread, sets looked up, remembered, checked.
+// fastload_stormmemo.txt next to the plugin: 1 on (default), 0 off, 2 check every remembered answer (no time saved).
+// stormmemo: lines in fastload.log: characters, time in Storm per thread, sets looked up, remembered, checked.
 void Stormmemo_Install(uintptr_t base, void* self);

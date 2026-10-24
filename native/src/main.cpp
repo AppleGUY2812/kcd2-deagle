@@ -16,26 +16,6 @@
 #include "ronvm.h"
 #include "lean.h"
 #include "invtime.h"
-#include "ftpreload.h"
-#include "fastzip.h"
-#include "streamio.h"
-#include "readiness.h"
-#include "hitch.h"
-#include "ftplaces.h"
-#include "streamahead.h"
-#include "pakahead.h"
-#include "cvars.h"
-#include "xmlahead.h"
-#include "loadwatch.h"
-#include "applyfast.h"
-#include "conceptbfs.h"
-#include "stormmemo.h"
-#include "questmenu.h"
-#include "animahead.h"
-#include "questprof.h"
-#include "questdump.h"
-#include "questreplay.h"
-#include "questfast.h"
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
@@ -992,6 +972,26 @@ static void RonMissLog(const std::string& ev) {
 	n++;
 }
 
+// The load-time work is its own plugin, fastload.asi (fastload_main.cpp): its commands come through our Lua channel
+// (deagle_questbench, deagle_hitch ...) and go there. Without it they are ignored (logged once).
+static bool FastloadCommand(const char* line) {
+	using Fn = int(__cdecl*)(const char*);
+	static Fn fn = nullptr;
+	if (!fn) if (HMODULE h = GetModuleHandleA("fastload.asi")) fn = (Fn)GetProcAddress(h, "Fastload_Command");
+	if (fn) return fn(line) != 0;
+	static const char* const names[] = { "ftpre", "fastzip", "streamio", "readiness", "hitch", "ftplaces", "pakahead",
+		"cvars", "xmlahead", "questbench", "loaded", "streamahead" };
+	for (const char* n : names) {
+		const size_t k = strlen(n);
+		if (!strncmp(line, n, k) && (line[k] == 0 || line[k] == ' ')) {
+			static bool told = false;
+			if (!told) { told = true; Log("'%s': a fastload command, and fastload.asi isn't loaded", n); }
+			return true;
+		}
+	}
+	return false;
+}
+
 static void Command(const char* line) {
 	char cmd[32] = {};
 	if (sscanf_s(line, "%31s", cmd, (unsigned)sizeof(cmd)) != 1) return;
@@ -1235,18 +1235,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
 	else if (!strcmp(cmd, "invtime")) Invtime_Command(rest);
-	else if (!strcmp(cmd, "ftpre")) Ftpre_Command(rest);
-	else if (!strcmp(cmd, "fastzip")) Fastzip_Command(rest);
-	else if (!strcmp(cmd, "streamio")) Streamio_Command(rest);
-	else if (!strcmp(cmd, "readiness")) Readiness_Command(rest);
-	else if (!strcmp(cmd, "hitch")) Hitch_Command(rest);
-	else if (!strcmp(cmd, "ftplaces")) Ftplaces_Command(rest);
-	else if (!strcmp(cmd, "pakahead")) Pakahead_Command(rest);
-	else if (!strcmp(cmd, "cvars")) Cvars_Command(rest);
-	else if (!strcmp(cmd, "xmlahead")) Xmlahead_Command(rest);
-	else if (!strcmp(cmd, "questbench")) Questmenu_Bench(rest);   // rebuild the quest graph N times at the menu (questmenu.h)
-	else if (!strcmp(cmd, "loaded")) { Cvars_OnLoaded(); Streamahead_OnLoaded(); Applyfast_OnLoaded(); }
-	else if (!strcmp(cmd, "streamahead")) Streamahead_Command(rest);
+	else if (FastloadCommand(line)) {}   // the load-time commands (questbench, hitch, loaded ...): fastload.asi
 	else if (!strcmp(cmd, "fastkey")) {
 		char k[24] = {};
 		sscanf_s(rest, "%23s", k, (unsigned)sizeof(k));
@@ -1413,10 +1402,6 @@ static void OnCamera(uintptr_t camera) {
 		flast = now;
 		fpos[0] = g_cam[3]; fpos[1] = g_cam[7]; fpos[2] = g_cam[11];
 	}
-	Hitch_Frame();   // a drawn frame: the long-frame sampler measures from here (hitch.cpp)
-	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)
-	Ftpre_Frame();   // fast-travel preload (ftpreload.cpp): the destination streams in while the map piece walks
-	Readiness_Frame();   // what holds a loading / black screen, and "let me in early" (readiness.cpp)
 	UpdateMotion(g_cam);
 	{   // a Ready or Not gun's recoil, offsets and fire shake (ronvm.cpp): game seconds, once a drawn frame
 		static LARGE_INTEGER rlast{};
@@ -1606,24 +1591,6 @@ static DWORD WINAPI Init(LPVOID) {
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
-	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
-	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
-	Applyfast_Install(g_game.base, g_self);   // faster pieces of the save load's apply step (applyfast.cpp)
-	Conceptbfs_Install(g_game.base, g_self);   // the concept graph's name lookup without its deque (conceptbfs.cpp)
-	Stormmemo_Install(g_game.base, g_self);   // Storm's named condition sets remembered per character (stormmemo.cpp)
-	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
-	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
-	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
-	Questreplay_Install(g_game.base);   // phase 2a record / replay: the menu build, questbench N rec (questreplay.cpp); before questprof
-	Questprof_Install(g_game.base);   // the quest build's inner profile for questbench N prof (questprof.cpp)
-	Questdump_Install(g_game.base);   // the quest graph dump for questbench N dump (questdump.cpp)
-	Animahead_Install(g_game.base, g_self);   // human animation sets during the terrain wait (animahead.cpp)
-	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
-	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
-	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
-	Ftplaces_Install(g_game.base, g_self);   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
-	Hitch_Install(g_game.base, g_game.size, g_self);   // samples the main thread in frames over 250 ms (hitch.cpp)
-	Readiness_Install(g_game.base);   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	uintptr_t fr = FindFrustum();
 	Log("UpdateFrustumPlanes %p", (void*)fr);
 	if (fr && MH_CreateHook((void*)fr, (void*)&HkFrustum, (void**)&g_origFrustum) == MH_OK && MH_EnableHook((void*)fr) == MH_OK)
@@ -1650,7 +1617,6 @@ static DWORD WINAPI Init(LPVOID) {
 	for (int i = 0; i < 240 && !g_env; i++) { g_env = FindEnv(); if (!g_env) Sleep(500); }
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Freecam_Install(g_env, (void*)g_origFrustum);   // free camera (freecam.cpp, johnpork-18)
-	if (g_env) Ftpre_Install(g_env, g_game.base);   // fast-travel preload (ftpreload.cpp)
 	if (g_env) Probe_Install(g_env, g_game.base);   // architecture step 1 probes (probe.cpp, Claude 5)
 	if (g_env) Rounds_Install(g_env, g_game.base);   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
 	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)

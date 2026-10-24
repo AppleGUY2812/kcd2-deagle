@@ -8,5 +8,5 @@
 // Per frame: ~8 pointer reads under SEH. docs/whgame_re/fast_travel.md has the addresses.
 // Modes ("[DN] ftpre N"): 0 off, 1 log only, 2 log + precache (default).
 void Ftpre_Install(uintptr_t env, uintptr_t gameBase);
-void Ftpre_Frame();                   // once a drawn frame, main thread (main.cpp OnCamera)
+void Ftpre_Frame();                   // once a drawn frame, main thread (fastload_main.cpp)
 void Ftpre_Command(const char* args);

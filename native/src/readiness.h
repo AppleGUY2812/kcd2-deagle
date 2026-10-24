@@ -15,7 +15,7 @@
 //   "readiness: gate 0xMASK (from +RVA) waiting N s: not ready ..." once a second while a gate waits;
 //   "readiness: gate 0xMASK (from +RVA) open after N s; not ready for: ...; ready last: X" when it opens
 //   (gates that open within 0.25 s are left out).
-// "Let me in early" (readiness_early.h; off by default, `readiness early 1`, kept in deagle_readiness.txt): the save-load
+// "Let me in early" (readiness_early.h; off by default, `readiness early 1`, kept in fastload_readiness.txt): the save-load
 // and fast-travel gates open once terrain, octree, animations, entities and objects are ready, while textures, merged
 // meshes, far LODs and voxel GI still load (through the game's own timeout path). Off, the open line says how much
 // sooner it would have let you in.
@@ -27,4 +27,5 @@ void Readiness_Install(uintptr_t gameBase);   // after MH_Initialize
 // system.cfg) is raised to that, then put back. The "waiting" lines show the reader: asleep with work queued (temp
 // memory or a pause holds it), asleep with nothing queued, temp memory full.
 void Readiness_Command(const char* args);     // "readiness [early 0|1] [temp 0|32-512]"
-void Readiness_Frame();   // main thread, once a drawn frame (main.cpp OnCamera)
+void Readiness_Frame();   // main thread, once a drawn frame (fastload_main.cpp)
+int Readiness_LevelState();   // the level manager's state (0 in game, 1-9 while a level loads), -1 = none yet; any thread

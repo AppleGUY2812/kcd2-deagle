@@ -169,7 +169,7 @@ const unsigned char kSyncBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x2
 using SyncFn = uint64_t(__fastcall*)(void* rt, uint64_t a2, uint64_t a3, uint64_t a4);
 SyncFn g_sync = nullptr;
 constexpr unsigned kPsoQuietMs = 1500;   // the menu: no XML load for this long
-// deagle_psoahead.txt: 2 during the load (default), 1 at the main menu (the menu freezes ~6 s), 0 off
+// fastload_psoahead.txt: 2 during the load (default), 1 at the main menu (the menu freezes ~6 s), 0 off
 int g_psoMode = 2;
 std::atomic<int> g_psoState{0};          // 0 not yet, 1 queued, -1 not possible
 std::atomic<long long> s_psoFrames{0};
@@ -202,7 +202,7 @@ uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
 	return g_sync(rt, a2, a3, a4);
 }
 
-// ---- 3b. PSO precache during the load (deagle_psoahead.txt 2), no menu freeze
+// ---- 3b. PSO precache during the load (fastload_psoahead.txt 2), no menu freeze
 // The render loading thread finishes its texture precache around the time the main thread starts waiting for the quest
 // job, then sits idle until the main thread's first frame sync after "finish level", and only then gets the precache
 // (boot 27: idle 13.9-15.7 s, boot 26: 14.8-15.8 s; precache 2.4 s after that). So: on the main thread, just before
@@ -331,7 +331,7 @@ MsgFn g_processMsg = nullptr, g_conceptOnMsg = nullptr, g_preModules = nullptr;
 constexpr uintptr_t kRvaPreModules = 0x47a1e4;
 const unsigned char kPreModulesBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x55,0x56,0x57,0x48,0x83,0xec,0x70 };
 thread_local long long t_earlyAt = 0;
-bool g_questsFirst = true;                 // deagle_questearly.txt: 0 off, 1 on
+bool g_questsFirst = true;                 // fastload_questearly.txt: 0 off, 1 on
 thread_local void* t_earlyMsg = nullptr;   // the message whose concept turn already ran
 std::atomic<long long> s_qeEarly{0}, s_qeSkipped{0};
 
@@ -522,12 +522,12 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string dir = path;
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
-	if (FILE* fp = fopen((dir + "deagle_applyfast.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((dir + "fastload_applyfast.txt").c_str(), "r")) {
 		int m = 2;
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
 		fclose(fp);
 	}
-	if (!g_mode) { g_psoState = -1; Log("applyfast: off (deagle_applyfast.txt)"); return; }
+	if (!g_mode) { g_psoState = -1; Log("applyfast: off (fastload_applyfast.txt)"); return; }
 	const bool a = Hook(base, kRvaFogAny, kFogAnyBytes, sizeof kFogAnyBytes, (void*)&HkFogAny, (void**)&g_fogAny, "fog ask");
 	const bool b = a && Hook(base, kRvaFogNode, kFogNodeBytes, sizeof kFogNodeBytes, (void*)&HkFogNode, (void**)&g_fogNode,
 	                         "fog node");
@@ -535,12 +535,12 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	g_base = base;
 	const bool c = !memcmp((void*)(base + kRvaFindChrparams), kFindCallBytes, sizeof kFindCallBytes) &&
 	               Hook(base, kRvaFind, kFindBytes, sizeof kFindBytes, (void*)&HkFind, (void**)&g_find, "facial DBA list");
-	if (FILE* fp = fopen((dir + "deagle_psoahead.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((dir + "fastload_psoahead.txt").c_str(), "r")) {
 		int m = 2;
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_psoMode = m;
 		fclose(fp);
 	}
-	if (FILE* fp = fopen((dir + "deagle_questearly.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((dir + "fastload_questearly.txt").c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1) g_questsFirst = m != 0;
 		fclose(fp);
@@ -568,8 +568,8 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	const bool retry = d && g_psoMode == 2 &&   // the later hand-over point (3b); without it, only before the quest wait
 	                   Hook(base, kRvaPostLoadLevel, kPostLoadLevelBytes, sizeof kPostLoadLevelBytes, (void*)&HkPostLoadLevel,
 	                        (void**)&g_postLoadLevel, "PostLoadLevel");
-	// piece 5: shaders parsed at the main menu, one per frame (deagle_menushaders.txt: 1 on, default; 0 off)
-	if (FILE* fp = fopen((dir + "deagle_menushaders.txt").c_str(), "r")) {
+	// piece 5: shaders parsed at the main menu, one per frame (fastload_menushaders.txt: 1 on, default; 0 off)
+	if (FILE* fp = fopen((dir + "fastload_menushaders.txt").c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1) g_menuShaders = m != 0;
 		fclose(fp);
@@ -586,8 +586,8 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	else g_shState = -1;
 	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s; "
 	    "PSO precache: %s; quests first in the level data message: %s", g_mode, g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF",
-	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? (retry ? "during the load (+ PostLoadLevel)" : "during the load (PostLoadLevel point OFF)") : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (deagle_psoahead.txt 0)",
-	    e ? "on" : g_questsFirst ? "OFF (code differs)" : "off (deagle_questearly.txt)");
+	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? (retry ? "during the load (+ PostLoadLevel)" : "during the load (PostLoadLevel point OFF)") : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (fastload_psoahead.txt 0)",
+	    e ? "on" : g_questsFirst ? "OFF (code differs)" : "off (fastload_questearly.txt)");
 	Log("applyfast: shaders parsed at the main menu: %s", sh ? "on (one per menu frame)" :
-	    g_menuShaders ? "OFF (code differs or hook failed)" : "off (deagle_menushaders.txt)");
+	    g_menuShaders ? "OFF (code differs or hook failed)" : "off (fastload_menushaders.txt)");
 }

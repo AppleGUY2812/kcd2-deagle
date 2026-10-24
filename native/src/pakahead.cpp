@@ -44,7 +44,7 @@ std::unordered_map<uintptr_t, uint32_t> g_pakIds;      // FILE* or in-memory pak
 std::vector<std::string> g_paks;
 std::atomic<long long> g_calls{0};
 
-// ---- step 2: unpack ahead (mode 2). deagle_pakahead_list.txt next to the plugin, made by tools/pakahead_list.py from a
+// ---- step 2: unpack ahead (mode 2). fastload_pakahead_list.txt next to the plugin, made by tools/pakahead_list.py from a
 // recording: one line per entry in the order the load needs them: "<pak path>\t<data offset>\t<packed>\t<size>\t<crc32>"
 // (entries checked against the pak's own directory). Workers read + unpack them into RAM from game start, at background
 // priority; the ReadFile hook copies a finished entry into the game's buffer instead of reading and unpacking it.
@@ -385,8 +385,8 @@ DWORD WINAPI Toucher(LPVOID) {
 }
 
 bool LoadList() {
-	FILE* f = fopen((g_dir + "deagle_pakahead_list.txt").c_str(), "r");
-	if (!f) { Log("pakahead: no deagle_pakahead_list.txt - nothing to unpack ahead"); return false; }
+	FILE* f = fopen((g_dir + "fastload_pakahead_list.txt").c_str(), "r");
+	if (!f) { Log("pakahead: no fastload_pakahead_list.txt - nothing to unpack ahead"); return false; }
 	char line[1200];
 	size_t bytes = 0;
 	while (fgets(line, sizeof line, f)) {
@@ -435,7 +435,7 @@ void StartAhead() {
 void Flush() {
 	std::vector<Rec> recs; std::vector<std::string> paks;
 	{ std::lock_guard<std::mutex> lk(g_mu); recs = g_recs; paks = g_paks; }
-	const std::string tmp = g_dir + "deagle_pakahead_trace.tmp", out = g_dir + "deagle_pakahead_trace.csv";
+	const std::string tmp = g_dir + "fastload_pakahead_trace.tmp", out = g_dir + "fastload_pakahead_trace.csv";
 	FILE* f = fopen(tmp.c_str(), "w");
 	if (!f) return;
 	fprintf(f, "# paks\n");
@@ -492,7 +492,7 @@ void Pakahead_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	g_dir = path; g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
-	if (FILE* fp = fopen((g_dir + "deagle_pakahead.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((g_dir + "fastload_pakahead.txt").c_str(), "r")) {
 		int m = 1; if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m; fclose(fp);
 	}
 	if (g_mode == 0) { Log("pakahead: off"); return; }

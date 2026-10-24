@@ -130,7 +130,7 @@ void Ftplaces_Install(uintptr_t gameBase, HMODULE self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA(self, path, MAX_PATH);
 	std::string p(path);
-	g_modeFile = p.substr(0, p.find_last_of('\\') + 1) + "deagle_ftplaces.txt";
+	g_modeFile = p.substr(0, p.find_last_of('\\') + 1) + "fastload_ftplaces.txt";
 	if (FILE* f = fopen(g_modeFile.c_str(), "r")) {
 		int m = 1;
 		if (fscanf(f, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;

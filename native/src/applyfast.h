@@ -17,16 +17,16 @@
 //    does not run at the menu).
 //    The list comes from the pipeline cache file, so the load's own precache then finds the PSOs made. The menu
 //    freezes while it runs: at the menu it also parses the 416 shaders the load would parse later (6.2 s, boots 22-23;
-//    state 4 2.4 -> 0.3-0.6 s, ~1.9 s off the load on average). deagle_psoahead.txt 1.
-//    3b (deagle_psoahead.txt 2, default): the same call during the load instead, with no menu freeze. Just before the
+//    state 4 2.4 -> 0.3-0.6 s, ~1.9 s off the load on average). fastload_psoahead.txt 1.
+//    3b (fastload_psoahead.txt 2, default): the same call during the load instead, with no menu freeze. Just before the
 //    main thread waits for the quest job, it waits until the render loading thread has finished its texture precache
 //    (it then sits idle until "finish level" is done), queues the precache and hands it over without blocking, so it
 //    runs while the main thread finishes the level. 0 = the game's own precache in state 4.
 // 4. Quests first in the level data message (~2-3 s of the main thread's wait for the quest job): the concept module's
 //    handler of module message 0x1e (it reads the level's ConceptManager block and submits the ConceptLoadJob) runs
 //    first in the module loop instead of after the character and AI-tree loaders, so the job starts ~3 s earlier.
-//    Same message, same thread, same code; its own turn is skipped. deagle_questearly.txt: 0 off, 1 on (default).
-// Mode in deagle_applyfast.txt next to the plugin: 0 off, 1 on, 2 on + every 64th skipped node also asked the game's
+//    Same message, same thread, same code; its own turn is skipped. fastload_questearly.txt: 0 off, 1 on (default).
+// Mode in fastload_applyfast.txt next to the plugin: 0 off, 1 on, 2 on + every 64th skipped node also asked the game's
 // way (a "MISMATCH" line if it ever says yes; default until boots confirm). Totals go to the log at gameplay start.
 void Applyfast_Install(uintptr_t gameBase, void* selfModule);
 void Applyfast_OnLoaded();

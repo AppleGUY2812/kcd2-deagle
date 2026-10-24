@@ -139,7 +139,7 @@ bool ReadInputs(uint64_t impl, Inputs& in) {   // the job lambda: +0x08 M, +0x20
 
 // ---- the cache file
 void WriteCache(const Inputs& in) {
-	const std::string out = g_dir + "deagle_questcache.txt", tmp = out + ".tmp";
+	const std::string out = g_dir + "fastload_questcache.txt", tmp = out + ".tmp";
 	FILE* f = fopen(tmp.c_str(), "w");
 	if (!f) return;
 	fprintf(f, "# inputs of the last load's quest job (questmenu.cpp); delete to stop the main-menu pre-build until the next load\n");
@@ -151,7 +151,7 @@ void WriteCache(const Inputs& in) {
 	MoveFileExA(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 bool ReadCache(Inputs& in) {
-	FILE* f = fopen((g_dir + "deagle_questcache.txt").c_str(), "r");
+	FILE* f = fopen((g_dir + "fastload_questcache.txt").c_str(), "r");
 	if (!f) return false;
 	char line[1200];
 	while (fgets(line, sizeof line, f)) {
@@ -252,10 +252,10 @@ DWORD WINAPI Build(LPVOID) {
 	*(uintptr_t*)(impl + 0x30) = *(uintptr_t*)(impl + 0x38) = (uintptr_t)(p.data() + p.size());
 	const unsigned long long free0 = FreeMb();
 	g_buildT0 = Now();
-	// phase 2a from deagle_questreplay_<level>.bin when it was recorded for these inputs, else recorded now (questreplay.cpp)
+	// phase 2a from fastload_questreplay_<level>.bin when it was recorded for these inputs, else recorded now (questreplay.cpp)
 	const int rmode = g_plan && Questreplay_Arm(g_plan) ? g_plan : 0;
 	const bool armed = rmode != 0;
-	const DWORD sa = GetFileAttributesA((g_dir + "deagle_questsample.txt").c_str());   // present: sample the menu build
+	const DWORD sa = GetFileAttributesA((g_dir + "fastload_questsample.txt").c_str());   // present: sample the menu build
 	const bool samp = sa != INVALID_FILE_ATTRIBUTES && !(sa & FILE_ATTRIBUTE_DIRECTORY);
 	if (samp) Questsample_Begin();
 	const bool ok = CallBody(impl, g_mgr);
@@ -280,10 +280,10 @@ DWORD WINAPI Build(LPVOID) {
 
 // ---- start: after boot event 0x24, on Main, once
 const char* WhyNot(Inputs& now) {
-	if (g_mode == 2) return "deagle_questmenu.txt 2: no pre-build, the load builds its own (from the record when there is one)";
-	if (!g_conceptHook) return "the concept message hook is off (deagle_questearly.txt 0 or code differs)";
+	if (g_mode == 2) return "fastload_questmenu.txt 2: no pre-build, the load builds its own (from the record when there is one)";
+	if (!g_conceptHook) return "the concept message hook is off (fastload_questearly.txt 0 or code differs)";
 	if (Xmlahead_LevelSeen()) return "a level load has already begun";
-	if (!g_cacheOk) return "no deagle_questcache.txt yet (written by the next load)";
+	if (!g_cacheOk) return "no fastload_questcache.txt yet (written by the next load)";
 	if (WaitForSingleObject(g_scanDone, 2000) != WAIT_OBJECT_0) return "the save scan did not finish";
 	if (g_saveLevel.empty()) return "no save found";
 	if (g_saveLevel != g_cache.level) return "the newest save is on another level than the cache";
@@ -361,8 +361,8 @@ DWORD WINAPI Bench(LPVOID arg) {
 		const unsigned long long free0 = FreeMb();
 		const bool prof = a.prof && Questprof_Begin();
 		std::string dumpPath;
-		if (a.dump) {   // one file per build (deagle_questdump_<k>.txt): tools/questdump_diff.py compares two
-			dumpPath = g_dir + "deagle_questdump_" + std::to_string(k) + ".txt";
+		if (a.dump) {   // one file per build (fastload_questdump_<k>.txt): tools/questdump_diff.py compares two
+			dumpPath = g_dir + "fastload_questdump_" + std::to_string(k) + ".txt";
 			DeleteFileA(dumpPath.c_str());
 			Questdump_Arm(dumpPath.c_str());
 		}
@@ -500,8 +500,8 @@ void Questmenu_Bench(const char* args) {
 	const char* why = nullptr;
 	if (got < 1) why = "usage: questbench N [ab|prof|dump|abdump|rec|recdump|file|filedump|filesample|sample] (N 1-20)";
 	else if (n < 1 || n > 20) why = "N must be 1-20";
-	else if (!g_mode) why = "questmenu is off (deagle_questmenu.txt 0)";
-	else if (!g_cacheOk) why = "no deagle_questcache.txt yet (a load writes it)";
+	else if (!g_mode) why = "questmenu is off (fastload_questmenu.txt 0)";
+	else if (!g_cacheOk) why = "no fastload_questcache.txt yet (a load writes it)";
 	else if (Xmlahead_LevelSeen()) why = "only at the main menu, before the first load";
 	else if (g_phase.load() == 1) why = "a build is running";
 	else if (g_benching.load()) why = "a bench is running";
@@ -521,8 +521,8 @@ void Questmenu_Bench(const char* args) {
 	           samp = !strcmp(mode, "filesample") || !strcmp(mode, "sample");
 	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof, dump, rec, file, samp }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
 	if (t) { CloseHandle(t); Log("questbench: %d builds started%s%s%s", n, ab ? " (questfast on / off alternating)" : prof ? " (with the inner profile, questprof)" : "",
-	                            dump ? " (graph dump per build: deagle_questdump_<k>.txt)" : "", rec ? " (build 1 records phase 2a, the others replay it)" :
-	                            file ? " (phase 2a from deagle_questreplay_<level>.bin, as the menu build)" : ""); }
+	                            dump ? " (graph dump per build: fastload_questdump_<k>.txt)" : "", rec ? " (build 1 records phase 2a, the others replay it)" :
+	                            file ? " (phase 2a from fastload_questreplay_<level>.bin, as the menu build)" : ""); }
 	else { g_phase = 3; g_benching = false; SetEvent(g_built); Log("questbench: could not start the thread"); }
 }
 
@@ -533,14 +533,14 @@ void Questmenu_Install(uintptr_t base, void* self) {
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	g_dir = path;
 	g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
-	if (FILE* fp = fopen((g_dir + "deagle_questmenu.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((g_dir + "fastload_questmenu.txt").c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 2 ? 2 : m != 0;
 		fclose(fp);
 	}
 	g_built = CreateEventA(nullptr, TRUE, FALSE, nullptr);
 	g_scanDone = CreateEventA(nullptr, TRUE, FALSE, nullptr);
-	if (!g_mode) { Log("questmenu: off (deagle_questmenu.txt); the load's inputs are not recorded"); return; }
+	if (!g_mode) { Log("questmenu: off (fastload_questmenu.txt); the load's inputs are not recorded"); return; }
 	const bool code = !memcmp((void*)(base + kRvaNormalise), kNormaliseBytes, sizeof kNormaliseBytes) &&
 	                  !memcmp((void*)(base + kRvaStrCtor), kStrCtorBytes, sizeof kStrCtorBytes) &&
 	                  !memcmp((void*)(base + kRvaStrRelease), kStrReleaseBytes, sizeof kStrReleaseBytes) &&

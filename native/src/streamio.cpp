@@ -450,7 +450,7 @@ void Streamio_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	g_modeFile = path;
-	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "deagle_streamio.txt";
+	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "fastload_streamio.txt";
 	if (FILE* fp = fopen(g_modeFile.c_str(), "r")) {
 		int m = 0;
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;

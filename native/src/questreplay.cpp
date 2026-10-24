@@ -1020,16 +1020,16 @@ void Enable(bool on, bool all) {
 	MH_ApplyQueued();
 }
 
-// ---- the record files (deagle_questreplay_<level>.bin next to the plugin, one per level) and their key
+// ---- the record files (fastload_questreplay_<level>.bin next to the plugin, one per level) and their key
 constexpr uint32_t kFileVer = 1;
 struct Hdr { char magic[4]; uint32_t ver; uint64_t key; uint32_t nStr, nProj; uint64_t blob, code; };
 std::string g_dir;
 std::string g_level;   // the level of the record in memory / being planned (its file name)
 HANDLE g_preloaded = nullptr;
-std::string FileOf(const std::string& level) {   // deagle_questreplay_<level>.bin (level names are plain identifiers)
+std::string FileOf(const std::string& level) {   // fastload_questreplay_<level>.bin (level names are plain identifiers)
 	std::string n;
 	for (char c : level) n += (isalnum((unsigned char)c) || c == '_' || c == '-') ? c : '_';
-	return "deagle_questreplay_" + (n.empty() ? std::string("none") : n) + ".bin";
+	return "fastload_questreplay_" + (n.empty() ? std::string("none") : n) + ".bin";
 }
 struct Loaded { bool ok = false; Hdr h{}; std::vector<char> blob; std::vector<uint32_t> so, sl; std::vector<size_t> proj; std::vector<uint8_t> code; };
 Loaded g_file;
@@ -1092,7 +1092,7 @@ void Questreplay_Preload(const char* pluginDir, const char* level) {
 	g_dir = pluginDir ? pluginDir : "";
 	g_level = level ? level : "";
 	// before 2026-10-24 one file for every level: it becomes this level's (its key says whether it is for this level)
-	const std::string old = g_dir + "deagle_questreplay.bin", now = g_dir + FileOf(g_level);
+	const std::string old = g_dir + "fastload_questreplay.bin", now = g_dir + FileOf(g_level);
 	if (GetFileAttributesA(old.c_str()) != INVALID_FILE_ATTRIBUTES && GetFileAttributesA(now.c_str()) == INVALID_FILE_ATTRIBUTES)
 		MoveFileA(old.c_str(), now.c_str());
 	g_preloaded = CreateEventA(nullptr, TRUE, FALSE, nullptr);

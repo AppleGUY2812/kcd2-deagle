@@ -48,10 +48,10 @@ StartFn g_origStart = nullptr;
 uint8_t* g_service = nullptr;
 bool g_off = true;
 int g_state = -100;
-std::atomic<int> g_earlyMode{ 0 };   // "let me in early" (readiness_early.h): 0 off, 1 on; deagle_readiness.txt
+std::atomic<int> g_earlyMode{ 0 };   // "let me in early" (readiness_early.h): 0 off, 1 on; fastload_readiness.txt
 // "readiness temp <MB>": the stream engine's temp memory budget (sys_streaming_memory_budget, Warhorse's system.cfg
 // 20480 KB) raised to this while a save-load or fast-travel gate waits, then put back; 0 = the game's own (default).
-// Kept as the second number in deagle_readiness.txt.
+// Kept as the second number in fastload_readiness.txt.
 std::atomic<int> g_tempMB{ 0 };
 int g_tempOrig = -1;   // KB, the value we raised from (-1: not raised)
 int g_tempSet = -1;    // KB, the value we wrote (restore only while it is still there)
@@ -400,6 +400,8 @@ void Opened(const Gate& g, long long now, const char* how, std::vector<std::stri
 
 }  // namespace
 
+int Readiness_LevelState() { return LevelState(); }
+
 void Readiness_Install(uintptr_t base) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
 	HMODULE self = nullptr;
@@ -408,7 +410,7 @@ void Readiness_Install(uintptr_t base) {
 	                   (LPCSTR)&Readiness_Install, &self);
 	GetModuleFileNameA(self, path, MAX_PATH);
 	g_modeFile = path;
-	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "deagle_readiness.txt";
+	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "fastload_readiness.txt";
 	if (FILE* fp = fopen(g_modeFile.c_str(), "r")) {
 		int m = 0, t = 0;
 		const int n = fscanf(fp, "%d %d", &m, &t);

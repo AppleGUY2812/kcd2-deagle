@@ -188,12 +188,12 @@ void Questfast_Install(uintptr_t base, void* self) {
 	std::string dir = path;
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
 	int mode = 1;
-	if (FILE* fp = fopen((dir + "deagle_questfast.txt").c_str(), "r")) {
+	if (FILE* fp = fopen((dir + "fastload_questfast.txt").c_str(), "r")) {
 		int m = 1;
 		if (fscanf(fp, "%d", &m) == 1) mode = m != 0;
 		fclose(fp);
 	}
-	if (!mode) { Log("questfast: off (deagle_questfast.txt)"); return; }
+	if (!mode) { Log("questfast: off (fastload_questfast.txt)"); return; }
 	void* const wraps[2] = { (void*)&HkSort<0>, (void*)&HkSort<1> };
 	std::string state;
 	for (int i = 0; i < 2; i++) {

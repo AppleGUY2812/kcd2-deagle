@@ -2,7 +2,7 @@
 #include <cstdint>
 // Human animation sets loaded at the main menu (re_menu_main.md #1, 2026-10-24).
 // The level load builds the male and female skeletons with their animation sets (.chrparams: persistent DBAs of 170 MB,
-// ~1.9 s on the main thread) after the terrain step. Mode 1 (deagle_animahead.txt next to the plugin, the default): at
+// ~1.9 s on the main thread) after the terrain step. Mode 1 (fastload_animahead.txt next to the plugin, the default): at
 // boot event 0x24 (save list read, the main menu is up; questmenu's start point), after questmenu's quest build if one
 // runs, a plugin thread calls the game's own preload, ICharacterManager::LoadAndLockResources (vtable +0x70), for female.cdf and male.cdf; nothing purges them
 // before the first load, whose spawns then find both in the character manager's cache. 0 = off.
