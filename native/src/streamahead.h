@@ -23,10 +23,11 @@ int Streamahead_Serve(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t offs
 void Streamahead_Record(uint8_t* cache, uint8_t* entry, int64_t offset, int64_t want, long long ticks);
 void Streamahead_Stats(long long* served, long long* gameFirst, long long* notListed);
 void Streamahead_OnLoaded();                  // gameplay started (Lua "loaded")
-// A save-load / fast-travel screen waits (readiness.cpp, every frame). While it does, the readers also read below the
-// free-RAM rule: the rest of the list (at most 512 MB held) while 1200 MB stays free, nothing freed above that, and 12
-// more readers join the 4 (16 reads of up to 1 MB in flight). Boot 31: nothing was held in Settle.
+// A save-load / fast-travel screen waits (readiness.cpp, every frame). While it does, the readers stop (the disk is the
+// game's) and a copy handed to the game is kept, up to 256 MB, for when it asks the same bytes again; the kept copies
+// are freed when the screen opens. Boots 34-36: ~4,000 such repeats per Settle, while reading ahead in the gate hurt.
 void Streamahead_SetGate(bool open);
 long long Streamahead_Ready();     // copies held now (tests)
-long long Streamahead_Revived();   // dropped copies a loading screen sent back to be read (tests)
+long long Streamahead_KeptServed();   // repeats handed over from kept copies (tests)
+long long Streamahead_HeldBytes();   // bytes held now (tests)
 void Streamahead_Command(const char* args);
