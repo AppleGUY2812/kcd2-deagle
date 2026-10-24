@@ -243,7 +243,10 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 ## Developer only
 `deagle_lua Deagle:Native([[rounds stats]])` logs the round sim's ray counts (full / static / dynamic);
 `deagle_lua Deagle:Native([[rounds split 0|1]])` turns step 7's static/dynamic split off/on (on by default after
-`rounds bind`). There is no `deagle_native` console command. `deagle_dev_reload` (re-run the script from the dev folder; your kept settings are set again, as at a load), `deagle_lua <code>` (run Lua), `deagle_vm_respawn`
+`rounds bind`). `deagle_lua Deagle:Native([[ftpre 0|1|2]])`: the fast-travel preload (plugin, on at `2` by default,
+not kept): while the map piece walks, the engine is asked to precache the destination, so less loads after arrival;
+it stops asking when the walk stops (arrival or a random encounter). `1` only logs (`ftpre:` lines in
+`deagle_native.log`: walk start, destination, walk end), `0` off. There is no `deagle_native` console command. `deagle_dev_reload` (re-run the script from the dev folder; your kept settings are set again, as at a load), `deagle_lua <code>` (run Lua), `deagle_vm_respawn`
 (rebuild the viewmodel), `deagle_input` (reload key bindings), `deagle_fxreload [library]` (the plugin re-reads
 `Libs/Particles/<library>.xml`, default `deagle_impacts`, from the dev folder into the running game: impact effects tuned
 without a restart; within 3 s of a shot it waits, in game time, and then reloads). Claude uses these through the dev console link

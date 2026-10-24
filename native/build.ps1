@@ -15,7 +15,9 @@ $asi = "$work\build\Release\deagle_native.asi"
 Remove-Item $asi -Force -ErrorAction SilentlyContinue
 & $cmake -S $work -B "$work\build" -G "Visual Studio 17 2022" -A x64 | Select-String -Pattern "error|Error|Generating done" | % Line
 if ($LASTEXITCODE -ne 0) { "BUILD FAILED (configure, exit $LASTEXITCODE)"; exit 1 }
-& $cmake --build "$work\build" --config Release 2>&1 | Select-String -Pattern "error|warning C4|deagle_native.vcxproj ->" | % Line
+# --clean-first: robocopy keeps the sources' own (older) timestamps, so an incremental build linked the previous
+# build's objects for every file not touched since (2026-10-23: a working-tree build silently missed rounds.cpp's split)
+& $cmake --build "$work\build" --config Release --clean-first 2>&1 | Select-String -Pattern "error|warning C4|deagle_native.vcxproj ->" | % Line
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $asi)) { "BUILD FAILED (compile, exit $LASTEXITCODE)"; exit 1 }
 Copy-Item $asi $out -Force
 "BUILT " + (Get-Item $out).Length

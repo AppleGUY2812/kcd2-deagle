@@ -16,6 +16,7 @@
 #include "ronvm.h"
 #include "lean.h"
 #include "invtime.h"
+#include "ftpreload.h"
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
@@ -348,6 +349,11 @@ static void MoveFlashes() {
 // an empty box and is culled until its first update computes one, which runs after the frame's culling
 // (docs/flash_no_delay_research.md): measured in game 2026-10-12 one game frame late. To test against that.
 static bool g_flyKeys = false;   // flykeys: read the Flight mod's keys here (OnCamera)
+// fastkey <key>|off: the weight map's fast-transfer key (fastmove.lua). Read here every frame while KCD2 has focus, so it
+// works in the inventory, chest and shop screens (their action maps send Lua no keys): "deagle_fastkey 1" on the press,
+// again every 150 ms while it stays down (the first repeat after 400 ms, like a key repeat), "deagle_fastkey 0" on the
+// release. Lua sends it on to the open screen.
+static int g_fastVk = 0;
 static float g_flashSeed = 0;
 static uintptr_t g_live = 0;
 static float g_liveScale = 1, g_liveSizes[8] = {};
@@ -1210,6 +1216,13 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
 	else if (!strcmp(cmd, "invtime")) Invtime_Command(rest);
+	else if (!strcmp(cmd, "ftpre")) Ftpre_Command(rest);
+	else if (!strcmp(cmd, "fastkey")) {
+		char k[24] = {};
+		sscanf_s(rest, "%23s", k, (unsigned)sizeof(k));
+		g_fastVk = strcmp(k, "off") ? VkOfKey(k) : 0;
+		Log("fastkey %s -> vk %d", k, g_fastVk);
+	}
 	else if (!strcmp(cmd, "flykeys")) {   // Lua takes the keys over only on this answer (an older plugin doesn't answer)
 		g_flyKeys = atoi(rest) != 0;
 		Log("flykeys %s", g_flyKeys ? "on" : "off");
@@ -1357,6 +1370,20 @@ static void OnCamera(uintptr_t camera) {
 		return;
 	}
 	uint64_t n = ++g_viewFrames;
+	{   // load timing (user 2026-10-21: fast travel ends on a long black screen, saves load slower): every gap of
+		// 100 ms or more between world frames (a loading or black screen draws no world view) and every camera jump of
+		// 30 m or more (a teleport, a fast travel arrival, the inventory / map scene), with millisecond times
+		static LARGE_INTEGER flast{};
+		static float fpos[3] = {0, 0, 0};
+		double fdt = flast.QuadPart ? double(now.QuadPart - flast.QuadPart) * 1000.0 / freq.QuadPart : 0;
+		float dx = g_cam[3] - fpos[0], dy = g_cam[7] - fpos[1], dz = g_cam[11] - fpos[2];
+		float jump = sqrtf(dx * dx + dy * dy + dz * dz);
+		if (fdt >= 100.0 || (flast.QuadPart && jump >= 30.0f))
+			Log("timing: frame %llu after %.0f ms, camera moved %.0f m to %.0f %.0f %.0f", n, fdt, jump, g_cam[3], g_cam[7], g_cam[11]);
+		flast = now;
+		fpos[0] = g_cam[3]; fpos[1] = g_cam[7]; fpos[2] = g_cam[11];
+	}
+	Ftpre_Frame();   // fast-travel preload (ftpreload.cpp): the destination streams in while the map piece walks
 	UpdateMotion(g_cam);
 	{   // a Ready or Not gun's recoil, offsets and fire shake (ronvm.cpp): game seconds, once a drawn frame
 		static LARGE_INTEGER rlast{};
@@ -1449,6 +1476,42 @@ static void OnCamera(uintptr_t camera) {
 			g_console.push_back(c);
 		}
 	}
+	{   // Shift / Ctrl for the weight map's multi-select: Scaleform's Key.isDown never sees them in KCD2's menus (user
+		// 2026-10-21: shift / ctrl click did nothing). Sent on change only, as "deagle_mods <1 shift + 2 ctrl>".
+		static int wasMods = -1;
+		int m = 0;
+		if (g_fastVk) {
+			HWND w = GetForegroundWindow();
+			DWORD pid = 0;
+			if (w) GetWindowThreadProcessId(w, &pid);
+			if (pid == GetCurrentProcessId())
+				m = ((GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 1 : 0) | ((GetAsyncKeyState(VK_CONTROL) & 0x8000) ? 2 : 0);
+		}
+		if (m != wasMods) {
+			wasMods = m;
+			char b[32];
+			snprintf(b, sizeof b, "deagle_mods %d", m);
+			std::lock_guard<std::mutex> lk(g_consoleMu);
+			g_console.push_back(b);
+		}
+	}
+	{   // fastkey: the weight map's fast-transfer key (see g_fastVk)
+		static bool was = false;
+		static DWORD next = 0;
+		bool d = false;
+		if (g_fastVk) {
+			HWND w = GetForegroundWindow();
+			DWORD pid = 0;
+			if (w) GetWindowThreadProcessId(w, &pid);
+			d = pid == GetCurrentProcessId() && (GetAsyncKeyState(g_fastVk) & 0x8000) != 0;
+		}
+		DWORD now = GetTickCount();
+		const char* send = nullptr;
+		if (d && (!was || (int)(now - next) >= 0)) { send = "deagle_fastkey 1"; next = now + (was ? 150 : 400); }
+		else if (!d && was) send = "deagle_fastkey 0";
+		was = d;
+		if (send) { std::lock_guard<std::mutex> lk(g_consoleMu); g_console.push_back(send); }
+	}
 	if (g_env) {
 		std::deque<std::string> run;
 		{ std::lock_guard<std::mutex> lk(g_consoleMu); run.swap(g_console); }
@@ -1536,6 +1599,7 @@ static DWORD WINAPI Init(LPVOID) {
 	for (int i = 0; i < 240 && !g_env; i++) { g_env = FindEnv(); if (!g_env) Sleep(500); }
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Freecam_Install(g_env, (void*)g_origFrustum);   // free camera (freecam.cpp, johnpork-18)
+	if (g_env) Ftpre_Install(g_env, g_game.base);   // fast-travel preload (ftpreload.cpp)
 	if (g_env) Probe_Install(g_env, g_game.base);   // architecture step 1 probes (probe.cpp, Claude 5)
 	if (g_env) Rounds_Install(g_env, g_game.base);   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
 	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)
