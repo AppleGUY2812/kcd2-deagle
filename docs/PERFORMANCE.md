@@ -422,8 +422,17 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   (The peer's table called the frozen frame "pre-save" and only the frames "apply save".)
 - The screen does not wait for streaming to finish: the streaming unpack counter (fastzip stream blocks) went 33,874
   (22:01:38.4) to 109,890 (54.4), ~5k blocks/s, and kept the same rate after gameplay started (159,289 at 22:02:10).
-  So a specific gate opens it. The load state machine is FUN_180fc3868 (state 6 WaitingForGraphicsAndScripts, 7
-  GraphicsAndScriptsReady, 8/9 video end); what state 6 waits on is being decoded.
+  So a specific gate opens it. The gate (decoded 2026-10-23, ~/re/work/save_load_step5/report.md on the ProLiant): in
+  level-manager state 6 the game registers a readiness observer (mask 0x3f93) with the readiness service; the
+  service fires it (state 7, then StartGameplay) once every registered readiness task in those categories is ready at
+  an update, or after `wh_sys_ReadinessObserverTimeoutDuration` (50 s). A streaming task is ready when its requests in
+  flight are 0. Read live from the running game: 18 tasks, 12 named (TextureStreaming, TerrainStreaming,
+  MergedMeshStreaming, AnimationStreaming, OctreeStreaming cat 0x1; MovedObservers 0x100; HLodStreaming 0x200;
+  EntityStreaming 0x800; SvotiStreaming / Propagation / Upload 0x1000) and 6 of other classes (one with category
+  0x2000 = ObjStreaming). So step 5 lasts until the cold boot's burst of stream requests drains: faster reads should
+  shorten it directly. An in-game reload of the same level registers the same observer, with everything resident.
+  native/src/readiness.cpp logs which task holds it (`readiness:` lines). `wh_sys_ReadinessObserverEnabled 0` or a
+  short timeout would open the gate early, with the world half streamed in (pop-in): not tried.
 - Threads during the frames (sampler, boot11): main ~65 % of ticks, 31 % of them in ZwWaitForAlertByThreadId; 8
   JobWorkers ~6.5 s each, 56 % waits, ~15 % zlib; "Streaming File IO HDD" ran in 126 ticks, 84 of them inside
   ZwReadFile. The sampler records a thread only on ticks where its CPU time moved, so it cannot see time blocked on
