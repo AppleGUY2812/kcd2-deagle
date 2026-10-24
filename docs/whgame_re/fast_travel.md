@@ -85,3 +85,19 @@ Options: (A) during the walk, request every place the end listener will try, asy
 &place, 0, 1)` with conceptMgr = `*(*(FUN_1809155c8()+0x120)+0x18)`; same events, the stall moves off Main. (B) skip
 the sync load of a not-loaded place in the end loop: fewer arrival events. (C) skip the loop: no arrival events.
 The `mainreads:` log (readiness.cpp, a gate held 0.25 s or more) names the files on the next long arrival.
+
+### Loading the arrival's places ahead (decoded 2026-10-24, ~/re/work/ft_place_prefetch/report.md; built: native/src/ftplaces.cpp)
+SETTLED: the END listener's list (random-event manager FTRE = `*(*(game+0x128)+0x30)`, vector of Place* at
++0x60/+0x68) has one writer, the place's "area entered" handler `FUN_18061faf8`: while fast travelling (ft+0x48, or
+the AfterFastTravel observer armed) an entered place goes there instead of the normal async path. So the set is the
+places whose trigger area contains the player at the destination, not the places near the path that the START
+listener prefetches (centre within 10 m + view radius of a path segment, async, notify 1). The walk tick
+`FUN_182ecefd4` unloads walk-time places it passes without an event; the END listener's `FUN_181e39370(S, 0)` unloads
+every place without an event after the arrival. The request: `char FUN_18051a8e0(S = conceptMgr+0xb0, Place** slot,
+u8 sync, u8 notify)`, conceptMgr = `*(*(game+0x120)+0x18)`; the game's own async caller `FUN_180620698` adds a
+reference (`FUN_181e38f20`, u16 count at place+0x0c) and the request releases it; notify 1 would start the event at
+completion after the stop, so the plugin passes notify 0. Main thread only (no locks); one worker thread loads one
+place at a time; at the arrival a loaded graph is used, an in-flight one is waited for, others load on Main.
+INFERRED: the places land in the list when the stop puts the player at the destination, so the arrival wait (3.7-6.7
+s) is the window; if they only land in the frame the observer fires, loading ahead gains nothing (`ftplaces:` lines
+show it).

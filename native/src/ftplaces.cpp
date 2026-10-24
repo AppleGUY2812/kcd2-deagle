@@ -1,6 +1,7 @@
 // The fast-travel arrival's random-event places, loaded ahead. See ftplaces.h.
 #include "ftplaces.h"
 #include "log.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
