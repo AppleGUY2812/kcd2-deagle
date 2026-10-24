@@ -6,6 +6,7 @@
 #include <intrin.h>
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -96,6 +97,24 @@ int __fastcall HkDropMips(uint8_t* tex, uint64_t mip) {
 		n_drop[k]++;
 		n_dropBytes[k] += r;
 	}
+	return r;
+}
+
+// The texture pool's size: FUN_180c18130 returns it in MB, asked by the streaming code every frame. With
+// r_TexturesStreamDynamicPool 1 (the default) it is r_TexturesStreamDynamicPoolTargetVramUsage (80) % of the card's
+// DXGI budget minus what isn't the pool, kept within r_TexturesStreamDynamicPoolMinSize (2048) and ...MaxSizeWH (8192);
+// r_TexturesStreamPoolSize (5120 here) is only the fallback. *(int64*)DAT_18515c3a0 = bytes the pool holds now.
+constexpr uintptr_t kRvaPoolMb = 0xc18130, kRvaPoolObj = 0x515c3a0;
+const unsigned char kPoolBytes[] = { 0x40,0x55,0x48,0x8b,0xec,0x48,0x83,0xec,0x30,0x83,0x3d,0x98,0x41,0x4c,0x04,0x00 };
+using PoolFn = long long(__fastcall*)();
+PoolFn g_poolOrig = nullptr;
+std::atomic<long long> g_poolMin{LLONG_MAX}, g_poolMax{0}, g_poolHeld{0};
+
+long long __fastcall HkPoolMb() {
+	const long long r = g_poolOrig();
+	for (long long m = g_poolMin.load(); r < m && !g_poolMin.compare_exchange_weak(m, r);) {}
+	for (long long m = g_poolMax.load(); r > m && !g_poolMax.compare_exchange_weak(m, r);) {}
+	if (const long long* obj = *(long long**)(g_base + kRvaPoolObj)) g_poolHeld.store(*obj, std::memory_order_relaxed);
 	return r;
 }
 
@@ -388,15 +407,18 @@ DWORD WINAPI Reporter(LPVOID) {
 			if (a != lastDrop[i]) o += snprintf(drops + o, sizeof drops - o, ", %s %lld (%.0f MB)", kDropName[i], a - lastDrop[i], (bb - lastDropB[i]) / 1e6);
 			lastDrop[i] = a; lastDropB[i] = bb;
 		}
+		const long long pMin = g_poolMin.exchange(LLONG_MAX), pMax = g_poolMax.exchange(0);
+		char pool[120] = "not asked";
+		if (pMax) snprintf(pool, sizeof pool, "%lld-%lld MB, holding %.0f MB", pMin, pMax, g_poolHeld.load() / 1048576.0);
 		long long aServed = 0, aFirst = 0, aNot = 0;
 		Streamahead_Stats(&aServed, &aFirst, &aNot);
 		Log("streamio: mode %d  +%lld requests %.1f MB in %.1f s = %.0f MB/s, read thread busy %.0f %% (ReadFile %.0f ms, "
 		    "lock wait %.0f ms)  total %lld requests %.1f MB, one-read %lld, fallback %lld, verified %lld, mismatches %lld, "
-		    "buffered path %lld, read ahead: served %lld, game first %lld, not listed %lld  sizes: %s  repeats %s  texture mips dropped %s", g_mode.load(),
+		    "buffered path %lld, read ahead: served %lld, game first %lld, not listed %lld  sizes: %s  repeats %s  texture mips dropped %s  texture pool %s", g_mode.load(),
 		    c - lastCalls, (b - lastBytes) / 1e6, secs,
 		    (b - lastBytes) / 1e6 / (secs > 0 ? secs : 1), 100.0 * Ms(t - lastTicks) / (secs * 1000.0), Ms(rd - lastRead),
 		    Ms(lk - lastLock), c, b / 1e6, n_one.load(), n_fallback.load(), n_verified.load(), n_bad.load(),
-		    n_buffered.load(), aServed, aFirst, aNot, sizes, reps, drops);
+		    n_buffered.load(), aServed, aFirst, aNot, sizes, reps, drops, pool);
 		lastCalls = c; lastBytes = b; lastTicks = t; lastLock = lk; lastRead = rd; lastT = now; lastLine = now;
 		if (now - lastPaks >= 30000) {
 			lastPaks = now;
@@ -453,6 +475,10 @@ void Streamio_Install(uintptr_t base, void* self) {
 	const bool okD = !memcmp(dm, kDropBytes, sizeof kDropBytes);
 	const bool hd = okD && MH_CreateHook(dm, (void*)&HkDropMips, (void**)&g_dropOrig) == MH_OK && MH_EnableHook(dm) == MH_OK;
 	Log("streamio: texture mip-drop counter %s", hd ? "on" : okD ? "FAILED" : "off (code check failed)");
+	void* pm = (void*)(base + kRvaPoolMb);
+	const bool okP = !memcmp(pm, kPoolBytes, sizeof kPoolBytes);
+	const bool hp = okP && MH_CreateHook(pm, (void*)&HkPoolMb, (void**)&g_poolOrig) == MH_OK && MH_EnableHook(pm) == MH_OK;
+	Log("streamio: texture pool size log %s", hp ? "on" : okP ? "FAILED" : "off (code check failed)");
 	Log("streamio: mode %d (%s), ReadFileStreaming hook %s, sys_UncachedStreamReads %d", g_mode.load(),
 	    g_mode == 0 ? "game reads, counted" : g_mode == 1 ? "one read per request, self-check first" : "verify both",
 	    h ? "on" : "FAILED", *g_uncached);
