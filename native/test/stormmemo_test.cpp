@@ -6,6 +6,7 @@
 // a group it doesn't declare: the check must catch both.
 #include "../src/stormmemo_core.h"
 #include <cstdio>
+#include <map>
 #include <random>
 #include <vector>
 
@@ -27,6 +28,8 @@ struct Group { int maxLevel = 0; std::vector<Rule> rules; };
 smemo::Memo g_m;
 smemo::Stats g_st;
 bool g_useMemo = false, g_check = false, g_mismatch = false;
+bool g_indexed = false;   // the walk over rules sorted by level (stormmemo.cpp's default)
+std::map<Group*, smemo::Levels<Rule>> g_lv;
 int g_masks = 0;   // 0: every action writes everything; 1: exact groups (field i = group i); 2: actions declare the wrong group
 long g_leafEvals = 0;
 
@@ -77,6 +80,8 @@ struct Acc {
 		const int idx = ((Action*)a)->idx;
 		return g_masks == 0 ? smemo::Memo::kAll : g_masks == 1 ? 1u << idx : 1u << ((idx + 1) % 6);
 	}
+	void Ended(Rule*, void*) {}
+	void Ran(Rule*) {}
 	void Run(void* a, void* s, Rule* r) {
 		Soul* so = (Soul*)s;
 		so->f[((Action*)a)->idx] = ((Action*)a)->val;
@@ -107,7 +112,8 @@ void Apply(std::vector<Group>& gs, Soul* s, int maxLevel, bool memo) {
 	if (memo) { g_m.soul = s; g_m.Changed(); }
 	for (int lv = 0; lv <= maxLevel; lv++)
 		for (Group& g : gs) {
-			if (memo) smemo::ApplyLevel(a, &g, s, lv, g_m);
+			if (memo && g_indexed) smemo::ApplyLevelIndexed(a, &g, s, lv, g_m, g_lv[&g]);
+			else if (memo) smemo::ApplyLevel(a, &g, s, lv, g_m);
 			else GameLevel(&g, s, lv);
 		}
 	if (memo) { g_m.Changed(); g_m.soul = nullptr; }
@@ -137,11 +143,11 @@ int main() {
 	std::vector<Group> gs(3);
 	int id = 0;
 	for (Group& g : gs) {
-		g.maxLevel = 3;
+		g.maxLevel = &g == &gs[1] ? 2 : 3;   // the pass loops to 3: group 1's level 3 must not run
 		for (int i = 0; i < 300; i++) {
 			Rule r;
 			r.id = id++;
-			r.level = R(4);
+			r.level = R(6) - 1;   // -1 and 4 never run (the game's loop is 0..3)
 			for (int k = 0, n = 1 + R(3); k < n; k++) {
 				Cond* c = pick();
 				if (R(4) == 0) { Cond* o = new Cond; o->kind = R(2) ? And : Or; o->kids = { pick(), nullptr, pick(), nullptr }; all.push_back(o); c = o; }
@@ -155,8 +161,10 @@ int main() {
 			g.rules.push_back(r);
 		}
 	}
-	unsigned long long hits[2] = {};
-	for (g_masks = 0; g_masks <= 1; g_masks++) {
+	unsigned long long hits[3] = {};
+	for (int pass = 0; pass < 3; pass++) {
+		g_masks = pass == 0 ? 0 : 1;
+		g_indexed = pass == 2;
 		g_st = {};
 		int bad = 0;
 		long gameLeaves = 0, memoLeaves = 0;
@@ -177,15 +185,16 @@ int main() {
 				for (int k = 0; k < 6; k++) same = same && a.f[k] == b.f[k];
 				if (!same) bad++;
 		}
-		printf("masks %d, souls 3000: %d differ; leaf evaluations %ld (game) vs %ld (memo, %.0f %% fewer); named looked up %llu, "
-		       "from the memo %llu; checked %llu, mismatches %llu\n", g_masks, bad, gameLeaves, memoLeaves,
+		printf("masks %d%s, souls 3000: %d differ; leaf evaluations %ld (game) vs %ld (memo, %.0f %% fewer); named looked up %llu, "
+		       "from the memo %llu; checked %llu, mismatches %llu\n", g_masks, g_indexed ? " indexed" : "", bad, gameLeaves, memoLeaves,
 		       100.0 * (gameLeaves - memoLeaves) / gameLeaves, (unsigned long long)g_st.looked,
 		       (unsigned long long)g_st.hits, (unsigned long long)g_st.checked, (unsigned long long)g_st.bad);
 		if (bad || g_st.bad || g_mismatch || g_st.hits == 0 || memoLeaves * 10 > gameLeaves * 9) { puts("FAIL"); return 1; }
-		hits[g_masks] = g_st.hits;
+		hits[pass] = g_st.hits;
 
 	}
 	if (hits[1] <= hits[0]) { puts("FAIL: exact groups reused no more than marking everything stale"); return 1; }
+	g_indexed = false;
 
 	// An action that writes a field it doesn't declare: some remembered answers go wrong, the check must see it.
 	g_masks = 2; g_st = {}; g_mismatch = false;

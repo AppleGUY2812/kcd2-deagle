@@ -101,6 +101,8 @@ WalkFn g_origWalk = nullptr;
 CondFn g_origCustom = nullptr;
 
 std::atomic<int> g_mode{1};   // 0 off, 1 on, 2 check every remembered answer
+std::atomic<int> g_index{1};  // 1: each group's rules sorted by level once (the walk visits only the level's own)
+std::atomic<int> g_census{1}; // 1: count which condition kind ends each rule, time the walk and the actions
 std::atomic<long long> g_checkLeft{100000};
 long long g_freq = 1;
 
@@ -108,8 +110,14 @@ thread_local smemo::Memo* t_m = nullptr;   // on the heap (32 KB), only for thre
 thread_local smemo::Stats t_st;
 thread_local long long t_souls = 0, t_ticks = 0, t_hitNo = 0;
 
+// The census (g_census): rules looked at, rules whose conditions all passed, the condition kind that ended the others
+// (kKinds index; kNoKind = a class not in kKinds), the walk's time and the actions' time.
+constexpr int kNKinds = 27, kNoKind = kNKinds;
+struct Census { long long rules, passed, walkTicks, actTicks, actions, ended[kNKinds + 1]; };
+thread_local Census t_cen = {};
+
 // Per-thread totals, merged after every character.
-struct Totals { DWORD tid; long long souls, ticks, looked, hits, checked, bad; };
+struct Totals { DWORD tid; long long souls, ticks, looked, hits, checked, bad; Census cen; };
 Totals g_tot[16] = {};
 SRWLOCK g_totLock = SRWLOCK_INIT;
 std::atomic<long long> g_bad{0};
@@ -122,17 +130,31 @@ void Flush() {
 			t.tid = tid;
 			t.souls += t_souls; t.ticks += t_ticks; t.looked += (long long)t_st.looked; t.hits += (long long)t_st.hits;
 			t.checked += (long long)t_st.checked; t.bad += (long long)t_st.bad;
+			t.cen.rules += t_cen.rules; t.cen.passed += t_cen.passed; t.cen.walkTicks += t_cen.walkTicks;
+			t.cen.actTicks += t_cen.actTicks; t.cen.actions += t_cen.actions;
+			for (int k = 0; k <= kNKinds; k++) t.cen.ended[k] += t_cen.ended[k];
 			break;
 		}
 	ReleaseSRWLockExclusive(&g_totLock);
 	t_souls = t_ticks = 0;
 	t_st = {};
+	t_cen = {};
 }
 
 const Kind* KindOf(const void* p) {
 	const uintptr_t vt = *(const uintptr_t*)p - g_base;
 	for (const Kind& k : kKinds) if (k.vt == vt) return &k;
 	return nullptr;
+}
+static_assert(sizeof kKinds / sizeof kKinds[0] == kNKinds, "kNKinds");
+// The census's kind lookup: a small per-thread cache by vtable (the linear search above only on a miss).
+int KindIndex(const void* p) {
+	struct Slot { uintptr_t vt; int k; };
+	thread_local Slot cache[64] = {};
+	const uintptr_t vt = *(const uintptr_t*)p;
+	Slot& s = cache[(vt >> 3) & 63];
+	if (s.vt != vt) { const Kind* k = KindOf(p); s = { vt, k ? (int)(k - kKinds) : kNoKind }; }
+	return s.k;
 }
 
 // A named set is remembered only when everything under it is a known read-only kind; it remembers the groups its
@@ -191,6 +213,8 @@ Mask ActionWrites(const void* a) {
 	return m;
 }
 
+inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
+
 struct GameRules {
 	using Rule = uint8_t;
 	int MaxLevel(uint8_t* g) { return *(int*)(g + 0x58); }
@@ -201,11 +225,23 @@ struct GameRules {
 	void** Actions(Rule* r, void*** end) { *end = *(void***)(r + 0x20); return *(void***)(r + 0x18); }
 	void** NextEntry(void** p) { return p + 2; }
 	bool Eval(void* c, void* soul) { return ((CondFn)(*(void***)c)[1])(c, soul); }
-	void Run(void* a, void* soul, Rule* r) { ((ActionFn)(*(void***)a)[1])(a, soul, r); }
+	void Run(void* a, void* soul, Rule* r) {
+		if (!census) return ((ActionFn)(*(void***)a)[1])(a, soul, r);
+		const long long t0 = Now();
+		((ActionFn)(*(void***)a)[1])(a, soul, r);
+		t_cen.actTicks += Now() - t0;
+		t_cen.actions++;
+	}
 	Mask Writes(void* a) { return ActionWrites(a); }
+	void Ended(Rule*, void* cond) {
+		if (!census) return;
+		t_cen.rules++;
+		if (!cond) t_cen.passed++;
+		else t_cen.ended[KindIndex(cond)]++;
+	}
+	void Ran(Rule*) {}
+	bool census = false;
 };
-
-inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 
 void __fastcall HkPass(void* rules, void* soul, uint16_t mask) {
 	if (!g_mode.load(std::memory_order_relaxed) || !soul) return g_origPass(rules, soul, mask);
@@ -230,7 +266,15 @@ void __fastcall HkWalk(uint8_t* group, void* soul, int level) {
 	if (!t_m || !t_m->soul) return g_origWalk(group, soul, level);
 	smemo::Memo& m = *t_m;
 	GameRules a;
-	smemo::ApplyLevel(a, group, soul, level, m);
+	a.census = g_census.load(std::memory_order_relaxed) != 0;
+	const long long t0 = a.census ? Now() : 0;
+	if (g_index.load(std::memory_order_relaxed)) {
+		thread_local std::unordered_map<const uint8_t*, smemo::Levels<uint8_t>> idx;
+		smemo::ApplyLevelIndexed(a, group, soul, level, m, idx[group]);
+	} else {
+		smemo::ApplyLevel(a, group, soul, level, m);
+	}
+	if (a.census) t_cen.walkTicks += Now() - t0;
 }
 
 bool __fastcall HkCustom(void* self, void* soul) {
@@ -272,6 +316,24 @@ DWORD WINAPI Reporter(LPVOID) {
 			Log("stormmemo: thread %lu: %lld characters, %.0f ms in Storm; named sets looked up %lld, remembered %lld "
 			    "(%.0f %%), checked %lld, mismatches %lld%s", t.tid, t.souls, 1000.0 * t.ticks / g_freq, t.looked,
 			    t.hits, t.looked ? 100.0 * t.hits / t.looked : 0.0, t.checked, t.bad, g_mode.load() ? "" : " (off)");
+			if (!t.cen.rules) continue;
+			// the five kinds that ended the most rules
+			int top[5] = { -1, -1, -1, -1, -1 };
+			for (int k = 0; k <= kNKinds; k++)
+				for (int j = 0; j < 5; j++)
+					if (top[j] < 0 || t.cen.ended[k] > t.cen.ended[top[j]]) {
+						for (int q = 4; q > j; q--) top[q] = top[q - 1];
+						top[j] = k;
+						break;
+					}
+			char buf[512] = {};
+			int n = 0;
+			for (int j = 0; j < 5 && top[j] >= 0 && t.cen.ended[top[j]]; j++)
+				n += snprintf(buf + n, sizeof buf - n, "%s%s %lld", j ? ", " : "",
+				              top[j] < kNKinds ? kKinds[top[j]].name + 2 : "other", t.cen.ended[top[j]]);
+			Log("stormmemo: census thread %lu: %lld rules looked at (%lld passed, %lld actions %.0f ms); rule walk %.0f ms "
+			    "(index %s); stopped by: %s", t.tid, t.cen.rules, t.cen.passed, t.cen.actions,
+			    1000.0 * t.cen.actTicks / g_freq, 1000.0 * t.cen.walkTicks / g_freq, g_index.load() ? "on" : "off", buf);
 		}
 	}
 	return 0;
@@ -287,8 +349,11 @@ void Stormmemo_Install(uintptr_t base, void* self) {
 	std::string file = path;
 	file = file.substr(0, file.find_last_of('\\') + 1) + "fastload_stormmemo.txt";
 	if (FILE* fp = fopen(file.c_str(), "r")) {
-		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
+		int m = 1, ix = 1, ce = 1;
+		const int got = fscanf(fp, "%d %d %d", &m, &ix, &ce);
+		if (got >= 1 && m >= 0 && m <= 2) g_mode = m;
+		if (got >= 2) g_index = ix != 0;
+		if (got >= 3) g_census = ce != 0;
 		fclose(fp);
 	}
 	if (!g_mode) { Log("stormmemo: off (fastload_stormmemo.txt)"); return; }
@@ -320,7 +385,8 @@ void Stormmemo_Install(uintptr_t base, void* self) {
 	         MH_EnableHook(fw) == MH_OK && MH_EnableHook(fc) == MH_OK && MH_EnableHook(fp) == MH_OK;
 	if (!h) { MH_DisableHook(fp); MH_DisableHook(fc); MH_DisableHook(fw); }
 	Log("stormmemo: Storm's named condition sets remembered per character %s, kept across actions that don't touch "
-	    "what they read (%s)", h ? "on" : "FAILED",
-	    g_mode == 2 ? "every remembered answer checked" : "the first 100000 remembered answers checked, then every 64th");
+	    "what they read (%s); rules sorted by level %s, census %s", h ? "on" : "FAILED",
+	    g_mode == 2 ? "every remembered answer checked" : "the first 100000 remembered answers checked, then every 64th",
+	    g_index.load() ? "on" : "off", g_census.load() ? "on" : "off");
 	if (h) CloseHandle(CreateThread(nullptr, 0, Reporter, nullptr, 0, nullptr));
 }

@@ -3,6 +3,7 @@
 // native/test/stormmemo_test.cpp checks it against the game's algorithm outside the game.
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 namespace smemo {
 
@@ -60,27 +61,64 @@ struct Memo {
 // stored. A supplies the game's layout:
 //   using Rule; int MaxLevel(g); Rule* Rules(g, Rule** end); Rule* Next(r); int Level(r);
 //   void** Conds(r, void*** end); void** Actions(r, void*** end); void** NextEntry(p)   (16-byte counted pointers)
-//   bool Eval(cond, soul); void Run(action, soul, r); Memo::Mask Writes(action)
+//   bool Eval(cond, soul); void Run(action, soul, r); Memo::Mask Writes(action); void Ended(r, cond); void Ran(r)
+// One rule, as FUN_180698e84 runs it. a.Ended(r, cond) is told which condition stopped it (null: all passed) and
+// a.Ran(r) when its actions are done (the census in stormmemo.cpp; no-ops in the test).
+template <class A>
+void ApplyRule(A& a, typename A::Rule* r, void* soul, Memo& m) {
+	void** ce = nullptr;
+	void** c = a.Conds(r, &ce);
+	for (; c != ce; c = a.NextEntry(c))
+		if (*c && !a.Eval(*c, soul)) break;
+	if (c != ce) { a.Ended(r, *c); return; }
+	a.Ended(r, nullptr);
+	void** ae = nullptr;
+	for (void** p = a.Actions(r, &ae); p != ae; p = a.NextEntry(p)) {
+		if (!*p) continue;
+		m.inAction++;
+		a.Run(*p, soul, r);
+		m.inAction--;
+		m.Changed(a.Writes(*p));
+	}
+	a.Ran(r);
+}
+
 template <class A, class G>
 void ApplyLevel(A& a, G* g, void* soul, int level, Memo& m) {
 	if (level > a.MaxLevel(g)) return;
 	typename A::Rule* end = nullptr;
-	for (typename A::Rule* r = a.Rules(g, &end); r != end; r = a.Next(r)) {
-		if (a.Level(r) != level) continue;
-		void** ce = nullptr;
-		void** c = a.Conds(r, &ce);
-		for (; c != ce; c = a.NextEntry(c))
-			if (*c && !a.Eval(*c, soul)) break;
-		if (c != ce) continue;
-		void** ae = nullptr;
-		for (void** p = a.Actions(r, &ae); p != ae; p = a.NextEntry(p)) {
-			if (!*p) continue;
-			m.inAction++;
-			a.Run(*p, soul, r);
-			m.inAction--;
-			m.Changed(a.Writes(*p));
-		}
+	for (typename A::Rule* r = a.Rules(g, &end); r != end; r = a.Next(r))
+		if (a.Level(r) == level) ApplyRule(a, r, soul, m);
+}
+
+// The same with the group's rules sorted by level once (Levels: per level, that level's rules in the group's order):
+// the game scans every rule of the group for each level, this visits only the level's own. Same rules, same order.
+// Index() rebuilds when the group's rule array or max level is not what it was built from.
+template <class Rule>
+struct Levels {
+	const void* begin = nullptr; const void* end = nullptr; int maxLevel = -1;
+	std::vector<std::vector<Rule*>> at;
+};
+template <class A, class G>
+const Levels<typename A::Rule>& Index(A& a, G* g, Levels<typename A::Rule>& lv) {
+	typename A::Rule* end = nullptr;
+	typename A::Rule* b = a.Rules(g, &end);
+	const int ml = a.MaxLevel(g);
+	if (lv.begin == b && lv.end == end && lv.maxLevel == ml) return lv;
+	lv.begin = b; lv.end = end; lv.maxLevel = ml;
+	lv.at.assign(ml >= 0 ? (size_t)ml + 1 : 0, {});
+	for (typename A::Rule* r = b; r != end; r = a.Next(r)) {
+		const int l = a.Level(r);
+		if (l >= 0 && l <= ml) lv.at[(size_t)l].push_back(r);   // other levels never run (the game's level loop ends at max)
 	}
+	return lv;
+}
+template <class A, class G>
+void ApplyLevelIndexed(A& a, G* g, void* soul, int level, Memo& m, Levels<typename A::Rule>& lv) {
+	if (level > a.MaxLevel(g) || level < 0) return;
+	const Levels<typename A::Rule>& x = Index(a, g, lv);
+	if ((size_t)level >= x.at.size()) return;
+	for (typename A::Rule* r : x.at[(size_t)level]) ApplyRule(a, r, soul, m);
 }
 
 struct Stats { uint64_t looked = 0, hits = 0, checked = 0, bad = 0; };
