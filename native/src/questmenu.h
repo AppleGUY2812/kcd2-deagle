@@ -14,9 +14,15 @@
 //   list, and on a match returns without rebuilding (mgr+0x378 = 0, as the body would leave it). Otherwise it runs the
 //   game's body, whose reset unloads the pre-build the way it unloads any old graph.
 // - Concept messages that touch the projects wait for the build (while it runs) or disarm the keep (after it).
-// deagle_questmenu.txt: 1 on (default), 0 off.
+// deagle_questmenu.txt: 1 on (default), 0 off, 2 no pre-build (test: the load builds its own, replayed when recorded).
 void Questmenu_Install(uintptr_t gameBase, void* selfModule);
 bool Questmenu_OnJobBody(uint64_t impl);   // loadwatch, job-body detour, depth 0: true = kept (skip the body)
+// The load builds its own graph (a load during play, or the menu build not kept): phase 2a replayed from
+// deagle_questreplay.bin and the XML phase skipped when the record was made for these inputs; never recorded in a load.
+// Begin: 2 = armed (loadwatch, job-body detour, depth 0, before the body). End: true = the replay failed, the record is
+// dropped and the caller runs the game's body again (its reset unloads the failed graph, as between questbench builds).
+int Questmenu_JobReplayBegin(uint64_t impl);
+bool Questmenu_JobReplayEnd(int mode);
 void Questmenu_OnConceptMsg(int type);    // applyfast's concept OnMessage hook (main thread)
 void Questmenu_SetConceptHook(bool on);   // applyfast: that hook is installed
 // questbench N [ab]: at the main menu, rebuild the quest graph N times (1-20) on a plugin thread with the cached inputs,

@@ -1020,11 +1020,17 @@ void Enable(bool on, bool all) {
 	MH_ApplyQueued();
 }
 
-// ---- the record file (deagle_questreplay.bin next to the plugin) and its key
+// ---- the record files (deagle_questreplay_<level>.bin next to the plugin, one per level) and their key
 constexpr uint32_t kFileVer = 1;
 struct Hdr { char magic[4]; uint32_t ver; uint64_t key; uint32_t nStr, nProj; uint64_t blob, code; };
 std::string g_dir;
+std::string g_level;   // the level of the record in memory / being planned (its file name)
 HANDLE g_preloaded = nullptr;
+std::string FileOf(const std::string& level) {   // deagle_questreplay_<level>.bin (level names are plain identifiers)
+	std::string n;
+	for (char c : level) n += (isalnum((unsigned char)c) || c == '_' || c == '-') ? c : '_';
+	return "deagle_questreplay_" + (n.empty() ? std::string("none") : n) + ".bin";
+}
 struct Loaded { bool ok = false; Hdr h{}; std::vector<char> blob; std::vector<uint32_t> so, sl; std::vector<size_t> proj; std::vector<uint8_t> code; };
 Loaded g_file;
 uint64_t g_key = 0, g_memKey = 0;   // the key of these inputs / of the record in memory (0: not from a key)
@@ -1055,7 +1061,7 @@ void MixDir(uint64_t& h, const std::string& dir, const char* pattern, int* files
 }
 
 void LoadFile() {
-	FILE* f = fopen((g_dir + "deagle_questreplay.bin").c_str(), "rb");
+	FILE* f = fopen((g_dir + FileOf(g_level)).c_str(), "rb");
 	if (f) {
 		Loaded& L = g_file;
 		bool ok = fread(&L.h, sizeof L.h, 1, f) == 1 && !memcmp(L.h.magic, "DQRP", 4) && L.h.ver == kFileVer &&
@@ -1071,7 +1077,7 @@ void LoadFile() {
 		}
 		fclose(f);
 		L.ok = ok;
-		if (!ok) { Loaded e; std::swap(L, e); Log("questreplay: deagle_questreplay.bin unreadable (another version?): ignored"); }
+		if (!ok) { Loaded e; std::swap(L, e); Log("questreplay: %s unreadable (another version?): ignored", FileOf(g_level).c_str()); }
 	}
 }
 DWORD WINAPI PreloadThread(LPVOID) {
@@ -1082,17 +1088,30 @@ DWORD WINAPI PreloadThread(LPVOID) {
 
 }  // namespace
 
-void Questreplay_Preload(const char* pluginDir) {
+void Questreplay_Preload(const char* pluginDir, const char* level) {
 	g_dir = pluginDir ? pluginDir : "";
+	g_level = level ? level : "";
+	// before 2026-10-24 one file for every level: it becomes this level's (its key says whether it is for this level)
+	const std::string old = g_dir + "deagle_questreplay.bin", now = g_dir + FileOf(g_level);
+	if (GetFileAttributesA(old.c_str()) != INVALID_FILE_ATTRIBUTES && GetFileAttributesA(now.c_str()) == INVALID_FILE_ATTRIBUTES)
+		MoveFileA(old.c_str(), now.c_str());
 	g_preloaded = CreateEventA(nullptr, TRUE, FALSE, nullptr);
 	HANDLE t = CreateThread(nullptr, 0, PreloadThread, nullptr, 0, nullptr);
 	if (t) CloseHandle(t);
 	else SetEvent(g_preloaded);
 }
 
-int Questreplay_Plan(const char* inputs) {
+int Questreplay_Plan(const char* level, const char* inputs) {
 	if (!g_hooked || g_mode.load()) return 0;
 	const long long t0 = Now();
+	if (g_preloaded) WaitForSingleObject(g_preloaded, 10000);
+	if (g_level != (level ? level : "")) {   // another level than the preloaded / kept record: its own file
+		Loaded e;
+		std::swap(g_file, e);
+		g_have = false;
+		g_memKey = 0;
+		g_level = level ? level : "";
+	}
 	uint64_t h = 0xcbf29ce484222325ull;
 	Mix(h, "DQRP", 4);
 	Mix(h, &kFileVer, 4);
@@ -1139,12 +1158,11 @@ int Questreplay_Plan(const char* inputs) {
 		    (Now() - t0) * 1000.0 / g_freq);
 		return 2;
 	}
-	if (g_preloaded) WaitForSingleObject(g_preloaded, 10000);
-	if (!g_file.ok) LoadFile();   // released after an earlier build (questbench N file)
+	if (!g_file.ok) LoadFile();   // released after an earlier build, or another level
 	const bool match = g_file.ok && g_file.h.key == h;
-	Log("questreplay: key #%016llx over %d paks / manifests + the job inputs (%.0f ms); %s", (unsigned long long)h, files,
-	    (Now() - t0) * 1000.0 / g_freq, match ? "deagle_questreplay.bin matches: this build replays" :
-	    g_file.ok ? "deagle_questreplay.bin is for other inputs: this build records" : "no record file: this build records");
+	Log("questreplay: key #%016llx over %d paks / manifests + the job inputs (%.0f ms); %s %s", (unsigned long long)h, files,
+	    (Now() - t0) * 1000.0 / g_freq, FileOf(g_level).c_str(), match ? "matches: this build replays" :
+	    g_file.ok ? "is for other inputs" : "does not exist");
 	if (match) {
 		g_rec.clear();
 		g_rec.code.swap(g_file.code);
@@ -1165,7 +1183,7 @@ int Questreplay_Plan(const char* inputs) {
 bool Questreplay_Save() {
 	if (!g_have || !g_key) return false;
 	const long long t0 = Now();
-	const std::string out = g_dir + "deagle_questreplay.bin", tmp = out + ".tmp";
+	const std::string out = g_dir + FileOf(g_level), tmp = out + ".tmp";
 	FILE* f = fopen(tmp.c_str(), "wb");
 	if (!f) { Log("questreplay: cannot write %s", tmp.c_str()); return false; }
 	Hdr h{};
@@ -1186,16 +1204,16 @@ bool Questreplay_Save() {
 	if (ok) ok = MoveFileExA(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
 	else DeleteFileA(tmp.c_str());
 	if (ok) g_memKey = g_key;
-	Log("questreplay: %s deagle_questreplay.bin (%.1f MB, key #%016llx) in %.0f ms", ok ? "wrote" : "could NOT write",
+	Log("questreplay: %s %s (%.1f MB, key #%016llx) in %.0f ms", ok ? "wrote" : "could NOT write", FileOf(g_level).c_str(),
 	    (sizeof h + h.nStr * 8.0 + h.nProj * 8.0 + h.blob + h.code) / 1048576.0, (unsigned long long)g_key, (Now() - t0) * 1000.0 / g_freq);
 	return ok;
 }
 
 void Questreplay_Drop() {
-	DeleteFileA((g_dir + "deagle_questreplay.bin").c_str());
+	DeleteFileA((g_dir + FileOf(g_level)).c_str());
 	g_have = false;
 	g_memKey = 0;
-	Log("questreplay: record dropped (deagle_questreplay.bin deleted): the next session records again");
+	Log("questreplay: record dropped (%s deleted): the next menu build on this level records again", FileOf(g_level).c_str());
 }
 
 void Questreplay_Release() {   // the record is not needed after the menu build (questbench rec records its own)

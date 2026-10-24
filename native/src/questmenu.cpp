@@ -216,13 +216,13 @@ DWORD WINAPI ScanSaves(LPVOID) {
 // ---- the build on a plugin thread
 using StrFn = void(__fastcall*)(uintptr_t*, const char*);
 using RelFn = void(__fastcall*)(uintptr_t*);
-std::string ReplayKey() {   // the job's inputs, part of questreplay's key (the paks and the DLL are added there)
-	std::string key = g_cache.level + "|" + std::to_string(g_cache.cv20) + "|" + std::to_string(g_cache.cv24);
-	for (auto& x : g_cache.M) key += "|M " + x;
-	for (auto& x : g_cache.P) key += "|P " + x;
+std::string ReplayKey(const Inputs& c = g_cache) {   // the job's inputs, part of questreplay's key (+ the paks and the DLL)
+	std::string key = c.level + "|" + std::to_string(c.cv20) + "|" + std::to_string(c.cv24);
+	for (auto& x : c.M) key += "|M " + x;
+	for (auto& x : c.P) key += "|P " + x;
 	return key;
 }
-int ReplayBegin() { const int m = Questreplay_Plan(ReplayKey().c_str()); return m && Questreplay_Arm(m) ? m : 0; }
+int ReplayBegin() { const int m = Questreplay_Plan(g_cache.level.c_str(), ReplayKey().c_str()); return m && Questreplay_Arm(m) ? m : 0; }
 bool ReplayEnd(int m, bool ok) {   // true = the replay failed (the build is not the game's)
 	if (!m) return false;
 	Questreplay_Disarm();
@@ -252,7 +252,7 @@ DWORD WINAPI Build(LPVOID) {
 	*(uintptr_t*)(impl + 0x30) = *(uintptr_t*)(impl + 0x38) = (uintptr_t)(p.data() + p.size());
 	const unsigned long long free0 = FreeMb();
 	g_buildT0 = Now();
-	// phase 2a from deagle_questreplay.bin when it was recorded for these inputs, else recorded now (questreplay.cpp)
+	// phase 2a from deagle_questreplay_<level>.bin when it was recorded for these inputs, else recorded now (questreplay.cpp)
 	const int rmode = g_plan && Questreplay_Arm(g_plan) ? g_plan : 0;
 	const bool armed = rmode != 0;
 	const DWORD sa = GetFileAttributesA((g_dir + "deagle_questsample.txt").c_str());   // present: sample the menu build
@@ -280,6 +280,7 @@ DWORD WINAPI Build(LPVOID) {
 
 // ---- start: after boot event 0x24, on Main, once
 const char* WhyNot(Inputs& now) {
+	if (g_mode == 2) return "deagle_questmenu.txt 2: no pre-build, the load builds its own (from the record when there is one)";
 	if (!g_conceptHook) return "the concept message hook is off (deagle_questearly.txt 0 or code differs)";
 	if (Xmlahead_LevelSeen()) return "a level load has already begun";
 	if (!g_cacheOk) return "no deagle_questcache.txt yet (written by the next load)";
@@ -317,7 +318,7 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	if (why) { Questreplay_Release(); Animahead_AtMenu(nullptr); return r; }   // the human animation sets on a plugin thread (animahead.h)
 	g_phase = 1;
 	g_armed = true;
-	g_plan = Questreplay_Plan(ReplayKey().c_str());
+	g_plan = Questreplay_Plan(g_cache.level.c_str(), ReplayKey().c_str());
 	if (g_plan == 2) Xmlahead_SkipQuests("the menu build replays its node build and skips its XML phase");
 	Xmlahead_StartMenuNow("the quest graph is built at the menu");
 	HANDLE t = CreateThread(nullptr, 8 << 20, Build, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
@@ -465,6 +466,31 @@ bool Questmenu_OnJobBody(uint64_t impl) {
 	return true;
 }
 
+int Questmenu_JobReplayBegin(uint64_t impl) {
+	if (t_build || !g_mode || !g_cacheOk) return 0;   // g_cacheOk: questreplay knows the plugin folder (Preload ran)
+	Inputs real;
+	if (!ReadInputs(impl, real)) return 0;
+	const int m = Questreplay_Plan(real.level.c_str(), ReplayKey(real).c_str());
+	if (m != 2 || !Questreplay_Arm(2)) {
+		Questreplay_Release();
+		Log("questmenu: the load builds its own graph: %s", m == 2 ? "the replay could not arm" : "no record for these inputs, the game's own build");
+		return 0;
+	}
+	Xmlahead_SkipQuests("the load replays the quest build and skips its XML phase");
+	Log("questmenu: the load builds its own graph from the record (phase 2a replayed, XML phase skipped)");
+	return 2;
+}
+
+bool Questmenu_JobReplayEnd(int m) {
+	if (!m) return false;
+	Questreplay_Disarm();
+	const bool failed = Questreplay_LastFailed();
+	if (failed) Questreplay_Drop();
+	Questreplay_Release();
+	if (failed) Log("questmenu: the load's replay FAILED: the game's own build runs now");
+	return failed;
+}
+
 void Questmenu_SetConceptHook(bool on) { g_conceptHook = on; }
 
 void Questmenu_Bench(const char* args) {
@@ -496,7 +522,7 @@ void Questmenu_Bench(const char* args) {
 	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof, dump, rec, file, samp }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
 	if (t) { CloseHandle(t); Log("questbench: %d builds started%s%s%s", n, ab ? " (questfast on / off alternating)" : prof ? " (with the inner profile, questprof)" : "",
 	                            dump ? " (graph dump per build: deagle_questdump_<k>.txt)" : "", rec ? " (build 1 records phase 2a, the others replay it)" :
-	                            file ? " (phase 2a from deagle_questreplay.bin, as the menu build)" : ""); }
+	                            file ? " (phase 2a from deagle_questreplay_<level>.bin, as the menu build)" : ""); }
 	else { g_phase = 3; g_benching = false; SetEvent(g_built); Log("questbench: could not start the thread"); }
 }
 
@@ -509,7 +535,7 @@ void Questmenu_Install(uintptr_t base, void* self) {
 	g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((g_dir + "deagle_questmenu.txt").c_str(), "r")) {
 		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1) g_mode = m != 0;
+		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 2 ? 2 : m != 0;
 		fclose(fp);
 	}
 	g_built = CreateEventA(nullptr, TRUE, FALSE, nullptr);
@@ -521,7 +547,7 @@ void Questmenu_Install(uintptr_t base, void* self) {
 	                  !memcmp((void*)(base + kRvaEvt24), kEvt24Bytes, sizeof kEvt24Bytes);
 	// the job body is hooked by loadwatch (its first bytes are a jmp now); checked there
 	g_cacheOk = ReadCache(g_cache);
-	if (g_cacheOk) Questreplay_Preload(g_dir.c_str());   // deagle_questreplay.bin read on a thread, ready for the menu build
+	if (g_cacheOk) Questreplay_Preload(g_dir.c_str(), g_cache.level.c_str());   // the level's record read on a thread, for the menu build
 	bool hooked = false;
 	if (code) {
 		void* t = (void*)(base + kRvaEvt24);

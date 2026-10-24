@@ -97,7 +97,9 @@ template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, u
 	const int prevPhase = I >= kJobBody && I <= 5 ? g_qPhase.exchange(I) : 0;
 	if (I == kJobBody) Questports_JobScope(true);    // the port cache acts on this thread only
 	if (I == 3) Questreplay_Phase2a(true);           // phase 2a: the node build record / replay (questreplay.cpp)
-	const uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);
+	const int rep = I == kJobBody && depth == 1 ? Questmenu_JobReplayBegin(a) : 0;   // the load's own build, from the record
+	uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);
+	if (rep && Questmenu_JobReplayEnd(rep)) r = ((Fn4)g_q[I].orig)(a, b, c, d);      // the replay failed: the game's own build
 	if (I == 3) Questreplay_Phase2a(false);
 	if (I == kJobBody) Questports_JobScope(false);
 	if (I >= kJobBody && I <= 5) g_qPhase = prevPhase;
