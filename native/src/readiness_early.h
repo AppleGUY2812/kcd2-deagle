@@ -21,6 +21,22 @@ inline bool Detail(const char* task) {   // may finish after the gate opens
 	return false;
 }
 
+// A must-have task that is down to its last few requests and stuck there: AnimationStreaming only. The user's
+// 2026-10-24 09:11 load: everything else was ready at 5.4 s, then one animation request sat "1 in flight" from 6.1 s
+// to 10.1 s and held the screen alone (let in early at 10.2 s). Such a task counts as ready once it has had at most
+// kStragglerMax requests in flight for kStragglerHold s in a row; the last animation arrives after the screen opens.
+constexpr int kStragglerMax = 2;
+constexpr double kStragglerHold = 1.0;
+inline bool StragglerKind(const char* task) { return task && !strcmp(task, "AnimationStreaming"); }
+
+// Once a frame per busy must-have task. since: gate age when it last went down to kStragglerMax or fewer (-1: more
+// now). inFlight < 0 = unknown (never a straggler). True = treat it as ready this frame.
+inline bool Straggler(const char* task, int inFlight, double age, double& since) {
+	if (!StragglerKind(task) || inFlight < 0 || inFlight > kStragglerMax) { since = -1; return false; }
+	if (since < 0) since = age;
+	return age - since >= kStragglerHold;
+}
+
 inline bool Eligible(uint32_t mask) { return mask == 0x3f93 || mask == 0x3f91; }
 
 struct Cfg {

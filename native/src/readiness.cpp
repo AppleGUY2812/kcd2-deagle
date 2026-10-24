@@ -87,6 +87,8 @@ struct Gate {
 	std::vector<double> notReady;      // seconds per task (index into g_tasks, by task pointer below)
 	std::vector<void*> taskAt;
 	std::vector<long long> lastBusy;
+	std::vector<double> lowSince;      // early::Straggler: age it went down to its last requests (-1: not)
+	std::vector<char> straggled;       // it was counted as ready that way at least once
 	void* obs = nullptr;           // the observer (C_ReadinessObserver)
 	bool eligible = false;         // a gate "let me in early" may open (save load 0x3f93, fast travel 0x3f91)
 	early::State early;
@@ -245,6 +247,8 @@ size_t Slot(Gate& g, void* t) {
 	g.taskAt.push_back(t);
 	g.notReady.push_back(0);
 	g.lastBusy.push_back(0);
+	g.lowSince.push_back(-1);
+	g.straggled.push_back(0);
 	return g.taskAt.size() - 1;
 }
 
@@ -504,14 +508,19 @@ void Readiness_Frame() {
 			if (gdt > g.lineLongest) g.lineLongest = gdt;
 			if (rnOk) { Add(g.rd, rn); Add(g.lineRd, rn); }
 			std::string busy;
+			const double age = Secs(now - g.t0);
 			for (auto& t : g_tasks) {
 				if (!(t.cat & g.mask)) continue;
 				bool r = true;
-				if (!Ready(t.at, g.mask, &r) || r) continue;
+				if (!Ready(t.at, g.mask, &r) || r) {
+					if (early::StragglerKind(t.name.c_str())) g.lowSince[Slot(g, t.at)] = -1;
+					continue;
+				}
 				all = false;
-				if (early::Detail(t.name.c_str())) detailBusy = true;
-				else mustReady = false;
 				const size_t i = Slot(g, t.at);
+				if (early::Detail(t.name.c_str())) detailBusy = true;
+				else if (early::Straggler(t.name.c_str(), InFlight(t), age, g.lowSince[i])) { detailBusy = true; g.straggled[i] = 1; }
+				else mustReady = false;
 				g.notReady[i] += gdt;
 				g.lastBusy[i] = now;
 				if (line) {
@@ -545,6 +554,8 @@ void Readiness_Frame() {
 					snprintf(n, sizeof n, f >= 0 ? "%s%s (%d in flight)" : "%s%s", still.empty() ? "" : ", ", t.name.c_str(), f);
 					still += n;
 				}
+				for (size_t k = 0; k < g.taskAt.size(); k++)
+					if (g.straggled[k]) still += " (" + NameAt(g.taskAt[k]) + " counted as ready: its last requests stuck 1 s)";
 				lines.push_back(one + still);
 			}
 			if (waited >= 0.25) longWait = true;
