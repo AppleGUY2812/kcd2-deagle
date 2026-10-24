@@ -263,7 +263,8 @@ const char* WhyNot(Inputs& now) {
 	for (int i = 0; i < 4; i++)
 		if (now.dg[i] != g_cache.dg[i]) return "quest manager subscribers differ from a load's (the quest log may not be listening yet)";
 	if (g_cache.dg[0] <= 0) return "the quest manager had no subscriber in the cached load";
-	if (FreeMb() < 2000) return "less than 2000 MB RAM free";
+	// the build needs what the load's own build would need, only earlier; below this the menu read-ahead is shedding too
+	if (FreeMb() < 1200) return "less than 1200 MB RAM free";
 	return nullptr;
 }
 
