@@ -5,7 +5,10 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
 "Control" = the end of the first gameplay frames. Times in s after the first level file ("level loading").
 
 ## The user's path vs the test boots (M)
-- **Best so far, boot 38 (2026-10-24 09:37, menu path, 2213 MB free): 24.0 s** from Continue. The two Checkers mods
+- **Best so far, boot 40 (2026-10-24 10:20, menu path, 1490 MB free): 22.7 s** from Continue, with animahead (human
+  animation sets at the menu, 7f34635) and kcd2-deagle-66's conceptbfs: terrain 4.6 (less RAM), level done 12.2, state 4
+  0.2, apply 4.9, gate 3.9. Main's part after terrain 8.8 -> 7.6 s. One boot: +-1 s noise.
+- Boot 38 (2026-10-24 09:37, menu path, 2213 MB free): 24.0 s from Continue. The two Checkers mods
   repacked stored (tools/paks/repack_stored.py; originals in E:\Tools\deagle-dev\mod_backup): gate 11.0 -> 3.2 s, opened
   by itself (TextureStreaming ready last, no early rule fired); Checkers paks no longer in the most-read list. Steps:
   terrain 3.8, level done 12.6 (quests kept), state 4 1.6, apply 5.2 (kcd2-deagle-66's now), gate 3.2.
@@ -75,6 +78,11 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
   the graph on a plugin thread (11.5 s, free RAM 2710 -> 2030 MB) and the load keeps it (mgr+0x378 = 0, body skipped).
   Concept messages at the menu during the build: 0x1, 0xc, 0x24; before the load: 0x38, 0x3a (none touch projects).
   Journal after the load identical to a normal load (boots 35 vs 36). Skips below 1200 MB free.
+- animahead (f71b7da, 7f34635; deagle_animahead.txt 1): female.cdf + male.cdf through the game's LoadAndLockResources on a
+  plugin thread at the menu, after the quest build (2.2 + 1.1 s there); the load's 30+ human skeleton loads hit the
+  cache (0 ms). "Loading level" (FUN_180b8f748) waits for a running preload. **Never during the load**: boot 39 ran it on
+  Main in the terrain wait and crashed (the global animation header array CM+0x280 has no lock; the terrain loaders on
+  job workers add to it; dump: FUN_18083f874).
 - skin cap (kcd2-deagle-66): wh_cc_MaxSkinLoadingInProgress 120 / JobQueueSize 80 (load): clothing 10.2 -> 7.2 s
   (did not repeat in every boot).
 
@@ -85,7 +93,8 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 | ground meshes (streamahead) | launch +1 s | done; 512 MB held cap |
 | XML parse (xmlahead) | menu idle (~launch +22 s) | capped 3,000 files ahead of the game: 4 workers idle most of the menu; level files wait for level loading |
 | quest graph 13.7 s | save list read (~launch +20 s) | done (questmenu): -2.4 s (31.35 s in boots 35/37 vs 33.75 s in 34/36); on |
-| Main: anim sets 2.2, SmartObjectAnimations 1.43, XGenAI 0.55 s | in the load | RE running: re_menu_main.md |
+| Main: human anim sets 1.9-2.2 s | menu, after the quest build | done (animahead): boot 40 |
+| Main: SmartObjectAnimations 1.43, XGenAI 0.55, material dedupe 0.5 s | in the load | next (re_stepEF E1, re_menu_main) |
 | RLT: shader parse 4-8 s, texture precache, PSO | in the load | RE running: re_menu_render.md |
 | save read, mapClouds/Storm, Settle textures at the save's position | in the load | asked kcd2-deagle-66 |
 Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
