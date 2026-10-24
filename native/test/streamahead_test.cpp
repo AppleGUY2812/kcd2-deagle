@@ -2,7 +2,7 @@
 // usage (run in this order from one folder; every file lands next to the exe):
 //   streamahead_test record    records 700 requests, "gameplay starts", the list must appear 5 s later
 //   streamahead_test serve     reads the list ahead and serves the same requests: every byte checked, most served
-//   streamahead_test shed      RAM gets short after the read-ahead: every copy is freed, the game reads them itself
+//   streamahead_test shed      RAM gets short after the read-ahead and stays short: every copy is freed, the game reads them itself
 //   streamahead_test revive    copies RAM shedding dropped for good are read again once a loading screen waits
 //   streamahead_test changed   the pak's write time changed since the list: nothing may be served
 //   streamahead_test gate      RAM short the whole time, but a loading screen waits, requests in a shuffled order: most served,
@@ -110,10 +110,9 @@ int main(int argc, char** argv) {
 		Streamahead_SetGate(true);   // RAM still short: only the loading-screen rule reads them again
 		for (int i = 0; i < 200 && ready() < 600; i++) Sleep(100);
 	}
-	if (mode == "shed") {        // RAM short: everything held is freed (the writer checks once a second)
-		ramgov::SetForTest(1ll << 40, 1ll << 40);
+	if (mode == "shed") {        // RAM short: everything held is freed (the writer checks once a second), and while it
+		ramgov::SetForTest(1ll << 40, 1ll << 40);   // stays short nothing is read again (it is once there is room: revive)
 		Sleep(2500);
-		ramgov::SetForTest(0, -1);
 	}
 	std::vector<uint8_t> out;
 	long long served = 0, bad = 0, fell = 0;

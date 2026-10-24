@@ -272,7 +272,7 @@ void Shed(long long want) {
 		it.data = nullptr;
 		g_held -= it.size;
 		got += it.size;
-		if (it.freedOnce) { it.dropped = true; it.state.store(3, std::memory_order_release); s_shedDropped++; continue; }
+		if (it.freedOnce) { it.dropped = true; s_ready--; it.state.store(3, std::memory_order_release); s_shedDropped++; continue; }
 		it.freedOnce = true;
 		s_ready--;   // counted again when it is read again
 		s_again2++;
@@ -317,7 +317,10 @@ DWORD WINAPI Reader(LPVOID arg) {
 		int pak = 0;
 		int64_t lo = 0, hi = 0;
 		const bool inWindow = !ramgov::CanTake(ChunkNow());
-		if (!NextChunk(chunk, pak, lo, hi)) break;
+		if (!NextChunk(chunk, pak, lo, hi)) {   // nothing waiting: wait, RAM shedding or a loading screen may put copies back
+			Sleep(g_gate.load(std::memory_order_relaxed) ? 5 : 50);
+			continue;
+		}
 		if (inWindow) s_gateReads++;
 		HANDLE& h = hs[pak];
 		if (h == INVALID_HANDLE_VALUE) {
