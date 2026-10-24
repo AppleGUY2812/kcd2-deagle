@@ -1,6 +1,7 @@
 // Faster pieces of the save load's "apply save" step. See applyfast.h.
 #include "applyfast.h"
 #include "log.h"
+#include "xmlahead.h"
 #include "MinHook.h"
 #include <windows.h>
 #include <algorithm>
@@ -150,9 +151,120 @@ void __fastcall HkFind(void* a1, void* a2, void* a3, void* a4, uint64_t* out) {
 	}
 }
 
+// ---- 3. PSO precache at the main menu
+// FUN_181de4180 (renderer vt+0x3e0 via the thunk at 0x5f88a8; no arguments) queues the mode-2 PSO precache lambda on
+// the render thread (FUN_181dfaf80(gRenDev->m_pRT): on any thread but the render threads it writes into the main
+// thread's command buffer, so it must be called on the main thread). PostLoadLevel calls it and the main thread
+// then waits ~2.4 s for it in state 4. The PSO list comes from the pipeline cache file, not the level (re_stepEF.md),
+// so the menu call builds the same PSOs and the load's own call finds them made.
+constexpr uintptr_t kRvaPsoQueue = 0x1de4180;
+const unsigned char kPsoQueueBytes[] = { 0x48,0x83,0xec,0x48,0x48,0x8b,0x15 };   // sub rsp,48h; mov rdx,[rip+..]
+// FUN_1809a6190 SyncMainWithRender(m_pRT, flag): the main thread hands its command buffer to the render thread, every
+// frame, at the menu too (boot 21 samples; ISystem::Render and CSystem vt+0x50 don't run at the menu).
+constexpr uintptr_t kRvaSync = 0x9a6190;
+const unsigned char kSyncBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57 };
+using SyncFn = uint64_t(__fastcall*)(void* rt, uint64_t a2, uint64_t a3, uint64_t a4);
+SyncFn g_sync = nullptr;
+constexpr unsigned kPsoQuietMs = 1500;   // the menu: no XML load for this long
+bool g_pso = false;                      // deagle_psoahead.txt: 1 on; off by default (the menu freezes ~6 s)
+std::atomic<int> g_psoState{0};          // 0 waiting for the menu, 1 queued, -1 not possible
+std::atomic<long long> s_psoFrames{0};
+std::atomic<long long> s_psoQueuedAt{0};
+
+void PsoMainFrame() {
+	if (g_psoState.load(std::memory_order_relaxed) != 0) return;
+	const long long n = ++s_psoFrames;
+	if (!Xmlahead_MenuQuiet(kPsoQuietMs)) return;
+	g_psoState = 1;
+	s_psoQueuedAt = Now();
+	Log("applyfast: PSO precache queued at the main menu (render sync %lld, thread %lu); the load's own precache should "
+	    "find them made (kcd.log: \"Precached N Graphics PSOs\")", n, GetCurrentThreadId());
+	reinterpret_cast<void(__fastcall*)()>(g_base + kRvaPsoQueue)();
+}
+
+std::atomic<long long> s_syncs{0};
+long long g_lastSyncAt = 0;
+uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
+	{   // when the main thread syncs during start-up (measurement: can the precache run before the menu shows?)
+		const long long n = ++s_syncs, now = Now();
+		if (n <= 3 || (n <= 400 && (now - g_lastSyncAt) * 1000 / g_freq >= 1000) || n == 100 || n == 400)
+			Log("applyfast: render sync %lld on thread %lu (%lld ms after the one before)", n, GetCurrentThreadId(),
+			    g_lastSyncAt ? (now - g_lastSyncAt) * 1000 / g_freq : -1);
+		g_lastSyncAt = now;
+	}
+	PsoMainFrame();   // before the hand-over: the queued precache goes with this frame's commands
+	return g_sync(rt, a2, a3, a4);
+}
+
+// ---- 4. Quests first in the level data message (re_questearly.md, 2026-10-24)
+// The LevelLoadJob thread reads levels/<level>/whdata_0 and sends module message 0x1e (C_ModuleMessageSerializer).
+// C_ModulesManager::ProcessMessage (FUN_180479bec) hands it to every module's OnMessage (vt+8) in registration order;
+// the concept module (C_ConceptModule, DAT_185480280, vtable 0x183E233C8, OnMessage FUN_1811411cc) comes after the
+// character and AI-tree loaders, so its handler FUN_18114148c (reads "*m_ConceptManager", submits the ConceptLoadJob)
+// runs ~3 s after the data exists, and the main thread later waits 1-3.4 s for that job. Here the concept handler runs
+// first in the module loop (after the pre-step, as in the game), with the same message on the same thread, and its own
+// turn in the loop is skipped. The serializer finds groups
+// by name, so the other modules read the same data.
+constexpr uintptr_t kRvaProcessMsg = 0x479bec, kRvaConceptOnMsg = 0x11411cc, kRvaConceptLevelData = 0x114148c;
+constexpr uintptr_t kRvaConceptModule = 0x5480280, kRvaConceptModuleVt = 0x3E233C8, kRvaSerializerMsgVt = 0x4095570;
+const unsigned char kProcessMsgBytes[] = { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89,0x7c,0x24,0x20 };
+const unsigned char kConceptOnMsgBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x44,0x8b,0x42,0x08 };
+const unsigned char kConceptLevelDataBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0x5a,0x18 };
+using MsgFn = void(__fastcall*)(void* self, void* msg);
+MsgFn g_processMsg = nullptr, g_conceptOnMsg = nullptr, g_preModules = nullptr;
+constexpr uintptr_t kRvaPreModules = 0x47a1e4;
+const unsigned char kPreModulesBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x55,0x56,0x57,0x48,0x83,0xec,0x70 };
+thread_local long long t_earlyAt = 0;
+bool g_questsFirst = true;                 // deagle_questearly.txt: 0 off, 1 on
+thread_local void* t_earlyMsg = nullptr;   // the message whose concept turn already ran
+std::atomic<long long> s_qeEarly{0}, s_qeSkipped{0};
+
+// FUN_18047a1e4(*mgr, msg): ProcessMessage's step before the module loop (only caller); for 0x1e it calls one handler
+// (*mgr + 0x70, vt+0x20). The quests' turn goes right after it, so that order stays as in the game.
+void __fastcall HkPreModules(void* game, void* msg) {
+	g_preModules(game, msg);
+	uintptr_t mod = 0;
+	if (msg && !t_earlyMsg && *(uintptr_t*)msg == g_base + kRvaSerializerMsgVt && *(int*)((char*)msg + 8) == 0x1e &&
+	    (mod = *(uintptr_t*)(g_base + kRvaConceptModule)) != 0 && *(uintptr_t*)mod == g_base + kRvaConceptModuleVt) {
+		const long long t0 = Now();
+		reinterpret_cast<MsgFn>(g_base + kRvaConceptLevelData)((void*)mod, msg);
+		t_earlyAt = Now();
+		t_earlyMsg = msg;
+		s_qeEarly++;
+		Log("applyfast: level data message: quests went first (%.0f ms, thread %lu)", (t_earlyAt - t0) * 1000.0 / g_freq,
+		    GetCurrentThreadId());
+	}
+}
+
+void __fastcall HkProcessMsg(void* mgr, void* msg) {
+	g_processMsg(mgr, msg);
+	if (t_earlyMsg == msg) t_earlyMsg = nullptr;   // this call's message is done: never match a later one at the same
+	                                               // address (a nested message's call leaves the outer one's mark)
+}
+
+void __fastcall HkConceptOnMsg(void* mod, void* msg) {
+	if (msg && msg == t_earlyMsg) {   // ran first already (HkPreModules)
+		s_qeSkipped++;
+		Log("applyfast: level data message: the quests' own turn came %.0f ms later (the quest job's head start)",
+		    (Now() - t_earlyAt) * 1000.0 / g_freq);
+		return;
+	}
+	g_conceptOnMsg(mod, msg);
+}
+
 }  // namespace
 
 void Applyfast_OnLoaded() {
+	if (s_qeEarly.load())
+		Log("applyfast: quests first: %lld level data messages, concept turn skipped %lld times", s_qeEarly.load(),
+		    s_qeSkipped.load());
+	static bool psoTold = false;
+	if (!psoTold && g_psoState.load() >= 0) {
+		psoTold = true;
+		Log("applyfast: PSO precache at the main menu: %s (after %lld render syncs)",
+		    g_psoState.load() == 1 ? "queued" : "NOT queued (the menu never went quiet, or xmlahead mode 0)", s_psoFrames.load());
+		// render syncs counted only until it was queued
+	}
 	const long long c = s_clouds.load(), t = s_ticks.load();
 	const long long dc = c - s_lastClouds.exchange(c), dt = t - s_lastTicks.exchange(t);
 	if (!dc && !s_sorts.load()) return;
@@ -175,7 +287,7 @@ void Applyfast_Install(uintptr_t base, void* self) {
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
 		fclose(fp);
 	}
-	if (!g_mode) { Log("applyfast: off (deagle_applyfast.txt)"); return; }
+	if (!g_mode) { g_psoState = -1; Log("applyfast: off (deagle_applyfast.txt)"); return; }
 	const bool a = Hook(base, kRvaFogAny, kFogAnyBytes, sizeof kFogAnyBytes, (void*)&HkFogAny, (void**)&g_fogAny, "fog ask");
 	const bool b = a && Hook(base, kRvaFogNode, kFogNodeBytes, sizeof kFogNodeBytes, (void*)&HkFogNode, (void**)&g_fogNode,
 	                         "fog node");
@@ -183,6 +295,35 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	g_base = base;
 	const bool c = !memcmp((void*)(base + kRvaFindChrparams), kFindCallBytes, sizeof kFindCallBytes) &&
 	               Hook(base, kRvaFind, kFindBytes, sizeof kFindBytes, (void*)&HkFind, (void**)&g_find, "facial DBA list");
-	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s", g_mode,
-	    g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF", c ? "on" : "OFF");
+	if (FILE* fp = fopen((dir + "deagle_psoahead.txt").c_str(), "r")) {
+		int m = 1;
+		if (fscanf(fp, "%d", &m) == 1) g_pso = m != 0;
+		fclose(fp);
+	}
+	if (FILE* fp = fopen((dir + "deagle_questearly.txt").c_str(), "r")) {
+		int m = 1;
+		if (fscanf(fp, "%d", &m) == 1) g_questsFirst = m != 0;
+		fclose(fp);
+	}
+	bool e = false;
+	if (g_questsFirst && !memcmp((void*)(base + kRvaConceptLevelData), kConceptLevelDataBytes, sizeof kConceptLevelDataBytes) &&
+	    *(uintptr_t*)(base + kRvaConceptModuleVt + 8) == base + kRvaConceptOnMsg &&
+	    Hook(base, kRvaConceptOnMsg, kConceptOnMsgBytes, sizeof kConceptOnMsgBytes, (void*)&HkConceptOnMsg,
+	         (void**)&g_conceptOnMsg, "concept OnMessage")) {
+		e = Hook(base, kRvaProcessMsg, kProcessMsgBytes, sizeof kProcessMsgBytes, (void*)&HkProcessMsg, (void**)&g_processMsg,
+		         "ProcessMessage");
+		if (e && !Hook(base, kRvaPreModules, kPreModulesBytes, sizeof kPreModulesBytes, (void*)&HkPreModules,
+		               (void**)&g_preModules, "ProcessMessage pre-step")) {
+			MH_DisableHook((void*)(base + kRvaProcessMsg));
+			e = false;
+		}
+		if (!e) MH_DisableHook((void*)(base + kRvaConceptOnMsg));
+	}
+	const bool d = g_pso && !memcmp((void*)(base + kRvaPsoQueue), kPsoQueueBytes, sizeof kPsoQueueBytes) &&
+	               Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync");
+	if (!d) g_psoState = -1;
+	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s; "
+	    "PSO precache at the main menu: %s; quests first in the level data message: %s", g_mode, g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF",
+	    c ? "on" : "OFF", d ? "on" : g_pso ? "OFF (code differs)" : "off (deagle_psoahead.txt)",
+	    e ? "on" : g_questsFirst ? "OFF (code differs)" : "off (deagle_questearly.txt)");
 }

@@ -80,6 +80,7 @@ std::atomic<long long> g_loads{0};
 std::atomic<size_t> g_gamePos{0};     // furthest list position the game has asked for
 std::atomic<long long> s_leadWaits{0}, s_ramWaits{0};
 std::atomic<ULONGLONG> g_lastLoad{0};
+std::atomic<bool> g_levelSeen{false};  // the game asked for a levels/ file: a level load has begun
 void* g_self = nullptr;
 std::atomic<long long> s_ready{0}, s_failed{0}, s_served{0}, s_late{0}, s_parseMs{0}, s_skipped{0}, s_waited{0},
 	s_waitTimeout{0}, s_waitUs{0};
@@ -95,7 +96,7 @@ size_t g_privAtStart = 0;
 
 DWORD WINAPI Worker(LPVOID arg) {
 	const int q = (int)(intptr_t)arg;
-	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);   // (normal tried in boot 25: no change)
 	const size_t n = g_queue[q].size();
 	for (size_t k = 0;; k++) {
 		if (g_stop) break;
@@ -142,10 +143,11 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 	const bool watch = MainReads_On();   // a mainreads window on this thread (any time, any mode)
 	std::string path;
 	if (g_mode == 2 || record || watch) path = Norm(file);
+	g_loads++;
+	g_lastLoad = GetTickCount64();
+	if (!g_levelSeen && !path.empty() && IsLevel(path)) g_levelSeen = true;
 	if (g_mode == 2 && !g_items.empty() && !g_stop) {
 		if (!g_self) g_self = self;
-		g_loads++;
-		g_lastLoad = GetTickCount64();
 		if (!g_started[1] && IsLevel(path)) { StartQueue(0, "level loading"); StartQueue(1, "level loading"); }
 		auto f = g_byPath.find(path);
 		if (f != g_byPath.end()) {
@@ -276,6 +278,10 @@ bool LoadList() {
 }
 
 }  // namespace
+
+bool Xmlahead_MenuQuiet(unsigned quietMs) {
+	return g_loads >= kMenuLoads && !g_levelSeen && GetTickCount64() - g_lastLoad >= quietMs;
+}
 
 void Xmlahead_Install(uintptr_t base, void* self) {
 	g_start = GetTickCount64();
