@@ -61,6 +61,18 @@ struct Task {
 std::vector<Task> g_tasks;
 uintptr_t g_vecBegin = 0, g_vecEnd = 0;
 
+// The stream engine's HDD reader thread, looked at once a frame while a gate waits (see Reader below).
+struct ReaderAcc {
+	int n = 0;              // frames looked at
+	int parkedBusy = 0;     // reader asleep with requests queued: held by temp memory or a pause, not by an empty queue
+	int parkedIdle = 0;     // reader asleep, queue empty: waiting for consumers to ask
+	int tempFull = 0;       // temp memory over its budget (a request that needs some can't start)
+	int paused = 0;         // a stream type paused (pause mask not 0)
+	long long queued = 0;   // sum of the queue length
+	int maxQueued = 0;
+	uint32_t mask = 0;      // the last pause mask seen (not 0)
+};
+
 struct Gate {
 	uint32_t mask;
 	uintptr_t from;           // the call site's RVA
@@ -76,6 +88,7 @@ struct Gate {
 	double longest = 0;            // s: its longest frame
 	int lineFrames = 0;            // the same, since the last "waiting" line
 	double lineLongest = 0;
+	ReaderAcc rd, lineRd;          // the reader over the whole gate, and since the last "waiting" line
 };
 std::mutex g_newMu;
 std::vector<Gate> g_new;    // started since the last frame (any thread)
@@ -257,6 +270,54 @@ std::string Feed(int frames, double longest) {
 	return out + s;
 }
 
+// The HDD reader (the one thread that reads every game pak), from ~/re/work/settle_feed/report.md section 4 (layout
+// INFERRED, not yet checked against the game's debug views): engine E = *(base+0x547dae8) - 0xf0; reader T = *(E+0x78):
+// sorted queue T+0x70/+0x78 and incoming T+0xa0/+0xa8 (vectors of pointers), T+0xf8 the count of threads parked in
+// its wait (FUN_180465878); pause mask E+0xe8; temp pool E+0x138 (used fallback bytes, peak, budget). The reader
+// allocates a request's temp memory from a 12 MB heap first, then from the fallback while used + size <= budget; when
+// both are full it parks until a free, with the queue still full (report item 4).
+struct ReaderNow { int queued; uint32_t parked, mask; int32_t used, budget; };
+bool ReadReader(ReaderNow* r) {
+	uintptr_t eng = 0, t = 0, q[2] = {}, in[2] = {};
+	int32_t pool[3] = {};
+	if (!Rd(g_base + kRvaStreamEngine, &eng, 8) || !eng) return false;
+	const uintptr_t e = eng - 0xf0;
+	if (!Rd(e + 0x78, &t, 8) || !t || !Rd(t + 0x70, q, 16) || !Rd(t + 0xa0, in, 16) || !Rd(t + 0xf8, &r->parked, 4) ||
+	    !Rd(e + 0xe8, &r->mask, 4) || !Rd(e + 0x138, pool, 12))
+		return false;
+	if (q[1] < q[0] || in[1] < in[0] || (q[1] - q[0]) / 8 > 1000000 || (in[1] - in[0]) / 8 > 1000000) return false;
+	r->queued = (int)((q[1] - q[0]) / 8 + (in[1] - in[0]) / 8);
+	r->used = pool[0];
+	r->budget = pool[2];
+	return true;
+}
+
+void Add(ReaderAcc& a, const ReaderNow& r) {
+	a.n++;
+	a.queued += r.queued;
+	if (r.queued > a.maxQueued) a.maxQueued = r.queued;
+	// the wait's counter (FUN_180465878): waiters in the low 31 bits, the top bit set once it is signalled
+	const bool asleep = (r.parked & 0x7fffffffu) != 0 && !(r.parked & 0x80000000u);
+	if (asleep && r.queued > 0) a.parkedBusy++;
+	if (asleep && r.queued == 0) a.parkedIdle++;
+	if (r.used > 0 && r.used + (1 << 20) > r.budget) a.tempFull++;   // under 1 MB of the fallback left
+	if (r.mask) { a.paused++; a.mask = r.mask; }
+}
+
+std::string Reader(const ReaderAcc& a) {
+	if (!a.n) return " | reader: ?";
+	char s[220];
+	const auto pc = [&](int k) { return k * 100 / a.n; };
+	snprintf(s, sizeof s, " | reader: queue %lld avg (max %d), asleep with work queued %d %%, asleep with nothing queued %d %%, "
+	         "temp memory full %d %%", a.queued / a.n, a.maxQueued, pc(a.parkedBusy), pc(a.parkedIdle), pc(a.tempFull));
+	std::string out = s;
+	if (a.paused) {
+		snprintf(s, sizeof s, ", paused %d %% (mask 0x%x)", pc(a.paused), a.mask);
+		out += s;
+	}
+	return out;
+}
+
 void Opened(const Gate& g, long long now, const char* how, std::vector<std::string>* out) {
 	const double took = Secs(now - g.t0);
 	if (took < 0.25) return;   // quick gates (most in-game checks) stay out of the log
@@ -286,7 +347,8 @@ void Opened(const Gate& g, long long now, const char* how, std::vector<std::stri
 		         took - g.early.wouldOpen);
 		tail = e;
 	}
-	out->push_back(head + (s.empty() ? std::string("nothing (every task ready)") : s) + "; ready last: " + last + tail);
+	out->push_back(head + (s.empty() ? std::string("nothing (every task ready)") : s) + "; ready last: " + last + tail +
+	               Reader(g.rd));
 }
 
 }  // namespace
@@ -364,6 +426,8 @@ void Readiness_Frame() {
 	std::vector<std::string> lines;
 	g_lock(g_service + 0x38);
 	const bool okTasks = ReadTasks(&changed);
+	ReaderNow rn{};
+	const bool rnOk = ReadReader(&rn);
 	if (okTasks) {
 		for (auto& t : g_tasks) Cat(t.at, &t.cat);   // asked every time, as the game's IsReady does
 		for (size_t gi = 0; gi < g_gates.size();) {
@@ -376,6 +440,7 @@ void Readiness_Frame() {
 			if (gdt > g.longest) g.longest = gdt;
 			g.lineFrames++;
 			if (gdt > g.lineLongest) g.lineLongest = gdt;
+			if (rnOk) { Add(g.rd, rn); Add(g.lineRd, rn); }
 			std::string busy;
 			for (auto& t : g_tasks) {
 				if (!(t.cat & g.mask)) continue;
@@ -431,9 +496,10 @@ void Readiness_Frame() {
 				char head[96];
 				snprintf(head, sizeof head, "readiness: gate 0x%x (from +%llx) waiting %.1f s: not ready: ", g.mask,
 				         (unsigned long long)g.from, waited);
-				lines.push_back(head + busy + Feed(g.lineFrames, g.lineLongest));
+				lines.push_back(head + busy + Feed(g.lineFrames, g.lineLongest) + Reader(g.lineRd));
 				g.lineFrames = 0;
 				g.lineLongest = 0;
+				g.lineRd = ReaderAcc{};
 			}
 			gi++;
 		}
