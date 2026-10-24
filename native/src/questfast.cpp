@@ -91,9 +91,69 @@ template <int I> void __fastcall HkSort(unsigned char* first, unsigned char* las
 	}
 }
 
+// ---- rttr metadata bool cache (questprof 2026-10-24: 11.0 M calls per quest build, 0.81 s incl). FUN_1804fbb98(owner**,
+// key variant*, bool* dflt): owner->vt+0x38 get_metadata(key) -> the stored variant as bool, else *dflt. rttr metadata is
+// registered once and never changes (I), so for an E_PropertyMetadata key (inline u32, policy FUN_1804fb9e0; the callers
+// leave the variant's other bytes unset) the answer per (owner, key, default) is fixed. Thread-local direct-mapped
+// table (no locks); other key types go to the game. The first 20,000 hits and every 1024th after also run the game's
+// lookup and must match, or the cache turns off for the session.
+constexpr uintptr_t kRvaMetaBool = 0x4fbb98, kRvaEnumPolicy = 0x4fb9e0;
+const unsigned char kMetaBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x50,0x48,0x8b,0x05,0x1b,0x34,0x40,0x04,0x48,0x33,0xc4 };
+using MetaFn = uint8_t(__fastcall*)(void**, uint64_t*, uint8_t*);
+MetaFn g_metaOrig = nullptr;
+uintptr_t g_enumPolicy = 0;
+struct MEnt { void* owner; uint32_t key; uint8_t dflt, val, used, pad; };
+constexpr size_t kMetaSlots = 4096;
+thread_local MEnt* t_meta = nullptr;
+std::atomic<bool> g_metaOn{true}, g_metaBad{false};
+std::atomic<long long> g_metaCalls{0}, g_metaHits{0}, g_metaBypass{0}, g_metaChecked{0};   // flushed from t_mc
+constexpr long long kMetaCheck = 20000;   // per thread
+struct MCount { long long calls, hits, bypass, checked, flushedCalls, flushedHits, flushedBypass, flushedChecked; };
+thread_local MCount t_mc{};   // plain per-thread counters: three atomic adds per call cost ~0.2 s per build
+inline void MetaFlush() {
+	MCount& c = t_mc;
+	g_metaCalls += c.calls - c.flushedCalls; g_metaHits += c.hits - c.flushedHits;
+	g_metaBypass += c.bypass - c.flushedBypass; g_metaChecked += c.checked - c.flushedChecked;
+	c.flushedCalls = c.calls; c.flushedHits = c.hits; c.flushedBypass = c.bypass; c.flushedChecked = c.checked;
+}
+
+uint8_t __fastcall HkMeta(void** p, uint64_t* key, uint8_t* dflt) {
+	MCount& c = t_mc;
+	if (!(++c.calls & 0xffff)) MetaFlush();
+	if (!g_metaOn.load(std::memory_order_relaxed) || !p || !key || !dflt || key[2] != g_enumPolicy) {
+		if (g_metaOn.load(std::memory_order_relaxed)) c.bypass++;
+		return g_metaOrig(p, key, dflt);
+	}
+	void* const owner = *p;
+	const uint32_t k = (uint32_t)key[0];
+	const uint8_t d = *dflt;
+	if (!t_meta) t_meta = (MEnt*)calloc(kMetaSlots, sizeof(MEnt));
+	if (!t_meta) return g_metaOrig(p, key, dflt);
+	const uint64_t h = ((uint64_t)(uintptr_t)owner * 0x9E3779B97F4A7C15ull) ^ ((uint64_t)k * 0xC2B2AE3D27D4EB4Full) ^ d;
+	MEnt& e = t_meta[(h >> 32) & (kMetaSlots - 1)];
+	if (e.used && e.owner == owner && e.key == k && e.dflt == d) {
+		const long long n = c.hits++;
+		if (n < kMetaCheck || !(n & 1023)) {
+			const uint8_t v = g_metaOrig(p, key, dflt);
+			c.checked++;
+			if (v != e.val && !g_metaBad.exchange(true)) {
+				g_metaOn = false;
+				Log("questfast: rttr metadata cache: owner %p key %u default %u cached %u, the game says %u: the cache is off for "
+				    "this session", owner, k, d, e.val, v);
+			}
+			return v;
+		}
+		return e.val;
+	}
+	const uint8_t v = g_metaOrig(p, key, dflt);
+	e.owner = owner; e.key = k; e.dflt = d; e.val = v; e.used = 1;
+	return v;
+}
+
 }  // namespace
 
 void Questfast_Report(const char* when) {
+	MetaFlush();   // the reporting thread's own counts (the quest job thread calls this)
 	char buf[512];
 	int o = 0;
 	for (auto& l : g_lists) {
@@ -104,12 +164,17 @@ void Questfast_Report(const char* when) {
 		if (o >= (int)sizeof buf) break;
 	}
 	Log("questfast: %s: rttr type registry %s", when, buf);
+	if (g_metaOrig)
+		Log("questfast: %s: rttr metadata cache %lld calls, %lld hits, %lld other key types (the game's), self-check %lld equal%s "
+		    "(this thread's counts exact, others' up to 65,536 calls behind)",
+		    when, g_metaCalls.load(), g_metaHits.load(), g_metaBypass.load(), g_metaChecked.load(), g_metaOn ? "" : ", OFF");
 }
 
 bool Questfast_SetOn(bool on) {
 	bool any = false;
 	for (auto& l : g_lists)
 		if (l.orig) { l.on = on && !l.bad.load(); any = true; }
+	if (g_metaOrig) { g_metaOn = on && !g_metaBad.load(); any = true; }
 	return any;
 }
 
@@ -136,5 +201,10 @@ void Questfast_Install(uintptr_t base, void* self) {
 		state += state.empty() ? "" : ", ";
 		state += std::string(l.name) + (ok ? " on" : " OFF (code differs or hook failed)");
 	}
-	Log("questfast: rttr type registry sorted insert: %s", state.c_str());
+	g_enumPolicy = base + kRvaEnumPolicy;
+	void* m = (void*)(base + kRvaMetaBool);
+	const bool metaOk = !memcmp(m, kMetaBytes, sizeof kMetaBytes) && MH_CreateHook(m, (void*)&HkMeta, (void**)&g_metaOrig) == MH_OK &&
+	                    MH_EnableHook(m) == MH_OK;
+	if (!metaOk) g_metaOrig = nullptr;
+	Log("questfast: rttr type registry sorted insert: %s; rttr metadata cache %s", state.c_str(), metaOk ? "on" : "OFF (code differs or hook failed)");
 }
