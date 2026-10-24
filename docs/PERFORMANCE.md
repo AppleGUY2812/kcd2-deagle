@@ -485,3 +485,25 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   (budgets, callback / finalize caps, the clothing system) is being decoded. The main thread read no files during the
   gate (`mainreads:` 1 XML 0 ms, 34 ms of pak reads in 12.3 s). VRAM 1.6-1.8 GB during the gate, copy engine idle: not
   the GPU either. VRAM rose to 4.8 GB in the first 30 s of play (most texture detail arrives after control anyway).
+- What holds Settle, decoded 2026-10-24 (~/re/work/settle_feed/report.md, ~/re/work/settle_clothing/report.md on the
+  ProLiant; SETTLED in code unless marked):
+  1. "AnimationStreaming" (stream type 4) is character assets (CHR/skin/DBA), fed by the clothing system's SkinLoader
+     jobs. Skin loads in progress are capped by `wh_cc_MaxSkinLoadingInProgress` 40 (`FUN_181e9de70` against
+     `DAT_185324180`, read live). INFERRED: the flat ~120 in flight for 5 s is that cap full (3 reads per skin).
+     `wh_cc_MaxSkinLoaderJobs` (1, read once at the first skin request) is 4 through user.cfg: 4 SkinLoader threads,
+     ~1 % busy in the gate (boot 13 samples), so the workers are not the limit.
+  2. C_ClothingSystem (0x80) is ready when the 35 nearest characters' attachment managers are done
+     (`wh_cc_RequiredPostLoadReadyManagers`, `FUN_1814d8738`; Henry is always among them). Its scheduler budget is 40 a
+     layer a frame in precache mode. The 35 -> 10 test gave nothing: a capped pipeline isn't faster when fewer are
+     required.
+  3. TextureStreaming counts ISSUED stream requests only (from allocation to release), not textures still waiting
+     in the scheduler (`FUN_18085f70c` issues up to 32 requests / 4 MB outstanding). That is why higher texture caps
+     made the save step longer: more was issued before the gate, so more to drain.
+  4. The IO thread idles only when every queue is empty (`FUN_180465878`); the other holds are a per-type pause mask,
+     a batch hold, a global pause, temp-pool exhaustion (12 MB heap + `sys_streaming_memory_budget`) and a full inflate
+     ring. Inflate is a job chain per request (parallel across requests only).
+  Threads in the gate (boot 13, 50 Hz sampler): Main ran in 89 % of ticks, a quarter of them waiting on its own jobs
+  (`FUN_1803d902c`), the rest spread over many systems (the busiest chain 11 of 371 samples); the 8 JobWorkers were
+  waiting in 62 % of their samples; RenderThread mostly asleep. Nothing is saturated: a latency chain.
+  Next (62c9ed8 logs it): skins in progress, texture requests / MB out, stream temp memory, frames, once a second in
+  the "waiting" lines; then one boot with `wh_cc_MaxSkinLoadingInProgress 120` / `...JobQueueSize 80` while loading.
