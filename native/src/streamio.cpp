@@ -3,6 +3,7 @@
 #include "log.h"
 #include "streamahead.h"
 #include <windows.h>
+#include <intrin.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -70,6 +71,32 @@ void NoteRepeat(uint8_t* cache, uint8_t* entry, int64_t offset, int64_t want) {
 	f->second = now;
 	n_rep[d < kRepEdge[0] ? 0 : d < kRepEdge[1] ? 1 : d < kRepEdge[2] ? 2 : 3]++;
 	n_repBytes += want;
+}
+
+// Texture mips dropped from the streaming pool: FUN_18252c168(texture, keep from mip) frees a texture's top mips and
+// returns the bytes freed. Every drop goes through it: the streaming update FUN_18085f70c (over budget / idle trim),
+// the pool trims FUN_182518104 and FUN_182519698 (called by FUN_182515560 when a new piece finds no room, and inline
+// in FUN_182237906), FUN_18251954c and FUN_1819d1f48. Counted by caller, to set against the repeats above.
+constexpr uintptr_t kRvaDropMips = 0x252c168;
+const unsigned char kDropBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,
+                                     0x48,0x83,0xec,0x40,0xf6,0x81,0x9e,0x00 };
+const uintptr_t kDropCaller[5] = { 0x85f70c, 0x19d1f48, 0x2518104, 0x251954c, 0x2519698 };   // sorted function starts
+const char* const kDropName[6] = { "update", "19d1f48", "trim 18104", "1954c", "trim 19698", "other" };
+using DropFn = int(__fastcall*)(uint8_t* tex, uint64_t mip);
+DropFn g_dropOrig = nullptr;
+uintptr_t g_base = 0;
+std::atomic<long long> n_drop[6], n_dropBytes[6];
+
+int __fastcall HkDropMips(uint8_t* tex, uint64_t mip) {
+	const int r = g_dropOrig(tex, mip);
+	if (r > 0) {
+		const uintptr_t ret = (uintptr_t)_ReturnAddress() - g_base;
+		int k = 5;
+		for (int i = 4; i >= 0; i--) if (ret >= kDropCaller[i] && ret - kDropCaller[i] < 0x8000) { k = i; break; }
+		n_drop[k]++;
+		n_dropBytes[k] += r;
+	}
+	return r;
 }
 
 std::mutex g_pakMu;                       // per pak (by its cache object): name + bytes, for the "most read" line
@@ -351,15 +378,25 @@ DWORD WINAPI Reporter(LPVOID) {
 		for (int i = 0; i < 4; i++) o += snprintf(reps + o, sizeof reps - o, "%s %s %lld", i ? "," : ":", kRepName[i], rp[i] - lastRep[i]);
 		for (int i = 0; i < 4; i++) lastRep[i] = rp[i];
 		lastRepB = repB;
+		static long long lastDrop[6], lastDropB[6];
+		char drops[300];
+		long long dN = 0, dB = 0;
+		for (int i = 0; i < 6; i++) dN += n_drop[i].load() - lastDrop[i], dB += n_dropBytes[i].load() - lastDropB[i];
+		o = snprintf(drops, sizeof drops, "+%lld (%.0f MB)", dN, dB / 1e6);
+		for (int i = 0; i < 6; i++) {
+			const long long a = n_drop[i].load(), bb = n_dropBytes[i].load();
+			if (a != lastDrop[i]) o += snprintf(drops + o, sizeof drops - o, ", %s %lld (%.0f MB)", kDropName[i], a - lastDrop[i], (bb - lastDropB[i]) / 1e6);
+			lastDrop[i] = a; lastDropB[i] = bb;
+		}
 		long long aServed = 0, aFirst = 0, aNot = 0;
 		Streamahead_Stats(&aServed, &aFirst, &aNot);
 		Log("streamio: mode %d  +%lld requests %.1f MB in %.1f s = %.0f MB/s, read thread busy %.0f %% (ReadFile %.0f ms, "
 		    "lock wait %.0f ms)  total %lld requests %.1f MB, one-read %lld, fallback %lld, verified %lld, mismatches %lld, "
-		    "buffered path %lld, read ahead: served %lld, game first %lld, not listed %lld  sizes: %s  repeats %s", g_mode.load(),
+		    "buffered path %lld, read ahead: served %lld, game first %lld, not listed %lld  sizes: %s  repeats %s  texture mips dropped %s", g_mode.load(),
 		    c - lastCalls, (b - lastBytes) / 1e6, secs,
 		    (b - lastBytes) / 1e6 / (secs > 0 ? secs : 1), 100.0 * Ms(t - lastTicks) / (secs * 1000.0), Ms(rd - lastRead),
 		    Ms(lk - lastLock), c, b / 1e6, n_one.load(), n_fallback.load(), n_verified.load(), n_bad.load(),
-		    n_buffered.load(), aServed, aFirst, aNot, sizes, reps);
+		    n_buffered.load(), aServed, aFirst, aNot, sizes, reps, drops);
 		lastCalls = c; lastBytes = b; lastTicks = t; lastLock = lk; lastRead = rd; lastT = now; lastLine = now;
 		if (now - lastPaks >= 30000) {
 			lastPaks = now;
@@ -411,6 +448,11 @@ void Streamio_Install(uintptr_t base, void* self) {
 	g_uncached = (const int*)(base + kRvaUncached);
 	Streamahead_Install(self);   // before the hook goes on: it serves and records from the hook (streamahead.cpp)
 	const bool h = MH_CreateHook(rd, (void*)&HkRead, (void**)&g_orig) == MH_OK && MH_EnableHook(rd) == MH_OK;
+	g_base = base;
+	void* dm = (void*)(base + kRvaDropMips);
+	const bool okD = !memcmp(dm, kDropBytes, sizeof kDropBytes);
+	const bool hd = okD && MH_CreateHook(dm, (void*)&HkDropMips, (void**)&g_dropOrig) == MH_OK && MH_EnableHook(dm) == MH_OK;
+	Log("streamio: texture mip-drop counter %s", hd ? "on" : okD ? "FAILED" : "off (code check failed)");
 	Log("streamio: mode %d (%s), ReadFileStreaming hook %s, sys_UncachedStreamReads %d", g_mode.load(),
 	    g_mode == 0 ? "game reads, counted" : g_mode == 1 ? "one read per request, self-check first" : "verify both",
 	    h ? "on" : "FAILED", *g_uncached);
