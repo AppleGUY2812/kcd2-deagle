@@ -315,6 +315,12 @@ In game (2026-10-23 19:36 boot, verify mode): 63,834 entries / 5.7 GB went throu
 mismatches; on the same calls zlib 16.6 s vs libdeflate 9.3 s unpacking and 5.3 s vs 0.75 s crc32 (CPU time over all
 threads).
 
+**Measured in game, fast mode (2026-10-23 19:49 boot, libdeflate on): 54.3 s** from "Loading last saved game" to
+gameplay, against 61.6 / 60.9 s on the two boots without libdeflate and without the sampler: ~7 s (11%) faster, one
+run each. Steps: open 6.3 s, terrain wait 15.3 s (was 18.3-20.0), one-thread stretch 8.0 s, pre-save 6.5 s, save 18.2 s
+(was 14.8-18.4; this step varies by ~3 s between runs). The hook unpacked the same 63,834 files / 5.7 GB in 9.1 s of
+CPU time (zlib on the verify boot: 16.6 s).
+
 `/arch:AVX2` made no difference to the unpack (563 / 303 / 1601) and +12% to crc32, so the plugin builds without it.
 GPU unpacking does not fit: entries are tiny (median 2.5 KB) and needed on the CPU, and DirectStorage's GPU path is
 GDeflate, a different format (all 82 GB repacked).
