@@ -507,3 +507,28 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   waiting in 62 % of their samples; RenderThread mostly asleep. Nothing is saturated: a latency chain.
   Next (62c9ed8 logs it): skins in progress, texture requests / MB out, stream temp memory, frames, once a second in
   the "waiting" lines; then one boot with `wh_cc_MaxSkinLoadingInProgress 120` / `...JobQueueSize 80` while loading.
+- Boots 15-18 (2026-10-24, measured by the load session; feed numbers from 62c9ed8's "waiting" lines):
+  | boot | skin cap (while loading) | Settle | last must-have ready | "early 1" would let in at |
+  |---|---|---|---|---|
+  | 15 | 40 (game default) | 12.0 s | clothing | 10.5 s |
+  | 16 | 120 | 10.4 s | clothing 7.2 s, characters 6.8 s | 7.5 s |
+  | 17 | 120 | 11.3 s | clothing 9.3 s, characters 8.8 s | 9.6 s |
+  | 18 | 120 | 11.8 s | clothing 6.9 s, characters 6.4 s | 7.2 s |
+  CORRECTION: boot 16's -1.6 s from `wh_cc_MaxSkinLoadingInProgress 120` did not repeat (cap 40: 11.3 / 11.3 / 12.2 / 12.0 s;
+  cap 120: 10.4 / 11.3 / 11.8 s, about 0.5 s apart, inside the spread). With 120 the skin queue drains by 4 s (111 -> 2),
+  but textures hold the gate to 10.5-11.1 s in every boot, so the cap can only move the "early 1" moment (clothing and
+  characters), and even that varies by 2.4 s between boots 17 and 18. During the gate, "texture requests out" holds at
+  500-800 from 3 s to 10 s at 170-210 fps, so the documented 32-job texture cap isn't what this counter shows; the MB out
+  grows to 20-53 MB at the end (the big mips come last).
+- The frozen first gameplay frame (4.1-4.3 s in every boot 15-18, 10 % of the load): the plugin's long-frame sampler
+  (hitch.cpp, boot 17) shows Main asleep the whole time in the render-frame wait (`FUN_1809a6308`, reached through
+  `FUN_1807a201c` / `FUN_1807a356c`), not paging itself: the ~160k page faults come from other threads. The load
+  session's outside sampler (boot 17, all threads) shows RenderThread busy the whole 4 s: 55 % in nvapi64_impl.dll
+  (NVIDIA's driver API), 22 % ntdll, 12 % bcryptPrimitives (hashing), and the render thread runs that code nowhere else
+  in the boot. DLSS is on (attributes.xml upscalingTechnology 2; nvngx_dlss.dll, nvngx_dlssd.dll, _nvngx.dll, wintrust,
+  imagehlp loaded). INFERRED, not proven: the DLSS feature is created in that frame (NGX loads and signature-checks the
+  DLSS DLL, then DLSS sets up its kernels through NvAPI). The game's create is `FUN_182539c5c` ->
+  `NVSDK_NGX_D3D12_CreateFeature`, only from `FUN_181dff980`; being traced (~/re/work/dlss_first_frame/report.md). Proof
+  needs the render thread's game call sites (hitch.cpp samples RenderThread from e6a356e) or one boot with DLSS off.
+- The state-4 frame (2.4 s, before the gate) is different: RenderLoadingThread, the JobWorkers (dxcompiler.dll) and the
+  driver's "D3D Background Thread"s are busy, which looks like shader / pipeline compiling.
