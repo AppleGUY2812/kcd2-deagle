@@ -26,7 +26,6 @@ public static class TS {
   }
   public static string Run(int pid, int seconds, int everyMs, string outPath) {
     var p = Process.GetProcessById(pid);
-    foreach (ProcessModule m in p.Modules) mods.Add(new Mod { Name = m.ModuleName, Base = (long)m.BaseAddress, End = (long)m.BaseAddress + m.ModuleMemorySize });
     IntPtr ph = OpenProcess(0x0410, false, pid);
     IntPtr ctx = Marshal.AllocHGlobal(0x4D0 + 16);
     IntPtr c = (IntPtr)(((long)ctx + 15) & ~15L);
@@ -38,7 +37,9 @@ public static class TS {
       while (sw.ElapsedMilliseconds < seconds * 1000L) {
         if (sw.ElapsedMilliseconds >= nextRefresh) {   // new threads, once a second
           nextRefresh = sw.ElapsedMilliseconds + 1000;
-          try { p.Refresh(); foreach (ProcessThread t in p.Threads) if (!handles.ContainsKey(t.Id)) {
+          // modules too: at launch WHGame.dll is not loaded yet (the 2026-10-23 boot lost its stacks to that)
+          try { p.Refresh(); mods.Clear(); foreach (ProcessModule m in p.Modules) mods.Add(new Mod { Name = m.ModuleName, Base = (long)m.BaseAddress, End = (long)m.BaseAddress + m.ModuleMemorySize }); } catch { }
+          try { foreach (ProcessThread t in p.Threads) if (!handles.ContainsKey(t.Id)) {
             IntPtr h = OpenThread(0x0002 | 0x0008 | 0x0040, false, t.Id); if (h != IntPtr.Zero) { handles[t.Id] = h; last[t.Id] = -1; } } }
           catch { break; }
           if (p.HasExited) break;

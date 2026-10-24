@@ -254,6 +254,30 @@ save load (the streaming engine, `sys_UncachedStreamReads`) reads at 150-280 MB/
 (samples every busy thread's instruction + stack from outside, no injection) during a boot, to see whether those
 threads are busy unpacking or waiting on reads.
 
+### What the load's threads do (2026-10-23 19:07 boot, `tools/threadsample.ps1`, 50 samples a second)
+
+Load 63 s again (19:07:52 -> 19:08:55). The main thread is the bottleneck: in the terrain wait ("Waiting for 14153
+async loaders", 18 s) it does not wait (2% of its samples in a wait), it reads and unpacks files itself:
+
+| main thread | terrain wait (18.3 s) | one-thread stretch (6.6 s) |
+|---|---|---|
+| zlib inflate (`FUN_1803da6b0` inflate_fast, `FUN_1803d9550` inflate) | 38% | 53% |
+| crc32 of the unpacked data (`FUN_180612300`, table slice-by-4) | 7% | 10% |
+| ReadFile (synchronous, Windows file cache) | 16% | 22% |
+| everything else | ~39% | ~15% |
+
+At least 7.5 s of the main thread go to zlib + crc32 in those two steps (a lower bound: the sampler sees a busy thread
+on ~60% of ticks). The zlib is 1.2.11 (`inflateInit2_(strm, -15, "1.2.11")` in `FUN_1803d9224`, raw deflate of the pak
+entries) with a modified stream struct (fields at +0x8/+0x10/+0x18/+0x1c, not zlib's layout), so a drop-in zlib-ng
+does not fit; the hook point would be the wrapper `FUN_1803d9224(result*, strm*, window, dst, dstSize, flag,
+src, srcSize, out*)` (2 callers) or its caller. The workers meanwhile pass work through an I/O completion port
+(NtRemoveIoCompletion / NtSetIoCompletion) and sleep. In the save load the unpacking is spread over 5+ workers
+(~1.1-1.4 s each), so it is not the critical path there.
+
+Fix candidate: unpack with libdeflate (whole-buffer raw deflate, ~2-3x zlib 1.2.11; crc32 with PCLMUL ~10x) in a
+hook on the wrapper, keeping the zip CRC check and falling back to the game's zlib on any mismatch. Expected: ~4-7 s
+off the 63 s. Not built.
+
 ## Sources
 
 [1] Unreal Animation Budget Allocator: https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-budget-allocator-in-unreal-engine
