@@ -3,6 +3,7 @@
 #include "applyfast.h"
 #include "questmenu.h"
 #include "questfast.h"
+#include "questports.h"
 #include "log.h"
 #include <windows.h>
 #include <atomic>
@@ -91,7 +92,9 @@ template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, u
 	}
 	const long long t = Now();
 	depth++;
+	if (I == kJobBody) Questports_JobScope(true);    // the port cache acts on this thread only
 	const uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);
+	if (I == kJobBody) Questports_JobScope(false);
 	depth--;
 	if (I == kJobBody && depth == 0 && g_jobState.load() >= 0) g_jobState = 1;
 	if (depth == 0) QNote(I, t, Now());

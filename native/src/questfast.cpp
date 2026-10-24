@@ -1,6 +1,7 @@
 // The quest graph build made faster: see questfast.h.
 #include "questfast.h"
 #include "questfast_sort.h"
+#include "questports.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -168,6 +169,7 @@ void Questfast_Report(const char* when) {
 		Log("questfast: %s: rttr metadata cache %lld calls, %lld hits, %lld other key types (the game's), self-check %lld equal%s "
 		    "(this thread's counts exact, others' up to 65,536 calls behind)",
 		    when, g_metaCalls.load(), g_metaHits.load(), g_metaBypass.load(), g_metaChecked.load(), g_metaOn ? "" : ", OFF");
+	Questports_Report(when);
 }
 
 bool Questfast_SetOn(bool on) {
@@ -175,6 +177,7 @@ bool Questfast_SetOn(bool on) {
 	for (auto& l : g_lists)
 		if (l.orig) { l.on = on && !l.bad.load(); any = true; }
 	if (g_metaOrig) { g_metaOn = on && !g_metaBad.load(); any = true; }
+	if (Questports_SetOn(on)) any = true;
 	return any;
 }
 
@@ -207,4 +210,5 @@ void Questfast_Install(uintptr_t base, void* self) {
 	                    MH_EnableHook(m) == MH_OK;
 	if (!metaOk) g_metaOrig = nullptr;
 	Log("questfast: rttr type registry sorted insert: %s; rttr metadata cache %s", state.c_str(), metaOk ? "on" : "OFF (code differs or hook failed)");
+	Questports_Install(base);
 }
