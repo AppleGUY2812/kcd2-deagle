@@ -101,8 +101,10 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 2. Quest job: off the load path when the menu build is kept, 11.5-14 s otherwise (loads during play, quick Continue).
    **Target (user): 5 s or less.** Path (re_quest_builder.md 5 + re_quest_dump_binary.md + re_quest_replay_parallel.md):
    graph-dump comparator first (exactness check), binary DOM (phase 1 2.3 -> ~0.4 s), replay builder + more cores for
-   2a (6.2 s) and pre-resolved edges for 2b (4.5 s). Step 1 built: questfast (d352a75) rttr sorted insert, expect
-   -0.4-0.8 s on the first build per process; not measured yet.
+   2a (6.2 s) and pre-resolved edges for 2b (4.5 s). Step 1: questfast (d352a75) rttr sorted insert; questbench (78a3fde,
+   menu, 6 builds A/B): 2a 4.46-4.79 s on vs 5.25-5.51 s off, **-0.75 s on every build** (types register again per
+   build: +1948 inserts each). Bench builds take 13.9-15.6 s (XML 4.3 s: no xmlahead lead for rebuilds; +0.3 s drift per
+   build). 0095dd5 fixed xmlahead's ReleaseNode (vt+0x10 = createNode, not Release: late/unused trees leaked).
 3. Apply save 5.3 s: Storm memo ~0.45 s, concept BFS ~0.4 s (re_stepG).
 4. The three build chains end together (quest 14.0, RLT ~14.4, Main 12.3 + E 2.1 s): one alone gains < 1 s; move all
    three to the menu (table above).
