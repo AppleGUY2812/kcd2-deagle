@@ -140,6 +140,8 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
 	const bool record = g_mode >= 1 && GetTickCount64() - g_start <= kRecordMs;
 	Rec r{};
 	ReadEntry(entry, r);
+	r.decompress = decompress ? 1 : 0;   // before TryServe: it needs this (2026-10-23 bug: every packed entry missed)
+	r.hasComp = comp ? 1 : 0;
 	if (g_mode == 2) {
 		const long long a = Now();
 		if (TryServe(cache, r, comp, uncomp, off, size)) {
@@ -159,8 +161,6 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
 		}
 	}
 	if (!record) return g_orig(cache, entry, comp, uncomp, decompress, off, size, skipCrc);
-	r.decompress = decompress ? 1 : 0;
-	r.hasComp = comp ? 1 : 0;
 	r.part = (off != 0 || (size != ~0ull && size != (uint64_t)r.usize)) ? 1 : 0;
 	uintptr_t file = 0, inMem = 0;
 	ReadZipFile(cache, file, inMem);

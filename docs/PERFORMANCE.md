@@ -346,3 +346,17 @@ measured in game. Next step after that: unpack ahead on the idle threads (record
 [13] CryEngine 5 profiling quick guide: https://www.cryengine.com/docs/static/engines/cryengine-5/categories/23756816/pages/35260143 ; physics profiling: https://www.cryengine.com/docs/static/engines/cryengine-5/categories/23756816/pages/26876703
 [14] Lumberyard ProjectDefines.h (USE_FRAME_PROFILER non-release): https://github.com/aws/lumberyard/blob/master/dev/Code/CryEngine/CryCommon/ProjectDefines.h
 Also: Unity profiling best practices (35 % headroom, CPU vs GPU bound): https://unity.com/how-to/best-practices-for-profiling-game-performance
+
+## Unpacking ahead (native/src/pakahead.cpp), 2026-10-23
+
+- Recording boot (fastzip verify, so slow: 68.4 s): 284,662 ZipDir ReadFile calls; 63,832 whole deflate entries. In the
+  load window 23,335 first reads of named paks, all matching their pak's directory (offset, sizes, crc32): 3.4 GB
+  unpacked. Thread time inside ReadFile in the load: 29.7 s on the 3 loader threads (the terrain step's async
+  loaders), 2.3 s on the main thread (verify mode doubles the unpack part).
+- First unpack-ahead boot: 52.5 s (54.3 before). Workers had 17,710 entries / 2.1 GB ready from the menu on (read
+  15.1 s + unpack 4.5 s of worker time, 0 bad), but only 937 stored entries were served: the serve check read the
+  "decompress" flag before it was set, so every deflate entry failed. Fixed the same day. Steps: open 6.2, terrain
+  14.9, one-thread 3.9, pre-save 11.6, save 15.9 s.
+- Stream unpack hook (FUN_1803d9224) counts: of ~145k blocks, 0 were a first block with a fresh z_stream: ~119k
+  later blocks of a file, ~18.6k with no z_stream (one-shot, a local stream), ~6.9k overlapping. The one-shot ones
+  are the next candidate for libdeflate.
