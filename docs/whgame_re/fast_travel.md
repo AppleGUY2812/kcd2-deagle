@@ -4,6 +4,8 @@ Found 2026-10-23 for the fast-travel preload (`native/src/ftpreload.cpp`). Addre
 the plugin checks the bytes of `0x182de27d0` and `0x181899654` against the installed DLL before it reads anything.
 
 ## The fast-travel manager
+Class `wh::playermodule::C_FastTravel` (vtable `0x183a84288` in the Ghidra project, `qk sym FastTravel`): its
+entries point into the same `0x182dd…`/`0x182de…` code as the functions below.
 `mgr = *(*(game + 0x128) + 0x28)`, `game = *(WHGame + 0x549d388)` (`FUN_1809155c8` returns it).
 
 | offset | what | evidence |
