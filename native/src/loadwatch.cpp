@@ -69,6 +69,7 @@ constexpr int kQ = sizeof g_q / sizeof g_q[0];
 constexpr int kQuestWait = 6;   // "main thread waits for the job"
 constexpr int kJobSubmit = 0, kJobBody = 1;
 std::atomic<int> g_jobState{-1};   // Loadwatch_QuestJob(); -1 until the body hook is on
+std::atomic<int> g_qPhase{0};      // the innermost quest hook running (Loadwatch_QuestPhase, for questsample)
 std::atomic<long long> g_qCalls[kQ], g_qTicks[kQ];
 std::atomic<int> g_qLines{0};
 long long g_t0 = 0;
@@ -93,11 +94,13 @@ template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, u
 	}
 	const long long t = Now();
 	depth++;
+	const int prevPhase = I >= kJobBody && I <= 5 ? g_qPhase.exchange(I) : 0;
 	if (I == kJobBody) Questports_JobScope(true);    // the port cache acts on this thread only
 	if (I == 3) Questreplay_Phase2a(true);           // phase 2a: the node build record / replay (questreplay.cpp)
 	const uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);
 	if (I == 3) Questreplay_Phase2a(false);
 	if (I == kJobBody) Questports_JobScope(false);
+	if (I >= kJobBody && I <= 5) g_qPhase = prevPhase;
 	depth--;
 	if (I == kJobBody && depth == 0 && g_jobState.load() >= 0) g_jobState = 1;
 	if (depth == 0) QNote(I, t, Now());
@@ -136,3 +139,5 @@ void Loadwatch_Install(uintptr_t base) {
 	}
 	Log("loadwatch: quest load timing %d of %d hooks on%s%s", on, kQ, off.empty() ? "" : "; off: ", off.c_str());
 }
+
+int Loadwatch_QuestPhase() { return g_qPhase.load(std::memory_order_relaxed); }

@@ -14,3 +14,4 @@ int Loadwatch_QuestJob();
 // Cumulative time (ms) and top-level calls of each quest hook so far: [0] job submit, [1] job body, [2] project,
 // [3] 2a node building, [4] 2b CreatePorts, [5] CreateEdges, [6] main thread waits. Returns how many were filled (7).
 int Loadwatch_QuestTotals(double ms[7], long long calls[7]);
+int Loadwatch_QuestPhase();   // 1 job, 2 project (phase 1 / activation), 3 2a, 4 ports, 5 edges, 0 none (one quest build at a time)

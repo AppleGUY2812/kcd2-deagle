@@ -21,6 +21,10 @@ const unsigned char kLoadBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xe
 const unsigned char kParseBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20 };
 constexpr ULONGLONG kRecordMs = 10 * 60 * 1000, kKeepMs = 15 * 60 * 1000;
 constexpr int kMenuWorkers = 4, kLevelWorkers = 3;
+// The quest job at the menu asks for ~21,800 quests/ files in list order (4.1 s of parsing): 4 workers left it waiting
+// 1.1 s of its 1.46 s XML phase (questsample, 2026-10-24). Extra workers help while the list is in quests/ and stop at
+// the first other file.
+constexpr int kQuestBoost = 6;
 constexpr long long kMenuLoads = 1500;      // the menu has loaded (3,562 XML loads before the 2026-10-23 22:00 load)
 constexpr ULONGLONG kMenuQuietMs = 3000;    // ... and no XML load for 3 s: the menu is idle
 // Workers stay at most kLead list files ahead of the furthest file the game has asked for (list order = the recorded
@@ -78,6 +82,8 @@ std::deque<Item> g_items;
 std::unordered_map<std::string, Item*> g_byPath;
 std::vector<Item*> g_queue[2];        // 0: files outside levels/ (parsed at the menu), 1: levels/ files (from the load)
 std::atomic<size_t> g_next[2];
+std::vector<Item*> g_quests;          // the quests/ files of queue 0, in list order: the boost workers' own queue
+std::atomic<size_t> g_nextQuest{0};
 std::atomic<bool> g_started[2], g_stop{false}, g_lowRam{false};
 std::atomic<long long> g_loads{0};
 std::atomic<size_t> g_gamePos{0};     // furthest list position the game has asked for
@@ -98,9 +104,10 @@ DWORDLONG FreeMb() { MEMORYSTATUSEX m{}; m.dwLength = sizeof m; return GlobalMem
 size_t g_privAtStart = 0;
 
 DWORD WINAPI Worker(LPVOID arg) {
-	const int q = (int)(intptr_t)arg;
+	const int q = (int)(intptr_t)arg & 0xff;
+	const bool boost = ((intptr_t)arg >> 8) & 1;   // a quest boost worker: only the quests/ files, then it stops
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);   // (normal tried in boot 25: no change)
-	const size_t n = g_queue[q].size();
+	const size_t n = boost ? g_quests.size() : g_queue[q].size();
 	for (size_t k = 0;; k++) {
 		if (g_stop) break;
 		if ((k & 127) == 0) {
@@ -111,9 +118,9 @@ DWORD WINAPI Worker(LPVOID arg) {
 			}
 			g_lowRam = false;
 		}
-		const size_t i = g_next[q]++;
+		const size_t i = boost ? g_nextQuest++ : g_next[q]++;
 		if (i >= n) break;
-		Item& it = *g_queue[q][i];
+		Item& it = boost ? *g_quests[i] : *g_queue[q][i];
 		while (!g_stop && it.idx > g_gamePos.load() + kLead && it.state.load() == 0) { s_leadWaits++; Sleep(2); }
 		int w = 0;
 		if (!it.state.compare_exchange_strong(w, 1)) continue;   // the game asked first
@@ -135,9 +142,12 @@ void StartQueue(int q, const char* why) {
 	if (g_queue[q].empty() || !g_started[q].compare_exchange_strong(f, true)) return;
 	if (!g_privAtStart) g_privAtStart = PrivateMb();
 	const int n = q == 0 ? kMenuWorkers : kLevelWorkers;
-	for (int i = 0; i < n; i++) CloseHandle(CreateThread(nullptr, 0, Worker, (LPVOID)(intptr_t)q, 0, nullptr));
-	Log("xmlahead: %s - %d workers parsing %zu %s files ahead (%llu MB RAM free, game private %zu MB)", why, n,
-	    g_queue[q].size(), q == 0 ? "non-level" : "level", (unsigned long long)FreeMb(), PrivateMb());
+	const int boost = q == 0 && !g_quests.empty() ? kQuestBoost : 0;
+	for (int i = 0; i < n + boost; i++)
+		CloseHandle(CreateThread(nullptr, 0, Worker, (LPVOID)(intptr_t)(q | (i >= n ? 0x100 : 0)), 0, nullptr));
+	Log("xmlahead: %s - %d workers parsing %zu %s files ahead%s (%llu MB RAM free, game private %zu MB)", why, n,
+	    g_queue[q].size(), q == 0 ? "non-level" : "level", boost ? (" + " + std::to_string(boost) + " more for the quests/ part").c_str() : "",
+	    (unsigned long long)FreeMb(), PrivateMb());
 }
 
 void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, char reportErrors) {
@@ -274,9 +284,11 @@ bool LoadList() {
 		it.idx = idx++;
 		g_byPath.emplace(p, &it);
 		g_queue[IsLevel(p) ? 1 : 0].push_back(&it);
+		if (p.compare(0, 7, "quests/") == 0) g_quests.push_back(&it);
 	}
 	fclose(f);
-	Log("xmlahead: list %zu files (%zu outside levels/, %zu level)", g_items.size(), g_queue[0].size(), g_queue[1].size());
+	Log("xmlahead: list %zu files (%zu outside levels/, %zu level, %zu quests/)", g_items.size(), g_queue[0].size(), g_queue[1].size(),
+	    g_quests.size());
 	return !g_items.empty();
 }
 
@@ -285,6 +297,18 @@ bool LoadList() {
 bool Xmlahead_LevelSeen() { return g_levelSeen.load(); }
 
 void Xmlahead_StartMenuNow(const char* why) { if (!g_items.empty() && !g_levelSeen) StartQueue(0, why); }
+
+void Xmlahead_SkipQuests(const char* why) {
+	size_t n = 0;
+	g_nextQuest = g_quests.size();   // the boost workers have nothing left
+	for (Item* it : g_quests) {
+		int w = 0;
+		if (it->state.compare_exchange_strong(w, 3)) { n++; continue; }
+		int r = 2;
+		if (it->state.compare_exchange_strong(r, 3)) { ReleaseNode(it->node); it->node = nullptr; n++; }
+	}
+	Log("xmlahead: %zu quests/ files not parsed ahead (%s)", n, why);
+}
 
 bool Xmlahead_MenuQuiet(unsigned quietMs) {
 	return g_loads >= kMenuLoads && !g_levelSeen && GetTickCount64() - g_lastLoad >= quietMs;

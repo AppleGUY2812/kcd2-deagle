@@ -3,6 +3,7 @@
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
+#include <intrin.h>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -20,7 +21,7 @@ inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.
 struct Fn { const char* name; uintptr_t rva; unsigned char b[16]; };
 enum {
 	kElem, kProp, kChild, kSeq, kCreate, kDef, kTypeCreate, kAttrConv, kTextConv, kGetValue, kPend, kAssocMap, kAssocSet,
-	kTypesByName, kPush260, kXSetPath, kInvoke1, kRegister, kUnregister, kHookN,
+	kTypesByName, kPush260, kXSetPath, kInvoke1, kRegister, kUnregister, kSkald, kHookN,
 	kInvoke0 = kHookN, kUnwrap, kInvalidType, kMetaMap, kHandler, kMethValid, kArgInt, kWrapNonPtr, kMakeArg, kVarDestroy,
 	kSeqView, kViewSetSize, kViewGet, kViewSet, kVarType, kUnwrapPtr, kVarInst, kExtract, kMove, kValid, kClone, kFilter,
 	kListDestroy, kInstFromVar, kStaticSp, kStaticName, kSpRelease, kCanBeNode, kNodeSp, kCanBeX, kXSp, kSp2Release,
@@ -46,6 +47,7 @@ const Fn kFn[kFnN] = {
 	{ "method invoke 1", 0x6aa718, { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0x09,0x48,0x8b,0xda,0x48,0x8b,0x01,0xff } },
 	{ "resolver Register", 0x7cec40, { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x10,0x49,0x89,0x6b,0x18,0x49,0x89,0x73,0x20,0x57 } },
 	{ "resolver Unregister", 0x7cebec, { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20,0x48 } },
+	{ "project XML load", 0x979068, { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x70,0x10,0x48,0x89,0x78,0x20,0x55 } },
 	{ "method invoke 0", 0x699ef4, { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0x09,0x48,0x8b,0xda,0x48,0x8b,0x01,0xff } },
 	{ "instance unwrap", 0x69e9dc, { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0xda,0x48,0x8b,0xf9 } },
 	{ "invalid type", 0xc0cda4, { 0x48,0x83,0xec,0x28,0x8b,0x0d,0xee,0xb7,0x4b,0x04,0x65,0x48,0x8b,0x04,0x25,0x58 } },
@@ -278,6 +280,8 @@ void Bad(const char* why) { if (g_bad.empty()) { g_bad = why; Log("questreplay: 
 // ---- record hooks (pass-through unless recording on this thread)
 uint64_t __fastcall HkProp(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 uint64_t ReplayRoot(uint64_t deser, uint64_t xmlRef, uint64_t inst, uint64_t merge);
+bool CanReplay(uint64_t deser, int pi);
+uint64_t __fastcall HkSkald(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 uint64_t __fastcall HkElem(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
 	if (t_2a && !t_rep && g_mode.load(std::memory_order_relaxed) == 2) return ReplayRoot(a, b, c, d);
@@ -592,12 +596,15 @@ uint64_t __fastcall HkUnregister(uint64_t a, uint64_t b, uint64_t c, uint64_t d,
 void* const kHk[kHookN] = { (void*)&HkElem, (void*)&HkProp, (void*)&HkChild, (void*)&HkSeq, (void*)&HkCreate, (void*)&HkDef,
                             (void*)&HkTypeCreate, (void*)&HkAttrConv, (void*)&HkTextConv, (void*)&HkGetValue, (void*)&HkPend,
                             (void*)&HkAssocMap, (void*)&HkAssocSet, (void*)&HkTypesByName, (void*)&HkPush260, (void*)&HkXSetPath,
-                            (void*)&HkInvoke1, (void*)&HkRegister, (void*)&HkUnregister };
+                            (void*)&HkInvoke1, (void*)&HkRegister, (void*)&HkUnregister, (void*)&HkSkald };
 
 // ---- stand-in XML node: getTag (vt+0x30), getAttr (vt+0x108), AddRef / Release (vt+0x18 / +0x20); anything else is noted
 struct Stub { void** vt; const char* tag; const char* n1; const char* v1; const char* n2; const char* v2; };
-std::atomic<int> g_stubBad{0};
-uint64_t __fastcall StubTrap(void*) { g_stubBad++; return 0; }
+std::atomic<int> g_stubBad{0}, g_stubSlot{-1};   // calls of a slot the stand-in does not have; the first slot
+template <int I> uint64_t __fastcall StubTrap(void*) { int u = -1; g_stubSlot.compare_exchange_strong(u, I); g_stubBad++; return 0; }
+template <int... I> struct TrapTable { static constexpr void* v[] = { (void*)&StubTrap<I>... }; };
+template <int N, int... I> struct MakeTraps : MakeTraps<N - 1, N - 1, I...> {};
+template <int... I> struct MakeTraps<0, I...> : TrapTable<I...> {};
 uint64_t __fastcall StubNop(void*) { return 0; }
 const char* __fastcall StubTag(Stub* s) { return s->tag; }
 const char* __fastcall StubAttr(Stub* s, const char* k) {
@@ -607,6 +614,26 @@ const char* __fastcall StubAttr(Stub* s, const char* k) {
 	return "";
 }
 void* g_stubVt[64];
+// phase 1 skipped (replay): the project's root node is this stand-in. The replay never reads the project XML; the game's
+// phase 1 loads ~21,800 files into the deserializer's own maps (definitions by name, file roots), which only the
+// deserializer reads (Create's definition path, replayed) and which are destroyed with it after the project.
+Stub g_rootStub{ g_stubVt, "Project", nullptr, nullptr, nullptr, nullptr };
+thread_local int t_skDepth = 0;
+thread_local bool t_armRep = false;   // this thread armed a replay (Arm 2)
+std::atomic<int> g_p1Skipped{0};
+int g_stubBad0 = 0;
+constexpr uintptr_t kRvaSkaldRet = 0x51ac24;   // FUN_18051abb4's call of the load returns here: the project's phase 1
+uint64_t __fastcall HkSkald(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
+	if (t_skDepth == 0 && t_armRep && g_mode.load() == 2 && (uintptr_t)_ReturnAddress() == g_base + kRvaSkaldRet && CanReplay(a, t_proj)) {
+		*(void**)b = &g_rootStub;   // XmlNodeRef out: AddRef / Release are no-ops on the stand-in
+		g_p1Skipped++;
+		return b;
+	}
+	t_skDepth++;
+	const uint64_t r = ORIG(kSkald)(a, b, c, d, e, f, g, h);
+	t_skDepth--;
+	return r;
+}
 
 // ---- replay
 const uint8_t* g_p = nullptr;
@@ -947,10 +974,20 @@ bool SafeReplay(uintptr_t deser, const uint64_t* in, DWORD* code) {
 	__except (*code = GetExceptionCode(), EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+bool CanReplay(uint64_t deser, int pi) {
+	const uintptr_t* vt = *(const uintptr_t* const*)deser;
+	return pi < (int)g_rec.proj.size() && vt[0x10 / 8] == g_base + kFn[kPend].rva && vt[0x18 / 8] == g_base + kFn[kDeserVt18].rva;
+}
+
 uint64_t ReplayRoot(uint64_t deser, uint64_t xmlRef, uint64_t inst, uint64_t merge) {
 	const int pi = t_proj++;
 	const uintptr_t* vt = *(const uintptr_t* const*)deser;
 	const bool vtOk = vt[0x10 / 8] == g_base + kFn[kPend].rva && vt[0x18 / 8] == g_base + kFn[kDeserVt18].rva;
+	if (*(void**)xmlRef == &g_rootStub && !CanReplay(deser, pi)) {   // cannot happen (the same test skipped phase 1)
+		g_failed = true;
+		Fail("phase 1 was skipped but the project cannot be replayed");
+		return 0;
+	}
 	if (pi >= (int)g_rec.proj.size() || !vtOk) {
 		Log("questreplay: project %d: %s: the game's own build", pi, !vtOk ? "another deserializer class" : "not in the record");
 		t_rep = true;   // its nested elements are the game's too
@@ -978,7 +1015,7 @@ uint64_t ReplayRoot(uint64_t deser, uint64_t xmlRef, uint64_t inst, uint64_t mer
 
 void Enable(bool on, bool all) {
 	for (int i = 0; i < kHookN; i++)
-		if (g_orig[i] && (all || i == kElem || i == kRegister || i == kUnregister))
+		if (g_orig[i] && (all || i == kElem || i == kRegister || i == kUnregister || i == kSkald))
 			(on ? MH_QueueEnableHook : MH_QueueDisableHook)((void*)(g_base + kFn[i].rva));
 	MH_ApplyQueued();
 }
@@ -1081,6 +1118,21 @@ int Questreplay_Plan(const char* inputs) {
 		}
 	}
 	MixDir(h, root + "Mods\\", "mod_order.txt", &files);
+	// Steam Workshop mods load too (kcd.log "[Mod] Opening paks in <library>\\steamapps\\workshop\\content\\1771300\\<id>/data")
+	const std::string ws = root + "..\\..\\workshop\\content\\1771300\\";
+	f = FindFirstFileA((ws + "*").c_str(), &fd);
+	if (f != INVALID_HANDLE_VALUE) {
+		std::vector<std::string> ids;
+		do {
+			if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != '.') ids.emplace_back(fd.cFileName);
+		} while (FindNextFileA(f, &fd));
+		FindClose(f);
+		std::sort(ids.begin(), ids.end());
+		for (auto& m : ids) {
+			MixDir(h, ws + m + "\\Data\\", "*.pak", &files);
+			MixDir(h, ws + m + "\\", "*.manifest", &files);
+		}
+	}
 	g_key = h;
 	if (g_have && g_memKey == h) {
 		Log("questreplay: key #%016llx (%.0f ms): the record in memory matches: this build replays", (unsigned long long)h,
@@ -1178,7 +1230,7 @@ void Questreplay_Install(uintptr_t base) {
 		Log("questreplay: OFF (%d of %d hooks)", ok, kHookN);
 		return;
 	}
-	for (auto& p : g_stubVt) p = (void*)&StubTrap;
+	for (int i = 0; i < 64; i++) g_stubVt[i] = MakeTraps<64>::v[i];
 	g_stubVt[0x18 / 8] = (void*)&StubNop;
 	g_stubVt[0x20 / 8] = (void*)&StubNop;
 	g_stubVt[0x30 / 8] = (void*)&StubTag;
@@ -1208,6 +1260,10 @@ bool Questreplay_Arm(int mode) {
 	g_idOrd.clear();
 	g_idHash = 0xcbf29ce484222325ull;
 	g_idReg = g_idUnreg = g_idOld = 0;
+	g_p1Skipped = 0;
+	g_stubBad0 = g_stubBad.load();
+	g_stubSlot = -1;
+	t_armRep = mode == 2;
 	if (mode == 1) {
 		g_rec.clear();
 		g_rec.code.reserve(64u << 20);
@@ -1226,7 +1282,14 @@ bool Questreplay_Arm(int mode) {
 void Questreplay_Disarm() {
 	const int mode = g_mode.exchange(0);
 	if (!mode) return;
+	t_armRep = false;
 	Enable(false, mode == 1);
+	if (mode == 2 && g_stubBad.load() != g_stubBad0) {   // something read the skipped XML or a stand-in node beyond its slots
+		g_failed = true;
+		char m[96];
+		snprintf(m, sizeof m, "a stand-in XML node was asked for vtable slot +0x%x (%d calls)", g_stubSlot.load() * 8, g_stubBad.load() - g_stubBad0);
+		Fail(m);
+	}
 	Log("questreplay: resolver ids in phase 2a: %u Register, %u Unregister (%u of objects from before), order hash #%016llx", g_idReg,
 	    g_idUnreg, g_idOld, (unsigned long long)g_idHash);
 	if (mode == 1) {
@@ -1242,7 +1305,8 @@ void Questreplay_Disarm() {
 		    g_c[cSeq], g_c[cText], g_c[cObj], g_c[cType], g_c[cDef], g_c[cPath], g_c[cSkip], g_c[cPend], g_c[cLine], g_c[cAssoc],
 		    g_have ? "usable" : "NOT usable: ", g_have ? "" : (g_bad.empty() ? "no project" : g_bad.c_str()));
 	} else {
-		Log("questreplay: replay build %s (%lld ops)%s%s", g_failed ? "FAILED" : "done", g_rOps, g_fail.empty() ? "" : ": ", g_fail.c_str());
+		Log("questreplay: replay build %s (%lld ops; phase 1 skipped for %d projects)%s%s", g_failed ? "FAILED" : "done", g_rOps,
+		    g_p1Skipped.load(), g_fail.empty() ? "" : ": ", g_fail.c_str());
 	}
 }
 
