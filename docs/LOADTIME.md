@@ -10,7 +10,14 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
   without), state 4 1.4, apply 5.0, gate 10.6 s. The gate grew from 8.2-9.0 s (boots 32-33) to 10.6-11.7 s in boots
   34-36 (streamahead 6fb0c4c era; kcd2-deagle-66 told). Boot 37 (c40fb0a, gate readers stopped, repeats served
   from kept copies: 415 hits): gate still 11.0 s, TextureStreaming last at 10.5 s; 32.1 s total, quests kept again.
-  r_TexturesStreamPoolSize at runtime: 5120 (auto, 8 GB card).
+  r_TexturesStreamPoolSize 5120 is only the fallback: the pool is dynamic (r_TexturesStreamDynamicPool 1, kcd2-deagle-66).
+- **The gate's texture tail is two mods** (re_texture_early.md, boot 37 trace): Mods/checkersfacesandbody (1.68 GB) and
+  checkershair ship each texture as one deflated 4K .dds (201 entries, 2.3 GB unpacked); vanilla splits per mip. Every
+  mip request re-reads and re-inflates the whole entry (299/299 passes, 5-9 per texture): gate seconds 5-11 spent 90 % of
+  the IO thread's read time on them; TextureStreaming ready 0.06 s after the last mod read; mod MB read tracks the ready
+  time across boots. The RLT's RT_Precache also inflates all 2.1 GB of them (U2's +2.28 GB). Fix candidate: repack them
+  stored (lossless, +0.6 GB disk), user's call; expected gate -5 s (I, one traced boot). Starting view textures before
+  state 4 gains <= 0.5 s (vanilla view textures ~155 MB) and is blocked by the frame-bound scheduler: dropped.
 - Menu + Continue (boot 27, 2026-10-24 02:31): **34.4 s from the click** (1.4 s click -> level loading, then 33.0 s).
   With 3b: 34.6 s (boot 29, gate 9.4 s) and 33.4 s (boot 30, + readiness temp 128). The gate varies +-1 s per boot.
 - Auto-load test boots (wh_sys_AutoLoadLastSave; boots 24-26): 38.3-39.4 s. They carry two costs the user's path does
