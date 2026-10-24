@@ -46,10 +46,12 @@ inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.
 inline bool OnMain() { return GetCurrentThreadId() == *(const DWORD*)(g_base + kRvaMainTid); }
 
 // ---- terrain meshes ahead (terrainfast.h "Menu preload")
-constexpr uintptr_t kRvaAsync = 0x52d91c;    // CObjManager async CGF load (objMgr, name, -, -, callback)
+constexpr uintptr_t kRvaAsync = 0x52d91c;    // CObjManager async CGF load (objMgr, name, -, -, -, callback): the callback is
+// argument 6 ([rsp+0x1b8] after 0x188 of pushes + frame = entry rsp+0x30; the callers store it at their [rsp+0x28]).
+// Boot 53 crashed with it forwarded as argument 5: every brush load got a garbage callback.
 const unsigned char kAsyncBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x48,0x89,0x6c,0x24,0x20 };
 constexpr uintptr_t kRvaObjMgr = 0x5496fb0;  // CObjManager*
-using AsyncFn = void(__fastcall*)(void* objMgr, const char* name, uint64_t, uint64_t, void* callback);
+using AsyncFn = void(__fastcall*)(void* objMgr, const char* name, uint64_t, uint64_t, uint64_t, void* callback);
 AsyncFn g_origAsync = nullptr;
 std::atomic<int> g_ahead{1};
 std::string g_dir;
@@ -80,11 +82,11 @@ bool LevelName(const char* name, std::string* level) {
 	return true;
 }
 
-void __fastcall HkAsync(void* objMgr, const char* name, uint64_t a3, uint64_t a4, void* cb) {
+void __fastcall HkAsync(void* objMgr, const char* name, uint64_t a3, uint64_t a4, uint64_t a5, void* cb) {
 	if (!g_ourCall && name && *name && OnMain() && Readiness_LevelState() >= 1 && g_rec.size() < 100000 &&
 	    !LevelName(name, &g_recLevel) && g_recSet.insert(name).second)
 		g_rec.push_back(name);
-	g_origAsync(objMgr, name, a3, a4, cb);
+	g_origAsync(objMgr, name, a3, a4, a5, cb);
 }
 
 std::string AheadFile(const std::string& level) { return g_dir + "fastload_terrainahead_" + level + ".txt"; }
@@ -208,7 +210,7 @@ void Terrainfast_Frame() {   // main thread, every frame (fastload_main.cpp Tick
 	const long long now = Now();
 	if ((long long)g_next - g_menuCgf >= kInFlight && now - g_lastIssue < g_freq) return;   // 1 s: some come back without a completion
 	g_ourCall = true;
-	for (int i = 0; i < kPerFrame && g_next < g_list.size(); i++) g_origAsync(objMgr, g_list[g_next++].c_str(), 0, 0, nullptr);
+	for (int i = 0; i < kPerFrame && g_next < g_list.size(); i++) g_origAsync(objMgr, g_list[g_next++].c_str(), 0, 0, 0, nullptr);
 	g_ourCall = false;
 	g_lastIssue = now;
 	if (g_next == g_list.size()) { g_aState = Ahead::Done; g_aEnd = Now(); AheadSummary("all asked"); }
