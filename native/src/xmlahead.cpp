@@ -54,9 +54,12 @@ std::string Norm(const char* f) {
 	return s;
 }
 
-void ReleaseNode(void* n) {   // XmlNodeRef dtor: vtable +0x10
+// XmlNodeRef release: vtable +0x20 (FUN_1804fb998, as the game's own release FUN_1804fb980 calls it). Until 2026-10-24
+// this called +0x10, which is createNode (FUN_182486658): every call added a node to that tree, wrote its pointer to
+// whatever rdx held, and AddRef'd it, so late and unused pre-parsed trees were never freed (re_quest_dump_binary.md).
+void ReleaseNode(void* n) {
 	if (!n) return;
-	__try { (*(void(__fastcall**)(void*))(*(uintptr_t*)n + 0x10))(n); } __except (EXCEPTION_EXECUTE_HANDLER) {}
+	__try { (*(void(__fastcall**)(void*))(*(uintptr_t*)n + 0x20))(n); } __except (EXCEPTION_EXECUTE_HANDLER) {}
 }
 
 // ---- recording
