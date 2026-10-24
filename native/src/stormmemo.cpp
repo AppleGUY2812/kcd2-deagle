@@ -376,8 +376,10 @@ DWORD WINAPI Reporter(LPVOID) {
 		for (const Totals& t : snap) {
 			if (!t.tid) break;
 			Log("stormmemo: thread %lu: %lld characters, %.0f ms in Storm; named sets looked up %lld, remembered %lld "
-			    "(%.0f %%), checked %lld, mismatches %lld%s", t.tid, t.souls, 1000.0 * t.ticks / g_freq, t.looked,
-			    t.hits, t.looked ? 100.0 * t.hits / t.looked : 0.0, t.checked, t.bad, g_mode.load() ? "" : " (off)");
+			    "(%.0f %%), checked %lld, mismatches %lld%s; name index %s, characters checked %lld, mismatches %lld (all "
+			    "threads)", t.tid, t.souls, 1000.0 * t.ticks / g_freq, t.looked,
+			    t.hits, t.looked ? 100.0 * t.hits / t.looked : 0.0, t.checked, t.bad, g_mode.load() ? "" : " (off)",
+			    g_index.load() ? "on" : "off", g_idxChecked.load(), g_idxBad.load());
 			if (!t.cen.rules) continue;
 			// the five kinds that ended the most rules
 			int top[5] = { -1, -1, -1, -1, -1 };
