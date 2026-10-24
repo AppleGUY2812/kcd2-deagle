@@ -53,6 +53,7 @@ std::atomic<int> g_earlyMode{ 0 };   // "let me in early" (readiness_early.h): 0
 // Kept as the second number in deagle_readiness.txt.
 std::atomic<int> g_tempMB{ 0 };
 int g_tempOrig = -1;   // KB, the value we raised from (-1: not raised)
+int g_tempSet = -1;    // KB, the value we wrote (restore only while it is still there)
 std::string g_modeFile;
 const early::Cfg g_earlyCfg;
 long long g_freq = 1, g_lastTick = 0, g_lastStateCheck = 0;
@@ -298,12 +299,16 @@ void TempBudget(bool want) {
 		const int32_t v = mb * 1024;
 		if (Wr(g_base + kRvaTempBudgetKB, &v, 4)) {
 			g_tempOrig = kb;
+			g_tempSet = v;
 			Log("readiness: stream temp budget %d -> %d MB while the screen waits", kb / 1024, mb);
 		}
 	} else if (!want && g_tempOrig >= 0) {
-		if (kb == mb * 1024 || mb == 0) Wr(g_base + kRvaTempBudgetKB, &g_tempOrig, 4);   // not if someone else set it since
-		Log("readiness: stream temp budget back to %d MB", g_tempOrig / 1024);
-		g_tempOrig = -1;
+		// Compare with what we wrote, not with g_tempMB: "readiness temp N" during a gate changes g_tempMB, not the variable.
+		if (kb == g_tempSet && Wr(g_base + kRvaTempBudgetKB, &g_tempOrig, 4))
+			Log("readiness: stream temp budget back to %d MB", g_tempOrig / 1024);
+		else
+			Log("readiness: stream temp budget left at %d MB (changed by something else since we set %d MB)", kb / 1024, g_tempSet / 1024);
+		g_tempOrig = g_tempSet = -1;
 	}
 }
 
