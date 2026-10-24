@@ -1397,7 +1397,7 @@ static void OnCamera(uintptr_t camera) {
 		fpos[0] = g_cam[3]; fpos[1] = g_cam[7]; fpos[2] = g_cam[11];
 	}
 	Ftpre_Frame();   // fast-travel preload (ftpreload.cpp): the destination streams in while the map piece walks
-	Readiness_Frame();   // what holds the loading screen after the save is applied (readiness.cpp; logs only)
+	Readiness_Frame();   // what holds a loading / black screen (readiness.cpp; logs only)
 	UpdateMotion(g_cam);
 	{   // a Ready or Not gun's recoil, offsets and fire shake (ronvm.cpp): game seconds, once a drawn frame
 		static LARGE_INTEGER rlast{};
@@ -1593,7 +1593,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
-	Readiness_Install(g_game.base);   // logs which streaming task holds the loading screen after the save (readiness.cpp)
+	Readiness_Install(g_game.base);   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	uintptr_t fr = FindFrustum();
 	Log("UpdateFrustumPlanes %p", (void*)fr);
 	if (fr && MH_CreateHook((void*)fr, (void*)&HkFrustum, (void**)&g_origFrustum) == MH_OK && MH_EnableHook((void*)fr) == MH_OK)
