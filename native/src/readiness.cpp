@@ -135,6 +135,24 @@ std::string NameOf(void* t, uintptr_t vt) {
 		}
 		if (n > 0) return std::string(s, (size_t)n);
 	}
+	// Other task classes: the class name from the game's type info (vtable[-1] -> complete object locator ->
+	// type descriptor ".?AVC_ClothingSystem@entitymodule@wh@@" -> "ClothingSystem"). The plain C_ReadinessTask class
+	// is used by several systems, so it keeps its vtable.
+	uintptr_t col = 0;
+	uint32_t td = 0;
+	char raw[96] = {};
+	if (Rd(vt - 8, &col, 8) && col && Rd(col + 12, &td, 4) && td && Rd(g_base + td + 0x10, raw, sizeof raw - 1)) {
+		const char* n = raw;
+		if (!strncmp(n, ".?AV", 4)) n += 4;
+		if (!strncmp(n, "C_", 2)) n += 2;
+		size_t len = 0;
+		while (n[len] && n[len] != '@' && len < 40) len++;
+		if (len > 0 && strncmp(n, "ReadinessTask", len)) return std::string(n, len);
+		if (len > 0) {
+			snprintf(s, sizeof s, "ReadinessTask(vt %llx)", (unsigned long long)(vt - g_base));
+			return s;
+		}
+	}
 	snprintf(s, sizeof s, "task(vt %llx)", (unsigned long long)(vt - g_base));
 	return s;
 }
@@ -324,6 +342,8 @@ void Readiness_Frame() {
 			Gate& g = g_gates[gi];
 			bool all = true, mustReady = true, detailBusy = false;
 			bool line = now - (g.lastLine ? g.lastLine : g.t0) >= g_freq;
+			// this frame's time, but not from before the gate started (a gate can start inside a long frame)
+			const double gdt = (std::min)(dt, (std::max)(0.0, Secs(now - g.t0)));
 			std::string busy;
 			for (auto& t : g_tasks) {
 				if (!(t.cat & g.mask)) continue;
@@ -333,7 +353,7 @@ void Readiness_Frame() {
 				if (early::Detail(t.name.c_str())) detailBusy = true;
 				else mustReady = false;
 				const size_t i = Slot(g, t.at);
-				g.notReady[i] += dt;
+				g.notReady[i] += gdt;
 				g.lastBusy[i] = now;
 				if (line) {
 					char one[120];
