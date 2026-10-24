@@ -281,6 +281,8 @@ bool LoadList() {
 
 bool Xmlahead_LevelSeen() { return g_levelSeen.load(); }
 
+void Xmlahead_StartMenuNow(const char* why) { if (!g_items.empty() && !g_levelSeen) StartQueue(0, why); }
+
 bool Xmlahead_MenuQuiet(unsigned quietMs) {
 	return g_loads >= kMenuLoads && !g_levelSeen && GetTickCount64() - g_lastLoad >= quietMs;
 }

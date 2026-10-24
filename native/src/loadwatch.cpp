@@ -1,6 +1,7 @@
 // Terrain loader wait timing: see loadwatch.h.
 #include "loadwatch.h"
 #include "applyfast.h"
+#include "questmenu.h"
 #include "log.h"
 #include <windows.h>
 #include <atomic>
@@ -83,6 +84,10 @@ template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, u
 	thread_local int depth = 0;
 	if (I == kQuestWait && depth == 0) Applyfast_BeforeQuestWait();   // its own wait is logged by applyfast
 	if (I == kJobSubmit && depth == 0 && g_jobState.load() >= 0) g_jobState = 0;
+	if (I == kJobBody && depth == 0 && Questmenu_OnJobBody(a)) {   // the graph built at the main menu is kept: no rebuild
+		if (g_jobState.load() >= 0) g_jobState = 1;
+		return 0;
+	}
 	const long long t = Now();
 	depth++;
 	const uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);

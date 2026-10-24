@@ -1,6 +1,7 @@
 // Faster pieces of the save load's "apply save" step. See applyfast.h.
 #include "applyfast.h"
 #include "loadwatch.h"
+#include "questmenu.h"
 #include "log.h"
 #include "xmlahead.h"
 #include "MinHook.h"
@@ -364,6 +365,7 @@ void __fastcall HkConceptOnMsg(void* mod, void* msg) {
 		    (Now() - t_earlyAt) * 1000.0 / g_freq);
 		return;
 	}
+	if (msg) Questmenu_OnConceptMsg(*(const int*)((const char*)msg + 8));   // may wait for / disarm the main-menu quest graph
 	g_conceptOnMsg(mod, msg);
 }
 
@@ -557,6 +559,7 @@ void Applyfast_Install(uintptr_t base, void* self) {
 		}
 		if (!e) MH_DisableHook((void*)(base + kRvaConceptOnMsg));
 	}
+	Questmenu_SetConceptHook(e);
 	const bool psoCode = !memcmp((void*)(base + kRvaPsoQueue), kPsoQueueBytes, sizeof kPsoQueueBytes) &&
 	                     !memcmp((void*)(base + kRvaSync), kSyncBytes, sizeof kSyncBytes);
 	const bool d = g_psoMode && psoCode &&
