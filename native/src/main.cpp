@@ -1614,7 +1614,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
 	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
-	Questreplay_Install(g_game.base);   // phase 2a record / replay for questbench N rec (questreplay.cpp): before questprof
+	Questreplay_Install(g_game.base);   // phase 2a record / replay: the menu build, questbench N rec (questreplay.cpp); before questprof
 	Questprof_Install(g_game.base);   // the quest build's inner profile for questbench N prof (questprof.cpp)
 	Questdump_Install(g_game.base);   // the quest graph dump for questbench N dump (questdump.cpp)
 	Animahead_Install(g_game.base, g_self);   // human animation sets during the terrain wait (animahead.cpp)

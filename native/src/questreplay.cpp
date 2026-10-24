@@ -3,6 +3,7 @@
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <string>
@@ -145,10 +146,10 @@ uintptr_t DynOf(const uint64_t* in, uint64_t I[4]) {
 	((void*(__fastcall*)(DInfo*, void*))*(uintptr_t*)cd)(&di, data);
 	return di.t;
 }
-inline bool NameIs(uintptr_t td, const std::string& s) {
+inline bool NameIs(uintptr_t td, const char* s, size_t sn) {
 	const char* p = *(const char**)(td + 0x38);
 	const size_t n = *(size_t*)(td + 0x40);
-	return n == s.size() && (!n || !memcmp(p, s.data(), n));
+	return n == sn && (!n || !memcmp(p, s, n));
 }
 
 // per build: the element type's properties (class_data+0x50, the deserializer's order) and its handler slots
@@ -225,6 +226,27 @@ struct Record {
 	void clear() { code.clear(); str.clear(); idx.clear(); proj.clear(); }
 };
 Record g_rec;
+// the record's strings as the replay reads them: one blob of NUL-terminated strings (also the file's layout)
+std::vector<char> g_blob;
+std::vector<uint32_t> g_so, g_sl;
+inline const char* SP(uint64_t i) { return i < g_so.size() ? g_blob.data() + g_so[i] : ""; }
+inline size_t SL(uint64_t i) { return i < g_sl.size() ? g_sl[i] : 0; }
+void Pack() {   // after recording: strings into the blob, the record-side pool freed
+	size_t total = 0;
+	for (auto& x : g_rec.str) total += x.size() + 1;
+	g_blob.assign(total, 0);
+	g_so.resize(g_rec.str.size());
+	g_sl.resize(g_rec.str.size());
+	size_t o = 0;
+	for (size_t i = 0; i < g_rec.str.size(); i++) {
+		g_so[i] = (uint32_t)o;
+		g_sl[i] = (uint32_t)g_rec.str[i].size();
+		memcpy(g_blob.data() + o, g_rec.str[i].data(), g_rec.str[i].size());
+		o += g_rec.str[i].size() + 1;
+	}
+	std::vector<std::string>().swap(g_rec.str);
+	std::unordered_map<std::string, uint32_t>().swap(g_rec.idx);
+}
 std::atomic<int> g_mode{0};   // 0 off, 1 record, 2 replay
 bool g_have = false, g_failed = false;
 std::string g_bad, g_fail;    // first reason the record cannot be used / the replay failed
@@ -609,7 +631,6 @@ inline uint64_t U() {
 	while (g_p < g_end) { const uint8_t b = *g_p++; v |= (uint64_t)(b & 0x7f) << s; if (!(b & 0x80)) break; s += 7; }
 	return v;
 }
-inline const std::string& Str(uint64_t i) { static const std::string none; return i < g_rec.str.size() ? g_rec.str[i] : none; }
 
 bool RElem(uintptr_t deser, const uint64_t* in);
 bool RChild(uintptr_t deser, Var* pv, int mode);
@@ -622,11 +643,11 @@ void Invoke0(uintptr_t* m, const uint64_t* orig) {
 	((PolFn)r.pol)(0, &r, nullptr);
 }
 
-bool AttrConv(void* P, const std::string& name, const std::string& value, Var* v) {   // FUN_1804fb74c with a stand-in node
-	Stub st{ g_stubVt, "", name.c_str(), value.c_str(), nullptr, nullptr };
+bool AttrConv(void* P, const char* name, const char* value, Var* v) {   // FUN_1804fb74c with a stand-in node
+	Stub st{ g_stubVt, "", name, value, nullptr, nullptr };
 	void* ref = &st;
 	const int bad0 = g_stubBad.load();
-	const bool ok = ((uint8_t(__fastcall*)(uint64_t, void**, const char*, Var*, void*))F(kAttrConv))(0, &ref, name.c_str(), v, P) != 0;
+	const bool ok = ((uint8_t(__fastcall*)(uint64_t, void**, const char*, Var*, void*))F(kAttrConv))(0, &ref, name, v, P) != 0;
 	if (g_stubBad.load() != bad0) return Fail("the attribute converter asked the stand-in node for something else");
 	return ok || Fail("attribute conversion failed");
 }
@@ -643,8 +664,8 @@ bool RProp(uintptr_t deser, const uint64_t* I, TI& ti) {
 	uint64_t ic[4];
 	alignas(16) uint8_t arg[0x20];
 	if (op == OP_P_ATTR) {   // the element's own attribute: no get_value, set_value without the wrapper check (S)
-		const std::string& name = Str(U());
-		const std::string& value = Str(U());
+		const char* name = SP(U());
+		const char* value = SP(U());
 		Var v = Empty();
 		if (!AttrConv(P, name, value, &v)) { Destroy(&v); return false; }
 		MakeArg(arg, &v);
@@ -658,7 +679,7 @@ bool RProp(uintptr_t deser, const uint64_t* I, TI& ti) {
 	((GetFn)vt[0x48 / 8])(P, &v, ic);
 	bool ok = true;
 	switch (op) {
-	case OP_P_MD6: { const std::string& name = Str(U()); const std::string& value = Str(U()); ok = AttrConv(P, name, value, &v); break; }
+	case OP_P_MD6: { const char* name = SP(U()); const char* value = SP(U()); ok = AttrConv(P, name, value, &v); break; }
 	case OP_P_CUR: break;
 	case OP_P_SEQ: {
 		uint32_t n = 0;
@@ -681,10 +702,10 @@ bool RProp(uintptr_t deser, const uint64_t* I, TI& ti) {
 			((Get)F(kViewGet))(view, &ev, esi);
 			if (o == OP_I_TEXT) {
 				Op();
-				const std::string& s = Str(U());
+				const uint64_t si = U();
 				uintptr_t T = *(uintptr_t*)(TypeOf(&ev) + 8);
 				Var tmp = Empty();
-				Sv sv{ s.data(), s.size() };
+				Sv sv{ SP(si), SL(si) };
 				if (!((uint8_t(__fastcall*)(uint64_t, Sv*, Var*, uintptr_t*))F(kTextConv))(0, &sv, &tmp, &T)) ok = Fail("sequence text conversion");
 				else { MakeArg(arg, &tmp); ((Set)F(kViewSet))(view, esi, arg); esi++; }
 				Destroy(&tmp);
@@ -714,7 +735,7 @@ bool RProp(uintptr_t deser, const uint64_t* I, TI& ti) {
 uintptr_t ResolveType(uint64_t lookup, uint64_t tdName) {   // Create's type path (S): types by name, filter, exactly one
 	if (lookup < g_created.size() && g_created[lookup]) return g_created[lookup];
 	uintptr_t cs = 0;
-	CryFrom(&cs, Str(lookup).c_str());
+	CryFrom(&cs, SP(lookup));
 	alignas(16) uint8_t list[0x80] = {}, filt[0x80] = {};
 	((void*(__fastcall*)(void*, void*))F(kTypesByName))(list, &cs);
 	((void*(__fastcall*)(void*, void*))F(kFilter))(filt, list);
@@ -725,7 +746,7 @@ uintptr_t ResolveType(uint64_t lookup, uint64_t tdName) {   // Create's type pat
 	((void(__fastcall*)(void*))F(kListDestroy))(filt);
 	((void(__fastcall*)(void*))F(kListDestroy))(list);
 	CryRelease(&cs);
-	if (td && !NameIs(td, Str(tdName))) td = 0;
+	if (td && !NameIs(td, SP(tdName), SL(tdName))) td = 0;
 	if (td) {
 		if (g_created.size() <= lookup) g_created.resize(lookup + 1, 0);
 		g_created[lookup] = td;
@@ -763,14 +784,14 @@ bool RCreate(uintptr_t deser, Var* out, bool* skipped) {   // out is uninitialis
 		if (st) {
 			uintptr_t sp = 0, cs = 0;
 			((void*(__fastcall*)(Var*, uintptr_t*))F(kStaticSp))(&v70, &sp);
-			CryFrom(&cs, Str(tag).c_str());
+			CryFrom(&cs, SP(tag));
 			((void(__fastcall*)(uintptr_t, void*))F(kStaticName))(sp, &cs);
 			CryRelease(&cs);
 			((Var*(__fastcall*)(Var*, Var*))F(kClone))(out, &v70);
 			((void(__fastcall*)(uintptr_t*))F(kSpRelease))(&sp);
 			made = true;
 		} else {
-			if (lvl) ((void*(__fastcall*)(void*, const char*))F(kCryAssign))((void*)(factory + 0x38), Str(lvl - 1).c_str());
+			if (lvl) ((void*(__fastcall*)(void*, const char*))F(kCryAssign))((void*)(factory + 0x38), SP(lvl - 1));
 			else if (rep) *(uint8_t*)(factory + 0x40) = 1;
 			const uintptr_t deser2 = *(uintptr_t*)(factory + 0x30);
 			uint64_t inst[4];
@@ -793,7 +814,7 @@ bool RCreate(uintptr_t deser, Var* out, bool* skipped) {   // out is uninitialis
 			else if (pk == 1) {
 				uintptr_t sp = 0, cs = 0;
 				((void*(__fastcall*)(Var*, uintptr_t*))F(kNodeSp))(&v70, &sp);
-				CryFrom(&cs, Str(path).c_str());
+				CryFrom(&cs, SP(path));
 				((void(__fastcall*)(uintptr_t, void*))(*(void***)sp)[0x170 / 8])(sp, &cs);
 				((void(__fastcall*)(uintptr_t, void*, uintptr_t*))F(kPush260))(*(uintptr_t*)(factory + 0x30), &cs, &sp);
 				CryRelease(&cs);
@@ -801,7 +822,7 @@ bool RCreate(uintptr_t deser, Var* out, bool* skipped) {   // out is uninitialis
 			} else if (pk == 2) {
 				uintptr_t sp = 0, cs = 0;
 				((void*(__fastcall*)(Var*, uintptr_t*))F(kXSp))(&v70, &sp);
-				CryFrom(&cs, Str(path).c_str());
+				CryFrom(&cs, SP(path));
 				((void(__fastcall*)(uintptr_t, void*))F(kXSetPath))(sp, &cs);
 				CryRelease(&cs);
 				((void(__fastcall*)(uintptr_t*))F(kSp2Release))(&sp);
@@ -870,10 +891,10 @@ bool RChild(uintptr_t deser, Var* pv, int mode) {   // FUN_181e25110 (S)
 bool RPend(uintptr_t deser, const uint64_t* orig) {   // the deserializer's own handler (vt+0x10) with a stand-in node
 	Op();
 	const uint8_t kind = B8();
-	const std::string& a = Str(U());
-	const std::string& b = Str(U());
-	Stub st{ g_stubVt, kind == 0 ? "Edge" : kind == 1 ? "Constant" : "Asset", kind ? "Name" : "From", a.c_str(),
-	         kind == 0 ? "To" : kind == 1 ? "Value" : "Alias", b.c_str() };
+	const char* a = SP(U());
+	const char* b = SP(U());
+	Stub st{ g_stubVt, kind == 0 ? "Edge" : kind == 1 ? "Constant" : "Asset", kind ? "Name" : "From", a,
+	         kind == 0 ? "To" : kind == 1 ? "Value" : "Alias", b };
 	void* ref = &st;
 	uint64_t ic[4];
 	memcpy(ic, orig, 32);
@@ -890,7 +911,7 @@ bool RElem(uintptr_t deser, const uint64_t* in) {   // FUN_181e25520 (S)
 	const uintptr_t dyn = DynOf(in, I);
 	if (ts >= g_tdOf.size()) g_tdOf.resize(ts + 1, 0);
 	if (g_tdOf[ts] != dyn) {
-		if (!dyn || !NameIs(dyn, Str(ts))) return Fail("element type differs from the record");
+		if (!dyn || !NameIs(dyn, SP(ts), SL(ts))) return Fail("element type differs from the record");
 		g_tdOf[ts] = dyn;
 	}
 	TI& ti = Ti(dyn);
@@ -962,7 +983,183 @@ void Enable(bool on, bool all) {
 	MH_ApplyQueued();
 }
 
+// ---- the record file (deagle_questreplay.bin next to the plugin) and its key
+constexpr uint32_t kFileVer = 1;
+struct Hdr { char magic[4]; uint32_t ver; uint64_t key; uint32_t nStr, nProj; uint64_t blob, code; };
+std::string g_dir;
+HANDLE g_preloaded = nullptr;
+struct Loaded { bool ok = false; Hdr h{}; std::vector<char> blob; std::vector<uint32_t> so, sl; std::vector<size_t> proj; std::vector<uint8_t> code; };
+Loaded g_file;
+uint64_t g_key = 0, g_memKey = 0;   // the key of these inputs / of the record in memory (0: not from a key)
+std::string g_keyWhy;
+
+inline void Mix(uint64_t& h, const void* p, size_t n) {
+	for (size_t i = 0; i < n; i++) h = (h ^ ((const uint8_t*)p)[i]) * 0x100000001b3ull;
+}
+inline void MixS(uint64_t& h, const std::string& s) { Mix(h, s.data(), s.size()); Mix(h, "\0", 1); }
+
+void MixDir(uint64_t& h, const std::string& dir, const char* pattern, int* files) {   // names, sizes, write times (sorted)
+	std::vector<std::string> v;
+	WIN32_FIND_DATAA fd;
+	HANDLE f = FindFirstFileA((dir + pattern).c_str(), &fd);
+	if (f == INVALID_HANDLE_VALUE) return;
+	do {
+		if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+		char b[512];
+		snprintf(b, sizeof b, "%s|%lu|%lu|%lu|%lu", fd.cFileName, fd.nFileSizeHigh, fd.nFileSizeLow, fd.ftLastWriteTime.dwHighDateTime,
+		         fd.ftLastWriteTime.dwLowDateTime);
+		v.emplace_back(b);
+	} while (FindNextFileA(f, &fd));
+	FindClose(f);
+	std::sort(v.begin(), v.end());
+	MixS(h, dir);
+	for (auto& x : v) MixS(h, x);
+	*files += (int)v.size();
+}
+
+void LoadFile() {
+	FILE* f = fopen((g_dir + "deagle_questreplay.bin").c_str(), "rb");
+	if (f) {
+		Loaded& L = g_file;
+		bool ok = fread(&L.h, sizeof L.h, 1, f) == 1 && !memcmp(L.h.magic, "DQRP", 4) && L.h.ver == kFileVer &&
+		          L.h.nStr < (1u << 26) && L.h.nProj < 4096 && L.h.blob < (1ull << 31) && L.h.code < (1ull << 31);
+		if (ok) {
+			L.so.resize(L.h.nStr); L.sl.resize(L.h.nStr); L.proj.resize(L.h.nProj); L.blob.resize(L.h.blob); L.code.resize(L.h.code);
+			std::vector<uint64_t> pj(L.h.nProj);
+			ok = (!L.h.nStr || (fread(L.so.data(), 4, L.h.nStr, f) == L.h.nStr && fread(L.sl.data(), 4, L.h.nStr, f) == L.h.nStr)) &&
+			     (!L.h.nProj || fread(pj.data(), 8, L.h.nProj, f) == L.h.nProj) &&
+			     (!L.h.blob || fread(L.blob.data(), 1, L.h.blob, f) == L.h.blob) && (!L.h.code || fread(L.code.data(), 1, L.h.code, f) == L.h.code);
+			for (size_t i = 0; ok && i < pj.size(); i++) { L.proj[i] = (size_t)pj[i]; ok = pj[i] < L.h.code; }
+			for (size_t i = 0; ok && i < L.so.size(); i++) ok = (uint64_t)L.so[i] + L.sl[i] < L.h.blob;
+		}
+		fclose(f);
+		L.ok = ok;
+		if (!ok) { Loaded e; std::swap(L, e); Log("questreplay: deagle_questreplay.bin unreadable (another version?): ignored"); }
+	}
+}
+DWORD WINAPI PreloadThread(LPVOID) {
+	LoadFile();
+	SetEvent(g_preloaded);
+	return 0;
+}
+
 }  // namespace
+
+void Questreplay_Preload(const char* pluginDir) {
+	g_dir = pluginDir ? pluginDir : "";
+	g_preloaded = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+	HANDLE t = CreateThread(nullptr, 0, PreloadThread, nullptr, 0, nullptr);
+	if (t) CloseHandle(t);
+	else SetEvent(g_preloaded);
+}
+
+int Questreplay_Plan(const char* inputs) {
+	if (!g_hooked || g_mode.load()) return 0;
+	const long long t0 = Now();
+	uint64_t h = 0xcbf29ce484222325ull;
+	Mix(h, "DQRP", 4);
+	Mix(h, &kFileVer, 4);
+	const uintptr_t nt = g_base + *(int*)(g_base + 0x3c);
+	Mix(h, (void*)(nt + 8), 4);      // WHGame.dll TimeDateStamp
+	Mix(h, (void*)(nt + 0x50), 4);   // SizeOfImage
+	MixS(h, inputs ? inputs : "");
+	const std::string root = g_dir + "..\\..\\";
+	int files = 0;
+	MixDir(h, root + "Data\\", "*.pak", &files);
+	WIN32_FIND_DATAA fd;
+	HANDLE f = FindFirstFileA((root + "Mods\\*").c_str(), &fd);
+	if (f != INVALID_HANDLE_VALUE) {
+		std::vector<std::string> mods;
+		do {
+			if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != '.') mods.emplace_back(fd.cFileName);
+		} while (FindNextFileA(f, &fd));
+		FindClose(f);
+		std::sort(mods.begin(), mods.end());
+		for (auto& m : mods) {
+			MixDir(h, root + "Mods\\" + m + "\\Data\\", "*.pak", &files);
+			MixDir(h, root + "Mods\\" + m + "\\", "*.manifest", &files);
+		}
+	}
+	MixDir(h, root + "Mods\\", "mod_order.txt", &files);
+	g_key = h;
+	if (g_have && g_memKey == h) {
+		Log("questreplay: key #%016llx (%.0f ms): the record in memory matches: this build replays", (unsigned long long)h,
+		    (Now() - t0) * 1000.0 / g_freq);
+		return 2;
+	}
+	if (g_preloaded) WaitForSingleObject(g_preloaded, 10000);
+	if (!g_file.ok) LoadFile();   // released after an earlier build (questbench N file)
+	const bool match = g_file.ok && g_file.h.key == h;
+	Log("questreplay: key #%016llx over %d paks / manifests + the job inputs (%.0f ms); %s", (unsigned long long)h, files,
+	    (Now() - t0) * 1000.0 / g_freq, match ? "deagle_questreplay.bin matches: this build replays" :
+	    g_file.ok ? "deagle_questreplay.bin is for other inputs: this build records" : "no record file: this build records");
+	if (match) {
+		g_rec.clear();
+		g_rec.code.swap(g_file.code);
+		g_rec.proj.swap(g_file.proj);
+		g_blob.swap(g_file.blob);
+		g_so.swap(g_file.so);
+		g_sl.swap(g_file.sl);
+		Loaded e;
+		std::swap(g_file, e);
+		g_have = true;
+		g_memKey = h;
+		return 2;
+	}
+	{ Loaded e; std::swap(g_file, e); }
+	return 1;
+}
+
+bool Questreplay_Save() {
+	if (!g_have || !g_key) return false;
+	const long long t0 = Now();
+	const std::string out = g_dir + "deagle_questreplay.bin", tmp = out + ".tmp";
+	FILE* f = fopen(tmp.c_str(), "wb");
+	if (!f) { Log("questreplay: cannot write %s", tmp.c_str()); return false; }
+	Hdr h{};
+	memcpy(h.magic, "DQRP", 4);
+	h.ver = kFileVer;
+	h.key = g_key;
+	h.nStr = (uint32_t)g_so.size();
+	h.nProj = (uint32_t)g_rec.proj.size();
+	h.blob = g_blob.size();
+	h.code = g_rec.code.size();
+	std::vector<uint64_t> pj(g_rec.proj.begin(), g_rec.proj.end());
+	bool ok = fwrite(&h, sizeof h, 1, f) == 1;
+	if (ok && h.nStr) ok = fwrite(g_so.data(), 4, h.nStr, f) == h.nStr && fwrite(g_sl.data(), 4, h.nStr, f) == h.nStr;
+	if (ok && h.nProj) ok = fwrite(pj.data(), 8, h.nProj, f) == h.nProj;
+	if (ok && h.blob) ok = fwrite(g_blob.data(), 1, h.blob, f) == h.blob;
+	if (ok && h.code) ok = fwrite(g_rec.code.data(), 1, h.code, f) == h.code;
+	ok = fclose(f) == 0 && ok;
+	if (ok) ok = MoveFileExA(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+	else DeleteFileA(tmp.c_str());
+	if (ok) g_memKey = g_key;
+	Log("questreplay: %s deagle_questreplay.bin (%.1f MB, key #%016llx) in %.0f ms", ok ? "wrote" : "could NOT write",
+	    (sizeof h + h.nStr * 8.0 + h.nProj * 8.0 + h.blob + h.code) / 1048576.0, (unsigned long long)g_key, (Now() - t0) * 1000.0 / g_freq);
+	return ok;
+}
+
+void Questreplay_Drop() {
+	DeleteFileA((g_dir + "deagle_questreplay.bin").c_str());
+	g_have = false;
+	g_memKey = 0;
+	Log("questreplay: record dropped (deagle_questreplay.bin deleted): the next session records again");
+}
+
+void Questreplay_Release() {   // the record is not needed after the menu build (questbench rec records its own)
+	if (g_mode.load()) return;
+	if (g_preloaded) WaitForSingleObject(g_preloaded, 10000);
+	{ Loaded e; std::swap(g_file, e); }
+	g_have = false;
+	g_memKey = 0;
+	std::vector<uint8_t>().swap(g_rec.code);
+	std::vector<size_t>().swap(g_rec.proj);
+	std::vector<char>().swap(g_blob);
+	std::vector<uint32_t>().swap(g_so);
+	std::vector<uint32_t>().swap(g_sl);
+	std::unordered_map<uintptr_t, TI>().swap(g_ti);
+	std::unordered_map<void*, PI>().swap(g_pi);
+}
 
 void Questreplay_Install(uintptr_t base) {
 	g_base = base;
@@ -1018,6 +1215,7 @@ bool Questreplay_Arm(int mode) {
 		memset(g_c, 0, sizeof g_c);
 		g_recDeser = 0;
 		g_have = false;
+		g_memKey = 0;
 	}
 	Enable(true, mode == 1);
 	g_t0 = Now();
@@ -1034,11 +1232,13 @@ void Questreplay_Disarm() {
 	if (mode == 1) {
 		g_have = g_bad.empty() && !g_rec.proj.empty();
 		size_t sb = 0;
+		const size_t ns = g_rec.str.size();
 		for (auto& s : g_rec.str) sb += s.size();
+		Pack();
 		Log("questreplay: recorded %zu projects, %.1f MB of ops, %zu strings (%.1f MB): %lld elements, %lld attributes, %lld md6, "
 		    "%lld unchanged, %lld sequences (%lld text items), %lld child objects, %lld types, %lld definitions (%lld paths), %lld skips, "
 		    "%lld pending, %lld lines, %lld associative; %s%s",
-		    g_rec.proj.size(), g_rec.code.size() / 1048576.0, g_rec.str.size(), sb / 1048576.0, g_c[cElem], g_c[cAttr], g_c[cMd6], g_c[cCur],
+		    g_rec.proj.size(), g_rec.code.size() / 1048576.0, ns, sb / 1048576.0, g_c[cElem], g_c[cAttr], g_c[cMd6], g_c[cCur],
 		    g_c[cSeq], g_c[cText], g_c[cObj], g_c[cType], g_c[cDef], g_c[cPath], g_c[cSkip], g_c[cPend], g_c[cLine], g_c[cAssoc],
 		    g_have ? "usable" : "NOT usable: ", g_have ? "" : (g_bad.empty() ? "no project" : g_bad.c_str()));
 	} else {

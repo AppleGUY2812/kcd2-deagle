@@ -215,6 +215,20 @@ DWORD WINAPI ScanSaves(LPVOID) {
 // ---- the build on a plugin thread
 using StrFn = void(__fastcall*)(uintptr_t*, const char*);
 using RelFn = void(__fastcall*)(uintptr_t*);
+std::string ReplayKey() {   // the job's inputs, part of questreplay's key (the paks and the DLL are added there)
+	std::string key = g_cache.level + "|" + std::to_string(g_cache.cv20) + "|" + std::to_string(g_cache.cv24);
+	for (auto& x : g_cache.M) key += "|M " + x;
+	for (auto& x : g_cache.P) key += "|P " + x;
+	return key;
+}
+int ReplayBegin() { const int m = Questreplay_Plan(ReplayKey().c_str()); return m && Questreplay_Arm(m) ? m : 0; }
+bool ReplayEnd(int m, bool ok) {   // true = the replay failed (the build is not the game's)
+	if (!m) return false;
+	Questreplay_Disarm();
+	if (m == 2 && Questreplay_LastFailed()) { Questreplay_Drop(); return true; }
+	if (m == 1 && ok && Questreplay_HaveRecord()) Questreplay_Save();
+	return false;
+}
 bool CallBody(uint8_t* impl, uintptr_t mgr) {
 	__try {
 		reinterpret_cast<void(__fastcall*)(void*, uint64_t)>(g_base + kRvaJobBody)(impl, 0);
@@ -236,18 +250,24 @@ DWORD WINAPI Build(LPVOID) {
 	*(uintptr_t*)(impl + 0x30) = *(uintptr_t*)(impl + 0x38) = (uintptr_t)(p.data() + p.size());
 	const unsigned long long free0 = FreeMb();
 	g_buildT0 = Now();
+	// phase 2a from deagle_questreplay.bin when it was recorded for these inputs, else recorded now (questreplay.cpp)
+	const int rmode = ReplayBegin();
+	const bool armed = rmode != 0;
 	const bool ok = CallBody(impl, g_mgr);
 	g_buildT1 = Now();
+	const bool replayFailed = ReplayEnd(rmode, ok);
+	Questreplay_Release();
 	uintptr_t snap[64];
 	size_t n = 0;
 	const bool snapped = ok && Snapshot(g_mgr, snap, 64, &n);
 	if (snapped) g_snap.assign(snap, snap + n);
 	for (uintptr_t& s : m) reinterpret_cast<RelFn>(g_base + kRvaStrRelease)(&s);
 	for (uintptr_t& s : p) reinterpret_cast<RelFn>(g_base + kRvaStrRelease)(&s);
-	g_phase = ok && snapped && n ? 2 : 3;
-	Log("questmenu: quest graph built at the main menu %s in %.2f s (%zu projects; free RAM %llu -> %llu MB)",
-	    g_phase == 2 ? "OK" : "FAILED (exception or no projects), the load builds its own", (g_buildT1 - g_buildT0) * 1.0 / g_freq,
-	    n, free0, FreeMb());
+	g_phase = ok && snapped && n && !replayFailed ? 2 : 3;
+	Log("questmenu: quest graph built at the main menu %s in %.2f s (%zu projects%s; free RAM %llu -> %llu MB)",
+	    g_phase == 2 ? "OK" : replayFailed ? "but the replay FAILED, the load builds its own" :
+	    "FAILED (exception or no projects), the load builds its own", (g_buildT1 - g_buildT0) * 1.0 / g_freq,
+	    n, !armed ? ", phase 2a: the game's own" : rmode == 2 ? ", phase 2a replayed" : ", phase 2a recorded", free0, FreeMb());
 	SetEvent(g_built);
 	return 0;
 }
@@ -288,7 +308,7 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	    g_saveLevel.empty() ? "-" : g_saveLevel.c_str(), g_saveTime, g_cacheOk ? g_cache.level.c_str() : "-", g_cache.P.size(),
 	    now.dg[0], now.dg[1], now.dg[2], now.dg[3], g_cache.dg[0], g_cache.dg[1], g_cache.dg[2], g_cache.dg[3],
 	    why ? "no pre-build: " : "building the quest graph now", why ? why : "");
-	if (why) { Animahead_AtMenu(nullptr); return r; }   // the human animation sets on a plugin thread (animahead.h)
+	if (why) { Questreplay_Release(); Animahead_AtMenu(nullptr); return r; }   // the human animation sets on a plugin thread (animahead.h)
 	g_phase = 1;
 	g_armed = true;
 	Xmlahead_StartMenuNow("the quest graph is built at the menu");
@@ -301,7 +321,7 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 
 // ---- questbench (questmenu.h)
 std::atomic<bool> g_benching{false};
-struct BenchArgs { int n; bool ab, prof, dump, rec; };
+struct BenchArgs { int n; bool ab, prof, dump, rec, file; };
 uintptr_t ReadMgr() {
 	__try { const uintptr_t mod = Module(); return mod ? *(uintptr_t*)(mod + 0x18) : 0; }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
@@ -338,12 +358,17 @@ DWORD WINAPI Bench(LPVOID arg) {
 			Questdump_Arm(dumpPath.c_str());
 		}
 		const char* rtag = "";
+		int fm = 0;
+		const long long t0 = Now();
 		if (a.rec) {   // build 1 records phase 2a, the others replay it (questreplay.cpp)
 			const int rm = k == 1 ? 1 : 2;
 			rtag = Questreplay_Arm(rm) ? (rm == 1 ? " [record]" : " [replay]") : " [record / replay could not arm]";
+		} else if (a.file && !(a.dump && k == 1)) {   // as the menu build does (filedump: build 1 is the game's own, to compare)
+			fm = ReplayBegin();
+			rtag = fm == 2 ? " [file replay]" : fm == 1 ? " [file record]" : " [file: off]";
 		}
-		const long long t0 = Now();
 		ok = CallBody(impl, g_mgr);
+		if (fm && ReplayEnd(fm, ok)) rtag = " [file replay FAILED]";
 		const double s = SecSince(t0);
 		if (a.rec) { Questreplay_Disarm(); if (k > 1 && Questreplay_LastFailed()) rtag = " [replay FAILED]"; }
 		if (a.dump) Questdump_Disarm();
@@ -358,6 +383,7 @@ DWORD WINAPI Bench(LPVOID arg) {
 	}
 	if (a.ab) Questfast_SetOn(true);
 	if (a.prof) Questprof_Stop();
+	if (a.file) Questreplay_Release();
 	uintptr_t snap[64];
 	size_t n = 0;
 	const bool snapped = ok && Snapshot(g_mgr, snap, 64, &n) && n;
@@ -433,10 +459,10 @@ void Questmenu_SetConceptHook(bool on) { g_conceptHook = on; }
 
 void Questmenu_Bench(const char* args) {
 	int n = 0;
-	char mode[8] = {};
-	const int got = args ? sscanf(args, "%d %7s", &n, mode) : 0;
+	char mode[16] = {};
+	const int got = args ? sscanf(args, "%d %15s", &n, mode) : 0;
 	const char* why = nullptr;
-	if (got < 1) why = "usage: questbench N [ab|prof|dump|abdump|rec|recdump] (N 1-20)";
+	if (got < 1) why = "usage: questbench N [ab|prof|dump|abdump|rec|recdump|file|filedump] (N 1-20)";
 	else if (n < 1 || n > 20) why = "N must be 1-20";
 	else if (!g_mode) why = "questmenu is off (deagle_questmenu.txt 0)";
 	else if (!g_cacheOk) why = "no deagle_questcache.txt yet (a load writes it)";
@@ -454,11 +480,12 @@ void Questmenu_Bench(const char* args) {
 	ResetEvent(g_built);   // a load or a project-touching concept message waits for the bench, as for the pre-build
 	g_phase = 1;
 	const bool ab = !strcmp(mode, "ab") || !strcmp(mode, "abdump"), prof = !strcmp(mode, "prof"),
-	           dump = !strcmp(mode, "dump") || !strcmp(mode, "abdump") || !strcmp(mode, "recdump"),
-	           rec = !strcmp(mode, "rec") || !strcmp(mode, "recdump");
-	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof, dump, rec }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+	           dump = !strcmp(mode, "dump") || !strcmp(mode, "abdump") || !strcmp(mode, "recdump") || !strcmp(mode, "filedump"),
+	           rec = !strcmp(mode, "rec") || !strcmp(mode, "recdump"), file = !strcmp(mode, "file") || !strcmp(mode, "filedump");
+	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof, dump, rec, file }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
 	if (t) { CloseHandle(t); Log("questbench: %d builds started%s%s%s", n, ab ? " (questfast on / off alternating)" : prof ? " (with the inner profile, questprof)" : "",
-	                            dump ? " (graph dump per build: deagle_questdump_<k>.txt)" : "", rec ? " (build 1 records phase 2a, the others replay it)" : ""); }
+	                            dump ? " (graph dump per build: deagle_questdump_<k>.txt)" : "", rec ? " (build 1 records phase 2a, the others replay it)" :
+	                            file ? " (phase 2a from deagle_questreplay.bin, as the menu build)" : ""); }
 	else { g_phase = 3; g_benching = false; SetEvent(g_built); Log("questbench: could not start the thread"); }
 }
 
@@ -483,6 +510,7 @@ void Questmenu_Install(uintptr_t base, void* self) {
 	                  !memcmp((void*)(base + kRvaEvt24), kEvt24Bytes, sizeof kEvt24Bytes);
 	// the job body is hooked by loadwatch (its first bytes are a jmp now); checked there
 	g_cacheOk = ReadCache(g_cache);
+	if (g_cacheOk) Questreplay_Preload(g_dir.c_str());   // deagle_questreplay.bin read on a thread, ready for the menu build
 	bool hooked = false;
 	if (code) {
 		void* t = (void*)(base + kRvaEvt24);
