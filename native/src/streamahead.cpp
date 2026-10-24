@@ -1,6 +1,7 @@
 // Reading the load's streaming requests ahead: see streamahead.h.
 #include "streamahead.h"
 #include "log.h"
+#include "ramgov.h"
 #include <windows.h>
 #include <atomic>
 #include <cstdio>
@@ -20,7 +21,11 @@ constexpr ULONGLONG kKeepMs = 30 * 60 * 1000;        // nothing held after this 
 constexpr ULONGLONG kListAfterMs = 5000;             // the list is written this long after gameplay first starts
 constexpr ULONGLONG kFreeAfterMs = 20000;            // ... and what was never asked for is freed this long after
 constexpr long long kCapBytes = 512ll << 20;         // held at once (16 GB PC: pakahead holds up to 2 GB too)
-DWORDLONG kFloorMb = 3500;                           // no reading ahead below this much free RAM (test: env DEAGLE_STREAMAHEAD_FLOOR_MB)
+// Free RAM: ramgov.h (read while >= 1.5 GB free, free the farthest copies below 1.2 GB). Was a fixed 3.5 GB floor: boot
+// 13 (2026-10-24) read 6,535 of 24,271 at the menu, then waited for RAM through the whole load (1.8 GB free).
+// Readers in parallel: the game's IO thread reads one request at a time (queue depth 1); boot 13's single reader made
+// 58 MB/s in ~145 KB reads. Several reads in flight are what an SSD needs.
+constexpr int kReaders = 4;
 constexpr int64_t kMerge = 256 << 10;                // neighbouring requests this close are read in one go ...
 constexpr int64_t kChunk = 4 << 20;                  // ... up to this much per read
 constexpr int64_t kMaxItem = 64ll << 20;
@@ -34,7 +39,6 @@ std::atomic<ULONGLONG> g_loadedAt{0};
 std::atomic<bool> g_listDone{false};
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
-DWORDLONG FreeMb() { MEMORYSTATUSEX m{}; m.dwLength = sizeof m; return GlobalMemoryStatusEx(&m) ? m.ullAvailPhys >> 20 : 0; }
 
 std::string Utf8(const wchar_t* w) {
 	char a[2048] = {};
@@ -109,7 +113,7 @@ struct Item {
 	int pak = -1;
 	uint32_t dataOff = 0;
 	int64_t offset = 0, size = 0, abs = 0;
-	std::atomic<int> state{0};    // 0 waiting, 1 being read, 2 ready, 3 taken or dropped
+	std::atomic<int> state{0};    // 0 waiting, 1 being read, 2 ready, 3 taken or dropped, 5 being freed for RAM (then 0)
 	uint8_t* data = nullptr;
 };
 std::unique_ptr<Item[]> g_items;
@@ -117,6 +121,11 @@ size_t g_n = 0;
 std::unordered_map<uint64_t, uint32_t> g_byKey;     // read-only once the reader starts
 std::atomic<bool> g_serveOn{false}, g_stop{false}, g_loadSeen{false}, g_readerDone{false};
 std::atomic<long long> g_held{0};
+std::mutex g_chunkMu;                                // readers pick their next chunk under this
+size_t g_cursor = 0;                                 // first list item not handed to a reader yet
+std::atomic<int> g_readersLeft{0};
+std::atomic<size_t> g_servedHi{0};                  // 1 + the highest list index served: RAM is freed above it first
+std::atomic<long long> s_shedBytes{0}, s_shedTimes{0};
 std::atomic<int> g_checkLeft{kCheck};
 std::atomic<long long> s_ready{0}, s_readBytes{0}, s_reads{0}, s_failed{0}, s_readTicks{0}, s_waitRam{0};
 std::atomic<long long> s_served{0}, s_servedBytes{0}, s_checked{0}, s_bad{0}, s_gameFirst{0}, s_waited{0}, s_again{0},
@@ -180,34 +189,21 @@ void IoPriority(HANDLE h, bool low) {
 	SetFileInformationByHandle(h, FileIoPriorityHintInfo, &p, sizeof p);
 }
 
-DWORD WINAPI Reader(LPVOID) {
-	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-	std::vector<HANDLE> hs(g_listPaks.size(), INVALID_HANDLE_VALUE);
-	bool low = true;   // low I/O priority until the load asks for listed data: the menu and the game's start come first
-	size_t cap = (size_t)kChunk + (2 << 20);
-	uint8_t* buf = (uint8_t*)VirtualAlloc(nullptr, cap, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-	std::vector<size_t> chunk;
-	const long long t0 = Now();
-	size_t i = 0;
-	while (buf && i < g_n && !g_stop) {
-		Item& first = g_items[i];
-		if (first.state.load() != 0) { i++; continue; }
-		bool counted = false;
-		while (!g_stop && (g_held.load() + first.size > kCapBytes || FreeMb() < kFloorMb)) {
-			if (!counted) { s_waitRam++; counted = true; }
-			Sleep(20);
-		}
-		if (g_stop) break;
-		if (low && g_loadSeen.load()) {
-			low = false;
-			for (HANDLE h : hs) if (h != INVALID_HANDLE_VALUE) IoPriority(h, false);
-		}
+// next chunk for a reader: the first waiting item and its neighbours in the same pak (state 0 -> 1). false = list done
+bool NextChunk(std::vector<size_t>& chunk, int& pak, int64_t& lo, int64_t& hi) {
+	std::lock_guard<std::mutex> g(g_chunkMu);
+	for (;;) {
+		while (g_cursor < g_n && g_items[g_cursor].state.load() != 0) g_cursor++;
+		if (g_cursor >= g_n) return false;
+		Item& first = g_items[g_cursor];
 		int e0 = 0;
-		if (!first.state.compare_exchange_strong(e0, 1)) { i++; continue; }   // the game asked first
+		if (!first.state.compare_exchange_strong(e0, 1)) { g_cursor++; continue; }   // the game asked first
 		chunk.clear();
-		chunk.push_back(i);
-		int64_t lo = first.abs, hi = first.abs + first.size;
-		size_t j = i + 1;
+		chunk.push_back(g_cursor);
+		pak = first.pak;
+		lo = first.abs;
+		hi = first.abs + first.size;
+		size_t j = g_cursor + 1;
 		for (; j < g_n; j++) {
 			Item& it = g_items[j];
 			if (it.pak != first.pak || it.abs < lo || it.abs > hi + kMerge || it.abs + it.size - lo > kChunk) break;
@@ -217,10 +213,63 @@ DWORD WINAPI Reader(LPVOID) {
 			chunk.push_back(j);
 			if (it.abs + it.size > hi) hi = it.abs + it.size;
 		}
-		i = j;
-		HANDLE& h = hs[first.pak];
+		g_cursor = j;
+		return true;
+	}
+}
+
+// RAM is short: frees ready copies from the far end (list order) until `want` bytes are freed; they wait again
+void Shed(long long want) {
+	size_t top;
+	{ std::lock_guard<std::mutex> g(g_chunkMu); top = g_cursor; }
+	const size_t floorIdx = g_servedHi.load();
+	long long got = 0;
+	size_t lowest = top;
+	for (size_t i = top; i-- > floorIdx && got < want;) {
+		Item& it = g_items[i];
+		int r = 2;
+		if (!it.state.compare_exchange_strong(r, 5)) continue;
+		free(it.data);
+		it.data = nullptr;
+		g_held -= it.size;
+		got += it.size;
+		it.state.store(0, std::memory_order_release);
+		lowest = i;
+	}
+	if (!got) return;
+	{ std::lock_guard<std::mutex> g(g_chunkMu); if (lowest < g_cursor) g_cursor = lowest; }
+	s_shedBytes += got;
+	if (s_shedTimes++ == 0)
+		Log("streamahead: free RAM %lld MB, below %lld: freeing the farthest-ahead copies (%.0f MB now; read again when "
+		    "there is room)", ramgov::AvailMb(), ramgov::ShedLevel().load(), got / 1e6);
+}
+
+DWORD WINAPI Reader(LPVOID) {
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+	std::vector<HANDLE> hs(g_listPaks.size(), INVALID_HANDLE_VALUE);
+	bool low = true;   // low I/O priority until the load asks for listed data: the menu and the game's start come first
+	size_t cap = (size_t)kChunk + (2 << 20);
+	uint8_t* buf = (uint8_t*)VirtualAlloc(nullptr, cap, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	std::vector<size_t> chunk;
+	const long long t0 = Now();
+	while (buf && !g_stop) {
+		bool counted = false;
+		while (!g_stop && (g_held.load() + kChunk > kCapBytes || !ramgov::CanTake(kChunk))) {
+			if (!counted) { s_waitRam++; counted = true; }
+			if (const long long want = ramgov::ShedBytes()) Shed(want);
+			Sleep(20);
+		}
+		if (g_stop) break;
+		if (low && g_loadSeen.load()) {
+			low = false;
+			for (HANDLE h : hs) if (h != INVALID_HANDLE_VALUE) IoPriority(h, false);
+		}
+		int pak = 0;
+		int64_t lo = 0, hi = 0;
+		if (!NextChunk(chunk, pak, lo, hi)) break;
+		HANDLE& h = hs[pak];
 		if (h == INVALID_HANDLE_VALUE) {
-			h = CreateFileW(Wide(g_listPaks[first.pak].path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			h = CreateFileW(Wide(g_listPaks[pak].path).c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 			                nullptr, OPEN_EXISTING, FILE_FLAG_NO_BUFFERING, nullptr);
 			if (h != INVALID_HANDLE_VALUE) IoPriority(h, low);
 		}
@@ -257,7 +306,7 @@ DWORD WINAPI Reader(LPVOID) {
 	}
 	for (HANDLE h : hs) if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
 	if (buf) VirtualFree(buf, 0, MEM_RELEASE);
-	g_readerDone = true;
+	if (g_readersLeft.fetch_sub(1) == 1) g_readerDone = true;
 	return 0;
 }
 
@@ -317,10 +366,12 @@ void WriteList() {
 }
 
 void Status() {
-	Log("streamahead: read ahead %lld of %zu (%.0f MB in %lld reads, %.1f s, %lld failed, waited for RAM %lld x), held %.0f MB; "
+	Log("streamahead: read ahead %lld of %zu (%.0f MB in %lld reads, %.1f s, %lld failed, waited for RAM %lld x, freed for RAM "
+	    "%.0f MB in %lld goes), held %.0f MB; "
 	    "served %lld (%.0f MB), checked %lld, mismatches %lld; game came first %lld, waited on our read %lld (timeouts %lld), "
 	    "asked again %lld, not listed %lld", s_ready.load(), g_n, s_readBytes.load() / 1e6, s_reads.load(),
-	    (double)s_readTicks.load() / g_freq, s_failed.load(), s_waitRam.load(), g_held.load() / 1e6, s_served.load(),
+	    (double)s_readTicks.load() / g_freq, s_failed.load(), s_waitRam.load(), s_shedBytes.load() / 1e6, s_shedTimes.load(),
+	    g_held.load() / 1e6, s_served.load(),
 	    s_servedBytes.load() / 1e6, s_checked.load(), s_bad.load(), s_gameFirst.load(), s_waited.load(), s_timeouts.load(),
 	    s_again.load(), s_notListed.load());
 }
@@ -346,6 +397,7 @@ DWORD WINAPI Writer(LPVOID) {
 			WriteList();
 		}
 		if (!g_listDone && now - g_start > kRecordMaxMs) { g_listDone = true; FlushTrace(); Log("streamahead: recording stopped (30 minutes, no gameplay start seen)"); }
+		if (g_n && !freed && !g_stop) if (const long long want = ramgov::ShedBytes()) Shed(want);   // readers may be done
 		if (g_n) {
 			const long long sig = s_ready + s_served * 7 + s_gameFirst * 13 + s_notListed * 17 + s_bad;
 			if (sig != lastSig && (now - g_start) % 2000 < 1000) { lastSig = sig; Status(); }
@@ -373,6 +425,7 @@ int Streamahead_Serve(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t offs
 	if (it.pak != p.list || it.dataOff != dataOff || it.offset != offset || it.size != want) { s_notListed++; return -1; }
 	g_loadSeen.store(true, std::memory_order_relaxed);
 	int st = it.state.load(std::memory_order_acquire);
+	while (st == 5) { SwitchToThread(); st = it.state.load(std::memory_order_acquire); }   // being freed: back at 0 next
 	if (st == 1) {   // our read of it is under way (one read of up to 4 MB, ~10 ms): wait for it, at most 100 ms
 		s_waited++;
 		const long long t0 = Now();
@@ -388,6 +441,8 @@ int Streamahead_Serve(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t offs
 	if (st != 2 || !it.state.compare_exchange_strong(e2, 3)) { s_again++; return -1; }
 	uint8_t* d = it.data;
 	it.data = nullptr;
+	const size_t idx = f->second;
+	for (size_t hi = g_servedHi.load(); hi < idx + 1 && !g_servedHi.compare_exchange_weak(hi, idx + 1);) {}
 	int r = 0;
 	if (g_checkLeft.load() > 0) {   // self-check: the game reads it too and keeps its own bytes
 		r = (int)orig(cache, entry, out, offset, size);
@@ -446,13 +501,12 @@ void Streamahead_Install(void* self) {
 	}
 	if (g_mode == 0) { Log("streamahead: off"); g_listDone = true; return; }
 	g_recs.reserve(100000);
-	char floorEnv[32] = {};
-	if (GetEnvironmentVariableA("DEAGLE_STREAMAHEAD_FLOOR_MB", floorEnv, sizeof floorEnv)) kFloorMb = (DWORDLONG)atoll(floorEnv);
 	if (g_mode == 2 && LoadList()) {
 		g_serveOn = true;
-		Log("streamahead: reading ahead, at most %lld MB held, not below %llu MB free RAM (%llu MB free now)", kCapBytes >> 20,
-		    (unsigned long long)kFloorMb, (unsigned long long)FreeMb());
-		CloseHandle(CreateThread(nullptr, 0, Reader, nullptr, 0, nullptr));
+		Log("streamahead: reading ahead with %d readers, at most %lld MB held, while >= %lld MB RAM free (%lld MB free now)",
+		    kReaders, kCapBytes >> 20, ramgov::TakeLevel().load(), ramgov::AvailMb());
+		g_readersLeft = kReaders;
+		for (int r = 0; r < kReaders; r++) CloseHandle(CreateThread(nullptr, 0, Reader, nullptr, 0, nullptr));
 	}
 	Log("streamahead: mode %d (%s)", g_mode, g_mode == 2 ? "record + serve" : "record");
 	CloseHandle(CreateThread(nullptr, 0, Writer, nullptr, 0, nullptr));

@@ -2,9 +2,11 @@
 // usage (run in this order from one folder; every file lands next to the exe):
 //   streamahead_test record    records 700 requests, "gameplay starts", the list must appear 5 s later
 //   streamahead_test serve     reads the list ahead and serves the same requests: every byte checked, most served
+//   streamahead_test shed      RAM gets short after the read-ahead: every copy is freed, the game reads them itself
 //   streamahead_test changed   the pak's write time changed since the list: nothing may be served
 // Exit code 0 = pass.
 #include "../src/streamahead.h"
+#include "../src/ramgov.h"
 #include <windows.h>
 #include <cstdarg>
 #include <cstdio>
@@ -89,7 +91,13 @@ int main(int argc, char** argv) {
 	*(HANDLE*)(cache + 0x10) = h;
 	Streamahead_Install(nullptr);
 	const std::vector<Req> reqs = Requests();
+	ramgov::SetForTest(0, -1);   // this PC's free RAM doesn't decide the test
 	if (mode != "record") Sleep(3000);   // the reader reads the list meanwhile (the main menu)
+	if (mode == "shed") {        // RAM short: everything held is freed (the writer checks once a second)
+		ramgov::SetForTest(1ll << 40, 1ll << 40);
+		Sleep(2500);
+		ramgov::SetForTest(0, -1);
+	}
 	std::vector<uint8_t> out;
 	long long served = 0, bad = 0, fell = 0;
 	for (const Req& q : reqs) {
@@ -127,6 +135,7 @@ int main(int argc, char** argv) {
 		if (lines != (int)reqs.size() - 47) { printf("FAIL: list size\n"); return 1; }
 	}
 	if (mode == "serve" && served < (long long)(reqs.size() - 47) * 9 / 10) { printf("FAIL: too few served\n"); return 1; }
+	if (mode == "shed" && served) { printf("FAIL: served after everything was freed\n"); return 1; }
 	if (mode == "changed" && served) { printf("FAIL: served from a pak that changed since the list\n"); return 1; }
 	printf("PASS %s\n", mode.c_str());
 	return 0;

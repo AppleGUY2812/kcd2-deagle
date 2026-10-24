@@ -2,6 +2,7 @@
 #include "pakahead.h"
 #include "log.h"
 #include "mainreads.h"
+#include "ramgov.h"
 #include <windows.h>
 #include <atomic>
 #include <cstdio>
@@ -53,7 +54,8 @@ bool g_pin = true;                                 // VirtualLock the big ones (
 constexpr ULONGLONG kKeepMs = 15 * 60 * 1000;     // nothing served after this: everything is freed
 struct Item {
 	uint32_t pak, dataOff, csize, usize, crc, idx;
-	std::atomic<int> state{0};                    // 0 waiting, 1 a worker has it, 2 ready, 3 taken or dropped, 4 being touched
+	std::atomic<int> state{0};                    // 0 waiting, 1 a worker has it, 2 ready, 3 taken or dropped, 4 being touched,
+	                                              // 5 being freed for RAM (back to 0 right after)
 	uint8_t* data = nullptr;
 };
 std::vector<uint64_t> g_prefix;                    // unpacked bytes before item i (list order)
@@ -67,7 +69,10 @@ std::deque<Item> g_items;                          // deque: Items never move (a
 std::unordered_map<uint64_t, Item*> g_byKey;       // (list pak index << 32) | data offset
 std::unordered_map<uintptr_t, int> g_fileToListPak; // the game's FILE* -> list pak index (-1 = not in the list)
 std::mutex g_mapMu;
-std::atomic<size_t> g_next{0}, g_held{0};
+std::atomic<size_t> g_held{0};
+std::mutex g_pickMu;                               // workers pick their next entry under this
+size_t g_cursor = 0;                               // no waiting entry below this (moved back when entries are freed)
+std::atomic<long long> s_shedBytes{0}, s_shedTimes{0}, s_ramWaits{0};
 std::atomic<long long> s_served{0}, s_servedBytes{0}, s_missNotReady{0}, s_prefetched{0}, s_bad{0}, s_readMs{0}, s_unpackMs{0};
 std::atomic<bool> g_stop{false};
 
@@ -152,6 +157,7 @@ bool TakeReady(Item& it) {
 	for (;;) {
 		int s = 2;
 		if (it.state.compare_exchange_strong(s, 3)) { if (waited) s_touchWaits++; return true; }
+		if (s == 5) { YieldProcessor(); continue; }   // being freed for RAM: back at 0 in a moment, then the game reads it
 		if (s != 4 || Now() > lim) {
 			if (s == 0) { int w = 0; it.state.compare_exchange_strong(w, 3); }   // not started: the workers skip it
 			return false;                                                      // being unpacked: dropped after
@@ -251,6 +257,41 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
 }
 
 // ---- workers
+// the lowest waiting entry, now the caller's (state 0 -> 1); g_items.size() = none left
+size_t Pick() {
+	std::lock_guard<std::mutex> lk(g_pickMu);
+	const size_t n = g_items.size();
+	for (; g_cursor < n; g_cursor++) {
+		int w = 0;
+		if (g_items[g_cursor].state.compare_exchange_strong(w, 1)) return g_cursor++;
+	}
+	return n;
+}
+
+// RAM is short: frees ready entries from the far end (list order) until `want` bytes are freed; they wait again
+void Shed(long long want) {
+	size_t top;
+	{ std::lock_guard<std::mutex> lk(g_pickMu); top = g_cursor; }
+	const size_t floorIdx = g_servedHi.load();
+	long long got = 0;
+	size_t lowest = top;
+	for (size_t i = top; i-- > floorIdx && got < want;) {
+		Item& it = g_items[i];
+		int r = 2;
+		if (!it.state.compare_exchange_strong(r, 5)) continue;
+		got += it.usize;
+		Release(it);
+		it.state.store(0);
+		lowest = i;
+	}
+	if (!got) return;
+	{ std::lock_guard<std::mutex> lk(g_pickMu); if (lowest < g_cursor) g_cursor = lowest; }
+	s_shedBytes += got;
+	if (s_shedTimes++ == 0)
+		Log("pakahead: free RAM %lld MB, below %lld: freeing the farthest-ahead entries (%.0f MB now; read again when there "
+		    "is room)", ramgov::AvailMb(), ramgov::ShedLevel().load(), got / 1e6);
+}
+
 DWORD WINAPI Worker(LPVOID) {
 	SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);   // low CPU and I/O priority: the menu stays smooth
 	libdeflate_decompressor* d = libdeflate_alloc_decompressor();
@@ -259,11 +300,11 @@ DWORD WINAPI Worker(LPVOID) {
 	const size_t n = g_items.size();
 	for (;;) {
 		if (g_stop) break;
-		const size_t i = g_next++;
+		for (bool counted = false; !g_stop && !ramgov::CanTake(8 << 20); Sleep(20))   // RAM first: the game comes first
+			if (!counted) { counted = true; s_ramWaits++; }
+		const size_t i = Pick();
 		if (i >= n) break;
 		Item& it = g_items[i];
-		int waiting = 0;
-		if (!it.state.compare_exchange_strong(waiting, 1)) continue;   // the game already took it
 		while (!g_stop && g_held.load() + it.usize > kCapBytes) Sleep(20);   // full: wait for the load to take some
 		if (g_stop) { it.state = 3; break; }
 		HANDLE& h = handles[it.pak];
@@ -309,7 +350,13 @@ constexpr uint64_t kTouchAhead = 256ull << 20;
 DWORD WINAPI Toucher(LPVOID) {
 	const size_t n = g_items.size();
 	size_t t = 0;
+	ULONGLONG lastShed = 0;
 	while (!g_stop && t < n) {
+		const ULONGLONG now = GetTickCount64();
+		if (now - lastShed >= 50) {   // RAM short: free from the far end (also while the workers wait)
+			lastShed = now;
+			if (const long long want = ramgov::ShedBytes()) Shed(want);
+		}
 		const size_t hi = g_servedHi.load();
 		if (t < hi) t = hi;                                        // fell behind the game: catch up
 		if (t >= n) break;
@@ -360,12 +407,10 @@ void StartAhead() {
 	MEMORYSTATUSEX m{ sizeof m };
 	GlobalMemoryStatusEx(&m);
 	const unsigned long long freeMb = m.ullAvailPhys >> 20;
-	// The game itself grows by ~6 GB during a load (16 GB PC, 2026-10-23). Hold at most what is left after that plus
-	// 1.5 GB for everything else, between 512 MB and 2 GB; pin only with 3 GB of that to spare. (21:12 boot: 3.8 GB
-	// free with WSL holding 3.8 GB - the old all-or-nothing 4 GB gate turned unpacking ahead off.)
-	const long long spare = (long long)freeMb - 3500;   // 21:36 boot: 4466 MB free was refused at - 4500, and the load paid 3-5 s
-	if (spare < 512) { Log("pakahead: only %llu MB RAM free - not unpacking ahead", freeMb); g_items.clear(); g_byKey.clear(); return; }
-	kCapBytes = (size_t)(spare > 2048 ? 2048 : spare) << 20;
+	// At most 2 GB held; free RAM decides the rest as it goes (ramgov.h: read while >= 1.5 GB free, free the farthest
+	// entries below 1.2 GB). The old rule fixed the cap at start from free RAM - 3.5 GB: boot 14 started with 6.6 GB free,
+	// held 2 GB, and the game's growth then paged it out. Pin only with lots to spare.
+	kCapBytes = 2048ull << 20;
 	g_pin = freeMb >= 7500;
 	// room to lock the held buffers: the minimum working set bounds what VirtualLock may pin
 	SIZE_T mn = 0, mx = 0;
@@ -377,8 +422,8 @@ void StartAhead() {
 	Log("pakahead: working set minimum %s (%zu MB -> +%zu MB)", ws ? "raised" : "NOT raised", mn >> 20, (kCapBytes >> 20) + 128);
 	for (int i = 0; i < kWorkers; i++) CloseHandle(CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr));
 	CloseHandle(CreateThread(nullptr, 0, Toucher, nullptr, 0, nullptr));
-	Log("pakahead: %d workers unpacking ahead (%llu MB RAM free, cap %zu MB, %s)", kWorkers, freeMb, kCapBytes >> 20,
-	    g_pin ? "pinned" : "not pinned: little RAM");
+	Log("pakahead: %d workers unpacking ahead (%llu MB RAM free, cap %zu MB, reading while >= %lld MB free, %s)", kWorkers,
+	    freeMb, kCapBytes >> 20, ramgov::TakeLevel().load(), g_pin ? "pinned" : "not pinned: little RAM");
 }
 
 void Flush() {
@@ -407,9 +452,10 @@ DWORD WINAPI Writer(LPVOID) {
 		if (!g_items.empty() && (s_served != lastServed || s_prefetched != lastPre)) {
 			lastServed = s_served; lastPre = s_prefetched;
 			Log("pakahead: ahead %lld of %zu ready (read %lld ms, unpack %lld ms, bad %lld), served %lld (%.0f MB), game "
-			    "came first %lld, held %.0f MB, pinned %lld (not %lld)", s_prefetched.load(), g_items.size(), s_readMs.load(),
-			    s_unpackMs.load(), s_bad.load(), s_served.load(), s_servedBytes.load() / 1e6, s_missNotReady.load(),
-			    g_held.load() / 1e6, s_locked.load(), s_lockFail.load());
+			    "came first %lld, held %.0f MB, pinned %lld (not %lld); RAM: waited %lld x, freed %.0f MB in %lld goes, %lld MB free",
+			    s_prefetched.load(), g_items.size(), s_readMs.load(), s_unpackMs.load(), s_bad.load(), s_served.load(),
+			    s_servedBytes.load() / 1e6, s_missNotReady.load(), g_held.load() / 1e6, s_locked.load(), s_lockFail.load(),
+			    s_ramWaits.load(), s_shedBytes.load() / 1e6, s_shedTimes.load(), ramgov::AvailMb());
 			const double ct = (double)s_copyTicks.load() / g_freq, tt = (double)s_touchTicks.load() / g_freq;
 			Log("pakahead: copies into the game %.0f MB in %.2f s (%.2f GB/s); sampled pages not in RAM: ours %lld of %lld, "
 			    "game's buffer %lld; toucher %.0f MB in %.2f s, %lld of %lld sampled pages were out, game waited on it %lld x",

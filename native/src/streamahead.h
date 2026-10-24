@@ -7,9 +7,9 @@
 // 1. Recording (mode 1 and 2): every unbuffered stream request (pak, entry data offset, offset, size) until gameplay
 //    first starts goes to deagle_streamahead_trace.csv next to the plugin, and 5 s after gameplay first starts the
 //    requests so far, first occurrence only, in time order, go to deagle_streamahead_list.txt for the next start.
-// 2. Serving (mode 2, with a list): one thread reads the list's ranges from the paks at start (its own unbuffered
+// 2. Serving (mode 2, with a list): 4 threads read the list's ranges from the paks at start (their own unbuffered
 //    handles, low I/O priority until the load asks for listed data; neighbouring requests merged into reads of up to
-//    4 MB), at most 512 MB held and not below 3.5 GB free RAM. The hook copies an exact match (same pak path, file size
+//    4 MB), at most 512 MB held, free RAM by ramgov.h (copies far ahead are freed and read again when RAM is short). The hook copies an exact match (same pak path, file size
 //    and write time as recorded, same data offset, offset and size) into the game's buffer; anything else, or not read
 //    yet, goes the game's own way. The first 100 copies are checked against the game's own read: one mismatch turns
 //    serving off for the session. What the load never asked for is freed 20 s after gameplay starts.
