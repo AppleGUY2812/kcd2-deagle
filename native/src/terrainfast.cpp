@@ -39,7 +39,7 @@ uintptr_t g_base = 0;
 FinFn g_finStats = nullptr;
 void* g_se = nullptr;            // the stream engine, from the first main-thread finalize
 long long g_freq = 1, g_lastFin = 0;
-bool g_inFin = false, g_inPump = false, g_wasWait = false;
+bool g_inFin = false, g_inPump = false, g_wasWait = false, g_inLoad = false;
 
 inline double Ms(long long t) { return (double)t * 1000.0 / g_freq; }
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
@@ -115,6 +115,9 @@ std::string Line(const Tally& s) {
 void __fastcall HkFin(void* se) {
 	if (g_inFin || !OnMain()) { ((FinFn)g_t[kFin].orig)(se); return; }   // the game's guard handles a nested call
 	if (!g_se) g_se = se;
+	// "terrainfast: load" counts this load only (boot 57 counted the menu preload's finalizes too); the first main-thread
+	// finalize of a load comes before the terrain step's, a frame tick may not
+	if (!g_inLoad && Readiness_LevelState() >= 1) { g_inLoad = true; g_s[0] = Tally(); }
 	g_inFin = true;
 	const long long a = Now();
 	((FinFn)g_t[kFin].orig)(se);
@@ -226,6 +229,7 @@ void Terrainfast_OnLoaded() {
 		}
 	}
 	g_rec.clear(); g_recSet.clear(); g_recLevel.clear();
+	g_inLoad = false;
 	Log("terrainfast: load (mode %d, every %d ms): %s", g_mode.load(), g_ms.load(), Line(g_s[0]).c_str());
 	g_s[0] = Tally();
 }
