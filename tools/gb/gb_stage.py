@@ -122,6 +122,10 @@ rounds = "".join(f'\n    <Attachment Type="CA_SKIN" AName="vm_round_{i}" Binding
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 from flash_cdf import block as flash_block
 flash = "".join("\n" + l for l in flash_block(REPO, f"src/Objects/manmade/weapons/guns/{SLUG}"))
+# a gun's rigid body pieces (Silhouette POM), one bone attachment per gun bone (tools/ron/rigid_cdf.py)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ron"))
+from rigid_cdf import block as rigid_block
+flash += "".join("\n" + l for l in rigid_block(REPO, SLUG))
 open(os.path.join(odir, f"{NAME}.cdf"), "w").write(f'''<CharacterDefinition>
   <Model File="objects/manmade/weapons/guns/{SLUG}/{NAME}.chr" Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" />
   <AttachmentList>

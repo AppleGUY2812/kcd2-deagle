@@ -49,19 +49,14 @@ for b, ts in sorted(parts.items(), key=lambda kv: -len(kv[1])):
     inv = mats[joints.index(b)]
     tri = idx[ts]
     p = P[tri[:, :, vo]].reshape(-1, 3); n = N[tri[:, :, no]].reshape(-1, 3); uv = UV[tri[:, :, to]].reshape(-1, 2)
-    # MODEL space (the bind pose, as the .skin holds it): CreateBoneAttachment(.., true) projects the attachment
-    # (CE 5.7.1 CAttachmentBONE::ProjectAttachment: relative = inverse(default joint) x absolute default (identity)),
-    # so the engine places the piece with its own joint frames: world = joint x inverse(default joint) x model vertex,
-    # the skinning itself. The bone-space version (x the DAE's inverse bind, attached unprojected) landed rotated and
-    # off the gun in game (the user's screenshot 2026-10-23): the DAE's frames are not the engine's.
-    ph = np.c_[p, np.ones(len(p))] @ bsm.T
-    nl = n @ np.linalg.inv(bsm[:3, :3]); nl /= np.linalg.norm(nl, axis=1, keepdims=True)
-    # MEASURED in game 2026-10-23: a CGF from this path shows turned +90 deg about Z against the character's model space
-    # (the frame attached unprojected to "root" lay with its muzzle to the LEFT, barrel along +Y in this data; the
-    # viewmodel build turns its +X view to CryEngine's +Y, the CGF path doesn't): pre-turn -90 deg, (x, y) -> (y, -x).
-    ph = np.c_[ph[:, 1], -ph[:, 0], ph[:, 2]]
-    nl = np.c_[nl[:, 1], -nl[:, 0], nl[:, 2]]
+    # BONE space (inverse bind x bind shape x position): the barrel lies along +Y, the engine's bone forward (GetBoneDir =
+    # joint.q x (0,1,0) pointed along the gun in game, 2026-10-23), so no extra turn. skin.lua binds each piece with a
+    # PROJECTED bone attachment (unprojected ones never get a joint id in CE 5.7.1 CreateAttachment: they sat at the
+    # model origin by the eye, screenshots 4 and 6) and then zeroes the projection's offset (SetAttachmentPos/Angles 0):
+    # world = joint x the piece, the skinning itself.
+    ph = (np.c_[p, np.ones(len(p))] @ bsm.T) @ inv.T
+    nl = n @ np.linalg.inv(inv[:3, :3] @ bsm[:3, :3]); nl /= np.linalg.norm(nl, axis=1, keepdims=True)
     np.savez(os.path.join(OUT, f'part_{b}.npz'), p=ph[:, :3], n=nl, uv=uv)
     out[b] = len(ts)
-    print('%-22s tris %5d  model-space bbox %s .. %s' % (b, len(ts), ph[:, :3].min(0).round(3), ph[:, :3].max(0).round(3)))
+    print('%-22s tris %5d  bone-space bbox %s .. %s' % (b, len(ts), ph[:, :3].min(0).round(3), ph[:, :3].max(0).round(3)))
 json.dump(out, open(os.path.join(OUT, 'parts.json'), 'w'), indent=1)

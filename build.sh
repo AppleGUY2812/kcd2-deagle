@@ -9,6 +9,7 @@ python3 "$here/tools/check_native.py" "$here" || { echo "the plugin lacks a hand
 python3 "$here/tools/gen_tracers.py" "$here" >/dev/null   # deagle_tracers.xml: a tracer per muzzle speed
 python3 "$here/tools/check_fx.py" "$here" || { echo "a muzzle flash part dies before it can be drawn (src/Libs/Particles/deagle.xml)" >&2; exit 1; }
 python3 "$here/tools/flash_cdf.py" "$here" >/dev/null   # every flash card in the viewmodels' .cdf (the script only hides / shows them)
+python3 "$here/tools/ron/rigid_cdf.py" "$here" >/dev/null   # the guns' rigid body pieces (Silhouette POM) in their .cdf
 out="$here/dist/deagle"
 rm -rf "$out" && mkdir -p "$out/data"
 cp "$here/mod.manifest" "$out/"
