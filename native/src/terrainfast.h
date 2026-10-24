@@ -7,10 +7,12 @@
 // CSystem::UpdateLoadingScreen (FUN_1806a0708), which runs it at most once per 20 ms. Boot 46: the terrain wait was
 // 1430 ms with the reads already served from memory (streamahead) and the main thread spinning 227k polls in between,
 // so the wait is set by that 20 ms cadence and the finalize's own CPU, not by the disk.
-// Mode 2 (default): at every UpdateLoadingScreen call on the main thread while the game says it is loading (its own
+// Boot 48 (mode 2): the wait fell 1430 -> 156 ms but started 1.4 s later, total unchanged: ~1.6 s of CGF StreamOnComplete
+// is the main thread's own CPU whatever the tick rate, so the default is mode 1 (timing only).
+// Mode 2: at every UpdateLoadingScreen call on the main thread while the game says it is loading (its own
 // vt+0x128 check), the finalize also runs when the last one is at least `ms` (1) old. Same call sites, same thread, the
 // game's own re-entry guard (DAT_18547dae5); only the 20 ms throttle is shorter. The loading screen itself still draws
-// every 20 ms. Mode 1 times only, mode 0 off. fastload_terrainfast.txt: "mode [ms]".
+// every 20 ms. Mode 1 (default) times only, mode 0 off. fastload_terrainfast.txt: "mode [ms]".
 // Log: "terrainfast: terrain wait ..." when the terrain wait ends (loadwatch.cpp), and "terrainfast: load ..." when
 // gameplay starts: finalize calls (the game's / ours), their main-thread ms, CGF and LOD completions and their ms, and the
 // loading-screen ticks' ms.

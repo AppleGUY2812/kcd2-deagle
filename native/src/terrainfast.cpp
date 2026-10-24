@@ -27,7 +27,7 @@ using TickFn = bool(__fastcall*)(void* sys);
 using FinFn = void(__fastcall*)(void* se);
 using Fn4 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);   // StreamOnComplete(this, stream, error)
 
-std::atomic<int> g_mode{2};
+std::atomic<int> g_mode{1};   // 2 measured no gain (boot 48): the finalize is Main CPU
 std::atomic<int> g_ms{1};
 uintptr_t g_base = 0;
 FinFn g_finStats = nullptr;
