@@ -287,6 +287,34 @@ built with MSVC exactly as in the plugin, `native/test/zbench.cpp`):
 | **libdeflate (MSVC, the plugin)** | **589** | **304** | **1629** |
 | crc32: zlib / zlib-ng / ISA-L / libdeflate (MSVC) | 2358 / 9737 / 11276 / 9951 | | |
 
+Full race, 2026-10-23 (the user: "the search space is all the decompressor tools in existence"): same entries, same
+CPU, one thread, every output checked against the zip's CRC (all 0 bad). MB/s of unpacked data:
+
+| decoder | language | objects | terrain | level |
+|---|---|---|---|---|
+| **libdeflate 1.26** (MSVC, in the plugin) | C | **589** | **304** | **1629** |
+| libdeflate 1.26 (Rust libdeflater / gcc -march=native) | C | 616 / 564 | 316 / 310 | 1597 / 1575 |
+| sirocco 0.2 | Rust | 568 | 322 | 1437 |
+| ISA-L igzip (python isal) | C + asm | 426 | 244 | 1007 |
+| AMD AOCL zlib | C | 419 | 206 | 1113 |
+| zlib-ng (python) | C | 417 | 214 | 923 |
+| zlib-rs | Rust | 403 | 203 | 926 |
+| Wuffs v0.4 | Wuffs -> C | 380 | 199 | 1084 |
+| zune-inflate (allocates its output) | Rust | 338 | 214 | 727 |
+| miniz_oxide | Rust | 310 | 169 | 820 |
+| zlib-dougallj (gcc.amd64) | C | 322 | 193 | 1019 |
+| zlib 1.3.1 | C | 248 | 174 | 642 |
+| Go klauspost/compress | Go | 183 | 118 | 411 |
+| Go compress/flate | Go | 117 | 83 | 379 |
+| Zig 0.15.2 std.compress.flate | Zig | 95 | 44 | 236 |
+
+libdeflate wins two of three outright; sirocco ties it on terrain.pak's tiny files (322 vs 316, within run-to-run
+noise). Harnesses: scratchpad csrc/harness.c, rbench (Rust), gobench, zigbench; data dumped by zbench.py.
+
+In game (2026-10-23 19:36 boot, verify mode): 63,834 entries / 5.7 GB went through the hook during the load, 0
+mismatches; on the same calls zlib 16.6 s vs libdeflate 9.3 s unpacking and 5.3 s vs 0.75 s crc32 (CPU time over all
+threads).
+
 `/arch:AVX2` made no difference to the unpack (563 / 303 / 1601) and +12% to crc32, so the plugin builds without it.
 GPU unpacking does not fit: entries are tiny (median 2.5 KB) and needed on the CPU, and DirectStorage's GPU path is
 GDeflate, a different format (all 82 GB repacked).
