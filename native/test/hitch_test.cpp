@@ -4,6 +4,7 @@
 // Run: hitch_test.exe <dir>   (writes <dir>\hitch_test.log and <dir>\deagle_hitch.csv)
 #include "../src/hitch.h"
 #include "../src/log.h"
+#include "MinHook.h"
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
@@ -43,13 +44,19 @@ int main() {
 	LogInit(&__ImageBase);   // hitch_test.log next to the exe
 	HMODULE self = (HMODULE)&__ImageBase;
 	const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)((const char*)self + __ImageBase.e_lfanew);
+	if (MH_Initialize() != MH_OK) { printf("FAIL: MinHook\n"); return 1; }
 	Hitch_Install((uintptr_t)self, nt->OptionalHeader.SizeOfImage, self);   // the exe stands in for WHGame.dll
 	CloseHandle(CreateThread(nullptr, 0, Render, nullptr, 0, nullptr));
 	Frames(30);
+	HANDLE probe = CreateFileW(L"hitch_probe.tmp", GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+	                           FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);   // inside long frame #1
+	if (probe != INVALID_HANDLE_VALUE) CloseHandle(probe);
 	Busy(700);
 	Frames(30);
+	HMODULE ver = LoadLibraryA("version.dll");   // inside long frame #2
 	Sleep(600);
 	Frames(60);
+	if (ver) FreeLibrary(ver);
 	Sleep(200);   // the watcher reports at its next look
 	char path[MAX_PATH];
 	GetModuleFileNameA(self, path, MAX_PATH);
@@ -58,11 +65,14 @@ int main() {
 	FILE* f = fopen(log.c_str(), "r");
 	if (!f) { printf("FAIL: no log\n"); return 1; }
 	char line[4096];
-	int hitches = 0, busyOk = 0, waitOk = 0, renderOk = 0;
+	int hitches = 0, busyOk = 0, waitOk = 0, renderOk = 0, fileOk = 0, dllOk = 0;
 	while (fgets(line, sizeof line, f)) {
 		if (!strstr(line, "hitch: #")) continue;
 		printf("%s", line);
 		if (strstr(line, " RenderThread: ") && strstr(line, "in: WHGame.dll+")) { renderOk++; continue; }
+		if (strstr(line, "hitch: #1 files:") && strstr(line, "Main hitch_probe.tmp")) { fileOk = 1; continue; }
+		if (strstr(line, "hitch: #2 files:") && strstr(line, "loaded version.dll")) { dllOk = 1; continue; }
+		if (strstr(line, " files: ")) continue;
 		hitches++;
 		int ms = 0, n = 0;
 		const char* p = strstr(line, "main frame ");
@@ -72,9 +82,9 @@ int main() {
 			waitOk = 1;
 	}
 	fclose(f);
-	if (hitches != 2 || !busyOk || !waitOk || renderOk != 2) {
-		printf("FAIL: %d long frames (want 2), busy %d, wait %d, render thread sampled in %d (want 2)\n", hitches, busyOk,
-		       waitOk, renderOk);
+	if (hitches != 2 || !busyOk || !waitOk || renderOk != 2 || !fileOk || !dllOk) {
+		printf("FAIL: %d long frames (want 2), busy %d, wait %d, render thread sampled in %d (want 2), probe file listed %d, "
+		       "version.dll load listed %d\n", hitches, busyOk, waitOk, renderOk, fileOk, dllOk);
 		return 1;
 	}
 	printf("hitch_test: all passed\n");

@@ -24,7 +24,8 @@ set_property(TARGET streamahead_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreade
 add_executable(mainreads_test test/mainreads_test.cpp src/mainreads.cpp)
 set_property(TARGET mainreads_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 # outside-the-game test: hitch.cpp's long-frame sampler on a stalling thread (native/test/hitch_test.cpp, runs on Windows)
-add_executable(hitch_test test/hitch_test.cpp src/hitch.cpp src/log.cpp)
+add_executable(hitch_test test/hitch_test.cpp src/hitch.cpp src/log.cpp ${MINHOOK_SRC})
+target_include_directories(hitch_test PRIVATE third_party/minhook/include)
 target_compile_options(hitch_test PRIVATE /W3 /EHa /O2)   # as the plugin: guarded reads catch inline faults
 set_property(TARGET hitch_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 # outside-the-game test: libdeflate as built for src/fastzip.cpp, on a real pak (native/test/zbench.cpp)

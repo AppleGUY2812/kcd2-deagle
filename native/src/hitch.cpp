@@ -1,6 +1,8 @@
 // Long frames, sampled from inside the game. See hitch.h.
 #include "hitch.h"
 #include "log.h"
+#include "MinHook.h"
+#include <winternl.h>
 #include <psapi.h>
 #include <tlhelp32.h>
 #include <intrin.h>
@@ -42,6 +44,136 @@ std::vector<Module> g_mods;   // sorted by base; refreshed at the start of each 
 struct Sample { uint32_t tMs; uint32_t faults; uint64_t rip; uint8_t who; int n; uint64_t ret[kKeep]; };
 
 long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
+
+// ---- Files opened and DLLs loaded, by any thread: a ring the long-frame report reads back by time. ----
+// Written from inside NtCreateFile / NtOpenFile (every file open in the process, the DLL loader's too) and the loader's
+// DLL notification (under the loader lock): atomics and plain copies only, no locks, no allocation, no file calls.
+constexpr uint32_t kEvRing = 8192;
+constexpr size_t kEvPath = 176;
+struct Ev { std::atomic<uint32_t> seq; long long t0; uint32_t us, tid, extra; char kind; char path[kEvPath]; };
+Ev g_ev[kEvRing];
+std::atomic<uint32_t> g_evNext{0};
+std::atomic<bool> g_evOn{false};
+bool g_watchOk = false;   // the file hooks are in
+
+// UTF-16 name -> ASCII ('?' for the rest), keeping the end (the file name), guarded: the caller's memory.
+__declspec(noinline) void CopyName(const UNICODE_STRING* us, char* out, size_t cap) {
+	out[0] = 0;
+	__try {
+		if (!us || !us->Buffer) return;
+		const size_t n = us->Length / 2, from = n > cap - 1 ? n - (cap - 1) : 0;
+		size_t j = 0;
+		for (size_t i = from; i < n; i++) { const wchar_t c = us->Buffer[i]; out[j++] = c >= 32 && c < 127 ? (char)c : '?'; }
+		out[j] = 0;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) { out[0] = 0; }
+}
+__declspec(noinline) const UNICODE_STRING* NameOf(const OBJECT_ATTRIBUTES* oa) {
+	__try { return oa ? oa->ObjectName : nullptr; } __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+
+// kind 'f' file open (extra = NTSTATUS), 'L' DLL loaded, 'U' DLL unloaded (extra = image size)
+void Note(char kind, const UNICODE_STRING* name, long long t0, long long t1, uint32_t extra) {
+	const uint32_t v = g_evNext.fetch_add(1, std::memory_order_relaxed);
+	Ev& e = g_ev[v % kEvRing];
+	e.seq.store(0, std::memory_order_release);   // being written
+	std::atomic_thread_fence(std::memory_order_release);
+	e.t0 = t0;
+	e.us = (uint32_t)((t1 - t0) * 1000000 / g_freq);
+	e.tid = GetCurrentThreadId();
+	e.extra = extra;
+	e.kind = kind;
+	CopyName(name, e.path, kEvPath);
+	e.seq.store(v + 1, std::memory_order_release);
+}
+
+using NtCreateFileFn = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, PLARGE_INTEGER, ULONG,
+                                        ULONG, ULONG, ULONG, PVOID, ULONG);
+using NtOpenFileFn = NTSTATUS(NTAPI*)(PHANDLE, ACCESS_MASK, POBJECT_ATTRIBUTES, PIO_STATUS_BLOCK, ULONG, ULONG);
+NtCreateFileFn g_origCreate = nullptr;
+NtOpenFileFn g_origOpen = nullptr;
+
+NTSTATUS NTAPI HkCreate(PHANDLE h, ACCESS_MASK a, POBJECT_ATTRIBUTES oa, PIO_STATUS_BLOCK io, PLARGE_INTEGER size,
+                        ULONG attr, ULONG share, ULONG disp, ULONG opt, PVOID ea, ULONG eaLen) {
+	if (!g_evOn.load(std::memory_order_relaxed)) return g_origCreate(h, a, oa, io, size, attr, share, disp, opt, ea, eaLen);
+	const long long t0 = Now();
+	const NTSTATUS s = g_origCreate(h, a, oa, io, size, attr, share, disp, opt, ea, eaLen);
+	Note('f', NameOf(oa), t0, Now(), (uint32_t)s);
+	return s;
+}
+NTSTATUS NTAPI HkOpen(PHANDLE h, ACCESS_MASK a, POBJECT_ATTRIBUTES oa, PIO_STATUS_BLOCK io, ULONG share, ULONG opt) {
+	if (!g_evOn.load(std::memory_order_relaxed)) return g_origOpen(h, a, oa, io, share, opt);
+	const long long t0 = Now();
+	const NTSTATUS s = g_origOpen(h, a, oa, io, share, opt);
+	Note('f', NameOf(oa), t0, Now(), (uint32_t)s);
+	return s;
+}
+
+struct DllNoteData { ULONG flags; const UNICODE_STRING* full; const UNICODE_STRING* base; PVOID dllBase; ULONG size; };
+VOID CALLBACK OnDll(ULONG reason, const void* data, PVOID) {
+	if (!g_evOn.load(std::memory_order_relaxed) || !data) return;
+	const DllNoteData* d = (const DllNoteData*)data;
+	const long long t = Now();
+	Note(reason == 1 ? 'L' : 'U', d->full, t, t, d->size);
+}
+
+bool InstallFileWatch() {
+	HMODULE nt = GetModuleHandleA("ntdll.dll");
+	void* c = nt ? (void*)GetProcAddress(nt, "NtCreateFile") : nullptr;
+	void* o = nt ? (void*)GetProcAddress(nt, "NtOpenFile") : nullptr;
+	using RegFn = NTSTATUS(NTAPI*)(ULONG, PVOID, PVOID, PVOID*);
+	RegFn reg = nt ? (RegFn)GetProcAddress(nt, "LdrRegisterDllNotification") : nullptr;
+	const bool hc = c && MH_CreateHook(c, (void*)&HkCreate, (void**)&g_origCreate) == MH_OK && MH_EnableHook(c) == MH_OK;
+	const bool ho = o && MH_CreateHook(o, (void*)&HkOpen, (void**)&g_origOpen) == MH_OK && MH_EnableHook(o) == MH_OK;
+	static PVOID cookie = nullptr;
+	const bool hd = reg && reg(0, (PVOID)&OnDll, nullptr, &cookie) >= 0;
+	if (!hc || !ho || !hd)
+		Log("hitch: file watch partly off (NtCreateFile %s, NtOpenFile %s, DLL notifications %s)", hc ? "ok" : "FAILED",
+		    ho ? "ok" : "FAILED", hd ? "ok" : "FAILED");
+	return hc || ho || hd;
+}
+
+struct EvCopy { long long t0; uint32_t us, tid, extra; char kind; char path[kEvPath]; };
+
+std::vector<EvCopy> EventsIn(long long a, long long b) {
+	std::vector<EvCopy> out;
+	const uint32_t n = g_evNext.load(std::memory_order_acquire);
+	for (uint32_t v = n > kEvRing ? n - kEvRing : 0; v < n; v++) {
+		Ev& e = g_ev[v % kEvRing];
+		if (e.seq.load(std::memory_order_acquire) != v + 1) continue;
+		EvCopy c;
+		c.t0 = e.t0; c.us = e.us; c.tid = e.tid; c.extra = e.extra; c.kind = e.kind;
+		memcpy(c.path, e.path, kEvPath);
+		c.path[kEvPath - 1] = 0;
+		std::atomic_thread_fence(std::memory_order_acquire);
+		if (e.seq.load(std::memory_order_acquire) != v + 1) continue;   // rewritten while copied
+		if (c.t0 >= a && c.t0 <= b) out.push_back(c);
+	}
+	return out;
+}
+
+std::map<DWORD, std::string> g_tidNames;   // watcher thread only
+std::string ThreadName(DWORD tid) {
+	if (!g_targets.empty() && tid == g_targets[0].tid) return "Main";
+	auto it = g_tidNames.find(tid);
+	if (it != g_tidNames.end()) return it->second;
+	std::string nm;
+	using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+	static DescFn desc = (DescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
+	if (HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid)) {
+		PWSTR w = nullptr;
+		if (desc && SUCCEEDED(desc(h, &w)) && w) {
+			char a[128] = {};
+			WideCharToMultiByte(CP_UTF8, 0, w, -1, a, sizeof a - 1, nullptr, nullptr);
+			nm = a;
+			LocalFree(w);
+		}
+		CloseHandle(h);
+	}
+	if (nm.empty()) nm = "tid " + std::to_string(tid);
+	if (g_tidNames.size() < 4096) g_tidNames[tid] = nm;
+	return nm;
+}
 
 uint32_t Faults() {
 	PROCESS_MEMORY_COUNTERS pmc{ sizeof pmc };
@@ -189,6 +321,61 @@ std::string Top(const std::map<std::string, int>& c, int total, int k) {
 	return out;
 }
 
+std::string g_filesCsvPath;
+size_t g_filesCsvBytes = 0;
+
+// The files opened and DLLs loaded during the long frame [a, b] (QPC): one log line, every event in the files csv.
+void ReportFiles(int no, long long a, long long b) {
+	if (!g_evOn) return;
+	const std::vector<EvCopy> ev = EventsIn(a, b);
+	if (ev.empty()) { Log("hitch: #%d files: none opened, no DLL loaded", no); return; }
+	int opens = 0, failed = 0;
+	double openMs = 0;
+	std::string dlls;
+	std::map<std::string, std::pair<int, double>> byFile;   // "thread file" -> count, ms
+	for (const EvCopy& e : ev) {
+		const std::string who = ThreadName(e.tid);
+		if (e.kind == 'f') {
+			opens++;
+			openMs += e.us / 1000.0;
+			if ((int32_t)e.extra < 0) failed++;
+			const char* slash = strrchr(e.path, '\\');
+			auto& f = byFile[who + " " + (slash ? slash + 1 : e.path)];
+			f.first++;
+			f.second += e.us / 1000.0;
+		} else if (dlls.size() < 900) {
+			const char* slash = strrchr(e.path, '\\');
+			char one[256];
+			char size[24];
+			if (e.extra >= 1048576) snprintf(size, sizeof size, "%.1f MB", e.extra / 1048576.0);
+			else snprintf(size, sizeof size, "%u KB", e.extra / 1024);
+			snprintf(one, sizeof one, "%s%s %s %s at %.0f ms (%s)", dlls.empty() ? "" : ", ", e.kind == 'L' ? "loaded" : "unloaded",
+			         slash ? slash + 1 : e.path, size, (e.t0 - a) * 1000.0 / (double)g_freq, who.c_str());
+			dlls += one;
+		}
+	}
+	std::vector<std::pair<double, std::string>> top;
+	for (auto& f : byFile) {
+		char one[256];
+		snprintf(one, sizeof one, "%s x%d %.1f ms", f.first.c_str(), f.second.first, f.second.second);
+		top.push_back({ f.second.second, one });
+	}
+	std::sort(top.begin(), top.end(), [](auto& x, auto& y) { return x.first > y.first; });
+	std::string most;
+	for (size_t i = 0; i < top.size() && i < 10; i++) most += (i ? ", " : "") + top[i].second;
+	Log("hitch: #%d files: %d opens (%d failed, %.0f ms inside the opens, %zu files); DLLs: %s; slowest: %s", no, opens, failed,
+	    openMs, byFile.size(), dlls.empty() ? "-" : dlls.c_str(), most.empty() ? "-" : most.c_str());
+	if (g_filesCsvPath.empty() || g_filesCsvBytes > kMaxCsvBytes) return;
+	FILE* f = fopen(g_filesCsvPath.c_str(), "a");
+	if (!f) return;
+	for (const EvCopy& e : ev) {
+		const int w = fprintf(f, "%d,%s,%.1f,%c,%u,%08x,%s\n", no, ThreadName(e.tid).c_str(), (e.t0 - a) * 1000.0 / (double)g_freq,
+		                      e.kind, e.us, e.extra, e.path);
+		if (w > 0) g_filesCsvBytes += (size_t)w;
+	}
+	fclose(f);
+}
+
 void Report(int no, double frameMs, const std::vector<Sample>& ss, uint32_t faults0) {
 	if (ss.empty()) return;
 	const uint32_t df = ss.back().faults - faults0;
@@ -238,6 +425,7 @@ DWORD WINAPI Watch(LPVOID) {
 		if (!ss.empty() && (last != start || !g_on)) {   // the long frame ended (or sampling was turned off)
 			const double frameMs = (last != start ? last - start : now - start) * 1000.0 / (double)g_freq;
 			Report(no, frameMs, ss, faults0);
+			ReportFiles(no, start, last != start ? last : now);
 			ss.clear();
 		}
 		if (!g_on || gapMs < g_thresholdMs.load()) continue;
@@ -266,17 +454,32 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self) {
 	g_freq = f.QuadPart;
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA(self, path, MAX_PATH);
-	std::string p(path);
-	p = p.substr(0, p.find_last_of('\\') + 1) + "deagle_hitch.csv";
-	FILE* fo = fopen(p.c_str(), "w");
-	if (fo) {
+	std::string dir(path);
+	dir = dir.substr(0, dir.find_last_of('\\') + 1);
+	if (FILE* sw = fopen((dir + "deagle_hitch.txt").c_str(), "r")) {   // "0": nothing at all (no thread, no hooks)
+		int m = 1;
+		const bool off = fscanf(sw, "%d", &m) == 1 && m == 0;
+		fclose(sw);
+		if (off) { g_on = false; Log("hitch: off (deagle_hitch.txt says 0: no sampler, no file watch)"); return; }
+	}
+	const std::string p = dir + "deagle_hitch.csv";
+	if (FILE* fo = fopen(p.c_str(), "w")) {
 		fprintf(fo, "hitch,thread,frame_ms,t_ms,faults,rip,stack\n");
 		fclose(fo);
 		g_csvPath = p;
 	}
+	const std::string pf = dir + "deagle_hitch_files.csv";
+	if (FILE* fo = fopen(pf.c_str(), "w")) {
+		fprintf(fo, "hitch,thread,t_ms,kind,us,status_or_size,path\n");
+		fclose(fo);
+		g_filesCsvPath = pf;
+	}
+	g_watchOk = InstallFileWatch();
+	g_evOn = g_watchOk;
 	CloseHandle(CreateThread(nullptr, 0, Watch, nullptr, 0, nullptr));
 	Log("hitch: on (main frames over %d ms sampled every %d ms from inside the game, with RenderThread and "
-	    "RenderLoadingThread; samples in %s)", g_thresholdMs.load(), kIntervalMs, g_csvPath.empty() ? "- (csv not writable)" : g_csvPath.c_str());
+	    "RenderLoadingThread; files opened and DLLs loaded %s; samples in %s)", g_thresholdMs.load(), kIntervalMs,
+	    g_evOn ? "listed per long frame" : "NOT watched", g_csvPath.empty() ? "- (csv not writable)" : g_csvPath.c_str());
 }
 
 void Hitch_Frame() {
@@ -289,8 +492,8 @@ void Hitch_Frame() {
 
 void Hitch_Command(const char* args) {
 	while (args && *args == ' ') args++;
-	if (args && !strcmp(args, "off")) g_on = false;
-	else if (args && !strcmp(args, "on")) g_on = true;
+	if (args && !strcmp(args, "off")) { g_on = false; g_evOn = false; }
+	else if (args && !strcmp(args, "on")) { g_on = true; g_evOn = g_watchOk; }
 	else if (args && !strncmp(args, "threads", 7)) {
 		std::vector<std::string> v;
 		std::string cur;
