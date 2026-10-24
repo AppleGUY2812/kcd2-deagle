@@ -22,6 +22,7 @@ long long g_freq = 1, g_first = 0, g_lastPt = 0;
 size_t g_startN = 0, g_lastN = ~(size_t)0;
 unsigned long long g_polls = 0;
 std::string g_curve;
+std::atomic<bool> g_inTerrainWait{false};   // Loadwatch_InTerrainWait (levelprof's phase)
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 
@@ -35,6 +36,7 @@ void __fastcall HkPoll(void* loaders, uint64_t a2) {   // main thread only
 	if (!g_first) {
 		g_first = a; g_lastPt = a; g_startN = Count(loaders); g_polls = 0; g_curve.clear();
 		Log("loadwatch: terrain wait starts, %zu loaders left", g_startN);
+		g_inTerrainWait = true;
 	}
 	g_orig(loaders, a2);
 	g_polls++;
@@ -48,6 +50,7 @@ void __fastcall HkPoll(void* loaders, uint64_t a2) {   // main thread only
 		Log("loadwatch: terrain wait done after %lld ms (%zu loaders, %llu polls); left at ms:%s", ms, g_startN, g_polls,
 		    g_curve.c_str());
 		g_first = 0;
+		g_inTerrainWait = false;
 	}
 	g_lastN = n;
 }
@@ -116,6 +119,7 @@ static_assert(sizeof g_qWrap / sizeof g_qWrap[0] == kQ, "one wrapper per hook");
 }  // namespace
 
 int Loadwatch_QuestJob() { return g_jobState.load(); }
+bool Loadwatch_InTerrainWait() { return g_inTerrainWait.load(std::memory_order_relaxed); }
 
 int Loadwatch_QuestTotals(double ms[7], long long calls[7]) {
 	static_assert(kQ == 7, "Loadwatch_QuestTotals' slots");
