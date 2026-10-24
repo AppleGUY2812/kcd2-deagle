@@ -10,7 +10,7 @@ file(GLOB MINHOOK_SRC third_party/minhook/src/*.c third_party/minhook/src/hde/hd
 set(LIBDEFLATE_SRC third_party/libdeflate/lib/deflate_decompress.c third_party/libdeflate/lib/crc32.c
     third_party/libdeflate/lib/utils.c third_party/libdeflate/lib/x86/cpu_features.c)
 add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp src/ftpreload.cpp src/fastzip.cpp src/streamio.cpp src/streamahead.cpp src/readiness.cpp src/hitch.cpp src/ftplaces.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/mainreads.cpp src/loadwatch.cpp src/applyfast.cpp src/conceptbfs.cpp src/stormmemo.cpp src/questmenu.cpp src/questfast.cpp src/animahead.cpp src/questprof.cpp
-    src/questports.cpp src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
+    src/questports.cpp src/questdump.cpp src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
 target_include_directories(deagle_native PRIVATE third_party/minhook/include third_party/libdeflate src)
 target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)

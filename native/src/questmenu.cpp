@@ -2,6 +2,7 @@
 #include "questmenu.h"
 #include "animahead.h"
 #include "questprof.h"
+#include "questdump.h"
 #include "log.h"
 #include "xmlahead.h"
 #include "loadwatch.h"
@@ -299,7 +300,7 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 
 // ---- questbench (questmenu.h)
 std::atomic<bool> g_benching{false};
-struct BenchArgs { int n; bool ab, prof; };
+struct BenchArgs { int n; bool ab, prof, dump; };
 uintptr_t ReadMgr() {
 	__try { const uintptr_t mod = Module(); return mod ? *(uintptr_t*)(mod + 0x18) : 0; }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
@@ -329,9 +330,16 @@ DWORD WINAPI Bench(LPVOID arg) {
 		Loadwatch_QuestTotals(ms0, c0);
 		const unsigned long long free0 = FreeMb();
 		const bool prof = a.prof && Questprof_Begin();
+		std::string dumpPath;
+		if (a.dump) {   // one file per build (deagle_questdump_<k>.txt): tools/questdump_diff.py compares two
+			dumpPath = g_dir + "deagle_questdump_" + std::to_string(k) + ".txt";
+			DeleteFileA(dumpPath.c_str());
+			Questdump_Arm(dumpPath.c_str());
+		}
 		const long long t0 = Now();
 		ok = CallBody(impl, g_mgr);
 		const double s = SecSince(t0);
+		if (a.dump) Questdump_Disarm();
 		if (prof) Questprof_End(k);
 		Loadwatch_QuestTotals(ms1, c1);
 		for (int i = 0; i < 7; i++) d[i] = (ms1[i] - ms0[i]) / 1000.0;
@@ -421,7 +429,7 @@ void Questmenu_Bench(const char* args) {
 	char mode[8] = {};
 	const int got = args ? sscanf(args, "%d %7s", &n, mode) : 0;
 	const char* why = nullptr;
-	if (got < 1) why = "usage: questbench N [ab|prof] (N 1-20)";
+	if (got < 1) why = "usage: questbench N [ab|prof|dump|abdump] (N 1-20)";
 	else if (n < 1 || n > 20) why = "N must be 1-20";
 	else if (!g_mode) why = "questmenu is off (deagle_questmenu.txt 0)";
 	else if (!g_cacheOk) why = "no deagle_questcache.txt yet (a load writes it)";
@@ -438,9 +446,11 @@ void Questmenu_Bench(const char* args) {
 	g_benching = true;
 	ResetEvent(g_built);   // a load or a project-touching concept message waits for the bench, as for the pre-build
 	g_phase = 1;
-	const bool ab = !strcmp(mode, "ab"), prof = !strcmp(mode, "prof");
-	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
-	if (t) { CloseHandle(t); Log("questbench: %d builds started%s", n, ab ? " (questfast on / off alternating)" : prof ? " (with the inner profile, questprof)" : ""); }
+	const bool ab = !strcmp(mode, "ab") || !strcmp(mode, "abdump"), prof = !strcmp(mode, "prof"),
+	           dump = !strcmp(mode, "dump") || !strcmp(mode, "abdump");
+	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, ab, prof, dump }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+	if (t) { CloseHandle(t); Log("questbench: %d builds started%s%s", n, ab ? " (questfast on / off alternating)" : prof ? " (with the inner profile, questprof)" : "",
+	                            dump ? " (graph dump per build: deagle_questdump_<k>.txt)" : ""); }
 	else { g_phase = 3; g_benching = false; SetEvent(g_built); Log("questbench: could not start the thread"); }
 }
 

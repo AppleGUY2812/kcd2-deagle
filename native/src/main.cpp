@@ -33,6 +33,7 @@
 #include "questmenu.h"
 #include "animahead.h"
 #include "questprof.h"
+#include "questdump.h"
 #include "questfast.h"
 #include "ron.h"
 #include "probe.h"
@@ -1613,6 +1614,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
 	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
 	Questprof_Install(g_game.base);   // the quest build's inner profile for questbench N prof (questprof.cpp)
+	Questdump_Install(g_game.base);   // the quest graph dump for questbench N dump (questdump.cpp)
 	Animahead_Install(g_game.base, g_self);   // human animation sets during the terrain wait (animahead.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
