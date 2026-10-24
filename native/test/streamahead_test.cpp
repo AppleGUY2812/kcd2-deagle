@@ -3,8 +3,9 @@
 //   streamahead_test record    records 700 requests, "gameplay starts", the list must appear 5 s later
 //   streamahead_test serve     reads the list ahead and serves the same requests: every byte checked, most served
 //   streamahead_test shed      RAM gets short after the read-ahead: every copy is freed, the game reads them itself
+//   streamahead_test revive    copies RAM shedding dropped for good are read again once a loading screen waits
 //   streamahead_test changed   the pak's write time changed since the list: nothing may be served
-//   streamahead_test gate      RAM short the whole time, but a loading screen waits: the 64 MB window still serves most,
+//   streamahead_test gate      RAM short the whole time, but a loading screen waits, requests in a shuffled order: most served,
 //                              read by up to 16 readers at once ("most reads in flight" in the status line)
 // Exit code 0 = pass.
 #include "../src/streamahead.h"
@@ -97,6 +98,18 @@ int main(int argc, char** argv) {
 	Streamahead_Install(nullptr);
 	const std::vector<Req> reqs = Requests();
 	if (mode != "record") Sleep(3000);   // the reader reads the list meanwhile (the main menu)
+	if (mode == "revive") {      // freed for RAM, read again, freed again (= dropped for good), then a loading screen
+		long long sv = 0, gf = 0, nl = 0;
+		auto ready = [&] { Streamahead_Stats(&sv, &gf, &nl); (void)sv; return Streamahead_Ready(); };
+		ramgov::SetForTest(1ll << 40, 1ll << 40);
+		for (int i = 0; i < 100 && ready() > 0; i++) Sleep(100);   // freed once (the writer sheds once a second)
+		ramgov::SetForTest(0, -1);
+		for (int i = 0; i < 200 && ready() < 600; i++) Sleep(100);  // read again
+		ramgov::SetForTest(1ll << 40, 1ll << 40);
+		for (int i = 0; i < 100 && ready() > 0; i++) Sleep(100);   // freed a second time: dropped for good
+		Streamahead_SetGate(true);   // RAM still short: only the loading-screen rule reads them again
+		for (int i = 0; i < 200 && ready() < 600; i++) Sleep(100);
+	}
 	if (mode == "shed") {        // RAM short: everything held is freed (the writer checks once a second)
 		ramgov::SetForTest(1ll << 40, 1ll << 40);
 		Sleep(2500);
@@ -104,7 +117,12 @@ int main(int argc, char** argv) {
 	}
 	std::vector<uint8_t> out;
 	long long served = 0, bad = 0, fell = 0;
-	for (const Req& q : reqs) {
+	std::vector<Req> order = reqs;
+	if (mode == "gate") {   // another order than the list's (boot 33): far jumps both ways
+		uint64_t r = 99;
+		for (size_t i = order.size(); i > 1; i--) { r = r * 6364136223846793005ull + 1; std::swap(order[i - 1], order[(r >> 33) % i]); }
+	}
+	for (const Req& q : order) {
 		uint8_t entry[0x20] = {};
 		*(uint32_t*)(entry + 0xc) = q.dataOff;
 		out.assign((size_t)q.size + 16, 0xcc);
@@ -141,6 +159,7 @@ int main(int argc, char** argv) {
 	}
 	if (mode == "serve" && served < (long long)(reqs.size() - 47) * 9 / 10) { printf("FAIL: too few served\n"); return 1; }
 	if (mode == "gate" && served < (long long)(reqs.size() - 47) * 7 / 10) { printf("FAIL: the gate window served too few\n"); return 1; }
+	if (mode == "revive" && (served < (long long)(reqs.size() - 47) * 7 / 10 || Streamahead_Revived() < 600)) { printf("FAIL: dropped copies weren't read again\n"); return 1; }
 	if (mode == "shed" && served) { printf("FAIL: served after everything was freed\n"); return 1; }
 	if (mode == "changed" && served) { printf("FAIL: served from a pak that changed since the list\n"); return 1; }
 	printf("PASS %s\n", mode.c_str());
