@@ -166,13 +166,14 @@ const unsigned char kSyncBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x2
 using SyncFn = uint64_t(__fastcall*)(void* rt, uint64_t a2, uint64_t a3, uint64_t a4);
 SyncFn g_sync = nullptr;
 constexpr unsigned kPsoQuietMs = 1500;   // the menu: no XML load for this long
-bool g_pso = false;                      // deagle_psoahead.txt: 1 on; off by default (the menu freezes ~6 s)
-std::atomic<int> g_psoState{0};          // 0 waiting for the menu, 1 queued, -1 not possible
+// deagle_psoahead.txt: 2 during the load (default), 1 at the main menu (the menu freezes ~6 s), 0 off
+int g_psoMode = 2;
+std::atomic<int> g_psoState{0};          // 0 not yet, 1 queued, -1 not possible
 std::atomic<long long> s_psoFrames{0};
 std::atomic<long long> s_psoQueuedAt{0};
 
 void PsoMainFrame() {
-	if (g_psoState.load(std::memory_order_relaxed) != 0) return;
+	if (g_psoMode != 1 || g_psoState.load(std::memory_order_relaxed) != 0) return;
 	const long long n = ++s_psoFrames;
 	if (!Xmlahead_MenuQuiet(kPsoQuietMs)) return;
 	g_psoState = 1;
@@ -195,6 +196,62 @@ uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
 	PsoMainFrame();   // before the hand-over: the queued precache goes with this frame's commands
 	return g_sync(rt, a2, a3, a4);
 }
+
+// ---- 3b. PSO precache during the load (deagle_psoahead.txt 2), no menu freeze
+// The render loading thread finishes its texture precache around the time the main thread starts waiting for the quest
+// job, then sits idle until the main thread's first frame sync after "finish level", and only then gets the precache
+// (boot 27: idle 13.9-15.7 s, boot 26: 14.8-15.8 s; precache 2.4 s after that). So: on the main thread, just before
+// the quest wait (it would wait there anyway), wait until the loading thread's batch is done, then queue the game's
+// own precache and hand it over at once, so it runs while the main thread finishes the level. Done = the flush byte
+// m_pRT+0x50 is 0 (SyncMainWithRender sets it, the loading thread clears it in FUN_180fbbdb8); the engine's own texture
+// precache request syncs the same way, only when that byte is 0 (FUN_1809b165c), so the hand-over never blocks.
+// The load's own precache (PostLoadLevel) then finds the PSOs made.
+constexpr uintptr_t kRvaRenDev = 0x547db60;   // DAT_18547db60: gRenDev; m_pRT at +0xf8
+constexpr unsigned kPsoWaitCapMs = 5000;      // longer than the 1.4-3.0 s seen; after it, queue without handing over
+std::atomic<long long> s_psoWaitMs{-1};
+
+bool OnMainThread() {   // the engine names it "Main" (thread samples); m_pRT+0xf8 is not it (FUN_1809b16f8)
+	using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+	static const DescFn f = (DescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
+	PWSTR d = nullptr;
+	const bool ok = f && SUCCEEDED(f(GetCurrentThread(), &d)) && d && !wcscmp(d, L"Main");
+	if (d) LocalFree(d);
+	return ok;
+}
+
+}  // namespace
+
+void Applyfast_BeforeQuestWait() {   // main thread, from loadwatch's hook of FUN_1811414d8 (msg 0x18)
+	if (g_psoMode != 2 || g_psoState.load() != 0 || !g_base) return;
+	g_psoState = -1;   // once per game start: the PSOs stay made
+	__try {
+		const uintptr_t rd = *(uintptr_t*)(g_base + kRvaRenDev);
+		const uintptr_t rt = rd ? *(uintptr_t*)(rd + 0xf8) : 0;
+		const bool main = OnMainThread();
+		if (!rt || !*(uintptr_t*)rt || !*(DWORD*)(rt + 0xf4) || !main) {
+			Log("applyfast: PSO precache during the load: not done (render thread object %p, loading thread %lu, render "
+			    "thread %lu, this thread %lu named Main: %s)", (void*)rt, rt ? *(DWORD*)(rt + 0xf4) : 0,
+			    rt ? *(DWORD*)(rt + 0xf0) : 0, GetCurrentThreadId(), main ? "yes" : "no");
+			return;
+		}
+		const long long t0 = Now();
+		long long ms = 0;
+		while (*(volatile char*)(rt + 0x50) && (ms = (Now() - t0) * 1000 / g_freq) < kPsoWaitCapMs) Sleep(1);
+		const bool idle = !*(volatile char*)(rt + 0x50);
+		ms = (Now() - t0) * 1000 / g_freq;
+		reinterpret_cast<void(__fastcall*)()>(g_base + kRvaPsoQueue)();
+		if (idle) reinterpret_cast<void(__fastcall*)(uintptr_t, char)>(g_base + kRvaSync)(rt, 0);
+		g_psoState = 1;
+		s_psoWaitMs = ms;
+		Log("applyfast: PSO precache during the load: %s after waiting %lld ms for the render loading thread (main thread %lu)",
+		    idle ? "handed to the render loading thread" : "queued (the loading thread stayed busy; it goes at the next sync)",
+		    ms, GetCurrentThreadId());
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		Log("applyfast: PSO precache during the load: exception, left to the game");
+	}
+}
+
+namespace {
 
 // ---- 4. Quests first in the level data message (re_questearly.md, 2026-10-24)
 // The LevelLoadJob thread reads levels/<level>/whdata_0 and sends module message 0x1e (C_ModuleMessageSerializer).
@@ -261,8 +318,9 @@ void Applyfast_OnLoaded() {
 	static bool psoTold = false;
 	if (!psoTold && g_psoState.load() >= 0) {
 		psoTold = true;
-		Log("applyfast: PSO precache at the main menu: %s (after %lld render syncs)",
-		    g_psoState.load() == 1 ? "queued" : "NOT queued (the menu never went quiet, or xmlahead mode 0)", s_psoFrames.load());
+		if (g_psoMode == 1)
+			Log("applyfast: PSO precache at the main menu: %s (after %lld render syncs)",
+			    g_psoState.load() == 1 ? "queued" : "NOT queued (the menu never went quiet, or xmlahead mode 0)", s_psoFrames.load());
 		// render syncs counted only until it was queued
 	}
 	const long long c = s_clouds.load(), t = s_ticks.load();
@@ -296,8 +354,8 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	const bool c = !memcmp((void*)(base + kRvaFindChrparams), kFindCallBytes, sizeof kFindCallBytes) &&
 	               Hook(base, kRvaFind, kFindBytes, sizeof kFindBytes, (void*)&HkFind, (void**)&g_find, "facial DBA list");
 	if (FILE* fp = fopen((dir + "deagle_psoahead.txt").c_str(), "r")) {
-		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1) g_pso = m != 0;
+		int m = 2;
+		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_psoMode = m;
 		fclose(fp);
 	}
 	if (FILE* fp = fopen((dir + "deagle_questearly.txt").c_str(), "r")) {
@@ -319,11 +377,13 @@ void Applyfast_Install(uintptr_t base, void* self) {
 		}
 		if (!e) MH_DisableHook((void*)(base + kRvaConceptOnMsg));
 	}
-	const bool d = g_pso && !memcmp((void*)(base + kRvaPsoQueue), kPsoQueueBytes, sizeof kPsoQueueBytes) &&
-	               Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync");
+	const bool psoCode = !memcmp((void*)(base + kRvaPsoQueue), kPsoQueueBytes, sizeof kPsoQueueBytes) &&
+	                     !memcmp((void*)(base + kRvaSync), kSyncBytes, sizeof kSyncBytes);
+	const bool d = g_psoMode && psoCode &&
+	               (g_psoMode == 2 || Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync"));
 	if (!d) g_psoState = -1;
 	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s; "
-	    "PSO precache at the main menu: %s; quests first in the level data message: %s", g_mode, g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF",
-	    c ? "on" : "OFF", d ? "on" : g_pso ? "OFF (code differs)" : "off (deagle_psoahead.txt)",
+	    "PSO precache: %s; quests first in the level data message: %s", g_mode, g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF",
+	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? "during the load" : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (deagle_psoahead.txt 0)",
 	    e ? "on" : g_questsFirst ? "OFF (code differs)" : "off (deagle_questearly.txt)");
 }

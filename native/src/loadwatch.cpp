@@ -1,5 +1,6 @@
 // Terrain loader wait timing: see loadwatch.h.
 #include "loadwatch.h"
+#include "applyfast.h"
 #include "log.h"
 #include <windows.h>
 #include <atomic>
@@ -61,6 +62,7 @@ QHook g_q[] = {
 	{ "main thread waits for the job", 0x11414d8, { 0x48,0x89,0x5c,0x24,0x10,0x57,0x48,0x83,0xec,0x20 }, nullptr },
 };
 constexpr int kQ = sizeof g_q / sizeof g_q[0];
+constexpr int kQuestWait = 6;   // "main thread waits for the job"
 std::atomic<long long> g_qCalls[kQ], g_qTicks[kQ];
 std::atomic<int> g_qLines{0};
 long long g_t0 = 0;
@@ -77,6 +79,7 @@ void QNote(int i, long long a, long long b) {
 
 template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	thread_local int depth = 0;
+	if (I == kQuestWait && depth == 0) Applyfast_BeforeQuestWait();   // its own wait is logged by applyfast
 	const long long t = Now();
 	depth++;
 	const uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);
