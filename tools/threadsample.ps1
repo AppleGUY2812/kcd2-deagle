@@ -12,6 +12,8 @@ using System; using System.Runtime.InteropServices; using System.Text; using Sys
 public static class TS {
   [DllImport("kernel32")] static extern IntPtr OpenThread(uint a, bool b, int id);
   [DllImport("kernel32")] static extern bool CloseHandle(IntPtr h);
+  [DllImport("kernel32")] static extern int GetThreadDescription(IntPtr h, out IntPtr desc);
+  [DllImport("kernel32")] static extern IntPtr LocalFree(IntPtr p);
   [DllImport("kernel32")] static extern uint SuspendThread(IntPtr h);
   [DllImport("kernel32")] static extern uint ResumeThread(IntPtr h);
   [DllImport("kernel32")] static extern bool GetThreadContext(IntPtr h, IntPtr ctx);
@@ -30,6 +32,7 @@ public static class TS {
     IntPtr ctx = Marshal.AllocHGlobal(0x4D0 + 16);
     IntPtr c = (IntPtr)(((long)ctx + 15) & ~15L);
     var handles = new Dictionary<int, IntPtr>(); var last = new Dictionary<int, long>();
+    var names = new Dictionary<int, string>();   // thread names (the engine names its threads after they start)
     var stack = new byte[2048]; long samples = 0;
     var sw = Stopwatch.StartNew(); long nextRefresh = 0;
     using (var w = new StreamWriter(outPath)) {
@@ -40,8 +43,12 @@ public static class TS {
           // modules too: at launch WHGame.dll is not loaded yet (the 2026-10-23 boot lost its stacks to that)
           try { p.Refresh(); mods.Clear(); foreach (ProcessModule m in p.Modules) mods.Add(new Mod { Name = m.ModuleName, Base = (long)m.BaseAddress, End = (long)m.BaseAddress + m.ModuleMemorySize }); } catch { }
           try { foreach (ProcessThread t in p.Threads) if (!handles.ContainsKey(t.Id)) {
-            IntPtr h = OpenThread(0x0002 | 0x0008 | 0x0040, false, t.Id); if (h != IntPtr.Zero) { handles[t.Id] = h; last[t.Id] = -1; } } }
+            IntPtr h = OpenThread(0x0002 | 0x0008 | 0x0040 | 0x0800, false, t.Id); if (h != IntPtr.Zero) { handles[t.Id] = h; last[t.Id] = -1; } } }
           catch { break; }
+          foreach (var kv in handles) {
+            string nm; if (names.TryGetValue(kv.Key, out nm) && nm.Length > 0) continue;
+            IntPtr d; if (GetThreadDescription(kv.Value, out d) >= 0 && d != IntPtr.Zero) { names[kv.Key] = Marshal.PtrToStringUni(d) ?? ""; LocalFree(d); }
+          }
           if (p.HasExited) break;
         }
         long now = sw.ElapsedMilliseconds;
@@ -66,7 +73,9 @@ public static class TS {
       }
     }
     foreach (var h in handles.Values) CloseHandle(h);
-    return "samples " + samples + ", threads " + handles.Count;
+    using (var nw = new StreamWriter(outPath + ".names.csv")) {   // tid,name for the threads that had one
+      nw.WriteLine("tid,name"); foreach (var kv in names) nw.WriteLine(kv.Key + "," + kv.Value.Replace(",", ";")); }
+    return "samples " + samples + ", threads " + handles.Count + ", named " + names.Count;
   }
 }
 "@

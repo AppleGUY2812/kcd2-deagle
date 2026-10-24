@@ -793,6 +793,7 @@ function Deagle:OnGameplayStarted()
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:NativeHello()
+	self:Native("loaded")        -- the plugin puts its load-only game settings back (native/src/cvars.cpp)
 end
 
 -- ---------------------------------------------------------------------------

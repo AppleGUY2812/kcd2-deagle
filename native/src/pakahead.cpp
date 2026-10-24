@@ -102,8 +102,26 @@ int ListPakOf(uintptr_t file) {
 	return idx;
 }
 
+// Ready entries of 64 KB and more live in VirtualAlloc'd, VirtualLock'd memory: the 2026-10-23 boot sampler showed
+// the game's loader thread in our memcpy 23 % of the terrain step, stalled reading these buffers (16 GB PC, the game
+// grows to ~6.5 GB during the load: Windows had paged the held buffers out). Smaller ones use malloc.
+constexpr uint32_t kBig = 64 * 1024;
+std::atomic<long long> s_locked{0}, s_lockFail{0};
+uint8_t* AllocData(uint32_t n) {
+	if (n < kBig) return (uint8_t*)malloc(n ? n : 1);
+	void* p = VirtualAlloc(nullptr, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	if (p && VirtualLock(p, n)) s_locked++; else if (p) s_lockFail++;
+	return (uint8_t*)p;
+}
+void FreeData(uint8_t* p, uint32_t n) {
+	if (!p) return;
+	if (n < kBig) { free(p); return; }
+	VirtualUnlock(p, n);   // fails harmlessly when the lock had failed
+	VirtualFree(p, 0, MEM_RELEASE);
+}
+
 void Release(Item& it) {
-	if (it.data) { free(it.data); it.data = nullptr; g_held -= it.usize; }
+	if (it.data) { FreeData(it.data, it.usize); it.data = nullptr; g_held -= it.usize; }
 }
 
 // mode 2: a finished entry for this read? copies it into the game's buffer; true = served (the game's read is skipped)
@@ -204,7 +222,7 @@ DWORD WINAPI Worker(LPVOID) {
 			h = CreateFileA(g_listPaks[it.pak].c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
 			                FILE_ATTRIBUTE_NORMAL, nullptr);
 		bool ok = h != INVALID_HANDLE_VALUE;
-		uint8_t* out = ok ? (uint8_t*)malloc(it.usize ? it.usize : 1) : nullptr;
+		uint8_t* out = ok ? AllocData(it.usize) : nullptr;
 		ok = out != nullptr;
 		const long long t0 = Now();
 		if (ok) {
@@ -224,7 +242,7 @@ DWORD WINAPI Worker(LPVOID) {
 		}
 		s_readMs += (t1 - t0) * 1000 / g_freq;
 		s_unpackMs += (Now() - t1) * 1000 / g_freq;
-		if (!ok) { free(out); s_bad++; it.state = 3; continue; }
+		if (!ok) { FreeData(out, it.usize); s_bad++; it.state = 3; continue; }
 		g_held += it.usize;
 		it.data = out;
 		int working = 1;
@@ -264,6 +282,14 @@ void StartAhead() {
 	GlobalMemoryStatusEx(&m);
 	const unsigned long long freeMb = m.ullAvailPhys >> 20;
 	if (freeMb < 4096) { Log("pakahead: only %llu MB RAM free - not unpacking ahead", freeMb); g_items.clear(); g_byKey.clear(); return; }
+	// room to lock the held buffers: the minimum working set bounds what VirtualLock may pin
+	SIZE_T mn = 0, mx = 0;
+	DWORD fl = 0;
+	const bool ws = GetProcessWorkingSetSizeEx(GetCurrentProcess(), &mn, &mx, &fl) &&
+	                SetProcessWorkingSetSizeEx(GetCurrentProcess(), mn + kCapBytes + (128ull << 20),
+	                                           (mx > mn + kCapBytes + (256ull << 20) ? mx : mn + kCapBytes + (256ull << 20)),
+	                                           QUOTA_LIMITS_HARDWS_MIN_DISABLE | QUOTA_LIMITS_HARDWS_MAX_DISABLE);
+	Log("pakahead: working set minimum %s (%zu MB -> +%zu MB)", ws ? "raised" : "NOT raised", mn >> 20, (kCapBytes >> 20) + 128);
 	for (int i = 0; i < kWorkers; i++) CloseHandle(CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr));
 	Log("pakahead: %d workers unpacking ahead (%llu MB RAM free, cap %zu MB)", kWorkers, freeMb, kCapBytes >> 20);
 }
@@ -294,8 +320,9 @@ DWORD WINAPI Writer(LPVOID) {
 		if (!g_items.empty() && (s_served != lastServed || s_prefetched != lastPre)) {
 			lastServed = s_served; lastPre = s_prefetched;
 			Log("pakahead: ahead %lld of %zu ready (read %lld ms, unpack %lld ms, bad %lld), served %lld (%.0f MB), game "
-			    "came first %lld, held %.0f MB", s_prefetched.load(), g_items.size(), s_readMs.load(), s_unpackMs.load(),
-			    s_bad.load(), s_served.load(), s_servedBytes.load() / 1e6, s_missNotReady.load(), g_held.load() / 1e6);
+			    "came first %lld, held %.0f MB, pinned %lld (not %lld)", s_prefetched.load(), g_items.size(), s_readMs.load(),
+			    s_unpackMs.load(), s_bad.load(), s_served.load(), s_servedBytes.load() / 1e6, s_missNotReady.load(),
+			    g_held.load() / 1e6, s_locked.load(), s_lockFail.load());
 		}
 		if (!g_items.empty() && !g_stop && GetTickCount64() - g_start > kKeepMs) {
 			g_stop = true;
