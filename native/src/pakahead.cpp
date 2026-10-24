@@ -46,7 +46,8 @@ std::atomic<long long> g_calls{0};
 // (entries checked against the pak's own directory). Workers read + unpack them into RAM from game start, at background
 // priority; the ReadFile hook copies a finished entry into the game's buffer instead of reading and unpacking it.
 constexpr int kWorkers = 6;
-constexpr size_t kCapBytes = 2048ull << 20;        // unpacked bytes held at once
+size_t kCapBytes = 2048ull << 20;                  // unpacked bytes held at once: set from free RAM at start
+bool g_pin = true;                                 // VirtualLock the big ones (only with RAM to spare)
 constexpr ULONGLONG kKeepMs = 15 * 60 * 1000;     // nothing served after this: everything is freed
 struct Item {
 	uint32_t pak, dataOff, csize, usize, crc;
@@ -110,7 +111,7 @@ std::atomic<long long> s_locked{0}, s_lockFail{0};
 uint8_t* AllocData(uint32_t n) {
 	if (n < kBig) return (uint8_t*)malloc(n ? n : 1);
 	void* p = VirtualAlloc(nullptr, n, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	if (p && VirtualLock(p, n)) s_locked++; else if (p) s_lockFail++;
+	if (p && g_pin && VirtualLock(p, n)) s_locked++; else if (p) s_lockFail++;
 	return (uint8_t*)p;
 }
 void FreeData(uint8_t* p, uint32_t n) {
@@ -281,17 +282,24 @@ void StartAhead() {
 	MEMORYSTATUSEX m{ sizeof m };
 	GlobalMemoryStatusEx(&m);
 	const unsigned long long freeMb = m.ullAvailPhys >> 20;
-	if (freeMb < 4096) { Log("pakahead: only %llu MB RAM free - not unpacking ahead", freeMb); g_items.clear(); g_byKey.clear(); return; }
+	// The game itself grows by ~6 GB during a load (16 GB PC, 2026-10-23). Hold at most what is left after that plus
+	// 1.5 GB for everything else, between 512 MB and 2 GB; pin only with 3 GB of that to spare. (21:12 boot: 3.8 GB
+	// free with WSL holding 3.8 GB - the old all-or-nothing 4 GB gate turned unpacking ahead off.)
+	const long long spare = (long long)freeMb - 4500;
+	if (spare < 512) { Log("pakahead: only %llu MB RAM free - not unpacking ahead", freeMb); g_items.clear(); g_byKey.clear(); return; }
+	kCapBytes = (size_t)(spare > 2048 ? 2048 : spare) << 20;
+	g_pin = freeMb >= 7500;
 	// room to lock the held buffers: the minimum working set bounds what VirtualLock may pin
 	SIZE_T mn = 0, mx = 0;
 	DWORD fl = 0;
-	const bool ws = GetProcessWorkingSetSizeEx(GetCurrentProcess(), &mn, &mx, &fl) &&
+	const bool ws = g_pin && GetProcessWorkingSetSizeEx(GetCurrentProcess(), &mn, &mx, &fl) &&
 	                SetProcessWorkingSetSizeEx(GetCurrentProcess(), mn + kCapBytes + (128ull << 20),
 	                                           (mx > mn + kCapBytes + (256ull << 20) ? mx : mn + kCapBytes + (256ull << 20)),
 	                                           QUOTA_LIMITS_HARDWS_MIN_DISABLE | QUOTA_LIMITS_HARDWS_MAX_DISABLE);
 	Log("pakahead: working set minimum %s (%zu MB -> +%zu MB)", ws ? "raised" : "NOT raised", mn >> 20, (kCapBytes >> 20) + 128);
 	for (int i = 0; i < kWorkers; i++) CloseHandle(CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr));
-	Log("pakahead: %d workers unpacking ahead (%llu MB RAM free, cap %zu MB)", kWorkers, freeMb, kCapBytes >> 20);
+	Log("pakahead: %d workers unpacking ahead (%llu MB RAM free, cap %zu MB, %s)", kWorkers, freeMb, kCapBytes >> 20,
+	    g_pin ? "pinned" : "not pinned: little RAM");
 }
 
 void Flush() {
