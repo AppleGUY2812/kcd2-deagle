@@ -33,6 +33,8 @@ using StreamFn = void(__fastcall*)(int* result, uint8_t* strm, uint8_t* window, 
 StreamFn g_origStream = nullptr;
 // whole = the first block held the whole file (libdeflate did it); split = the game's zlib did it (later blocks too)
 std::atomic<long long> s_calls{0}, s_whole{0}, s_split{0}, s_out{0}, s_ticks{0}, s_bad{0}, s_zlibTicks{0}, s_deflTicks{0};
+std::atomic<long long> s_noStrm{0}, s_notFirst{0}, s_stateSet{0}, s_flag{0}, s_overlap{0};   // why not tried
+std::atomic<int> g_streamMode{0};        // deagle_fastzip_stream.txt: 0 game zlib (counts only), 1 libdeflate, 2 verify
 std::atomic<bool> s_off{false};          // too few whole files: stop trying (a failed try costs a partial unpack)
 
 using UnpackFn = void(__fastcall*)(const uint8_t* src, uint8_t* dst, uint32_t srcSize, uint32_t dstSize,
@@ -114,12 +116,17 @@ void __fastcall HkUnpack(const uint8_t* src, uint8_t* dst, uint32_t srcSize, uin
 
 void __fastcall HkStream(int* result, uint8_t* strm, uint8_t* window, uint8_t* dst, uint32_t dstLen, char flag,
                          const uint8_t* src, uint32_t srcLen, uint32_t* totalOut) {
-	const int mode = g_mode.load(std::memory_order_relaxed);
+	const int mode = g_mode.load(std::memory_order_relaxed) == 0 ? 0 : g_streamMode.load(std::memory_order_relaxed);
 	const long long t0 = Now();
 	s_calls++;
 	// first block of a file, stream not set up yet, plain output: try the whole file in one go
 	const bool first = strm && *(const uint32_t*)(strm + 0x1c) == 0 && *(void* const*)(strm + 0x28) == nullptr;
 	const bool overlap = dst < src + srcLen && src < dst + dstLen;
+	if (!strm) s_noStrm++;
+	else if (*(const uint32_t*)(strm + 0x1c) != 0) s_notFirst++;
+	else if (*(void* const*)(strm + 0x28) != nullptr) s_stateSet++;
+	else if (flag) s_flag++;
+	else if (overlap) s_overlap++;
 	libdeflate_decompressor* d = (mode != 0 && first && !flag && !overlap && !s_off) ? Decomp() : nullptr;
 	if (!d) {
 		g_origStream(result, strm, window, dst, dstLen, flag, src, srcLen, totalOut);
@@ -211,8 +218,11 @@ DWORD WINAPI Reporter(LPVOID) {
 		Log("fastzip: mode %d  unpack %lld files %.1f MB in %.0f ms (to zlib: %lld in-place, %lld other)  crc32 %lld "
 		    "calls %.1f MB in %.0f ms%s", g_mode.load(), u_calls.load(), u_out.load() / 1e6, Ms(u_ticks),
 		    u_overlap.load(), u_fallback.load(), c_calls.load(), c_bytes.load() / 1e6, Ms(c_ticks), extra);
-		Log("fastzip: stream blocks %lld: whole files by libdeflate %lld (%.1f MB), split -> zlib %lld%s, %.0f ms",
-		    s_calls.load(), s_whole.load(), s_out.load() / 1e6, s_split.load(), s_off ? " (stopped trying)" : "", Ms(s_ticks));
+		Log("fastzip: stream (mode %d) blocks %lld: whole files by libdeflate %lld (%.1f MB), split -> zlib %lld%s, %.0f ms;"
+		    " not tried: no z_stream %lld, later block %lld, z_stream set up %lld, flag %lld, overlap %lld",
+		    g_streamMode.load(), s_calls.load(), s_whole.load(), s_out.load() / 1e6, s_split.load(),
+		    s_off ? " (stopped trying)" : "", Ms(s_ticks), s_noStrm.load(), s_notFirst.load(), s_stateSet.load(),
+		    s_flag.load(), s_overlap.load());
 	}
 }
 
@@ -240,6 +250,11 @@ void Fastzip_Install(uintptr_t base, void* self) {
 	if (!Decomp()) { Log("fastzip: libdeflate alloc failed - not installed"); return; }
 	const bool hU = MH_CreateHook(up, (void*)&HkUnpack, (void**)&g_origUnpack) == MH_OK && MH_EnableHook(up) == MH_OK;
 	const bool hC = MH_CreateHook(cr, (void*)&HkCrc, (void**)&g_origCrc) == MH_OK && MH_EnableHook(cr) == MH_OK;
+	if (FILE* fp = fopen((g_modeFile.substr(0, g_modeFile.size() - 4) + "_stream.txt").c_str(), "r")) {
+		int m = 0;
+		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_streamMode = m;
+		fclose(fp);
+	}
 	void* st = (void*)(base + kRvaStream);
 	bool hS = false;
 	if (memcmp(st, kStreamBytes, sizeof kStreamBytes)) Log("fastzip: stream unpack code check failed - that hook not installed");

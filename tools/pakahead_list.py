@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Make deagle_pakahead_list.txt (the plugin's unpack-ahead list, native/src/pakahead.cpp) from a recording.
 
-usage: tools/pakahead_list.py <deagle_pakahead_trace.csv> <out list> [--until-ms N]
+usage: tools/pakahead_list.py <deagle_pakahead_trace.csv> <out list> [--from-ms N] [--until-ms N]
+(t_ms counts from the plugin's start; the level load is the window to keep, boot reads come before the menu anyway)
 
 Keeps each entry the game read whole and unpacked (or stored), first read only, in time order. Every entry is checked
 against its pak's own zip directory: an entry whose data offset, sizes and crc32 don't match one directory entry is
@@ -54,6 +55,9 @@ def main():
         print(__doc__)
         return 1
     until = None
+    start = 0
+    if '--from-ms' in sys.argv:
+        start = int(sys.argv[sys.argv.index('--from-ms') + 1])
     if '--until-ms' in sys.argv:
         until = int(sys.argv[sys.argv.index('--until-ms') + 1])
     paks = {}
@@ -62,7 +66,7 @@ def main():
         for line in f:
             if line.startswith('#'):
                 if ',' in line:
-                    i, path = line[1:].rstrip('\n').split(',', 1)
+                    i, path = line[1:].rstrip('\r\n').split(',', 1)
                     if i.isdigit():
                         paks[int(i)] = path
                 continue
@@ -76,6 +80,8 @@ def main():
     for r in sorted(rows, key=lambda r: int(r['t_ms'])):
         if until is not None and int(r['t_ms']) > until:
             break
+        if int(r['t_ms']) < start:
+            continue
         pak = paks.get(int(r['pak']), '?')
         key = (pak.lower(), int(r['data_off']))
         if key in seen:
