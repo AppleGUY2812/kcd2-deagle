@@ -23,7 +23,12 @@ constexpr ULONGLONG kRecordMs = 10 * 60 * 1000, kKeepMs = 15 * 60 * 1000;
 constexpr int kMenuWorkers = 4, kLevelWorkers = 3;
 constexpr long long kMenuLoads = 1500;      // the menu has loaded (3,562 XML loads before the 2026-10-23 22:00 load)
 constexpr ULONGLONG kMenuQuietMs = 3000;    // ... and no XML load for 3 s: the menu is idle
-constexpr DWORDLONG kMinFreeMb = 2500;      // workers stop taking files below this much free RAM
+// Workers stay at most kLead list files ahead of the furthest file the game has asked for (list order = the recorded
+// load order), so what they hold ahead is bounded (~kLead trees) and needs no spare RAM: boot 12 (2026-10-24) had 2.1 GB
+// free at the menu and the old 2.5 GB floor parsed nothing, leaving the quest job's ~5 s XML phase on the load. They
+// pause (not stop) below kMinFreeMb.
+constexpr size_t kLead = 3000;
+constexpr DWORDLONG kMinFreeMb = 1000;
 
 using LoadFn = void**(__fastcall*)(void* self, void** ret, const char* file, uint64_t a4, char reportErrors);
 using ParseFn = void**(__fastcall*)(void* parser, void** ret, const char* file, char cleanPools, char reportErrors);
@@ -62,6 +67,7 @@ std::vector<Rec> g_recs;
 // ---- ahead
 struct Item {
 	std::string path;                 // normalized
+	size_t idx = 0;                   // position in the list (the recorded load order)
 	std::atomic<int> state{0};        // 0 waiting, 1 parsing, 2 ready, 3 taken / dropped / failed
 	void* node = nullptr;
 };
@@ -71,6 +77,8 @@ std::vector<Item*> g_queue[2];        // 0: files outside levels/ (parsed at the
 std::atomic<size_t> g_next[2];
 std::atomic<bool> g_started[2], g_stop{false}, g_lowRam{false};
 std::atomic<long long> g_loads{0};
+std::atomic<size_t> g_gamePos{0};     // furthest list position the game has asked for
+std::atomic<long long> s_leadWaits{0}, s_ramWaits{0};
 std::atomic<ULONGLONG> g_lastLoad{0};
 void* g_self = nullptr;
 std::atomic<long long> s_ready{0}, s_failed{0}, s_served{0}, s_late{0}, s_parseMs{0}, s_skipped{0}, s_waited{0},
@@ -90,14 +98,19 @@ DWORD WINAPI Worker(LPVOID arg) {
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 	const size_t n = g_queue[q].size();
 	for (size_t k = 0;; k++) {
-		if (g_stop || g_lowRam) break;
-		if ((k & 127) == 0 && FreeMb() < kMinFreeMb) {
-			if (!g_lowRam.exchange(true)) Log("xmlahead: free RAM below %llu MB - no more files parsed ahead", (unsigned long long)kMinFreeMb);
-			break;
+		if (g_stop) break;
+		if ((k & 127) == 0) {
+			while (!g_stop && FreeMb() < kMinFreeMb) {   // pause while RAM is short
+				if (!g_lowRam.exchange(true)) Log("xmlahead: free RAM below %llu MB - parsing ahead paused", (unsigned long long)kMinFreeMb);
+				s_ramWaits++;
+				Sleep(100);
+			}
+			g_lowRam = false;
 		}
 		const size_t i = g_next[q]++;
 		if (i >= n) break;
 		Item& it = *g_queue[q][i];
+		while (!g_stop && it.idx > g_gamePos.load() + kLead && it.state.load() == 0) { s_leadWaits++; Sleep(2); }
 		int w = 0;
 		if (!it.state.compare_exchange_strong(w, 1)) continue;   // the game asked first
 		void* node = nullptr;
@@ -137,6 +150,7 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 		auto f = g_byPath.find(path);
 		if (f != g_byPath.end()) {
 			Item& it = *f->second;
+			for (size_t pos = g_gamePos.load(); it.idx > pos && !g_gamePos.compare_exchange_weak(pos, it.idx);) {}
 			int r = 2;
 			if (it.state.compare_exchange_strong(r, 3)) {
 				*ret = it.node;          // the worker's reference goes to the caller
@@ -214,9 +228,11 @@ DWORD WINAPI Writer(LPVOID) {
 		if ((g_started[0] || g_started[1]) && (s_served != lastServed || s_ready != lastReady)) {
 			lastServed = s_served; lastReady = s_ready;
 			Log("xmlahead: ready %lld of %zu (failed %lld, parse %lld ms), served %lld (%lld after waiting %lld ms, %lld "
-			    "waits timed out), game first %lld, dropped %lld; game private %zu MB (+%lld since start)",
+			    "waits timed out), game first %lld, dropped %lld; game at %zu, workers at %zu/%zu, lead waits %lld, RAM "
+			    "waits %lld; game private %zu MB (+%lld since start)",
 			    s_ready.load(), g_items.size(), s_failed.load(), s_parseMs.load(), s_served.load(), s_waited.load(),
-			    s_waitUs.load() / 1000, s_waitTimeout.load(), s_skipped.load(), s_late.load(), PrivateMb(),
+			    s_waitUs.load() / 1000, s_waitTimeout.load(), s_skipped.load(), s_late.load(), g_gamePos.load(),
+			    g_next[0].load(), g_next[1].load(), s_leadWaits.load(), s_ramWaits.load(), PrivateMb(),
 			    (long long)PrivateMb() - (long long)g_privAtStart);
 		}
 		const ULONGLONG t = GetTickCount64() - g_start;
@@ -239,6 +255,7 @@ bool LoadList() {
 	FILE* f = fopen((g_dir + "deagle_xmlahead_list.txt").c_str(), "r");
 	if (!f) { Log("xmlahead: no deagle_xmlahead_list.txt - nothing to parse ahead"); return false; }
 	char line[1100];
+	size_t idx = 0;
 	while (fgets(line, sizeof line, f)) {
 		if (line[0] == '#') continue;
 		size_t l = strlen(line);
@@ -249,6 +266,7 @@ bool LoadList() {
 		g_items.emplace_back();
 		Item& it = g_items.back();
 		it.path = p;
+		it.idx = idx++;
 		g_byPath.emplace(p, &it);
 		g_queue[IsLevel(p) ? 1 : 0].push_back(&it);
 	}

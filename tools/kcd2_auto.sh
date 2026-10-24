@@ -3,25 +3,26 @@
 # fully autonomous"). Only when the game isn't already running: a running KingdomCome.exe means the user is playing.
 #   tools/kcd2_auto.sh start [timeout s]   back up the saves (once a day), turn on wh_sys_AutoLoadLastSave for this run
 #                                          ("Newest game is auto loaded on game start", WHGame.dll; off by default) in
-#                                          user.cfg, launch through Steam, wait until the mod logs "gameplay started",
+#                                          the plugin's deagle_cvars.txt (user.cfg belongs to the mirror session since
+#                                          2026-10-23), launch through Steam, wait until the mod logs "gameplay started",
 #                                          focus the window (KCD2 pauses unfocused)
 #   tools/kcd2_auto.sh shot <out.png>      a frame of the game window
-#   tools/kcd2_auto.sh stop                close it by its exact PID, take this run's lines out of user.cfg
+#   tools/kcd2_auto.sh stop                close it by its exact PID, take this run's lines out of deagle_cvars.txt
 #   tools/kcd2_auto.sh status
 # Install between runs only after stop (the game must be closed for an install). Never pkill -f.
 set -euo pipefail
 G=/mnt/e/SteamLibrary/steamapps/common/KingdomComeDeliverance2
-CFG="$G/user.cfg"
+CFG="$G/Bin/Win64MasterMasterSteamPGO/deagle_cvars.txt"   # the plugin sets it when the game registers it
 LOG="$G/kcd.log"
 SAVES="/mnt/c/Users/<user>/Saved Games/kingdomcome2/saves"
 BACKUP=/mnt/e/Tools/deagle-work/save_backup
-MARK="-- kcd2_auto.sh (remove with tools/kcd2_auto.sh stop)"
+MARK="# kcd2_auto.sh (remove with tools/kcd2_auto.sh stop)"
 um() { command um "$@"; }
 pid() { tasklist.exe /FI "IMAGENAME eq KingdomCome.exe" /FO CSV /NH 2>/dev/null | tr -d '\r' | awk -F'","' '/KingdomCome/ {gsub(/"/, "", $2); print $2}' | head -1; }
 
 cfg_on() {
 	[ -f "$CFG" ] || : > "$CFG"
-	grep -qF -- "$MARK" "$CFG" || printf '%s\nwh_sys_AutoLoadLastSave = 1\n' "$MARK" >> "$CFG"
+	grep -qF -- "$MARK" "$CFG" || printf '%s\nwh_sys_AutoLoadLastSave 1 load\n' "$MARK" >> "$CFG"
 }
 cfg_off() {
 	[ -f "$CFG" ] || return 0
@@ -72,11 +73,11 @@ stop)
 	if [ -n "$p" ]; then um win kill "$p" >/dev/null; echo "closed pid $p"; else echo "not running"; fi
 	for _ in $(seq 1 30); do [ -z "$(pid)" ] && break; sleep 1; done
 	cfg_off
-	echo "user.cfg: this run's lines removed"
+	echo "deagle_cvars.txt: this run's lines removed"
 	;;
 status)
 	p=$(pid); echo "KingdomCome.exe: ${p:-not running}"
-	grep -qsF -- "$MARK" "$CFG" && echo "user.cfg: auto-load on (a run is in progress or wasn't stopped)" || echo "user.cfg: clean"
+	grep -qsF -- "$MARK" "$CFG" && echo "deagle_cvars.txt: auto-load on (a run is in progress or wasn't stopped)" || echo "deagle_cvars.txt: clean"
 	;;
 *) echo "usage: kcd2_auto.sh start [timeout] | shot <png> [scale] | stop | status" >&2; exit 2 ;;
 esac
