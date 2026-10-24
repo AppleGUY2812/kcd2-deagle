@@ -44,6 +44,34 @@ std::atomic<long long> n_one{0}, n_fallback{0}, n_verified{0}, n_bad{0};
 std::atomic<long long> n_size[6];         // <=32K, <=128K, <=512K, <=1M, <=4M, more
 const char* const kSizeName[6] = { "32K", "128K", "512K", "1M", "4M", "more" };
 
+// Repeats: the same exact piece (pak, data offset, offset, size) read again, by the time since its last read. Boots
+// 34-37 (2026-10-24): ~4,000 of the Settle wait's requests were such repeats; under 1 s apart means requests cancelled
+// and asked again, seconds apart means textures dropped from the pool and streamed again.
+std::mutex g_repMu;
+std::unordered_map<uint64_t, ULONGLONG> g_lastRead;   // piece -> GetTickCount64 of its last read
+constexpr size_t kRepMax = 400000;                    // ~25 MB at most; new pieces past that aren't tracked
+const ULONGLONG kRepEdge[3] = { 100, 1000, 5000 };
+const char* const kRepName[4] = { "<0.1 s", "<1 s", "<5 s", "later" };
+std::atomic<long long> n_rep[4], n_repBytes{0};
+
+void NoteRepeat(uint8_t* cache, uint8_t* entry, int64_t offset, int64_t want) {
+	uint64_t k = (uint64_t)(uintptr_t)cache * 0x9e3779b97f4a7c15ull;
+	k ^= ((uint64_t)*(uint32_t*)(entry + 0xc) << 1) + 0x632be59bd9b4e019ull + (k << 6) + (k >> 2);
+	k ^= (uint64_t)offset * 0xff51afd7ed558ccdull + (k << 6) + (k >> 2);
+	k ^= (uint64_t)want * 0xc4ceb9fe1a85ec53ull + (k << 6) + (k >> 2);
+	const ULONGLONG now = GetTickCount64();
+	std::lock_guard<std::mutex> g(g_repMu);
+	auto f = g_lastRead.find(k);
+	if (f == g_lastRead.end()) {
+		if (g_lastRead.size() < kRepMax) g_lastRead.emplace(k, now);
+		return;
+	}
+	const ULONGLONG d = now - f->second;
+	f->second = now;
+	n_rep[d < kRepEdge[0] ? 0 : d < kRepEdge[1] ? 1 : d < kRepEdge[2] ? 2 : 3]++;
+	n_repBytes += want;
+}
+
 std::mutex g_pakMu;                       // per pak (by its cache object): name + bytes, for the "most read" line
 struct Pak { std::string name; long long bytes = 0, calls = 0; };
 std::unordered_map<uint8_t*, Pak> g_paks;
@@ -293,13 +321,14 @@ uint32_t __fastcall HkRead(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t
 	n_size[want <= (32 << 10) ? 0 : want <= (128 << 10) ? 1 : want <= (512 << 10) ? 2 : want <= (1 << 20) ? 3
 	       : want <= (4 << 20) ? 4 : 5]++;
 	CountPak(cache, *(HANDLE*)(cache + 0x10), want);
+	NoteRepeat(cache, entry, offset, want);
 	Streamahead_Record(cache, entry, offset, want, Now() - t0);
 	n_ticks += Now() - t0;
 	return r;
 }
 
 DWORD WINAPI Reporter(LPVOID) {
-	long long lastCalls = 0, lastBytes = 0, lastTicks = 0, lastLock = 0, lastRead = 0;
+	long long lastCalls = 0, lastBytes = 0, lastTicks = 0, lastLock = 0, lastRead = 0, lastRep[4] = {}, lastRepB = 0;
 	ULONGLONG lastPaks = 0;
 	const ULONGLONG start = GetTickCount64();
 	ULONGLONG lastLine = 0, lastT = GetTickCount64();
@@ -314,15 +343,23 @@ DWORD WINAPI Reporter(LPVOID) {
 		char sizes[200] = "";
 		int o = 0;
 		for (int i = 0; i < 6; i++) o += snprintf(sizes + o, sizeof sizes - o, "%s%s %lld", i ? ", " : "", kSizeName[i], n_size[i].load());
+		char reps[200];
+		long long repN = 0, rp[4];
+		for (int i = 0; i < 4; i++) repN += (rp[i] = n_rep[i].load()) - lastRep[i];
+		const long long repB = n_repBytes.load();
+		o = snprintf(reps, sizeof reps, "+%lld (%.0f MB), since the last read", repN, (repB - lastRepB) / 1e6);
+		for (int i = 0; i < 4; i++) o += snprintf(reps + o, sizeof reps - o, "%s %s %lld", i ? "," : ":", kRepName[i], rp[i] - lastRep[i]);
+		for (int i = 0; i < 4; i++) lastRep[i] = rp[i];
+		lastRepB = repB;
 		long long aServed = 0, aFirst = 0, aNot = 0;
 		Streamahead_Stats(&aServed, &aFirst, &aNot);
 		Log("streamio: mode %d  +%lld requests %.1f MB in %.1f s = %.0f MB/s, read thread busy %.0f %% (ReadFile %.0f ms, "
 		    "lock wait %.0f ms)  total %lld requests %.1f MB, one-read %lld, fallback %lld, verified %lld, mismatches %lld, "
-		    "buffered path %lld, read ahead: served %lld, game first %lld, not listed %lld  sizes: %s", g_mode.load(),
+		    "buffered path %lld, read ahead: served %lld, game first %lld, not listed %lld  sizes: %s  repeats %s", g_mode.load(),
 		    c - lastCalls, (b - lastBytes) / 1e6, secs,
 		    (b - lastBytes) / 1e6 / (secs > 0 ? secs : 1), 100.0 * Ms(t - lastTicks) / (secs * 1000.0), Ms(rd - lastRead),
 		    Ms(lk - lastLock), c, b / 1e6, n_one.load(), n_fallback.load(), n_verified.load(), n_bad.load(),
-		    n_buffered.load(), aServed, aFirst, aNot, sizes);
+		    n_buffered.load(), aServed, aFirst, aNot, sizes, reps);
 		lastCalls = c; lastBytes = b; lastTicks = t; lastLock = lk; lastRead = rd; lastT = now; lastLine = now;
 		if (now - lastPaks >= 30000) {
 			lastPaks = now;
