@@ -20,6 +20,7 @@
 #include "fastzip.h"
 #include "streamio.h"
 #include "readiness.h"
+#include "hitch.h"
 #include "streamahead.h"
 #include "pakahead.h"
 #include "cvars.h"
@@ -1228,6 +1229,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "fastzip")) Fastzip_Command(rest);
 	else if (!strcmp(cmd, "streamio")) Streamio_Command(rest);
 	else if (!strcmp(cmd, "readiness")) Readiness_Command(rest);
+	else if (!strcmp(cmd, "hitch")) Hitch_Command(rest);
 	else if (!strcmp(cmd, "pakahead")) Pakahead_Command(rest);
 	else if (!strcmp(cmd, "cvars")) Cvars_Command(rest);
 	else if (!strcmp(cmd, "xmlahead")) Xmlahead_Command(rest);
@@ -1399,6 +1401,7 @@ static void OnCamera(uintptr_t camera) {
 		flast = now;
 		fpos[0] = g_cam[3]; fpos[1] = g_cam[7]; fpos[2] = g_cam[11];
 	}
+	Hitch_Frame();   // a drawn frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftpre_Frame();   // fast-travel preload (ftpreload.cpp): the destination streams in while the map piece walks
 	Readiness_Frame();   // what holds a loading / black screen, and "let me in early" (readiness.cpp)
 	UpdateMotion(g_cam);
@@ -1596,6 +1599,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
+	Hitch_Install(g_game.base, g_game.size, g_self);   // samples the main thread in frames over 250 ms (hitch.cpp)
 	Readiness_Install(g_game.base);   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	uintptr_t fr = FindFrustum();
 	Log("UpdateFrustumPlanes %p", (void*)fr);
