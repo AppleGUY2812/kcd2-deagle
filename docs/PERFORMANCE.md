@@ -532,3 +532,9 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   needs the render thread's game call sites (hitch.cpp samples RenderThread from e6a356e) or one boot with DLSS off.
 - The state-4 frame (2.4 s, before the gate) is different: RenderLoadingThread, the JobWorkers (dxcompiler.dll) and the
   driver's "D3D Background Thread"s are busy, which looks like shader / pipeline compiling.
+- Paging in the frozen frame (boot 17, Windows counters each second, the load session's boot17_mem.csv): "Pages
+  Input/sec" (pages read from disk for hard faults) 18,868 at 00:56:55.8 and 66,559 at 56.8 (~270 MB/s, equal to the
+  disk read rate that second), then 8,034 and 1,657; transition faults 67-89k/s. Free RAM 1.2-1.5 GB, game private
+  bytes 8.0 GB (11.7 GB 10 s into play), WSL's VM 3.2 GB. About 340 MB was read back in those 2 s: that matches the DLSS
+  DLLs NGX may map (nvngx_dlss 47 MB used, DLSS Enabler's unused nvngx_dlssd 76 MB and nvngx_dlssnr 166 MB next to the
+  exe), but the page file would look the same in these counters. a50aeaf lists what the frame opens.
