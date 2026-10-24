@@ -6,6 +6,7 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
 
 ## The user's path vs the test boots (M)
 - Menu + Continue (boot 27, 2026-10-24 02:31): **34.4 s from the click** (1.4 s click -> level loading, then 33.0 s).
+  With 3b: 34.6 s (boot 29, gate 9.4 s) and 33.4 s (boot 30, + readiness temp 128). The gate varies +-1 s per boot.
 - Auto-load test boots (wh_sys_AutoLoadLastSave; boots 24-26): 38.3-39.4 s. They carry two costs the user's path does
   not: NVIDIA NGX/DLSS start-up (~4 s first gameplay frame; on the menu path it happens before the load) and less
   menu time for the read-ahead (gate 10-11 s vs 8.7 s). Compare test boots with test boots.
@@ -35,10 +36,23 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 - applyfast facial DBA sort (2195bf8): lists arrive nearly sorted (10 breaks in 40k), 80-95 ms; gain not measurable.
 - applyfast quests first (02c973b, on): quest job starts 3.1-3.3 s earlier; Main's wait 3.3 -> 1.4-1.9 s; state 4
   ~1 s earlier. Quests not yet checked in game.
-- applyfast PSO precache at the menu (02c973b, off): state 4 2.4 -> 0.3-0.6 s, but the menu freezes ~6.2 s (it also
-  parses the 416 shaders the load parses later) and holds ~500 MB earlier. Net ~1.9 s on 2 boots. The user decides.
+- applyfast 3b, PSO precache during the load (e21c93b, default, deagle_psoahead.txt 2): handed to the RLT before
+  Main's quest wait; state 4 2.4 -> 0.4-0.5 s (boots 29-30). Main now waits 1.7-2.2 s for the RLT's texture precache.
+  Mode 1 (at the menu, on Main) froze the menu ~6.2 s: rejected.
 - skin cap (kcd2-deagle-66): wh_cc_MaxSkinLoadingInProgress 120 / JobQueueSize 80 (load): clothing 10.2 -> 7.2 s
   (did not repeat in every boot).
+
+## Start early (user rule 2026-10-24: every step at launch / menu, before Continue)
+| Work | Starts now | Status |
+|---|---|---|
+| unpack (pakahead) | launch +1 s | done; 2 GB cap: 17,650 of 23,338 files ready before the menu |
+| ground meshes (streamahead) | launch +1 s | done; 512 MB held cap |
+| XML parse (xmlahead) | menu idle (~launch +22 s) | capped 3,000 files ahead of the game: 4 workers idle most of the menu; level files wait for level loading |
+| quest graph 13.7 s | level loading +~1 s | RE running: re_questmenu_keep.md, re_questmenu_when.md |
+| Main: anim sets 2.2, SmartObjectAnimations 1.43, XGenAI 0.55 s | in the load | RE running: re_menu_main.md |
+| RLT: shader parse 4-8 s, texture precache, PSO | in the load | RE running: re_menu_render.md |
+| save read, mapClouds/Storm, Settle textures at the save's position | in the load | asked kcd2-deagle-66 |
+Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 
 ## Tried, no gain
 - r_PipelineStatePrecacheMode 0: state 4 0.3 s but a 0.8 s freeze after control (shaders built on demand).
@@ -50,8 +64,9 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 1. Settle gate 8.7 s (kcd2-deagle-66): textures, clothing.
 2. Quest job 13.7 s on one worker: nodes 6.0 s + edges 3.3 s are the bulk; XML 2.25 s (workers behind).
 3. Apply save 5.3 s: Storm memo ~0.45 s, concept BFS ~0.4 s (re_stepG).
-4. State 4: the precache's 71-shader parse 1.1 s + PSO 1 s; at the menu it costs a 6 s freeze.
-5. SmartObjectAnimations table on a worker (1.43 s); objects step 8.6 s (re_stepC).
+4. The three build chains end together (quest 14.0, RLT ~14.4, Main 12.3 + E 2.1 s): one alone gains < 1 s; move all
+   three to the menu (table above).
+5. Objects step 8.6 s (re_stepC): entities 2.7 s, CryPak lock waits ~1.8 s.
 
 ## Measuring rules
 - One change per boot; same deagle_cvars.txt (the two wh_cc lines are in it).
