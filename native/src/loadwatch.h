@@ -11,3 +11,6 @@
 void Loadwatch_Install(uintptr_t gameBase);
 // The quest job (piece 3b's wait): -1 unknown (the job-body hook is off), 0 not finished since its last submit, 1 done.
 int Loadwatch_QuestJob();
+// Cumulative time (ms) and top-level calls of each quest hook so far: [0] job submit, [1] job body, [2] project,
+// [3] 2a node building, [4] 2b CreatePorts, [5] CreateEdges, [6] main thread waits. Returns how many were filled (7).
+int Loadwatch_QuestTotals(double ms[7], long long calls[7]);

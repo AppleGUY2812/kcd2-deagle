@@ -8,3 +8,4 @@
 // deagle_questfast.txt: 1 on (default), 0 off.
 void Questfast_Install(uintptr_t gameBase, void* selfModule);
 void Questfast_Report(const char* when);   // one log line with the counts and times so far
+bool Questfast_SetOn(bool on);             // questbench's A/B: the sorted insert on or off (false = not installed)

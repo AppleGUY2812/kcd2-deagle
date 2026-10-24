@@ -28,7 +28,8 @@ struct List {
 	size_t size, key;
 	bool strings;               // entries start with an MSVC std::string (compared by content in the self-check)
 	SortFn orig = nullptr;
-	std::atomic<bool> on{true};             // false after a self-check mismatch: the game's sort from then on
+	std::atomic<bool> on{true};             // false after a self-check mismatch (the game's sort from then on) or questbench's B
+	std::atomic<bool> bad{false};           // a self-check mismatch: never back on this session
 	std::atomic<long long> calls{0}, fast{0}, unsorted{0}, ticks{0};
 	std::atomic<long long> checked{0}, checkTicks{0};
 };
@@ -83,6 +84,7 @@ template <int I> void __fastcall HkSort(unsigned char* first, unsigned char* las
 	free(copy);
 	l.checked++;
 	if (!same) {
+		l.bad = true;
 		l.on = false;
 		Log("questfast: rttr %s: the sorted insert differs from the game's sort at call %lld (%zu entries): the game's order "
 		    "was put back and its sort is used for the rest of this session", l.name, c, bytes / l.size);
@@ -102,6 +104,13 @@ void Questfast_Report(const char* when) {
 		if (o >= (int)sizeof buf) break;
 	}
 	Log("questfast: %s: rttr type registry %s", when, buf);
+}
+
+bool Questfast_SetOn(bool on) {
+	bool any = false;
+	for (auto& l : g_lists)
+		if (l.orig) { l.on = on && !l.bad.load(); any = true; }
+	return any;
 }
 
 void Questfast_Install(uintptr_t base, void* self) {

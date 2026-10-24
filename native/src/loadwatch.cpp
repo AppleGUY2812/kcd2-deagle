@@ -106,6 +106,12 @@ static_assert(sizeof g_qWrap / sizeof g_qWrap[0] == kQ, "one wrapper per hook");
 
 int Loadwatch_QuestJob() { return g_jobState.load(); }
 
+int Loadwatch_QuestTotals(double ms[7], long long calls[7]) {
+	static_assert(kQ == 7, "Loadwatch_QuestTotals' slots");
+	for (int i = 0; i < kQ; i++) { ms[i] = g_qTicks[i].load() * 1000.0 / g_freq; calls[i] = g_qCalls[i].load(); }
+	return kQ;
+}
+
 void Loadwatch_Install(uintptr_t base) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
 	void* p = (void*)(base + kRvaPoll);

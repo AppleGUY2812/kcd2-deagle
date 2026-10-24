@@ -2,6 +2,8 @@
 #include "questmenu.h"
 #include "log.h"
 #include "xmlahead.h"
+#include "loadwatch.h"
+#include "questfast.h"
 #include "MinHook.h"
 #include <windows.h>
 #include <shlobj.h>
@@ -292,6 +294,64 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	return r;
 }
 
+// ---- questbench (questmenu.h)
+std::atomic<bool> g_benching{false};
+struct BenchArgs { int n; bool ab; };
+uintptr_t ReadMgr() {
+	__try { const uintptr_t mod = Module(); return mod ? *(uintptr_t*)(mod + 0x18) : 0; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+DWORD WINAPI Bench(LPVOID arg) {
+	const BenchArgs a = *(BenchArgs*)arg;
+	delete (BenchArgs*)arg;
+	t_build = true;
+	std::vector<uintptr_t> m(g_cache.M.size()), p(g_cache.P.size());
+	for (size_t i = 0; i < m.size(); i++) reinterpret_cast<StrFn>(g_base + kRvaStrCtor)(&m[i], g_cache.M[i].c_str());
+	for (size_t i = 0; i < p.size(); i++) reinterpret_cast<StrFn>(g_base + kRvaStrCtor)(&p[i], g_cache.P[i].c_str());
+	alignas(16) uint8_t impl[0x60] = {};
+	*(uintptr_t*)(impl + 0x08) = (uintptr_t)m.data();
+	*(uintptr_t*)(impl + 0x10) = *(uintptr_t*)(impl + 0x18) = (uintptr_t)(m.data() + m.size());
+	*(uintptr_t*)(impl + 0x20) = g_mgr;
+	*(uintptr_t*)(impl + 0x28) = (uintptr_t)p.data();
+	*(uintptr_t*)(impl + 0x30) = *(uintptr_t*)(impl + 0x38) = (uintptr_t)(p.data() + p.size());
+	bool ok = false;
+	int done = 0;
+	for (int k = 1; k <= a.n; k++) {
+		if (Xmlahead_LevelSeen()) { Log("questbench: a level load began: stopped after %d builds", done); break; }
+		if (FreeMb() < 1200) { Log("questbench: less than 1200 MB RAM free: stopped after %d builds", done); break; }
+		const bool fast = !a.ab || (k % 2 == 1);
+		if (a.ab) Questfast_SetOn(fast);
+		double ms0[7] = {}, ms1[7] = {}, d[7];
+		long long c0[7] = {}, c1[7] = {};
+		Loadwatch_QuestTotals(ms0, c0);
+		const unsigned long long free0 = FreeMb();
+		const long long t0 = Now();
+		ok = CallBody(impl, g_mgr);
+		const double s = SecSince(t0);
+		Loadwatch_QuestTotals(ms1, c1);
+		for (int i = 0; i < 7; i++) d[i] = (ms1[i] - ms0[i]) / 1000.0;
+		done++;
+		Log("questbench: build %d/%d %s in %.2f s: XML + definitions %.2f, 2a nodes %.2f, ports %.2f, edges %.2f, after the "
+		    "projects %.2f s%s; free RAM %llu -> %llu MB", k, a.n, ok ? "OK" : "FAILED (exception)", s, d[2] - d[3] - d[4] - d[5],
+		    d[3], d[4], d[5], d[1] - d[2], a.ab ? (fast ? " [questfast on]" : " [questfast off]") : "", free0, FreeMb());
+		if (!ok) break;
+	}
+	if (a.ab) Questfast_SetOn(true);
+	uintptr_t snap[64];
+	size_t n = 0;
+	const bool snapped = ok && Snapshot(g_mgr, snap, 64, &n) && n;
+	if (snapped) g_snap.assign(snap, snap + n);
+	for (uintptr_t& s : m) reinterpret_cast<RelFn>(g_base + kRvaStrRelease)(&s);
+	for (uintptr_t& s : p) reinterpret_cast<RelFn>(g_base + kRvaStrRelease)(&s);
+	g_buildT1 = Now();
+	g_phase = snapped ? 2 : 3;
+	Log("questbench: done, %d builds; %s", done, !g_armed.load() ? "no main-menu build was pending, the load builds its own" :
+	    snapped ? "the first load keeps the last build" : "the last build failed: the load builds its own");
+	SetEvent(g_built);
+	g_benching = false;
+	return 0;
+}
+
 bool InList(int type, const int* l, size_t n) { for (size_t i = 0; i < n; i++) if (l[i] == type) return true; return false; }
 const int kWaitTypes[] = { 2, 5, 6, 9, 0xa, 0x18, 0x22, 0x33, 0x3c, 0x41, 0x47, 0x48, 0x4d, 0x4f };   // touch the projects
 const int kDisarmTypes[] = { 2, 5, 6, 9, 0xa, 0x22, 0x33, 0x3c, 0x41, 0x47, 0x4d, 0x4f };
@@ -349,6 +409,33 @@ bool Questmenu_OnJobBody(uint64_t impl) {
 }
 
 void Questmenu_SetConceptHook(bool on) { g_conceptHook = on; }
+
+void Questmenu_Bench(const char* args) {
+	int n = 0;
+	char mode[8] = {};
+	const int got = args ? sscanf(args, "%d %7s", &n, mode) : 0;
+	const char* why = nullptr;
+	if (got < 1) why = "usage: questbench N [ab] (N 1-20)";
+	else if (n < 1 || n > 20) why = "N must be 1-20";
+	else if (!g_mode) why = "questmenu is off (deagle_questmenu.txt 0)";
+	else if (!g_cacheOk) why = "no deagle_questcache.txt yet (a load writes it)";
+	else if (Xmlahead_LevelSeen()) why = "only at the main menu, before the first load";
+	else if (g_phase.load() == 1) why = "a build is running";
+	else if (g_benching.load()) why = "a bench is running";
+	else if (!(g_mgr = g_mgr ? g_mgr : ReadMgr())) why = "no concept manager";
+	else if (FreeMb() < 1200) why = "less than 1200 MB RAM free";
+	if (why) {
+		Log("questbench: %s (state: phase %d, cache %s, last build %.2f s)", why, g_phase.load(), g_cacheOk ? g_cache.level.c_str() : "-",
+		    (g_buildT1 - g_buildT0) * 1.0 / g_freq);
+		return;
+	}
+	g_benching = true;
+	ResetEvent(g_built);   // a load or a project-touching concept message waits for the bench, as for the pre-build
+	g_phase = 1;
+	HANDLE t = CreateThread(nullptr, 8 << 20, Bench, new BenchArgs{ n, !strcmp(mode, "ab") }, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+	if (t) { CloseHandle(t); Log("questbench: %d builds started%s", n, !strcmp(mode, "ab") ? " (questfast on / off alternating)" : ""); }
+	else { g_phase = 3; g_benching = false; SetEvent(g_built); Log("questbench: could not start the thread"); }
+}
 
 void Questmenu_Install(uintptr_t base, void* self) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;

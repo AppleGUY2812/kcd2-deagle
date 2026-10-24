@@ -19,3 +19,7 @@ void Questmenu_Install(uintptr_t gameBase, void* selfModule);
 bool Questmenu_OnJobBody(uint64_t impl);   // loadwatch, job-body detour, depth 0: true = kept (skip the body)
 void Questmenu_OnConceptMsg(int type);    // applyfast's concept OnMessage hook (main thread)
 void Questmenu_SetConceptHook(bool on);   // applyfast: that hook is installed
+// questbench N [ab]: at the main menu, rebuild the quest graph N times (1-20) on a plugin thread with the cached inputs,
+// one "questbench:" line per build with the time of each part (the profile/test loop without a boot). ab = questfast on
+// for odd builds, off for even ones. A pending main-menu build stays kept (re-snapshotted). No args: the state.
+void Questmenu_Bench(const char* args);

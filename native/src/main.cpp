@@ -1238,6 +1238,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "pakahead")) Pakahead_Command(rest);
 	else if (!strcmp(cmd, "cvars")) Cvars_Command(rest);
 	else if (!strcmp(cmd, "xmlahead")) Xmlahead_Command(rest);
+	else if (!strcmp(cmd, "questbench")) Questmenu_Bench(rest);   // rebuild the quest graph N times at the menu (questmenu.h)
 	else if (!strcmp(cmd, "loaded")) { Cvars_OnLoaded(); Streamahead_OnLoaded(); Applyfast_OnLoaded(); }
 	else if (!strcmp(cmd, "streamahead")) Streamahead_Command(rest);
 	else if (!strcmp(cmd, "fastkey")) {
