@@ -56,6 +56,13 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_respec <skill>` | Resets one skill: its bought perks come off and you get exactly that many points back to spend again (e.g. `deagle_respec alchemy`). Other skills stay as they are. Free perks (like Lab Dweller) stay. Needs the native plugin and pak from 2026-10-20 or later. (testing) |
 | **KCD2 Perk Points** window | Desktop shortcut `KCD2 Perk Points.bat` (script `tools/points_ui.ps1`, copied to `E:\Tools\kcd2-points`): every skill and stat with its free points, **Set** to change, **Reset perks** to reset one skill, **Perks...** to add or remove single perks (pick one, Add / Remove; "Use points" takes or gives back a point; exclusive pairs in gold: Add swaps, the partner comes off first because the game silently refuses a perk beside its exclusive partner). It can't show which perks Henry has (the game's HasPerk says no for every skill-tree perk). Perk list: `perks.json` next to the script (`tools/gen_perklist.py`). Runs next to the game (alt-tab / second screen). Each read answers at once since the 2026-10-20 install. Same plugin requirement. (testing) |
 
+### KCD2 Render mod (the gun mirror, separate repo `~/kcd2-render`, `Mods\kcd2render\krender.ini`, read at game start)
+| Setting | What it does |
+|---|---|
+| `enabled=1` + `mirror=1` | the live mirror on the gun: screen-space reflection for what's on screen, six 256 px cube photos around the eye for the rest; `refresh_move` (2.5 m walked) and `face_every` (8 frames) set how often a photo is re-taken |
+| `face_keep_display=1` / `0` | the black-flash fix (2026-10-23): 1 = a cube photo no longer resizes the game window (the resize was the flash); 0 = the old behaviour, for comparing (the cube then stays frozen after the first fill). Installed 2026-10-23, untested in game |
+| `mask_debug=1` / `0` | the mirror's pixels get a half magenta tint, to check the mask covers only the gun. On for the 2026-10-23 check; set back to 0 after it |
+
 ## Settings worth knowing (`deagle_set <name> <value>`)
 Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.on 0`) is an unknown command.
 On / off settings take `1` / `0` (or `true` / `false`, `on` / `off`); list settings take numbers apart by commas.
