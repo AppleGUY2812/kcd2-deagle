@@ -29,6 +29,7 @@
 #include "loadwatch.h"
 #include "applyfast.h"
 #include "questmenu.h"
+#include "questfast.h"
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
@@ -1603,6 +1604,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Applyfast_Install(g_game.base, g_self);   // faster pieces of the save load's apply step (applyfast.cpp)
 	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
+	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)

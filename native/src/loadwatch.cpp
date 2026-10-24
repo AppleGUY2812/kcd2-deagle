@@ -2,6 +2,7 @@
 #include "loadwatch.h"
 #include "applyfast.h"
 #include "questmenu.h"
+#include "questfast.h"
 #include "log.h"
 #include <windows.h>
 #include <atomic>
@@ -94,6 +95,7 @@ template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, u
 	depth--;
 	if (I == kJobBody && depth == 0 && g_jobState.load() >= 0) g_jobState = 1;
 	if (depth == 0) QNote(I, t, Now());
+	if (I == kJobBody && depth == 0) Questfast_Report("after the quest job");
 	return r;
 }
 void* const g_qWrap[] = { (void*)&QWrap<0>, (void*)&QWrap<1>, (void*)&QWrap<2>, (void*)&QWrap<3>, (void*)&QWrap<4>,
