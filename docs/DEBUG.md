@@ -61,7 +61,11 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 |---|---|
 | `enabled=1` + `mirror=1` | the live mirror on the gun: screen-space reflection for what's on screen, six 256 px cube photos around the eye for the rest; `refresh_move` (2.5 m walked) and `face_every` (8 frames) set how often a photo is re-taken |
 | `face_keep_display=1` / `0` | the black-flash fix (2026-10-23): 1 = a cube photo no longer resizes the game window (the resize was the flash); 0 = the old behaviour, for comparing (the cube then stays frozen after the first fill). Installed 2026-10-23, untested in game |
-| `mask_debug=1` / `0` | the mirror's pixels get a half magenta tint, to check the mask covers only the gun. On for the 2026-10-23 check; set back to 0 after it |
+| `mask_debug=1` / `0` | the mirror's pixels get a half magenta tint, to check the mask covers only the gun. Checked 2026-10-23 (only the chrome and the rounds); 0 since |
+| `mirror_chrome=1`, `mirror_f0_scale` | the gun reflects like chrome (~55 %, neutral) instead of polished silver (95 %, warm); `mirror_f0_scale` darker < 1 |
+| `mirror_tex_f0=0.25`, `mirror_smooth_lo/hi` 0.80/0.85 | the game's own blurry reflection under the mirror cut to a quarter (the texture stores F0 x 0.25 where the mirror takes over, the plugin adds it back sharp). Must match `tools/ron/mk_grizzly_mirror.py` TEX_F0 / MIRROR_S_* |
+| `depth_trace=1` / `0` | the reflection ray is traced through the 360° photo's depth: nearby things at their real place |
+| `dlss_keep=1` | no DLSS rebuild after each photo; the photo is re-taken behind the fast-travel black screen, otherwise frozen |
 
 ## Settings worth knowing (`deagle_set <name> <value>`)
 Type the whole line: `deagle_set hearing.on 0`. A setting name alone (`hearing.on 0`) is an unknown command.
