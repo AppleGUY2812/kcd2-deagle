@@ -1,7 +1,7 @@
 #pragma once
 #include <cstdint>
 // Inner profile of the quest graph build (re_quest_replay_parallel.md plan step 1: "measure the replay floor first").
-// questbench N prof turns on 65 timing hooks on the builder's inner functions for its builds only (MinHook
+// questbench N prof turns on 74 timing hooks on the builder's inner functions for its builds only (MinHook
 // enable/disable around them), counts only the bench thread, and logs per build the self time (time not spent in another
 // hooked function) and calls of each, plus the resolver Register / Unregister counts (other threads separately). The
 // functions a replay must still call (ctor, attribute convert, OnAfterDeserialization, port add, connect, Register) are

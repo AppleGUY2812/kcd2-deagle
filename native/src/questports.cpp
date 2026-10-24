@@ -25,6 +25,18 @@ constexpr uintptr_t kRvaVisitorVt = 0x3e388d8;
 // node vt+0x150 / +0x158 bodies the "Set" path may call that write only the new definition (S): `ret`, modules, Quest
 constexpr uintptr_t kRvaRet = 0x3b6e80, kRvaModule150 = 0x11ca874, kRvaQuest150 = 0x1f43580;
 constexpr uintptr_t kRvaSpRelease = 0x23c8a8c;   // shared_ptr destructor (release ctrl if any)
+// Lookup -> bind pass-through (re_quest_portbind.md 4, H3): a lazily created port (and each CreatePorts record) looks its
+// definition up (FUN_1806a0674(node, shared_ptr* out, CryString* name): one walk) and then binds it (FUN_180697e78(node,
+// port by value): the same walk again, then FUN_180698810(port, &node, shared_ptr by value)). The bind reuses the lookup's
+// definition when it is the next bind on this thread, for the same node and port name.
+constexpr uintptr_t kRvaLookup = 0x6a0674, kRvaBind = 0x697e78, kRvaSetDef = 0x698810;
+constexpr uintptr_t kRvaNodeAddRef = 0x1e38f20, kRvaNodeRelease = 0x1e39320, kRvaStrRelease = 0x4fc624;
+const unsigned char kLookupBytes[] = { 0x4c,0x8b,0xdc,0x53,0x48,0x83,0xec,0x60,0x48,0xc7,0x02,0x00,0x00,0x00,0x00,0x48 };
+const unsigned char kBindBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x55,0x56,0x57,0x48,0x8b,0xec,0x48,0x81,0xec,0x80,0x00 };
+const unsigned char kSetDefBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0xf9,0x49,0x8b,0xd8 };
+const unsigned char kAddRefBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x0f,0xb7,0x41,0x0c,0x48,0x8b };
+const unsigned char kReleaseBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xb8,0xff,0xff,0xff,0xff,0x66,0xf0 };
+const unsigned char kStrReleaseBytes[] = { 0x48,0x83,0xec,0x28,0x48,0x8b,0x09,0x48,0x83,0xc1,0xf4,0xe8 };
 const unsigned char kSpReleaseBytes[] = { 0x48,0x83,0xec,0x28,0x48,0x8b,0x49,0x08,0x48,0x85,0xc9,0x74,0x05,0xe8 };
 
 using EnumFn = void(__fastcall*)(unsigned char*, unsigned char*, uint64_t);
@@ -40,6 +52,22 @@ thread_local int t_job = 0;
 std::atomic<bool> g_on{true}, g_bad{false};
 
 struct Sp { void* p; void* ctrl; };
+
+// ---- lookup -> bind pass-through
+using LookupFn = Sp*(__fastcall*)(unsigned char*, Sp*, void*);
+using BindFn = uint8_t(__fastcall*)(unsigned char*, void**);
+using SetDefFn = void(__fastcall*)(void*, void**, Sp*);
+using RefFn = void(__fastcall*)(void*);
+LookupFn g_lookupOrig = nullptr;
+BindFn g_bindOrig = nullptr;
+SetDefFn g_setDef = nullptr;
+RefFn g_nodeAddRef = nullptr, g_nodeRelease = nullptr, g_strRelease = nullptr;
+bool g_h3 = false;
+std::atomic<bool> g_h3On{true}, g_h3Bad{false};
+std::atomic<long long> g_h3Used{0}, g_h3Other{0}, g_h3Checked{0}, g_h3CheckTicks{0};
+struct Stash { unsigned char* node; Sp sp; char name[128]; bool valid; };
+thread_local Stash t_stash{};
+inline void AddRefSp(const Sp& sp) { if (sp.ctrl) _InterlockedIncrement((volatile long*)((char*)sp.ctrl + 8)); }
 struct Ent { uint64_t h; void* type; uint32_t en, len; char* name; Sp sp; uint32_t hits; };
 Ent* g_tab = nullptr;
 size_t g_cap = 0, g_n = 0;
@@ -174,6 +202,84 @@ template <int K> void __fastcall HkEnum(unsigned char* node, unsigned char* fn, 
 
 void* const kWrap[3] = { (void*)&HkEnum<0>, (void*)&HkEnum<1>, (void*)&HkEnum<2> };
 
+void DropStash() {
+	if (t_stash.valid && t_stash.sp.ctrl) g_spRelease(&t_stash.sp);
+	t_stash.valid = false;
+	t_stash.sp = Sp{};
+}
+
+Sp* __fastcall HkLookup(unsigned char* node, Sp* out, void* nameStr) {
+	Sp* r = g_lookupOrig(node, out, nameStr);
+	if (!t_job || !g_h3On.load(std::memory_order_relaxed)) return r;
+	DropStash();
+	const char* name = nameStr ? *(const char**)nameStr : nullptr;
+	const size_t n = name ? strlen(name) : 0;
+	if (!name || n >= sizeof t_stash.name || !out->p) return r;   // nothing found: no port follows, nothing to pass on
+	memcpy(t_stash.name, name, n + 1);
+	t_stash.node = node;
+	t_stash.sp = *out;
+	AddRefSp(t_stash.sp);
+	t_stash.valid = true;
+	return r;
+}
+
+// two definitions have the same name (GetName, vt+0x08, returns a CryString by value). Not the port's name: a wildcard
+// definition (metadata 9) matches any one-letter port name ("A", "B" of MakeArray-like nodes) under its own name.
+bool SameDefName(void* a, void* b) {
+	void* x = nullptr; void* y = nullptr;
+	((void*(__fastcall*)(void*, void**))(*(void***)a)[1])(a, &x);
+	((void*(__fastcall*)(void*, void**))(*(void***)b)[1])(b, &y);
+	const bool same = x && y && !strcmp((const char*)x, (const char*)y);
+	if (x) g_strRelease(&x);
+	if (y) g_strRelease(&y);
+	return same;
+}
+
+uint8_t __fastcall HkBind(unsigned char* node, void** port) {
+	if (!t_stash.valid) return g_bindOrig(node, port);
+	Stash st = t_stash;   // taken: the stash serves at most the next bind
+	t_stash.valid = false; t_stash.sp = Sp{};
+	const char* pname = nullptr;
+	void* nameStr = nullptr;
+	if (t_job && g_h3On.load(std::memory_order_relaxed) && st.node == node && port && *port) {
+		nameStr = ((void*(__fastcall*)(void*))(*(void***)*port)[0x48 / 8])(*port);   // the port's CryString*
+		pname = nameStr ? *(const char**)nameStr : nullptr;
+	}
+	if (!pname || strcmp(pname, st.name)) {
+		g_h3Other.fetch_add(1, std::memory_order_relaxed);
+		if (st.sp.ctrl) g_spRelease(&st.sp);
+		return g_bindOrig(node, port);
+	}
+	const long long k = g_h3Used.fetch_add(1, std::memory_order_relaxed);
+	if (k < 2048 || !(k & 127)) {   // the walk again: the same definition (static) or one of the same class and name (per instance)
+		const long long t = Now();
+		Sp again{};
+		g_lookupOrig(node, &again, nameStr);   // the port's own name string (the visitor reads its length header)
+		const bool same = again.p == st.sp.p || (again.p && st.sp.p && *(void**)again.p == *(void**)st.sp.p && SameDefName(again.p, st.sp.p));
+		if (again.ctrl) g_spRelease(&again);
+		g_h3CheckTicks.fetch_add(Now() - t, std::memory_order_relaxed);
+		g_h3Checked.fetch_add(1, std::memory_order_relaxed);
+		if (!same) {
+			if (!g_h3Bad.exchange(true)) {
+				g_h3On = false;
+				Log("questfast: port pass-through MISMATCH: node %p port \"%s\": lookup %p, walk again %p: off for this session",
+				    node, st.name, st.sp.p, again.p);
+			}
+			if (st.sp.ctrl) g_spRelease(&st.sp);
+			return g_bindOrig(node, port);
+		}
+	}
+	// the bind's own steps without its walk (FUN_180697e78, S): node ref, set the definition (the call takes the shared_ptr by
+	// value: our reference goes to it), node and port refs released
+	g_nodeAddRef(node);
+	void* nodeLocal = node;
+	Sp copy = st.sp;
+	g_setDef(*port, &nodeLocal, &copy);
+	g_nodeRelease(node);
+	if (*port) g_nodeRelease(*port);
+	return 1;
+}
+
 }  // namespace
 
 void Questports_JobScope(bool enter) { t_job += enter ? 1 : -1; }
@@ -181,6 +287,7 @@ void Questports_JobScope(bool enter) { t_job += enter ? 1 : -1; }
 bool Questports_SetOn(bool on) {
 	if (!g_installed) return false;
 	g_on = on && !g_bad.load();
+	g_h3On = on && !g_h3Bad.load();
 	return true;
 }
 
@@ -194,6 +301,9 @@ void Questports_Report(const char* when) {
 	    when, g_hits.load(), g_miss.load(), g_missTicks.load() * 1000.0 / g_freq, keys, g_checked.load(),
 	    g_checkTicks.load() * 1000.0 / g_freq, g_on ? "" : ", OFF", g_fbThread.load(), g_fbVisitor.load(), g_fbSet.load(),
 	    g_fbBody.load());
+	if (g_h3)
+		Log("questfast: %s: port pass-through %lld binds without a walk, %lld other binds, self-check %lld equal (%.0f ms)%s", when,
+		    g_h3Used.load(), g_h3Other.load(), g_h3Checked.load(), g_h3CheckTicks.load() * 1000.0 / g_freq, g_h3On ? "" : ", OFF");
 }
 
 void Questports_Install(uintptr_t base) {
@@ -218,5 +328,20 @@ void Questports_Install(uintptr_t base) {
 	}
 	for (int i = 0; i < 3; i++) MH_EnableHook(t[i]);
 	g_installed = true;
-	Log("questfast: port cache on (3 enumerators hooked, quest job thread only)");
+	// pass-through: all six pieces or none
+	void* lk = (void*)(base + kRvaLookup); void* bd = (void*)(base + kRvaBind);
+	if (!memcmp(lk, kLookupBytes, 16) && !memcmp(bd, kBindBytes, 16) && !memcmp((void*)(base + kRvaSetDef), kSetDefBytes, 16) &&
+	    !memcmp((void*)(base + kRvaNodeAddRef), kAddRefBytes, 16) && !memcmp((void*)(base + kRvaNodeRelease), kReleaseBytes, 16) &&
+	    !memcmp((void*)(base + kRvaStrRelease), kStrReleaseBytes, sizeof kStrReleaseBytes)) {
+		g_setDef = (SetDefFn)(base + kRvaSetDef);
+		g_nodeAddRef = (RefFn)(base + kRvaNodeAddRef); g_nodeRelease = (RefFn)(base + kRvaNodeRelease);
+		g_strRelease = (RefFn)(base + kRvaStrRelease);
+		if (MH_CreateHook(lk, (void*)&HkLookup, (void**)&g_lookupOrig) == MH_OK) {
+			if (MH_CreateHook(bd, (void*)&HkBind, (void**)&g_bindOrig) == MH_OK) {
+				MH_EnableHook(lk); MH_EnableHook(bd);
+				g_h3 = true;
+			} else MH_RemoveHook(lk);
+		}
+	}
+	Log("questfast: port cache on (3 enumerators hooked, quest job thread only); lookup -> bind pass-through %s", g_h3 ? "on" : "OFF");
 }
