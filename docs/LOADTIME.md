@@ -24,6 +24,12 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
 | first gameplay frames | -33.0 | 0.3 + 0.6 s |
 
 ## RAM is the system limit (M)
+User's own loads vs free RAM at level loading: 2122 MB 33.4 s (boot 32), 1597 MB 38.5 s (U1), 1320 MB 48.3 s (U2,
+2026-10-24 07:48). U2: state 4 took 11.7 s (2.7 s in test boots) with 969k page faults in that frame (250k in test
+boots); 465 MB free at the gate. At launch 4.6 GB was free; pakahead filled to 2.1 GB at the menu, then shed 1.9 GB
+and served 299 MB. Other RAM then: KCD2 4.6 GB resident (11.7 GB private), WSL 2.1 GB, Brave 1.0, Steam 0.5,
+Jellyfin 0.45, Discord 0.43. The hitch line now splits a long frame's faults into disk reads / standby / fresh
+(system-wide) to tell whether the game's own pages are read back.
 16 GB PC (Ryzen 5 3600, 6 cores); WSL 2.4-3.7 GB. Read-ahead caches follow ramgov.h (read ahead while >= 1.5 GB free,
 free the farthest below 1.2 GB, each item freed at most once). Anything that holds more RAM before the load (PSOs at the
 menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free and terrain 5.2-5.7 s instead of 3.7-3.9.
@@ -38,7 +44,11 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
   ~1 s earlier. Quests not yet checked in game.
 - applyfast 3b, PSO precache during the load (e21c93b, default, deagle_psoahead.txt 2): handed to the RLT before
   Main's quest wait; state 4 2.4 -> 0.4-0.5 s (boots 29-30). Main now waits 1.7-2.2 s for the RLT's texture precache.
-  Mode 1 (at the menu, on Main) froze the menu ~6.2 s: rejected.
+  Mode 1 (at the menu, on Main) froze the menu ~6.2 s: rejected. Since boot 31 it never fires in time: the quest job
+  ends earlier (quests first), the RLT is still on its texture precache then, and later points come after the game's
+  own sync. Next: PSO creation on worker threads (re_pso_parallel.md).
+- applyfast 5, shaders parsed at the main menu (6a313dd, deagle_menushaders.txt 1): U2 parsed 110 at the menu, 367 in
+  the load; the user clicked Continue ~7 s after the menu came up, so most of the window is the start-up screens.
 - skin cap (kcd2-deagle-66): wh_cc_MaxSkinLoadingInProgress 120 / JobQueueSize 80 (load): clothing 10.2 -> 7.2 s
   (did not repeat in every boot).
 
@@ -48,7 +58,7 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 | unpack (pakahead) | launch +1 s | done; 2 GB cap: 17,650 of 23,338 files ready before the menu |
 | ground meshes (streamahead) | launch +1 s | done; 512 MB held cap |
 | XML parse (xmlahead) | menu idle (~launch +22 s) | capped 3,000 files ahead of the game: 4 workers idle most of the menu; level files wait for level loading |
-| quest graph 13.7 s | level loading +~1 s | RE running: re_questmenu_keep.md, re_questmenu_when.md |
+| quest graph 13.7 s | save list read (~launch +20 s) | built a918236 (questmenu.cpp); cache recorded in U2; off in the user's folder (deagle_questmenu.txt 0) until a test boot |
 | Main: anim sets 2.2, SmartObjectAnimations 1.43, XGenAI 0.55 s | in the load | RE running: re_menu_main.md |
 | RLT: shader parse 4-8 s, texture precache, PSO | in the load | RE running: re_menu_render.md |
 | save read, mapClouds/Storm, Settle textures at the save's position | in the load | asked kcd2-deagle-66 |
