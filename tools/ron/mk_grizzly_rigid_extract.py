@@ -56,6 +56,11 @@ for b, ts in sorted(parts.items(), key=lambda kv: -len(kv[1])):
     # off the gun in game (the user's screenshot 2026-10-23): the DAE's frames are not the engine's.
     ph = np.c_[p, np.ones(len(p))] @ bsm.T
     nl = n @ np.linalg.inv(bsm[:3, :3]); nl /= np.linalg.norm(nl, axis=1, keepdims=True)
+    # MEASURED in game 2026-10-23: a CGF from this path shows turned +90 deg about Z against the character's model space
+    # (the frame attached unprojected to "root" lay with its muzzle to the LEFT, barrel along +Y in this data; the
+    # viewmodel build turns its +X view to CryEngine's +Y, the CGF path doesn't): pre-turn -90 deg, (x, y) -> (y, -x).
+    ph = np.c_[ph[:, 1], -ph[:, 0], ph[:, 2]]
+    nl = np.c_[nl[:, 1], -nl[:, 0], nl[:, 2]]
     np.savez(os.path.join(OUT, f'part_{b}.npz'), p=ph[:, :3], n=nl, uv=uv)
     out[b] = len(ts)
     print('%-22s tris %5d  model-space bbox %s .. %s' % (b, len(ts), ph[:, :3].min(0).round(3), ph[:, :3].max(0).round(3)))

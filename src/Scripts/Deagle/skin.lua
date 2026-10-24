@@ -98,7 +98,7 @@ function Deagle:SpomCmd(arg)
 		local p, d = System.GetViewCameraPos(), System.GetViewCameraDir()
 		local rl = math.sqrt(d.x * d.x + d.y * d.y); local r = rl > 0 and { x = d.y / rl, y = -d.x / rl } or { x = 1, y = 0 }
 		local cgf = (self.SKIN_RIGID.ron_grizzly.mirror.cgf) .. "j_gun.cgf"
-		local cen = { x = 0.0913, y = 0.2028, z = -0.3662 }   -- the piece's middle in model space (the CGF origin is the viewmodel's): x5
+		local cen = { x = 0.2028, y = -0.0913, z = -0.3662 }   -- the piece's middle in model space (the CGF origin is the viewmodel's): x5
 		for _, c in ipairs({ { "deagle_spomtest_spom", -0.4, self.SKIN_RIGID_MTL.spom }, { "deagle_spomtest_pom", 0.4, self.SKIN_RIGID_MTL.pom } }) do
 			local pos = { x = p.x + d.x * 1.5 + r.x * c[2] - cen.x * 5, y = p.y + d.y * 1.5 + r.y * c[2] - cen.y * 5, z = p.z + d.z * 1.5 - cen.z * 5 }
 			local e = System.SpawnEntity({ class = "BasicEntity", name = c[1], position = pos, flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = cgf } })
