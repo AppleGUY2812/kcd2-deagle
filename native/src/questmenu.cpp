@@ -1,5 +1,6 @@
 // The quest graph built at the main menu and kept by the first load: see questmenu.h.
 #include "questmenu.h"
+#include "animahead.h"
 #include "log.h"
 #include "xmlahead.h"
 #include "loadwatch.h"
@@ -284,13 +285,14 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	    g_saveLevel.empty() ? "-" : g_saveLevel.c_str(), g_saveTime, g_cacheOk ? g_cache.level.c_str() : "-", g_cache.P.size(),
 	    now.dg[0], now.dg[1], now.dg[2], now.dg[3], g_cache.dg[0], g_cache.dg[1], g_cache.dg[2], g_cache.dg[3],
 	    why ? "no pre-build: " : "building the quest graph now", why ? why : "");
-	if (why) return r;
+	if (why) { Animahead_AtMenu(nullptr); return r; }   // the human animation sets on a plugin thread (animahead.h)
 	g_phase = 1;
 	g_armed = true;
 	Xmlahead_StartMenuNow("the quest graph is built at the menu");
 	HANDLE t = CreateThread(nullptr, 8 << 20, Build, nullptr, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
 	if (t) CloseHandle(t);
 	else { g_phase = 3; g_armed = false; SetEvent(g_built); Log("questmenu: could not start the build thread"); }
+	Animahead_AtMenu(g_built);   // after the build: the animation sets must not load next to anything else
 	return r;
 }
 
