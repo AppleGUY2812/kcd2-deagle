@@ -115,6 +115,7 @@ struct Item {
 	int64_t offset = 0, size = 0, abs = 0;
 	std::atomic<int> state{0};    // 0 waiting, 1 being read, 2 ready, 3 taken or dropped, 5 being freed for RAM (then 0)
 	uint8_t* data = nullptr;
+	bool freedOnce = false;       // freed for RAM once: the next time it is dropped for good (boot 16: 3.6 GB read for 1.9 GB)
 };
 std::unique_ptr<Item[]> g_items;
 size_t g_n = 0;
@@ -125,7 +126,7 @@ std::mutex g_chunkMu;                                // readers pick their next 
 size_t g_cursor = 0;                                 // first list item not handed to a reader yet
 std::atomic<int> g_readersLeft{0};
 std::atomic<size_t> g_servedHi{0};                  // 1 + the highest list index served: RAM is freed above it first
-std::atomic<long long> s_shedBytes{0}, s_shedTimes{0};
+std::atomic<long long> s_shedBytes{0}, s_shedTimes{0}, s_shedDropped{0}, s_again2{0};
 std::atomic<int> g_checkLeft{kCheck};
 std::atomic<long long> s_ready{0}, s_readBytes{0}, s_reads{0}, s_failed{0}, s_readTicks{0}, s_waitRam{0};
 std::atomic<long long> s_served{0}, s_servedBytes{0}, s_checked{0}, s_bad{0}, s_gameFirst{0}, s_waited{0}, s_again{0},
@@ -233,6 +234,10 @@ void Shed(long long want) {
 		it.data = nullptr;
 		g_held -= it.size;
 		got += it.size;
+		if (it.freedOnce) { it.state.store(3, std::memory_order_release); s_shedDropped++; continue; }
+		it.freedOnce = true;
+		s_ready--;   // counted again when it is read again
+		s_again2++;
 		it.state.store(0, std::memory_order_release);
 		lowest = i;
 	}
@@ -367,10 +372,11 @@ void WriteList() {
 
 void Status() {
 	Log("streamahead: read ahead %lld of %zu (%.0f MB in %lld reads, %.1f s, %lld failed, waited for RAM %lld x, freed for RAM "
-	    "%.0f MB in %lld goes), held %.0f MB; "
+	    "%.0f MB in %lld goes: %lld to read again, %lld dropped), held %.0f MB; "
 	    "served %lld (%.0f MB), checked %lld, mismatches %lld; game came first %lld, waited on our read %lld (timeouts %lld), "
 	    "asked again %lld, not listed %lld", s_ready.load(), g_n, s_readBytes.load() / 1e6, s_reads.load(),
 	    (double)s_readTicks.load() / g_freq, s_failed.load(), s_waitRam.load(), s_shedBytes.load() / 1e6, s_shedTimes.load(),
+	    s_again2.load(), s_shedDropped.load(),
 	    g_held.load() / 1e6, s_served.load(),
 	    s_servedBytes.load() / 1e6, s_checked.load(), s_bad.load(), s_gameFirst.load(), s_waited.load(), s_timeouts.load(),
 	    s_again.load(), s_notListed.load());

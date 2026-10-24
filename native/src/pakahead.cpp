@@ -57,6 +57,7 @@ struct Item {
 	std::atomic<int> state{0};                    // 0 waiting, 1 a worker has it, 2 ready, 3 taken or dropped, 4 being touched,
 	                                              // 5 being freed for RAM (back to 0 right after)
 	uint8_t* data = nullptr;
+	bool freedOnce = false;                       // freed for RAM once: the next time it is dropped for good (no re-read loop)
 };
 std::vector<uint64_t> g_prefix;                    // unpacked bytes before item i (list order)
 std::atomic<size_t> g_servedHi{0};                 // 1 + the highest list index served so far
@@ -72,7 +73,7 @@ std::mutex g_mapMu;
 std::atomic<size_t> g_held{0};
 std::mutex g_pickMu;                               // workers pick their next entry under this
 size_t g_cursor = 0;                               // no waiting entry below this (moved back when entries are freed)
-std::atomic<long long> s_shedBytes{0}, s_shedTimes{0}, s_ramWaits{0};
+std::atomic<long long> s_shedBytes{0}, s_shedTimes{0}, s_ramWaits{0}, s_shedDropped{0};
 std::atomic<long long> s_served{0}, s_servedBytes{0}, s_missNotReady{0}, s_prefetched{0}, s_bad{0}, s_readMs{0}, s_unpackMs{0};
 std::atomic<bool> g_stop{false};
 
@@ -281,6 +282,8 @@ void Shed(long long want) {
 		if (!it.state.compare_exchange_strong(r, 5)) continue;
 		got += it.usize;
 		Release(it);
+		if (it.freedOnce) { it.state.store(3); s_shedDropped++; continue; }   // boot 15/16: re-reading looped (12 goes)
+		it.freedOnce = true;
 		it.state.store(0);
 		lowest = i;
 	}
@@ -452,10 +455,10 @@ DWORD WINAPI Writer(LPVOID) {
 		if (!g_items.empty() && (s_served != lastServed || s_prefetched != lastPre)) {
 			lastServed = s_served; lastPre = s_prefetched;
 			Log("pakahead: ahead %lld of %zu ready (read %lld ms, unpack %lld ms, bad %lld), served %lld (%.0f MB), game "
-			    "came first %lld, held %.0f MB, pinned %lld (not %lld); RAM: waited %lld x, freed %.0f MB in %lld goes, %lld MB free",
+			    "came first %lld, held %.0f MB, pinned %lld (not %lld); RAM: waited %lld x, freed %.0f MB in %lld goes (%lld dropped for good), %lld MB free",
 			    s_prefetched.load(), g_items.size(), s_readMs.load(), s_unpackMs.load(), s_bad.load(), s_served.load(),
 			    s_servedBytes.load() / 1e6, s_missNotReady.load(), g_held.load() / 1e6, s_locked.load(), s_lockFail.load(),
-			    s_ramWaits.load(), s_shedBytes.load() / 1e6, s_shedTimes.load(), ramgov::AvailMb());
+			    s_ramWaits.load(), s_shedBytes.load() / 1e6, s_shedTimes.load(), s_shedDropped.load(), ramgov::AvailMb());
 			const double ct = (double)s_copyTicks.load() / g_freq, tt = (double)s_touchTicks.load() / g_freq;
 			Log("pakahead: copies into the game %.0f MB in %.2f s (%.2f GB/s); sampled pages not in RAM: ours %lld of %lld, "
 			    "game's buffer %lld; toucher %.0f MB in %.2f s, %lld of %lld sampled pages were out, game waited on it %lld x",
