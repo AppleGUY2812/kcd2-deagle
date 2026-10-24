@@ -1,6 +1,7 @@
 // Parsing XML ahead: see xmlahead.h.
 #include "xmlahead.h"
 #include "log.h"
+#include "mainreads.h"
 #include <windows.h>
 #include <atomic>
 #include <cstdio>
@@ -125,8 +126,9 @@ void StartQueue(int q, const char* why) {
 void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, char reportErrors) {
 	const ULONGLONG now = GetTickCount64() - g_start;
 	const bool record = now <= kRecordMs;
+	const bool watch = MainReads_On();   // a mainreads window on this thread (any time, any mode)
 	std::string path;
-	if (g_mode == 2 || record) path = Norm(file);
+	if (g_mode == 2 || record || watch) path = Norm(file);
 	if (g_mode == 2 && !g_items.empty() && !g_stop) {
 		if (!g_self) g_self = self;
 		g_loads++;
@@ -140,6 +142,7 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 				*ret = it.node;          // the worker's reference goes to the caller
 				it.node = nullptr;
 				s_served++;
+				if (watch) MainReads_Add('X', path.c_str(), 0, 0, Now(), 0);
 				if (record) {
 					Rec rc{ (uint32_t)((Now() - g_t0) * 1000 / g_freq), GetCurrentThreadId(), 0, 1, 1, path };
 					std::lock_guard<std::mutex> lk(g_mu); g_recs.push_back(std::move(rc));
@@ -156,6 +159,7 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 				int ready = 2;
 				if (it.state.compare_exchange_strong(ready, 3)) {
 					*ret = it.node; it.node = nullptr; s_served++; s_waited++;
+					if (watch) MainReads_Add('X', path.c_str(), 0, 0, a, Now() - a);
 					if (record) {
 						Rec rc{ (uint32_t)((Now() - g_t0) * 1000 / g_freq), GetCurrentThreadId(), 0, 1, 2, path };
 						std::lock_guard<std::mutex> lk(g_mu); g_recs.push_back(std::move(rc));
@@ -167,10 +171,12 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 			}
 		}
 	}
-	if (!record) return g_origLoad(self, ret, file, a4, reportErrors);
+	if (!record && !watch) return g_origLoad(self, ret, file, a4, reportErrors);
 	const long long a = Now();
 	void** out = g_origLoad(self, ret, file, a4, reportErrors);
 	const long long b = Now();
+	if (watch) MainReads_Add('x', path.c_str(), 0, 0, a, b - a);
+	if (!record) return out;
 	Rec rc{ (uint32_t)((a - g_t0) * 1000 / g_freq), GetCurrentThreadId(), (uint32_t)((b - a) * 1000000 / g_freq),
 	        (uint8_t)(ret && *ret ? 1 : 0), 0, path };
 	std::lock_guard<std::mutex> lk(g_mu);

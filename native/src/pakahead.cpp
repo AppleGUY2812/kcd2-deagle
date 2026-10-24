@@ -1,6 +1,7 @@
 // Unpacking ahead, step 1: the recorder. See pakahead.h.
 #include "pakahead.h"
 #include "log.h"
+#include "mainreads.h"
 #include <windows.h>
 #include <atomic>
 #include <cstdio>
@@ -195,6 +196,7 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
                            char skipCrc) {
 	if (!entry) return g_orig(cache, entry, comp, uncomp, decompress, off, size, skipCrc);
 	const bool record = g_mode >= 1 && GetTickCount64() - g_start <= kRecordMs;
+	const bool watch = MainReads_On();   // a mainreads window on this thread (any time, any mode)
 	Rec r{};
 	ReadEntry(entry, r);
 	r.decompress = decompress ? 1 : 0;   // before TryServe: it needs this (2026-10-23 bug: every packed entry missed)
@@ -202,6 +204,11 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
 	if (g_mode == 2) {
 		const long long a = Now();
 		if (TryServe(cache, r, comp, uncomp, off, size)) {
+			if (watch) {
+				uintptr_t file = 0, inMem = 0;
+				ReadZipFile(cache, file, inMem);
+				MainReads_Add('P', PakName(file, 0).c_str(), r.dataOff, r.usize, a, Now() - a);
+			}
 			if (!record) return 0;
 			r.tMs = (uint32_t)((a - g_t0) * 1000 / g_freq);
 			r.us = (uint32_t)((Now() - a) * 1000000 / g_freq);
@@ -217,7 +224,7 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
 			return 0;
 		}
 	}
-	if (!record) return g_orig(cache, entry, comp, uncomp, decompress, off, size, skipCrc);
+	if (!record && !watch) return g_orig(cache, entry, comp, uncomp, decompress, off, size, skipCrc);
 	r.part = (off != 0 || (size != ~0ull && size != (uint64_t)r.usize)) ? 1 : 0;
 	uintptr_t file = 0, inMem = 0;
 	ReadZipFile(cache, file, inMem);
@@ -235,6 +242,9 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
 		g_paks.push_back(PakName(file, inMem));   // once per pak; the game's FILE* is still open here
 	}
 	r.pak = it->second;
+	// names are cached per FILE*: a pak closed and another opened at the same address later would show the old name
+	if (watch) MainReads_Add('p', g_paks[r.pak].c_str(), r.dataOff, r.usize, a, b - a);
+	if (!record) return ret;
 	g_recs.push_back(r);
 	g_calls++;
 	return ret;

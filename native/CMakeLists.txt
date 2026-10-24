@@ -9,7 +9,7 @@ file(GLOB MINHOOK_SRC third_party/minhook/src/*.c third_party/minhook/src/hde/hd
 # libdeflate v1.26 (MIT): unpack + crc32 only, for src/fastzip.cpp
 set(LIBDEFLATE_SRC third_party/libdeflate/lib/deflate_decompress.c third_party/libdeflate/lib/crc32.c
     third_party/libdeflate/lib/utils.c third_party/libdeflate/lib/x86/cpu_features.c)
-add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp src/ftpreload.cpp src/fastzip.cpp src/streamio.cpp src/streamahead.cpp src/readiness.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/loadwatch.cpp src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
+add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp src/ftpreload.cpp src/fastzip.cpp src/streamio.cpp src/streamahead.cpp src/readiness.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/mainreads.cpp src/loadwatch.cpp src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
 target_include_directories(deagle_native PRIVATE third_party/minhook/include third_party/libdeflate src)
 target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)
@@ -20,6 +20,9 @@ set_property(TARGET ron_coexist PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 # outside-the-game test: streamahead.cpp's record -> list -> read ahead -> serve on a fake pak (native/test/streamahead_test.cpp)
 add_executable(streamahead_test test/streamahead_test.cpp src/streamahead.cpp)
 set_property(TARGET streamahead_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+# outside-the-game test: mainreads.cpp's window of main-thread reads (native/test/mainreads_test.cpp)
+add_executable(mainreads_test test/mainreads_test.cpp src/mainreads.cpp)
+set_property(TARGET mainreads_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 # outside-the-game test: libdeflate as built for src/fastzip.cpp, on a real pak (native/test/zbench.cpp)
 add_executable(zbench test/zbench.cpp ${LIBDEFLATE_SRC})
 target_include_directories(zbench PRIVATE third_party/libdeflate)
