@@ -37,7 +37,9 @@ constexpr int kCheck = 100;                          // copies checked against t
 // samples, one 128 KB read at a time. Boot 33 tried a 64 MB window near the game's furthest request instead: the
 // textures came in another order than in the list's boot, so the window held 64 MB the game didn't ask for, the
 // cursor jumps skipped 3,177 requests the game then read itself, and the 64 MB cap freed 400 MB read ahead (Settle 9.0 s).
-constexpr long long kGateFloorMb = 700;
+// The user's load at 07:49 (2026-10-24, 16eca84) had 700 here: 465 MB free when Settle began, then the 16 readers took
+// 538 MB at once when it rose past 700 and Settle took 12.8 s (animations 9.5 s vs 4.5): never read into a short PC.
+constexpr long long kGateFloorMb = 1200;
 // ... with 12 more readers that only read then, in 1 MB pieces: 16 reads in flight (the 4 synchronous readers alone
 // are 4; a SATA SSD wants ~16-32 for full speed on scattered reads), ~16 MB of read buffers
 constexpr int kGateReaders = 12;
@@ -140,8 +142,8 @@ size_t g_cursor = 0;                                 // first list item not hand
 std::atomic<int> g_readersLeft{0};
 std::atomic<size_t> g_servedHi{0};                  // 1 + the highest list index served: RAM is freed above it first
 std::atomic<bool> g_gate{false};                    // a loading screen waits (Streamahead_SetGate)
-std::atomic<long long> s_gateReads{0}, s_revived{0};
 std::atomic<int> g_inFlight{0}, s_inFlightMax{0};   // reads under way now, and the most at once
+std::atomic<long long> s_gateReads{0}, s_revived{0};
 std::atomic<long long> s_shedBytes{0}, s_shedTimes{0}, s_shedDropped{0}, s_again2{0};
 std::atomic<int> g_checkLeft{kCheck};
 std::atomic<long long> s_ready{0}, s_readBytes{0}, s_reads{0}, s_failed{0}, s_readTicks{0}, s_waitRam{0};
@@ -217,7 +219,8 @@ bool MayRead() {
 	const int64_t c = ChunkNow();
 	if (g_held.load() + c > kCapBytes) return false;
 	if (ramgov::CanTake(c)) return true;
-	return GateWindow() && ramgov::AvailMb() - (c >> 20) - 1 >= kGateFloorMb;
+	// every read still under way counts against free RAM (16 readers would pass one check together)
+	return GateWindow() && ramgov::AvailMb() - ((c >> 20) + 1) * (g_inFlight.load() + 1) >= kGateFloorMb;
 }
 
 // bytes to shed now: ramgov's answer, but while a loading screen waits only below its floor (back to 128 MB above it)
@@ -560,7 +563,7 @@ void Streamahead_SetGate(bool open) {
 		s_revived += (long long)revived;
 	}
 	Log("streamahead: loading screen %s (%lld MB free, %.0f MB held; %zu dropped copies to read again%s)",
-	    open ? "waits: 16 readers in 1 MB pieces read the rest of the list while free RAM is >= 700 MB"
+	    open ? "waits: 16 readers in 1 MB pieces read the rest of the list while free RAM is >= 1200 MB"
 	         : "gone: back to the normal free-RAM rule",
 	    ramgov::AvailMb(), g_held.load() / 1e6, revived, g_readerDone ? ", but the readers are done" : "");
 }
