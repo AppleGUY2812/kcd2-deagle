@@ -240,8 +240,19 @@ neither "the SSD is too slow" nor "the CPU is too slow" as such. About 19 s are 
 **Memory is short:** with the game up, 1.3 GB of 16 GB is free and Windows' file cache holds 0.7 GB; 32.9 GB is
 committed (page file on C:, 3.7 GB in use). The game has 10.6 GB committed but only 4.0 GB in RAM. Other RAM users
 at the time: Brave 2.4 GB (23 processes), WSL 2.1 GB, Discord 0.8 GB, Steam's web helper 0.7 GB. Even in normal play
-Windows reads 140-560 pages a second back from the page file. Whether paging costs load time is the next measurement
-(`loadprofile.ps1` now logs pages in/out, free RAM and the game's commit, one row a second).
+Windows reads 140-560 pages a second back from the page file.
+
+**RAM is not why the load is slow (tested 18:50, Brave and Discord closed, 5.8 GB free at launch): 60.9 s** against
+61.6 s before; boot to play 105 s against 104 s. Same steps, same lengths (terrain wait 19.9 s, the one-thread stretch
+11 s, the save 14.8 s). The page file on C: was not read during the load (C: ~0 MB/s). The high "pages in" during
+the terrain wait (~21,000/s) is exactly the E: read rate (21,000 x 4 KB = 82 MB/s): those are the game's own cached
+file reads (Windows counts cache reads as page-ins), not the page file. WHGame.dll does not map files itself (no
+MapViewOfFile / CreateFileMapping import).
+
+What is left: the terrain wait and the one-thread stretch read through Windows' file cache at ~80 MB/s, while the
+save load (the streaming engine, `sys_UncachedStreamReads`) reads at 150-280 MB/s. Next: `tools/threadsample.ps1`
+(samples every busy thread's instruction + stack from outside, no injection) during a boot, to see whether those
+threads are busy unpacking or waiting on reads.
 
 ## Sources
 
