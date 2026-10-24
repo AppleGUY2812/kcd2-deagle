@@ -29,6 +29,7 @@
 #include "applyfast.h"
 #include "conceptbfs.h"
 #include "stormmemo.h"
+#include "terrainfast.h"
 #include "questmenu.h"
 #include "animahead.h"
 #include "questprof.h"
@@ -68,6 +69,7 @@ void GameplayStarted(const char* why) {
 	Cvars_OnLoaded();
 	Streamahead_OnLoaded();
 	Applyfast_OnLoaded();
+	Terrainfast_OnLoaded();
 }
 
 void Tick() {
@@ -149,6 +151,7 @@ DWORD WINAPI Init(LPVOID) {
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
 	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
 	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
+	Terrainfast_Install(g_game.base, g_self);   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)
 	Applyfast_Install(g_game.base, g_self);   // faster pieces of the save load's apply step (applyfast.cpp)
 	Conceptbfs_Install(g_game.base, g_self);   // the concept graph's name lookup without its deque (conceptbfs.cpp)
 	Stormmemo_Install(g_game.base, g_self);   // Storm's named condition sets remembered per character (stormmemo.cpp)
@@ -197,6 +200,7 @@ extern "C" __declspec(dllexport) int Fastload_Command(const char* line) {
 	else if (!strcmp(cmd, "questbench")) Questmenu_Bench(rest);   // rebuild the quest graph N times at the menu (questmenu.h)
 	else if (!strcmp(cmd, "loaded")) GameplayStarted("Lua loaded");   // a no-op when the level state already said so
 	else if (!strcmp(cmd, "streamahead")) Streamahead_Command(rest);
+	else if (!strcmp(cmd, "terrainfast")) Terrainfast_Command(rest);
 	else return 0;
 	return 1;
 }
