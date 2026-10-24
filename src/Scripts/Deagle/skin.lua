@@ -11,6 +11,14 @@ local log = U.log
 
 Deagle.SKINS = { ron_grizzly = { main = "", silver = "_silver", mirror = "_mirror" } }   -- mirror: the Silver polished (tools/ron/mk_grizzly_mirror.py)
 local PARTS = { "vm_mesh", "vm_mag1", "vm_mag2", "vm_round_1", "vm_round_2", "vm_round_3", "vm_round_4" }
+-- A skin's body as RIGID pieces on the gun's bones (2026-10-23, the gun-mirror session; tools/ron/mk_grizzly_rigid.py):
+-- KCD2's Silhouette POM only works on static meshes (on the skinned body every ray missed: the gun went invisible).
+-- Every vertex of the Grizzly's body rides one bone, so each bone's piece is a CGF in that bone's frame, attached with
+-- CreateBoneAttachment(.., false) + SetAttachmentCGF: it moves exactly like the skin. That skin's .mtl draws the
+-- skinned body NoDraw; any other skin hides the pieces.
+Deagle.SKIN_RIGID = { ron_grizzly = { mirror = { cgf = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_",
+	bones = { "J_Gun", "tag_slide", "tag_sight", "tag_barrel", "tag_grip_safety", "tag_hammer", "tag_slidelock_safety",
+		"tag_slidelock", "tag_trigger", "tag_mag_release" } } } }
 if Deagle.cfg.skin == nil then Deagle.cfg.skin = "main" end
 
 -- the material path of a skin on the current gun (nil: the gun has no such skin)
@@ -36,7 +44,37 @@ function Deagle:SkinApply()
 		local ok, r = pcall(vm.ChangeAttachmentMaterial, vm, part, mtl)
 		if ok and r ~= false then n = n + 1 end
 	end
-	log(string.format("skin %s on %s: %s (%d parts)", want, tostring(self.gun.id), mtl, n))
+	local rigid = self:SkinRigid(vm, want)
+	log(string.format("skin %s on %s: %s (%d parts%s)", want, tostring(self.gun.id), mtl, n, rigid > 0 and (", " .. rigid .. " rigid pieces") or ""))
+end
+
+-- the rigid pieces of skin `want` shown (created once per viewmodel entity), every other skin's hidden; returns how
+-- many are shown
+function Deagle:SkinRigid(vm, want)
+	local defs = self.gun and self.SKIN_RIGID[self.gun.id]
+	if not defs then return 0 end
+	local ent = tostring(self.vmId) .. "|" .. tostring(vm)
+	if self.skinRigidEnt ~= ent then self.skinRigidEnt = ent; self.skinRigidMade = {} end
+	local made, shown = self.skinRigidMade, 0
+	for name, d in pairs(defs) do
+		for _, bone in ipairs(d.bones) do
+			local att = "vm_rigid_" .. name .. "_" .. bone
+			if name == want then
+				if not made[att] then
+					pcall(vm.CreateBoneAttachment, vm, 0, bone, att, false)
+					local ok = pcall(vm.SetAttachmentCGF, vm, 0, att, d.cgf .. string.lower(bone) .. ".cgf")   -- also shows it
+					made[att] = ok
+					if not ok then log("skin " .. name .. ": rigid piece " .. bone .. " failed to load") end
+				else
+					pcall(vm.HideAttachment, vm, 0, att, false, false)
+				end
+				if made[att] then shown = shown + 1 end
+			elseif made[att] then
+				pcall(vm.HideAttachment, vm, 0, att, true, true)
+			end
+		end
+	end
+	return shown
 end
 
 function Deagle:SkinCmd(arg)

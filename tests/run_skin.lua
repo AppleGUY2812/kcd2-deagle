@@ -27,8 +27,18 @@ M.console("deagle_skin", "gold"); step(0.1)
 check("an unknown skin: refused, nothing changed", Deagle.cfg.skin == "silver" and M.attachMtl.vm_mesh == nil, Deagle.cfg.skin)
 M.console("deagle_skin", "mirror"); step(0.1)
 check("deagle_skin mirror: the polished set", M.attachMtl.vm_mesh == base .. "_mirror" and Deagle.cfg.skin == "mirror", M.attachMtl.vm_mesh)
+local rig = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_"
+check("mirror: the body's 10 rigid pieces on their bones (Silhouette POM needs static meshes)",
+	M.attachCgf and M.attachCgf.vm_rigid_mirror_J_Gun == rig .. "j_gun.cgf" and M.attachCgf.vm_rigid_mirror_tag_slide == rig .. "tag_slide.cgf"
+	and M.hidden.vm_rigid_mirror_tag_mag_release == false, M.attachCgf and M.attachCgf.vm_rigid_mirror_J_Gun)
+local made = M.runtimeCgf
+M.console("deagle_skin", "main"); step(0.1)
 M.console("deagle_skin", "main"); step(0.1)
 check("deagle_skin main: back to the gun as built", M.attachMtl.vm_mesh == base, M.attachMtl.vm_mesh)
+check("main: the rigid pieces hidden", M.hidden.vm_rigid_mirror_J_Gun == true and M.hidden.vm_rigid_mirror_tag_trigger == true, M.hidden.vm_rigid_mirror_J_Gun)
+M.console("deagle_skin", "mirror"); step(0.1)
+check("mirror again: shown again, not loaded twice", M.hidden.vm_rigid_mirror_J_Gun == false and M.runtimeCgf == made, M.runtimeCgf)
+M.console("deagle_skin", "main"); step(0.1)
 M.attachMtl = {}
 Deagle:UseGun("deagle"); Deagle:VmEntity(); step(0.6)
 check("the Deagle (no skins): its material left alone", M.attachMtl.vm_mesh == nil or M.attachMtl.vm_mesh:find("deagle/vm/"), M.attachMtl.vm_mesh)
