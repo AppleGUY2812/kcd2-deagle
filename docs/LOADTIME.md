@@ -5,6 +5,10 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
 "Control" = the end of the first gameplay frames. Times in s after the first level file ("level loading").
 
 ## The user's path vs the test boots (M)
+- **Best so far, boot 38 (2026-10-24 09:37, menu path, 2213 MB free): 24.0 s** from Continue. The two Checkers mods
+  repacked stored (tools/paks/repack_stored.py; originals in E:\Tools\deagle-dev\mod_backup): gate 11.0 -> 3.2 s, opened
+  by itself (TextureStreaming ready last, no early rule fired); Checkers paks no longer in the most-read list. Steps:
+  terrain 3.8, level done 12.6 (quests kept), state 4 1.6, apply 5.2 (kcd2-deagle-66's now), gate 3.2.
 - Best so far, boot 35 (2026-10-24 08:24, menu path, 2910 MB free): **30.6 s** with the quest graph built at the menu
   and kept (questmenu); boots 34 / 36 without it: 33.8 / 33.7 s. Steps in boot 35: terrain 3.5, level done 12.5 (16.1
   without), state 4 1.4, apply 5.0, gate 10.6 s. The gate grew from 8.2-9.0 s (boots 32-33) to 10.6-11.7 s in boots
