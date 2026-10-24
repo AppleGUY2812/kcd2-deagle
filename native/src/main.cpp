@@ -28,6 +28,7 @@
 #include "xmlahead.h"
 #include "loadwatch.h"
 #include "applyfast.h"
+#include "conceptbfs.h"
 #include "questmenu.h"
 #include "questfast.h"
 #include "ron.h"
@@ -1603,6 +1604,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
 	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
 	Applyfast_Install(g_game.base, g_self);   // faster pieces of the save load's apply step (applyfast.cpp)
+	Conceptbfs_Install(g_game.base, g_self);   // the concept graph's name lookup without its deque (conceptbfs.cpp)
 	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
 	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
