@@ -30,7 +30,7 @@ struct Group { int maxLevel = 0; std::vector<Rule> rules; };
 smemo::Memo g_m;
 smemo::Stats g_st;
 bool g_useMemo = false, g_check = false, g_mismatch = false;
-bool g_indexed = false;   // the walk over rules sorted by level (stormmemo.cpp's default)
+bool g_indexed = false, g_idxCheck = false, g_idxBad = false, g_wrongName = false;   // the walk over rules sorted by level (stormmemo.cpp's default)
 std::map<Group*, smemo::Levels<Rule>> g_lv;
 int g_masks = 0;   // 0: every action writes everything; 1: exact groups (field i = group i); 2: actions declare the wrong group
 long g_leafEvals = 0;
@@ -114,7 +114,7 @@ struct Acc {
 		for (size_t i = 0; i < c->kids.size(); i += 2) if (c->kids[i] && !ReadOnly(c->kids[i])) return false;
 		return true;
 	}
-	const char* SoulName(void* s) { return ((Soul*)s)->name.c_str(); }
+	const char* SoulName(void* s) { return g_wrongName ? "npc_b1" : ((Soul*)s)->name.c_str(); }
 	void Ended(Rule*, void*) {}
 	void Ran(Rule*) {}
 	void Run(void* a, void* s, Rule* r) {
@@ -147,7 +147,7 @@ void Apply(std::vector<Group>& gs, Soul* s, int maxLevel, bool memo) {
 	if (memo) { g_m.soul = s; g_m.Changed(); }
 	for (int lv = 0; lv <= maxLevel; lv++)
 		for (Group& g : gs) {
-			if (memo && g_indexed) smemo::ApplyLevelIndexed(a, &g, s, lv, g_m, g_lv[&g]);
+			if (memo && g_indexed) smemo::ApplyLevelIndexed(a, &g, s, lv, g_m, g_lv[&g], g_idxCheck, &g_idxBad);
 			else if (memo) smemo::ApplyLevel(a, &g, s, lv, g_m);
 			else GameLevel(&g, s, lv);
 		}
@@ -272,6 +272,28 @@ int main() {
 	g_useMemo = true; g_check = true; g_mismatch = false;
 	Apply(one, &s, 0, true);
 	if (!g_mismatch) { puts("FAIL: the check missed a condition that changes"); return 1; }
+
+	// The index's check: with the right name it finds nothing; with a wrong name (an index that would skip the wrong
+	// rules) it must say so, and every character must still end up as the game leaves it.
+	for (int wrong = 0; wrong <= 1; wrong++) {
+		int differ = 0;
+		g_idxBad = false;
+		for (int i = 0; i < 500; i++) {
+			Soul a;
+			for (int& v : a.f) v = R(3);
+			a.name = nameOf(R(20));
+			Soul b = a;
+			Apply(gs, &a, 3, false);
+			g_useMemo = true; g_indexed = true; g_idxCheck = true; g_wrongName = wrong;
+			Apply(gs, &b, 3, true);
+			g_useMemo = false; g_indexed = false; g_idxCheck = false; g_wrongName = false;
+			bool same = a.fired == b.fired;
+			for (int k = 0; k < 6; k++) same = same && a.f[k] == b.f[k];
+			differ += !same;
+		}
+		printf("index check, %s name: %d differ, mismatch %s\n", wrong ? "wrong" : "right", differ, g_idxBad ? "seen" : "none");
+		if (differ || g_idxBad != (wrong == 1)) { puts("FAIL: the index check"); return 1; }
+	}
 
 	// A condition that isn't read-only before a name check: the index must not skip the rule (the game calls it).
 	{

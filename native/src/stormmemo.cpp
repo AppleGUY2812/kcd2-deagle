@@ -104,7 +104,12 @@ CondFn g_origCustom = nullptr;
 std::atomic<int> g_mode{1};   // 0 off, 1 on, 2 check every remembered answer
 std::atomic<int> g_index{1};  // 1: each group's rules sorted by level once (the walk visits only the level's own)
 std::atomic<int> g_census{1};
-std::atomic<long long> g_idxRules{0}, g_idxGated{0};   // rules indexed / of them tied to a name (all threads) // 1: count which condition kind ends each rule, time the walk and the actions
+std::atomic<long long> g_idxRules{0}, g_idxGated{0};
+// The index's check: the first 200 characters per thread, then every 64th, walk every rule and evaluate the game's
+// way the name gates of the rules the index skips. A gate that is true = a mismatch: index off for the session.
+thread_local bool t_checkIdx = false;
+thread_local long long t_idxSouls = 0;
+std::atomic<long long> g_idxChecked{0}, g_idxBad{0};   // rules indexed / of them tied to a name (all threads) // 1: count which condition kind ends each rule, time the walk and the actions
 std::atomic<long long> g_checkLeft{100000};
 long long g_freq = 1;
 
@@ -293,10 +298,15 @@ void __fastcall HkPass(void* rules, void* soul, uint16_t mask) {
 	m.soul = soul;
 	m.inAction = 0;
 	m.Changed();
+	const bool prevCheck = t_checkIdx;
+	t_checkIdx = (t_idxSouls < 200 || (t_idxSouls & 63) == 0);
+	t_idxSouls++;
+	if (t_checkIdx && g_index.load(std::memory_order_relaxed)) g_idxChecked++;
 	const long long t0 = Now();
 	g_origPass(rules, soul, mask);
 	t_ticks += Now() - t0;
 	t_souls++;
+	t_checkIdx = prevCheck;
 	m.Changed();
 	m.soul = prevSoul;
 	m.inAction = prevIn;
@@ -313,7 +323,15 @@ void __fastcall HkWalk(uint8_t* group, void* soul, int level) {
 		thread_local std::unordered_map<const uint8_t*, smemo::Levels<uint8_t>> idx;
 		smemo::Levels<uint8_t>& lv = idx[group];
 		const void* was = lv.begin;
-		smemo::ApplyLevelIndexed(a, group, soul, level, m, lv);
+		bool bad = false;
+		smemo::ApplyLevelIndexed(a, group, soul, level, m, lv, t_checkIdx, &bad);
+		if (bad) {
+			g_idxBad++;
+			if (g_index.exchange(0))
+				Log("stormmemo: index MISMATCH for \"%.60s\": a rule the name index skips passed its name check the game's "
+				    "way - index off for this session (the rule ran as the game runs it)",
+				    *(const char* const*)((uint8_t*)soul + 0x360));
+		}
 		if (lv.begin != was) { g_idxRules += (long long)lv.rules; g_idxGated += (long long)lv.gated; }
 	} else {
 		smemo::ApplyLevel(a, group, soul, level, m);
@@ -376,9 +394,11 @@ DWORD WINAPI Reporter(LPVOID) {
 				n += snprintf(buf + n, sizeof buf - n, "%s%s %lld", j ? ", " : "",
 				              top[j] < kNKinds ? kKinds[top[j]].name + 2 : "other", t.cen.ended[top[j]]);
 			Log("stormmemo: census thread %lu: %lld rules looked at (%lld passed, %lld actions %.0f ms); rule walk %.0f ms "
-			    "(index %s: %lld of %lld rules need a name, all threads); stopped by: %s", t.tid, t.cen.rules, t.cen.passed,
+			    "(index %s: %lld of %lld rules need a name; characters checked %lld, mismatches %lld; all threads); "
+			    "stopped by: %s", t.tid, t.cen.rules, t.cen.passed,
 			    t.cen.actions, 1000.0 * t.cen.actTicks / g_freq, 1000.0 * t.cen.walkTicks / g_freq,
-			    g_index.load() ? "on" : "off", g_idxGated.load(), g_idxRules.load(), buf);
+			    g_index.load() ? "on" : "off", g_idxGated.load(), g_idxRules.load(), g_idxChecked.load(), g_idxBad.load(),
+			    buf);
 		}
 	}
 	return 0;

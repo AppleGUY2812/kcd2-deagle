@@ -104,7 +104,9 @@ void ApplyLevel(A& a, G* g, void* soul, int level, Memo& m) {
 template <class Rule>
 struct Levels {
 	struct Entry { uint32_t idx; Rule* r; };
+	struct Gated { Rule* r; void* gate; std::vector<std::string> keys; };   // the checked walk: every rule in order
 	const void* begin = nullptr; const void* end = nullptr; int maxLevel = -1;
+	std::vector<std::vector<Gated>> all;                                       // per level: gate null = no name
 	std::vector<std::vector<Entry>> always;                                     // per level: rules with no name gate
 	std::vector<std::unordered_map<std::string, std::vector<Entry>>> byName;    // per level: name -> its rules
 	size_t gated = 0, rules = 0;
@@ -120,6 +122,7 @@ const Levels<typename A::Rule>& Index(A& a, G* g, Levels<typename A::Rule>& lv) 
 	const size_t n = ml >= 0 ? (size_t)ml + 1 : 0;
 	lv.always.assign(n, {});
 	lv.byName.assign(n, {});
+	lv.all.assign(n, {});
 	lv.gated = lv.rules = 0;
 	std::vector<std::string> keys;
 	uint32_t idx = 0;
@@ -127,14 +130,16 @@ const Levels<typename A::Rule>& Index(A& a, G* g, Levels<typename A::Rule>& lv) 
 		const int l = a.Level(r);
 		if (l < 0 || l > ml) continue;   // other levels never run (the game's level loop ends at max)
 		lv.rules++;
-		bool gate = false;
+		void* gate = nullptr;
 		void** ce = nullptr;
 		for (void** c = a.Conds(r, &ce); c != ce; c = a.NextEntry(c)) {
 			if (!*c) continue;
 			keys.clear();
-			if (a.NameKeys(*c, &keys) && !keys.empty()) { gate = true; break; }
+			if (a.NameKeys(*c, &keys) && !keys.empty()) { gate = *c; break; }
 			if (!a.ReadOnly(*c)) break;
 		}
+		if (!gate) keys.clear();
+		lv.all[(size_t)l].push_back({ r, gate, keys });
 		if (!gate) { lv.always[(size_t)l].push_back({ idx, r }); continue; }
 		lv.gated++;
 		for (size_t k = 0; k < keys.size(); k++) {
@@ -145,12 +150,30 @@ const Levels<typename A::Rule>& Index(A& a, G* g, Levels<typename A::Rule>& lv) 
 	}
 	return lv;
 }
+// check: walk every rule in the group's order instead; a rule the index would skip (a name gate for other names) has
+// its gate evaluated the game's way at the point the game would reach it (the conditions before it are read-only, so
+// the rule runs in the game only if the gate is true). A true gate is a mismatch: *mismatch is set and the rule runs
+// as the game runs it, so the outcome stays the game's.
 template <class A, class G>
-void ApplyLevelIndexed(A& a, G* g, void* soul, int level, Memo& m, Levels<typename A::Rule>& lv) {
+void ApplyLevelIndexed(A& a, G* g, void* soul, int level, Memo& m, Levels<typename A::Rule>& lv, bool check = false,
+                       bool* mismatch = nullptr) {
 	using E = typename Levels<typename A::Rule>::Entry;
 	if (level > a.MaxLevel(g) || level < 0) return;
 	const Levels<typename A::Rule>& x = Index(a, g, lv);
 	if ((size_t)level >= x.always.size()) return;
+	if (check) {
+		const char* name = a.SoulName(soul);
+		for (const auto& e : x.all[(size_t)level]) {
+			bool mine = !e.gate;
+			for (size_t k = 0; !mine && k < e.keys.size(); k++) mine = name && e.keys[k] == name;
+			if (mine) { ApplyRule(a, e.r, soul, m); continue; }
+			if (a.Eval(e.gate, soul)) {
+				if (mismatch) *mismatch = true;
+				ApplyRule(a, e.r, soul, m);
+			}
+		}
+		return;
+	}
 	const std::vector<E>& al = x.always[(size_t)level];
 	const std::vector<E>* named = nullptr;
 	const auto& bn = x.byName[(size_t)level];
