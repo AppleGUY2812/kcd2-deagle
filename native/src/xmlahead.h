@@ -10,9 +10,13 @@
 // Release. (XmlParser::ParseFile, FUN_18247cecc, the path with a caller-owned parser, is only counted.)
 // Mode, deagle_xmlahead.txt next to the plugin: 0 off, 1 record (default): deagle_xmlahead_trace.csv (time, thread,
 // file, result, microseconds), first 10 minutes; 2 record + parse ahead: the files of deagle_xmlahead_list.txt
-// (tools/xmlahead_list.py) are parsed by 4 workers from the first request for a "levels/" file on (the level is
-// loading, so every mod pak is mounted: a mod's version of a file is what both the game and the workers get).
-// Served once per file, on the first request, by exact path (lower case, '/'); anything else goes the normal way.
+// (tools/xmlahead_list.py, from a recording) are parsed ahead: files outside levels/ by 4 workers once the main menu
+// is idle (1,500+ XML loads done, then none for 3 s: every mod pak is mounted by then), levels/ files by 3 workers
+// from the first request for one (the level paks mount with the load). Workers stop below 2.5 GB free RAM.
+// Served once per file, on the first request, by exact path (lower case, '/'); anything else goes the normal way. A
+// request for a file a worker is parsing right now waits for it (up to 100 ms, then the game parses it itself).
+// 2026-10-23 22:00 boot: the load makes 35,894 XML loads (9.1 s of thread time; the first list had 3,258 files, 48.4 s
+// load, no gain).
 // Trees nobody asked for are released after 15 minutes.
 void Xmlahead_Install(uintptr_t gameBase, void* selfModule);   // right after MH_Initialize
 void Xmlahead_Command(const char* args);

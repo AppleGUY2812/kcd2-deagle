@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <vector>
 #include "MinHook.h"
+#include <psapi.h>
 
 namespace {
 
@@ -18,7 +19,10 @@ constexpr uintptr_t kRvaLoad = 0x979360, kRvaParse = 0x247cecc;
 const unsigned char kLoadBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x60,0x0f,0x57,0xc0 };
 const unsigned char kParseBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20 };
 constexpr ULONGLONG kRecordMs = 10 * 60 * 1000, kKeepMs = 15 * 60 * 1000;
-constexpr int kWorkers = 4;
+constexpr int kMenuWorkers = 4, kLevelWorkers = 3;
+constexpr long long kMenuLoads = 1500;      // the menu has loaded (3,562 XML loads before the 2026-10-23 22:00 load)
+constexpr ULONGLONG kMenuQuietMs = 3000;    // ... and no XML load for 3 s: the menu is idle
+constexpr DWORDLONG kMinFreeMb = 2500;      // workers stop taking files below this much free RAM
 
 using LoadFn = void**(__fastcall*)(void* self, void** ret, const char* file, uint64_t a4, char reportErrors);
 using ParseFn = void**(__fastcall*)(void* parser, void** ret, const char* file, char cleanPools, char reportErrors);
@@ -62,19 +66,37 @@ struct Item {
 };
 std::deque<Item> g_items;
 std::unordered_map<std::string, Item*> g_byPath;
-std::atomic<size_t> g_next{0};
-std::atomic<bool> g_started{false}, g_stop{false};
+std::vector<Item*> g_queue[2];        // 0: files outside levels/ (parsed at the menu), 1: levels/ files (from the load)
+std::atomic<size_t> g_next[2];
+std::atomic<bool> g_started[2], g_stop{false}, g_lowRam{false};
+std::atomic<long long> g_loads{0};
+std::atomic<ULONGLONG> g_lastLoad{0};
 void* g_self = nullptr;
-std::atomic<long long> s_ready{0}, s_failed{0}, s_served{0}, s_late{0}, s_parseMs{0};
+std::atomic<long long> s_ready{0}, s_failed{0}, s_served{0}, s_late{0}, s_parseMs{0}, s_skipped{0}, s_waited{0},
+	s_waitTimeout{0}, s_waitUs{0};
 
-DWORD WINAPI Worker(LPVOID) {
+bool IsLevel(const std::string& p) { return p.compare(0, 7, "levels/") == 0 || p.compare(0, 12, "data/levels/") == 0; }
+
+size_t PrivateMb() {
+	PROCESS_MEMORY_COUNTERS_EX pm{}; pm.cb = sizeof pm;
+	return K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pm, sizeof pm) ? pm.PrivateUsage >> 20 : 0;
+}
+DWORDLONG FreeMb() { MEMORYSTATUSEX m{}; m.dwLength = sizeof m; return GlobalMemoryStatusEx(&m) ? m.ullAvailPhys >> 20 : 0; }
+size_t g_privAtStart = 0;
+
+DWORD WINAPI Worker(LPVOID arg) {
+	const int q = (int)(intptr_t)arg;
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
-	const size_t n = g_items.size();
-	for (;;) {
-		if (g_stop) break;
-		const size_t i = g_next++;
+	const size_t n = g_queue[q].size();
+	for (size_t k = 0;; k++) {
+		if (g_stop || g_lowRam) break;
+		if ((k & 127) == 0 && FreeMb() < kMinFreeMb) {
+			if (!g_lowRam.exchange(true)) Log("xmlahead: free RAM below %llu MB - no more files parsed ahead", (unsigned long long)kMinFreeMb);
+			break;
+		}
+		const size_t i = g_next[q]++;
 		if (i >= n) break;
-		Item& it = g_items[i];
+		Item& it = *g_queue[q][i];
 		int w = 0;
 		if (!it.state.compare_exchange_strong(w, 1)) continue;   // the game asked first
 		void* node = nullptr;
@@ -90,11 +112,14 @@ DWORD WINAPI Worker(LPVOID) {
 	return 0;
 }
 
-void StartAhead() {
+void StartQueue(int q, const char* why) {
 	bool f = false;
-	if (!g_started.compare_exchange_strong(f, true)) return;
-	for (int i = 0; i < kWorkers; i++) CloseHandle(CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr));
-	Log("xmlahead: level loading - %d workers parsing %zu files ahead", kWorkers, g_items.size());
+	if (g_queue[q].empty() || !g_started[q].compare_exchange_strong(f, true)) return;
+	if (!g_privAtStart) g_privAtStart = PrivateMb();
+	const int n = q == 0 ? kMenuWorkers : kLevelWorkers;
+	for (int i = 0; i < n; i++) CloseHandle(CreateThread(nullptr, 0, Worker, (LPVOID)(intptr_t)q, 0, nullptr));
+	Log("xmlahead: %s - %d workers parsing %zu %s files ahead (%llu MB RAM free, game private %zu MB)", why, n,
+	    g_queue[q].size(), q == 0 ? "non-level" : "level", (unsigned long long)FreeMb(), PrivateMb());
 }
 
 void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, char reportErrors) {
@@ -104,7 +129,9 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 	if (g_mode == 2 || record) path = Norm(file);
 	if (g_mode == 2 && !g_items.empty() && !g_stop) {
 		if (!g_self) g_self = self;
-		if (!g_started && path.compare(0, 7, "levels/") == 0) StartAhead();
+		g_loads++;
+		g_lastLoad = GetTickCount64();
+		if (!g_started[1] && IsLevel(path)) { StartQueue(0, "level loading"); StartQueue(1, "level loading"); }
 		auto f = g_byPath.find(path);
 		if (f != g_byPath.end()) {
 			Item& it = *f->second;
@@ -119,9 +146,25 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 				}
 				return ret;
 			}
-			int w = 0;
-			it.state.compare_exchange_strong(w, 3);   // not started: skip it; parsing: the worker drops its tree
-			if (r == 1) it.state.compare_exchange_strong(r, 3);
+			if (r == 0 && it.state.compare_exchange_strong(r, 3)) s_skipped++;   // not started: the game parses it
+			else if (r == 1) {
+				// a worker is parsing it right now (~1 ms): wait for that tree instead of parsing the file twice;
+				// after 100 ms (a lock the worker needs?) the game parses it itself and the worker drops its tree
+				const long long a = Now(), lim = a + g_freq / 10;
+				while (it.state.load() == 1 && Now() < lim) YieldProcessor();
+				s_waitUs += (Now() - a) * 1000000 / g_freq;
+				int ready = 2;
+				if (it.state.compare_exchange_strong(ready, 3)) {
+					*ret = it.node; it.node = nullptr; s_served++; s_waited++;
+					if (record) {
+						Rec rc{ (uint32_t)((Now() - g_t0) * 1000 / g_freq), GetCurrentThreadId(), 0, 1, 2, path };
+						std::lock_guard<std::mutex> lk(g_mu); g_recs.push_back(std::move(rc));
+					}
+					return ret;
+				}
+				int p = 1;
+				if (it.state.compare_exchange_strong(p, 3)) s_waitTimeout++;
+			}
 		}
 	}
 	if (!record) return g_origLoad(self, ret, file, a4, reportErrors);
@@ -155,14 +198,20 @@ void Flush() {
 DWORD WINAPI Writer(LPVOID) {
 	size_t written = 0;
 	long long lastServed = -1, lastReady = -1;
-	for (;;) {
-		Sleep(5000);
+	for (unsigned tick = 1;; tick++) {
+		Sleep(500);
+		if (!g_items.empty() && !g_started[0] && g_loads >= kMenuLoads && GetTickCount64() - g_lastLoad >= kMenuQuietMs)
+			StartQueue(0, "main menu idle");
+		if (tick % 10) continue;
 		size_t n; { std::lock_guard<std::mutex> lk(g_mu); n = g_recs.size(); }
 		if (n != written) { Flush(); written = n; }
-		if (g_started && (s_served != lastServed || s_ready != lastReady)) {
+		if ((g_started[0] || g_started[1]) && (s_served != lastServed || s_ready != lastReady)) {
 			lastServed = s_served; lastReady = s_ready;
-			Log("xmlahead: ready %lld of %zu (failed %lld, parse %lld ms), served %lld, game came first + dropped %lld",
-			    s_ready.load(), g_items.size(), s_failed.load(), s_parseMs.load(), s_served.load(), s_late.load());
+			Log("xmlahead: ready %lld of %zu (failed %lld, parse %lld ms), served %lld (%lld after waiting %lld ms, %lld "
+			    "waits timed out), game first %lld, dropped %lld; game private %zu MB (+%lld since start)",
+			    s_ready.load(), g_items.size(), s_failed.load(), s_parseMs.load(), s_served.load(), s_waited.load(),
+			    s_waitUs.load() / 1000, s_waitTimeout.load(), s_skipped.load(), s_late.load(), PrivateMb(),
+			    (long long)PrivateMb() - (long long)g_privAtStart);
 		}
 		const ULONGLONG t = GetTickCount64() - g_start;
 		if (!g_items.empty() && !g_stop && t > kKeepMs) {
@@ -195,9 +244,10 @@ bool LoadList() {
 		Item& it = g_items.back();
 		it.path = p;
 		g_byPath.emplace(p, &it);
+		g_queue[IsLevel(p) ? 1 : 0].push_back(&it);
 	}
 	fclose(f);
-	Log("xmlahead: list %zu files", g_items.size());
+	Log("xmlahead: list %zu files (%zu outside levels/, %zu level)", g_items.size(), g_queue[0].size(), g_queue[1].size());
 	return !g_items.empty();
 }
 
@@ -229,6 +279,7 @@ void Xmlahead_Install(uintptr_t base, void* self) {
 void Xmlahead_Command(const char* args) {
 	(void)args;
 	size_t n; { std::lock_guard<std::mutex> lk(g_mu); n = g_recs.size(); }
-	Log("xmlahead: mode %d, %zu loads recorded, list %zu, ready %lld, served %lld, failed %lld, ParseFile calls %lld",
-	    g_mode, n, g_items.size(), s_ready.load(), s_served.load(), s_failed.load(), g_parseCalls.load());
+	Log("xmlahead: mode %d, %zu loads recorded, list %zu, ready %lld, served %lld, failed %lld, game first %lld, "
+	    "ParseFile calls %lld, game private %zu MB", g_mode, n, g_items.size(), s_ready.load(), s_served.load(),
+	    s_failed.load(), s_skipped.load(), g_parseCalls.load(), PrivateMb());
 }
