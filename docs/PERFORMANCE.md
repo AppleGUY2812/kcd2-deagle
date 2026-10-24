@@ -365,3 +365,24 @@ Also: Unity profiling best practices (35 % headroom, CPU vs GPU bound): https://
   unpacks), one-thread 2.4 (8.0), pre-save 6.9, save 17.5 s. Worker time: read 46 s + unpack 7 s over 6 threads,
   all before or during the load at background priority. The streaming engine's zlib (~25 s of thread time during
   the load, FUN_1803d9224 blocks) is now the biggest unpack cost left.
+
+## What the 47 s load does (boot sampler with stacks, 2026-10-23 20:51, tools/threadsample.ps1)
+
+~60 samples/s = one thread 100 % busy. Load start = "Loading last saved game".
+- open (0-6.4 s): main thread busy (FUN_1810368a8 30 % self, under CTerrain::Load_T FUN_18052c81c).
+- terrain (6.4-22.7 s): two threads at 100 % carry it: 10032 = CryPak reads (CCachedFileData::GetData, ZipDir
+  ReadFile) + the shader preprocessor (FUN_1805c06f8 "#ifdef / #elifcvar", FUN_1805bf950 "Couldn't find entry
+  function"), 23 % of it in OUR memcpy (pakahead serve, stalled on the held buffers: paged out); 18740 =
+  BucketAllocator (FUN_1804f7610) + FUN_1806e8aa0 / FUN_181e25ac0 (unnamed). The main thread is busy part of the
+  time and waits in FUN_1804635d4 (a mutex-guarded queue push). Thread 22260 spins on an IO completion port
+  (CCTPEndpoint, the local client-server network loop) at 100 % the whole time.
+- onethread + presave (22.7-32 s): driver threads compile pipelines (dxcompiler, nvwgf2umx); then the main thread
+  at 100 % (FUN_180b59d88 ...).
+- save (32-47 s): the main thread is ~18 % busy, and 67 % of those samples are in FUN_18085f3c4: the cvar
+  sys_SleepIfInactiveWH (default 1) "when the game window is inactive, sleep the main thread for 25ms every frame"
+  (the user had tabbed out). The texture job threads (inflate via FUN_1803d9224 -> FUN_1803d93c0 in-place path)
+  sit ~25 % busy; r_TexturesStreamingMaxRequestedMB is 4 MB, ...Jobs 32.
+- Settings that cap threads: r_ShadersAsyncMaxThreads 1, r_PSOCompilationWorkerThreads 2. Set at registration by
+  native/src/cvars.cpp from now on (see docs/DEBUG.md "cvars").
+- RAM: 16 GB PC; at 21:12 WSL held 3.8 GB, Brave + Discord ~1.7 GB, and Windows had 3.8 GB free at game start
+  (the game grows to ~6.5 GB during a load): unpacking ahead turned itself off.
