@@ -15,5 +15,12 @@
 //   "readiness: gate 0xMASK (from +RVA) waiting N s: not ready ..." once a second while a gate waits;
 //   "readiness: gate 0xMASK (from +RVA) open after N s; not ready for: ...; ready last: X" when it opens
 //   (gates that open within 0.25 s are left out).
+// "Let me in early" (readiness_early.h; off by default, `readiness early 1`, kept in deagle_readiness.txt): the save-load
+// and fast-travel gates open once terrain, octree, animations, entities and objects are ready, while textures, merged
+// meshes, far LODs and voxel GI still load (through the game's own timeout path). Off, the open line says how much
+// sooner it would have let you in.
+//   "readiness: gate ... let in early after N s; still loading: ..."
+// While a gate holds the screen (0.25 s or more), and 1.5 s after, every main-thread file read is logged (mainreads.h).
 void Readiness_Install(uintptr_t gameBase);   // after MH_Initialize
+void Readiness_Command(const char* args);     // "readiness [early 0|1]"
 void Readiness_Frame();   // main thread, once a drawn frame (main.cpp OnCamera)

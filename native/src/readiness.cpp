@@ -1,10 +1,13 @@
 // Which readiness task holds a loading or black screen: see readiness.h.
 // Addresses: WHGame.dll 1.5.6, checked at start against the installed DLL's bytes.
 #include "readiness.h"
+#include "readiness_early.h"
 #include "log.h"
+#include "mainreads.h"
 #include <windows.h>
 #include <intrin.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -28,6 +31,10 @@ const unsigned char kIsReadyBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,
 // machine FUN_180fc3868 switches on it, and its +0x91 is the "video ended" byte (levelmgr +0xa1)
 // service: +0x38 its lock, +0x48 / +0x50 the task pointers (begin, end); task vtable +0x10 IsReady(mask),
 // +0x18 category; a C_ReadinessProgress task: +0x10 name (char*), +0x1c requests in flight
+// observer (wh::C_ReadinessObserver, 0x70 bytes; ~/re/work/fast_travel_arrival/report.md): +8 the service, +0x18 the
+// mask, +0x20 the expiry (int64, timer units of 10 us; the -1 sentinel 0xfffffffffffe7960 = no timeout), +0x68 armed,
+// +0x6c the update countdown. FUN_180fc3f48 arms it; the service fires it once the countdown is used up and either
+// FUN_1808bae94 (expiry >= 0 and expiry <= now: the wh_sys_ReadinessObserverTimeoutDuration path) or IsReady(mask).
 
 using LockFn = void(__fastcall*)(void*);
 using CatFn = uint32_t(__fastcall*)(void*);
@@ -40,6 +47,9 @@ StartFn g_origStart = nullptr;
 uint8_t* g_service = nullptr;
 bool g_off = true;
 int g_state = -100;
+std::atomic<int> g_earlyMode{ 0 };   // "let me in early" (readiness_early.h): 0 off, 1 on; deagle_readiness.txt
+std::string g_modeFile;
+const early::Cfg g_earlyCfg;
 long long g_freq = 1, g_lastTick = 0, g_lastStateCheck = 0;
 
 struct Task {
@@ -58,6 +68,10 @@ struct Gate {
 	std::vector<double> notReady;      // seconds per task (index into g_tasks, by task pointer below)
 	std::vector<void*> taskAt;
 	std::vector<long long> lastBusy;
+	void* obs = nullptr;           // the observer (C_ReadinessObserver)
+	bool eligible = false;         // a gate "let me in early" may open (save load 0x3f93, fast travel 0x3f91)
+	early::State early;
+	double letAt = -1;             // s: let in early at this age (-1: not)
 };
 std::mutex g_newMu;
 std::vector<Gate> g_new;    // started since the last frame (any thread)
@@ -71,6 +85,8 @@ uint64_t __fastcall HkStart(void* observer, uint32_t mask, void* callback) {
 	g.mask = mask;
 	g.from = (uintptr_t)_ReturnAddress() - g_base;
 	g.t0 = Now();
+	g.obs = observer;
+	g.eligible = early::Eligible(mask);
 	{
 		std::lock_guard<std::mutex> l(g_newMu);
 		if (g_new.size() < 16) g_new.push_back(g);
@@ -88,6 +104,21 @@ bool Cat(void* t, uint32_t* cat) {
 bool Ready(void* t, uint32_t mask, bool* ready) {   // what the game's IsReady (FUN_1808baee0) asks each task
 	__try { *ready = ((ReadyFn)(*(void***)t)[0x10 / 8])(t, mask); return true; }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// Lets a waiting observer fire on its next update, through the game's own timeout path (as if
+// wh_sys_ReadinessObserverTimeoutDuration ran out): the expiry becomes 0. Only when the observer still looks armed
+// for this gate. 0 done, 1 not armed any more, 2 the layout doesn't match, 3 not readable.
+int LetIn(void* o, uint32_t mask) {
+	__try {
+		uint8_t* p = (uint8_t*)o;
+		if (p[0x68] != 1) return 1;
+		if (*(uint32_t*)(p + 0x18) != mask) return 2;
+		const long long e = *(long long*)(p + 0x20);
+		if (e < 0 && e != (long long)0xfffffffffffe7960ull) return 2;
+		*(volatile long long*)(p + 0x20) = 0;
+		return 0;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return 3; }
 }
 
 std::string NameOf(void* t, uintptr_t vt) {
@@ -198,13 +229,36 @@ void Opened(const Gate& g, long long now, const char* how, std::vector<std::stri
 	char head[160];
 	snprintf(head, sizeof head, "readiness: gate 0x%x (from +%llx) %s after %.1f s; not ready for: ", g.mask,
 	         (unsigned long long)g.from, how, took);
-	out->push_back(head + (s.empty() ? std::string("nothing (every task ready)") : s) + "; ready last: " + last);
+	std::string tail;
+	if (g.letAt >= 0) {
+		char e[96];
+		snprintf(e, sizeof e, "; let in early at %.1f s (readiness early 1)", g.letAt);
+		tail = e;
+	} else if (g.eligible && g.early.wouldOpen >= 0) {
+		char e[120];
+		snprintf(e, sizeof e, "; \"readiness early 1\" would let you in at %.1f s (%.1f s sooner)", g.early.wouldOpen,
+		         took - g.early.wouldOpen);
+		tail = e;
+	}
+	out->push_back(head + (s.empty() ? std::string("nothing (every task ready)") : s) + "; ready last: " + last + tail);
 }
 
 }  // namespace
 
 void Readiness_Install(uintptr_t base) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
+	HMODULE self = nullptr;
+	char path[MAX_PATH] = {};
+	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+	                   (LPCSTR)&Readiness_Install, &self);
+	GetModuleFileNameA(self, path, MAX_PATH);
+	g_modeFile = path;
+	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "deagle_readiness.txt";
+	if (FILE* fp = fopen(g_modeFile.c_str(), "r")) {
+		int m = 0;
+		if (fscanf(fp, "%d", &m) == 1 && (m == 0 || m == 1)) g_earlyMode = m;
+		fclose(fp);
+	}
 	void* start = (void*)(base + kRvaStart);
 	const bool ok = !memcmp(start, kStartBytes, sizeof kStartBytes) &&
 	                !memcmp((void*)(base + kRvaIsReady), kIsReadyBytes, sizeof kIsReadyBytes);
@@ -214,8 +268,24 @@ void Readiness_Install(uintptr_t base) {
 	g_unlock = (LockFn)(base + kRvaUnlock);
 	const bool h = MH_CreateHook(start, (void*)&HkStart, (void**)&g_origStart) == MH_OK && MH_EnableHook(start) == MH_OK;
 	g_off = !h;
-	Log("readiness: %s (logs every readiness gate that holds the screen 0.25 s or more, and which task holds it)",
-	    h ? "on" : "FAILED to hook the observer start");
+	Log("readiness: %s (logs every readiness gate that holds the screen 0.25 s or more, and which task holds it); "
+	    "let me in early %s", h ? "on" : "FAILED to hook the observer start", g_earlyMode ? "ON" : "off");
+}
+
+void Readiness_Command(const char* args) {
+	while (args && *args == ' ') args++;
+	if (args && !strncmp(args, "early", 5)) {
+		const char* v = args + 5;
+		while (*v == ' ') v++;
+		if ((*v == '0' || *v == '1') && (v[1] == 0 || v[1] == ' ')) {
+			g_earlyMode = *v - '0';
+			if (FILE* f = fopen(g_modeFile.c_str(), "w")) { fprintf(f, "%d\n", g_earlyMode.load()); fclose(f); }
+			Log("readiness: let me in early %s (kept for the next start in %s)", g_earlyMode ? "ON" : "off",
+			    g_modeFile.c_str());
+			return;
+		}
+	}
+	Log("readiness: %s, let me in early %s  (readiness early 0|1)", g_off ? "off" : "on", g_earlyMode ? "ON" : "off");
 }
 
 void Readiness_Frame() {
@@ -244,7 +314,7 @@ void Readiness_Frame() {
 		if (!g_service) return;   // no level yet: try again next frame
 		Log("readiness: service found (level manager +0x%x%s)", where & 0xfff, where & 0x1000 ? ", through its observer" : "");
 	}
-	bool changed = false;
+	bool changed = false, longWait = false;
 	std::vector<std::string> lines;
 	g_lock(g_service + 0x38);
 	const bool okTasks = ReadTasks(&changed);
@@ -252,13 +322,16 @@ void Readiness_Frame() {
 		for (auto& t : g_tasks) Cat(t.at, &t.cat);   // asked every time, as the game's IsReady does
 		for (size_t gi = 0; gi < g_gates.size();) {
 			Gate& g = g_gates[gi];
-			bool all = true, line = now - (g.lastLine ? g.lastLine : g.t0) >= g_freq;
+			bool all = true, mustReady = true, detailBusy = false;
+			bool line = now - (g.lastLine ? g.lastLine : g.t0) >= g_freq;
 			std::string busy;
 			for (auto& t : g_tasks) {
 				if (!(t.cat & g.mask)) continue;
 				bool r = true;
 				if (!Ready(t.at, g.mask, &r) || r) continue;
 				all = false;
+				if (early::Detail(t.name.c_str())) detailBusy = true;
+				else mustReady = false;
 				const size_t i = Slot(g, t.at);
 				g.notReady[i] += dt;
 				g.lastBusy[i] = now;
@@ -271,6 +344,31 @@ void Readiness_Frame() {
 				}
 			}
 			const double waited = Secs(now - g.t0);
+			if (g.eligible && !all && g.letAt < 0 && early::Step(g.early, g_earlyCfg, waited, mustReady, detailBusy) &&
+			    g_earlyMode.load(std::memory_order_relaxed) == 1) {
+				const int r = LetIn(g.obs, g.mask);
+				char one[200];
+				if (r == 0) {
+					g.letAt = waited;
+					snprintf(one, sizeof one, "readiness: gate 0x%x (from +%llx) let in early after %.1f s; still loading: ",
+					         g.mask, (unsigned long long)g.from, waited);
+				} else {
+					g.eligible = false;   // once per gate
+					snprintf(one, sizeof one, "readiness: gate 0x%x (from +%llx) can't let in early (%s); still loading: ",
+					         g.mask, (unsigned long long)g.from, r == 1 ? "observer not armed" : r == 2 ? "observer layout differs" : "observer unreadable");
+				}
+				std::string still;
+				for (auto& t : g_tasks) {
+					bool rr = true;
+					if (!(t.cat & g.mask) || !Ready(t.at, g.mask, &rr) || rr) continue;
+					char n[96];
+					const int f = InFlight(t);
+					snprintf(n, sizeof n, f >= 0 ? "%s%s (%d in flight)" : "%s%s", still.empty() ? "" : ", ", t.name.c_str(), f);
+					still += n;
+				}
+				lines.push_back(one + still);
+			}
+			if (waited >= 0.25) longWait = true;
 			if (all || waited > 120) {
 				Opened(g, now, all ? "open" : "still shut, stopped watching", &lines);
 				g_gates.erase(g_gates.begin() + gi);
@@ -287,6 +385,9 @@ void Readiness_Frame() {
 		}
 	}
 	g_unlock(g_service + 0x38);
+	// every file the main thread reads while a gate holds the screen, up to 1.5 s after (mainreads.cpp): names the
+	// XML read in the frame the fast-travel observer fires
+	if (longWait) MainReads_Log(1500);
 	if (!okTasks) { Log("readiness: the task list doesn't read - off"); g_off = true; return; }
 	if (changed) {
 		std::string all;
