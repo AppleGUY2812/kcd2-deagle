@@ -3,6 +3,8 @@
 // native/test/stormmemo_test.cpp checks it against the game's algorithm outside the game.
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace smemo {
@@ -62,6 +64,7 @@ struct Memo {
 //   using Rule; int MaxLevel(g); Rule* Rules(g, Rule** end); Rule* Next(r); int Level(r);
 //   void** Conds(r, void*** end); void** Actions(r, void*** end); void** NextEntry(p)   (16-byte counted pointers)
 //   bool Eval(cond, soul); void Run(action, soul, r); Memo::Mask Writes(action); void Ended(r, cond); void Ran(r)
+//   (indexed walk) bool NameKeys(cond, std::vector<std::string>*); bool ReadOnly(cond); const char* SoulName(soul)
 // One rule, as FUN_180698e84 runs it. a.Ended(r, cond) is told which condition stopped it (null: all passed) and
 // a.Ran(r) when its actions are done (the census in stormmemo.cpp; no-ops in the test).
 template <class A>
@@ -91,34 +94,81 @@ void ApplyLevel(A& a, G* g, void* soul, int level, Memo& m) {
 		if (a.Level(r) == level) ApplyRule(a, r, soul, m);
 }
 
-// The same with the group's rules sorted by level once (Levels: per level, that level's rules in the group's order):
-// the game scans every rule of the group for each level, this visits only the level's own. Same rules, same order.
+// The same with the group's rules sorted by level once, and split by the character name they require: the game scans
+// every rule of the group for each level (boot 63: ~6,500 rules looked at per character, 62 pass, 75 % stopped by a
+// name check), this visits only the level's rules that need no name or need this character's. A rule needs a name when
+// one of its conditions is a name gate (a.NameKeys: C_HasName with an exact name, or an or of those) and every
+// condition before it is read-only (a.ReadOnly): for a character with another name that rule fails in the game too,
+// and skipping it skips only read-only evaluations. Rules run in the group's order (a merge by index).
 // Index() rebuilds when the group's rule array or max level is not what it was built from.
 template <class Rule>
 struct Levels {
+	struct Entry { uint32_t idx; Rule* r; };
 	const void* begin = nullptr; const void* end = nullptr; int maxLevel = -1;
-	std::vector<std::vector<Rule*>> at;
+	std::vector<std::vector<Entry>> always;                                     // per level: rules with no name gate
+	std::vector<std::unordered_map<std::string, std::vector<Entry>>> byName;    // per level: name -> its rules
+	size_t gated = 0, rules = 0;
 };
 template <class A, class G>
 const Levels<typename A::Rule>& Index(A& a, G* g, Levels<typename A::Rule>& lv) {
-	typename A::Rule* end = nullptr;
-	typename A::Rule* b = a.Rules(g, &end);
+	using Rule = typename A::Rule;
+	Rule* end = nullptr;
+	Rule* b = a.Rules(g, &end);
 	const int ml = a.MaxLevel(g);
 	if (lv.begin == b && lv.end == end && lv.maxLevel == ml) return lv;
 	lv.begin = b; lv.end = end; lv.maxLevel = ml;
-	lv.at.assign(ml >= 0 ? (size_t)ml + 1 : 0, {});
-	for (typename A::Rule* r = b; r != end; r = a.Next(r)) {
+	const size_t n = ml >= 0 ? (size_t)ml + 1 : 0;
+	lv.always.assign(n, {});
+	lv.byName.assign(n, {});
+	lv.gated = lv.rules = 0;
+	std::vector<std::string> keys;
+	uint32_t idx = 0;
+	for (Rule* r = b; r != end; r = a.Next(r), idx++) {
 		const int l = a.Level(r);
-		if (l >= 0 && l <= ml) lv.at[(size_t)l].push_back(r);   // other levels never run (the game's level loop ends at max)
+		if (l < 0 || l > ml) continue;   // other levels never run (the game's level loop ends at max)
+		lv.rules++;
+		bool gate = false;
+		void** ce = nullptr;
+		for (void** c = a.Conds(r, &ce); c != ce; c = a.NextEntry(c)) {
+			if (!*c) continue;
+			keys.clear();
+			if (a.NameKeys(*c, &keys) && !keys.empty()) { gate = true; break; }
+			if (!a.ReadOnly(*c)) break;
+		}
+		if (!gate) { lv.always[(size_t)l].push_back({ idx, r }); continue; }
+		lv.gated++;
+		for (size_t k = 0; k < keys.size(); k++) {
+			bool dup = false;
+			for (size_t j = 0; j < k; j++) dup = dup || keys[j] == keys[k];
+			if (!dup) lv.byName[(size_t)l][keys[k]].push_back({ idx, r });
+		}
 	}
 	return lv;
 }
 template <class A, class G>
 void ApplyLevelIndexed(A& a, G* g, void* soul, int level, Memo& m, Levels<typename A::Rule>& lv) {
+	using E = typename Levels<typename A::Rule>::Entry;
 	if (level > a.MaxLevel(g) || level < 0) return;
 	const Levels<typename A::Rule>& x = Index(a, g, lv);
-	if ((size_t)level >= x.at.size()) return;
-	for (typename A::Rule* r : x.at[(size_t)level]) ApplyRule(a, r, soul, m);
+	if ((size_t)level >= x.always.size()) return;
+	const std::vector<E>& al = x.always[(size_t)level];
+	const std::vector<E>* named = nullptr;
+	const auto& bn = x.byName[(size_t)level];
+	if (!bn.empty()) {
+		const char* name = a.SoulName(soul);
+		if (name) {
+			thread_local std::string key;
+			key.assign(name);
+			auto it = bn.find(key);
+			if (it != bn.end()) named = &it->second;
+		}
+	}
+	if (!named) { for (const E& e : al) ApplyRule(a, e.r, soul, m); return; }
+	size_t i = 0, j = 0;
+	while (i < al.size() || j < named->size()) {
+		if (j == named->size() || (i < al.size() && al[i].idx < (*named)[j].idx)) ApplyRule(a, al[i++].r, soul, m);
+		else ApplyRule(a, (*named)[j++].r, soul, m);
+	}
 }
 
 struct Stats { uint64_t looked = 0, hits = 0, checked = 0, bad = 0; };

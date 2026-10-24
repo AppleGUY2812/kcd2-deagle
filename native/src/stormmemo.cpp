@@ -87,6 +87,7 @@ const Op kOps[] = {
 	{ 0x3bccf78, 0x3f2dd0, kAll, "SetReputation" },       { 0x3c15bf8, 0x16b4edc, kAll, "SetEquipDirectives" },
 	{ 0x3bf7898, 0x12d8244, kAll, "SetReincarnationParams" },
 };
+constexpr uintptr_t kVtHasName = 0x3a4fc40, kVtAnd = 0x3b30da8, kVtOr = 0x3b30cf8;
 constexpr uintptr_t kVtCustomOp = 0x3bdcaa0, kExecCustomOp = 0x1397d70;
 constexpr int kNOps = sizeof kOps / sizeof kOps[0];
 bool g_opOk[kNOps] = {};   // its execute is where 1.5.6 has it (checked at start)
@@ -102,7 +103,8 @@ CondFn g_origCustom = nullptr;
 
 std::atomic<int> g_mode{1};   // 0 off, 1 on, 2 check every remembered answer
 std::atomic<int> g_index{1};  // 1: each group's rules sorted by level once (the walk visits only the level's own)
-std::atomic<int> g_census{1}; // 1: count which condition kind ends each rule, time the walk and the actions
+std::atomic<int> g_census{1};
+std::atomic<long long> g_idxRules{0}, g_idxGated{0};   // rules indexed / of them tied to a name (all threads) // 1: count which condition kind ends each rule, time the walk and the actions
 std::atomic<long long> g_checkLeft{100000};
 long long g_freq = 1;
 
@@ -241,6 +243,45 @@ struct GameRules {
 	}
 	void Ran(Rule*) {}
 	bool census = false;
+	// Name gates for the indexed walk. C_HasName (FUN_180698f40): the character's name (soul+0x360) against a pattern
+	// at +0x18 (* and ?) if not empty, else a prefix at +0x10 if not empty, else the exact name at +8 (byte compare).
+	// Only the exact form is a gate. And (FUN_180f4df74) / or (FUN_180699070) skip null children.
+	static int Len(const char* p) { return p ? *(const int*)(p - 8) : 0; }   // CryString length header
+	bool NameKeys(void* c, std::vector<std::string>* keys, int depth = 0) {
+		if (!c || depth > 8) return false;
+		const uintptr_t vt = *(const uintptr_t*)c - g_base;
+		const uint8_t* b = (const uint8_t*)c;
+		if (vt == kVtHasName) {
+			const char* exact = *(const char* const*)(b + 8);
+			if (!exact || Len(*(const char* const*)(b + 0x18)) || Len(*(const char* const*)(b + 0x10))) return false;
+			keys->emplace_back(exact);
+			return true;
+		}
+		void* const* e = *(void* const* const*)(b + 0x10);
+		void* const* k = *(void* const* const*)(b + 8);
+		if (vt == kVtAnd) {   // a gate if a child is one and every child before it is read-only
+			for (; k != e; k += 2) {
+				if (!*k) continue;
+				const size_t before = keys->size();
+				if (NameKeys(*k, keys, depth + 1)) return true;
+				keys->resize(before);
+				if (!ReadOnly(*k)) return false;
+			}
+			return false;
+		}
+		if (vt == kVtOr) {   // a gate if every child is one: the names of all of them
+			bool any = false;
+			for (; k != e; k += 2) {
+				if (!*k) continue;
+				if (!NameKeys(*k, keys, depth + 1)) return false;
+				any = true;
+			}
+			return any;
+		}
+		return false;
+	}
+	bool ReadOnly(void* c) { return ReadMask(c, 0) >= 0; }   // made only of known read-only kinds
+	const char* SoulName(void* soul) { return *(const char* const*)((const uint8_t*)soul + 0x360); }
 };
 
 void __fastcall HkPass(void* rules, void* soul, uint16_t mask) {
@@ -270,7 +311,10 @@ void __fastcall HkWalk(uint8_t* group, void* soul, int level) {
 	const long long t0 = a.census ? Now() : 0;
 	if (g_index.load(std::memory_order_relaxed)) {
 		thread_local std::unordered_map<const uint8_t*, smemo::Levels<uint8_t>> idx;
-		smemo::ApplyLevelIndexed(a, group, soul, level, m, idx[group]);
+		smemo::Levels<uint8_t>& lv = idx[group];
+		const void* was = lv.begin;
+		smemo::ApplyLevelIndexed(a, group, soul, level, m, lv);
+		if (lv.begin != was) { g_idxRules += (long long)lv.rules; g_idxGated += (long long)lv.gated; }
 	} else {
 		smemo::ApplyLevel(a, group, soul, level, m);
 	}
@@ -332,8 +376,9 @@ DWORD WINAPI Reporter(LPVOID) {
 				n += snprintf(buf + n, sizeof buf - n, "%s%s %lld", j ? ", " : "",
 				              top[j] < kNKinds ? kKinds[top[j]].name + 2 : "other", t.cen.ended[top[j]]);
 			Log("stormmemo: census thread %lu: %lld rules looked at (%lld passed, %lld actions %.0f ms); rule walk %.0f ms "
-			    "(index %s); stopped by: %s", t.tid, t.cen.rules, t.cen.passed, t.cen.actions,
-			    1000.0 * t.cen.actTicks / g_freq, 1000.0 * t.cen.walkTicks / g_freq, g_index.load() ? "on" : "off", buf);
+			    "(index %s: %lld of %lld rules need a name, all threads); stopped by: %s", t.tid, t.cen.rules, t.cen.passed,
+			    t.cen.actions, 1000.0 * t.cen.actTicks / g_freq, 1000.0 * t.cen.walkTicks / g_freq,
+			    g_index.load() ? "on" : "off", g_idxGated.load(), g_idxRules.load(), buf);
 		}
 	}
 	return 0;

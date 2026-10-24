@@ -7,14 +7,16 @@
 #include "../src/stormmemo_core.h"
 #include <cstdio>
 #include <map>
+#include <string>
 #include <random>
 #include <vector>
 
-struct Soul { int f[6] = {}; std::vector<int> fired; };
-enum Kind { Leaf, NamedAnd, NamedOr, And, Or, Not, Flaky };
+struct Soul { int f[6] = {}; std::vector<int> fired; std::string name; };
+enum Kind { Leaf, NamedAnd, NamedOr, And, Or, Not, Flaky, Name, NamePrefix };
 struct Cond {
 	Kind kind = Leaf;
 	int a = 0, b = 0;
+	std::string str;   // Name: the exact name; NamePrefix: a prefix (not a gate)
 	std::vector<void*> kids;   // 16-byte entries like the game's counted pointers: {ptr, 0}
 	int calls = 0;
 };
@@ -54,6 +56,8 @@ bool Eval(Cond* c, Soul* s) {
 	switch (c->kind) {
 	case Leaf: g_leafEvals++; return s->f[c->a] == c->b;
 	case Flaky: return (++c->calls & 1) != 0;
+	case Name: g_leafEvals++; return s->name == c->str;
+	case NamePrefix: g_leafEvals++; return s->name.compare(0, c->str.size(), c->str) == 0;
 	case And: return Kids(c, s, true);
 	case Or: return Kids(c, s, false);
 	case Not: return !Eval((Cond*)c->kids[0], s);
@@ -80,6 +84,37 @@ struct Acc {
 		const int idx = ((Action*)a)->idx;
 		return g_masks == 0 ? smemo::Memo::kAll : g_masks == 1 ? 1u << idx : 1u << ((idx + 1) % 6);
 	}
+	bool NameKeys(void* p, std::vector<std::string>* keys) {
+		Cond* c = (Cond*)p;
+		if (c->kind == Name) { keys->push_back(c->str); return true; }
+		if (c->kind == And) {
+			for (size_t i = 0; i < c->kids.size(); i += 2) {
+				if (!c->kids[i]) continue;
+				const size_t before = keys->size();
+				if (NameKeys(c->kids[i], keys)) return true;
+				keys->resize(before);
+				if (!ReadOnly(c->kids[i])) return false;
+			}
+			return false;
+		}
+		if (c->kind == Or) {
+			bool any = false;
+			for (size_t i = 0; i < c->kids.size(); i += 2) {
+				if (!c->kids[i]) continue;
+				if (!NameKeys(c->kids[i], keys)) return false;
+				any = true;
+			}
+			return any;
+		}
+		return false;
+	}
+	bool ReadOnly(void* p) {
+		Cond* c = (Cond*)p;
+		if (c->kind == Flaky) return false;
+		for (size_t i = 0; i < c->kids.size(); i += 2) if (c->kids[i] && !ReadOnly(c->kids[i])) return false;
+		return true;
+	}
+	const char* SoulName(void* s) { return ((Soul*)s)->name.c_str(); }
 	void Ended(Rule*, void*) {}
 	void Ran(Rule*) {}
 	void Run(void* a, void* s, Rule* r) {
@@ -124,6 +159,14 @@ int main() {
 	auto R = [&](int n) { return (int)(rng() % (unsigned)n); };
 	std::vector<Cond*> all, named;
 	auto leaf = [&] { Cond* c = new Cond; c->a = R(6); c->b = R(3); all.push_back(c); return c; };
+	auto nameOf = [&](int i) { return std::string("npc_") + (char)('a' + i % 5) + std::to_string(i); };
+	auto nameCond = [&]() -> Cond* {   // exact names (gates), sometimes a prefix (not a gate)
+		Cond* c = new Cond;
+		c->kind = R(6) ? Name : NamePrefix;
+		c->str = c->kind == Name ? nameOf(R(15)) : std::string("npc_") + (char)('a' + R(5));
+		all.push_back(c);
+		return c;
+	};
 	auto pick = [&]() -> Cond* {   // a condition to put in a set or a rule: mostly named sets once there are some
 		const int k = R(10);
 		if (k < 5 && !named.empty()) return named[R((int)named.size())];
@@ -148,6 +191,16 @@ int main() {
 			Rule r;
 			r.id = id++;
 			r.level = R(6) - 1;   // -1 and 4 never run (the game's loop is 0..3)
+			const int gate = R(8);   // 3 in 8 rules start with a name, 1 in 8 with an or of names, 1 in 8 an and with one
+			if (gate < 3) { r.conds.push_back(nameCond()); r.conds.push_back(nullptr); }
+			else if (gate == 3) {
+				Cond* o = new Cond; o->kind = Or;
+				for (int k = 0, n = 1 + R(3); k < n; k++) { o->kids.push_back(R(6) ? (void*)nameCond() : nullptr); o->kids.push_back(nullptr); }
+				all.push_back(o); r.conds.push_back(o); r.conds.push_back(nullptr);
+			} else if (gate == 4) {
+				Cond* o = new Cond; o->kind = And; o->kids = { leaf(), nullptr, nameCond(), nullptr };
+				all.push_back(o); r.conds.push_back(o); r.conds.push_back(nullptr);
+			}
 			for (int k = 0, n = 1 + R(3); k < n; k++) {
 				Cond* c = pick();
 				if (R(4) == 0) { Cond* o = new Cond; o->kind = R(2) ? And : Or; o->kids = { pick(), nullptr, pick(), nullptr }; all.push_back(o); c = o; }
@@ -171,6 +224,7 @@ int main() {
 		for (int i = 0; i < 3000; i++) {
 				Soul a;
 				for (int& v : a.f) v = R(3);
+				a.name = nameOf(R(20));   // 5 of the 20 names no rule asks for
 				Soul b = a;
 				g_leafEvals = 0;
 				Apply(gs, &a, 3, false);
@@ -218,6 +272,20 @@ int main() {
 	g_useMemo = true; g_check = true; g_mismatch = false;
 	Apply(one, &s, 0, true);
 	if (!g_mismatch) { puts("FAIL: the check missed a condition that changes"); return 1; }
+
+	// A condition that isn't read-only before a name check: the index must not skip the rule (the game calls it).
+	{
+		Cond* fl2 = new Cond; fl2->kind = Flaky;
+		Cond* nm = new Cond; nm->kind = Name; nm->str = "somebody_else";
+		Group g2; g2.maxLevel = 0;
+		Rule r; r.id = 9100; r.conds = { fl2, nullptr, nm, nullptr }; g2.rules.push_back(r);
+		std::vector<Group> two{ g2 };
+		Soul u; u.name = "me";
+		g_useMemo = true; g_check = false; g_indexed = true; g_lv.clear();
+		Apply(two, &u, 0, true);
+		g_indexed = false;
+		if (fl2->calls != 1) { puts("FAIL: the index skipped a rule whose first condition isn't read-only"); return 1; }
+	}
 
 	// Outside a character's pass nothing is remembered.
 	g_mismatch = false;
