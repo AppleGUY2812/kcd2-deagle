@@ -68,3 +68,20 @@ frame sync (`FUN_1809a6308`, 200 ms condvar rounds on renderer+0x50); RenderThre
 threads. Likely the camera-jump precache (`e_AutoPrecacheCameraJumpDist`) or shader work: not decoded. Then, in the
 frame the observer fires, a 450 to 830 ms main-thread stall: an XML file read from a pak (`FUN_1804617fc`) and parsed
 by expat (`FUN_1806e6b70` tokenizer, `FUN_1804faed8` node builder). Which file is not known yet.
+
+### The arrival stall's XML (decoded 2026-10-24, ~/re/work/ft_xml_stall/report.md on the ProLiant)
+The 450-830 ms main-thread stall is the random-event places' concept graphs loaded synchronously. SETTLED in code:
+the observer's callback `FUN_181ff8970` -> `FUN_182de1714` -> `FUN_182de0b7c` broadcasts the fast-travel-END listener
+list (ft+0x18, `FUN_180875df8`). `FUN_180c3d134` registers `FUN_182ece874` there (and `FUN_182ece930` on the START list,
+ft+0x8). `FUN_182ece874` shuffles a vector of random-event places (`std::shuffle`) and calls `FUN_180620698(place,
+sync=1)` for each until `FUN_1806202c4` starts an event. A place whose graph isn't loaded is loaded on Main
+(`FUN_182735b34` -> `FUN_18051a52c`, the body the streaming thread runs for async loads) -> concept project loader
+`FUN_180979068` -> `FUN_180979360` -> `FUN_180463d38` (XML, no cache: re-read and re-parsed every call), then
+`ConceptGraphDeserializer` (`FUN_180bc195c` / `FUN_180bc309c` / `FUN_180bc4694`). The start listener only prefetches,
+async, the places near the path. The sampler saw both phases on Main (~0.4 s XML, ~0.35 s graph build). INFERRED: the
+shuffled order makes the number of sync loads, and so the stall, differ per trip. Not seen directly: a frame of
+`FUN_182ece874` itself (the sampler keeps 8 return addresses).
+Options: (A) during the walk, request every place the end listener will try, async: `FUN_18051a8e0(conceptMgr+0xb0,
+&place, 0, 1)` with conceptMgr = `*(*(FUN_1809155c8()+0x120)+0x18)`; same events, the stall moves off Main. (B) skip
+the sync load of a not-loaded place in the end loop: fewer arrival events. (C) skip the loop: no arrival events.
+The `mainreads:` log (readiness.cpp, a gate held 0.25 s or more) names the files on the next long arrival.

@@ -477,3 +477,11 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
 - Candidates, by expected gain: streamio mode 1 (one read per page); hot paks on an NVMe drive (this PC has two, the
   SATA E: is the slowest; needs the user's go, and room: C: 48 GB, D: 39 GB free, Data 82 GB); a second reader by
   medium; for fast travel only, higher texture / object caps while the "AfterFastTravel" observer waits.
+- Boots 12 and 13 (2026-10-24, game's own settings, `readiness early` off): Settle 11.3 s both times. The last holders:
+  C_ClothingSystem (category 0x80, the vt 3e8b8e0 task) to 8.4-9.5 s, animations to 8.4-10.3 s, textures to 11.3 s.
+  "Let me in early" would have saved 2.7 s and 0.8 s: the must-have tasks end close to the textures. NOT disk-bound:
+  E: was idle 50-66 % during the gate (Windows disk counters, queue ~0.4) and the read thread busy 49-82 %, at 150-200
+  MB/s; animations sat at ~120 in flight for 5 s. So faster reads (streamio 1) save little here; what feeds the reader
+  (budgets, callback / finalize caps, the clothing system) is being decoded. The main thread read no files during the
+  gate (`mainreads:` 1 XML 0 ms, 34 ms of pak reads in 12.3 s). VRAM 1.6-1.8 GB during the gate, copy engine idle: not
+  the GPU either. VRAM rose to 4.8 GB in the first 30 s of play (most texture detail arrives after control anyway).
