@@ -9,6 +9,9 @@
 //           (CryEngine's ZipRawUncompress shape). Overlapping buffers (in-place unpack) and anything libdeflate does
 //           not finish cleanly go to the game's own code, so the game sees zlib's exact result.
 //   crc32:  FUN_180612300(crc, buf, len), zlib's crc32 (same maths as libdeflate_crc32).
+//   stream: FUN_1803d9224, the streaming engine's block unpack (textures etc. on the job threads; the save step).
+//           When a file's first block holds the whole file, libdeflate unpacks it in one go; otherwise the game's
+//           zlib does the file block by block as before. After 300 split files, if over 60 % are split, it stops trying.
 // Mode, read at start from deagle_fastzip.txt next to the plugin and set live by "[DN] fastzip N":
 //   0 the game's zlib (still timed), 1 libdeflate (default), 2 verify: both run on every call, the game gets
 //   zlib's result, every mismatch is logged, and the log shows both libraries' times on the same data.
