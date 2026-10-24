@@ -3,6 +3,7 @@
 #include "applyfast.h"
 #include "questmenu.h"
 #include "questfast.h"
+#include "animahead.h"
 #include "log.h"
 #include <windows.h>
 #include <atomic>
@@ -33,6 +34,7 @@ void __fastcall HkPoll(void* loaders, uint64_t a2) {   // main thread only
 	if (!g_first) {
 		g_first = a; g_lastPt = a; g_startN = Count(loaders); g_polls = 0; g_curve.clear();
 		Log("loadwatch: terrain wait starts, %zu loaders left", g_startN);
+		Animahead_OnTerrainWait();   // the human animation sets while the loaders run (animahead.h)
 	}
 	g_orig(loaders, a2);
 	g_polls++;
