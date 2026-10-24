@@ -442,8 +442,9 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   `sys_UncachedStreamReads` 1 does synchronous unbuffered ReadFile calls of 128 KB into a bounce buffer, one at a time,
   under the pak lock.
 - E: (Samsung 870 EVO, SATA), unbuffered reads measured 2026-10-23: scattered 128 KB 213 MB/s (16 in flight 276),
-  scattered 1 MB 437 MB/s (8 in flight 452), sequential 128 KB ~430, 1 MB ~505. Bigger reads help ~2x on scattered
-  data; more reads in flight barely help on this drive.
+  scattered 1 MB 437 MB/s (8 in flight 452), sequential 128 KB ~430, 1 MB ~505. More reads in flight barely help on
+  this drive. The game's real pattern (8 back-to-back 128 KB reads per 1 MB page) ran at ~285 MB/s against ~460 MB/s
+  for one 1 MB read: 38 % less read time (an earlier "2x" compared scattered 128 KB with scattered 1 MB: wrong).
 - Memory-mapping a cold pak reads at disk speed on first touch (369 MB/s measured); only data already in RAM reads at
   memory speed (~45,000 MB/s on the second pass). That is why the in-game reload is fast: the data is resident, not read
   a faster way.
@@ -454,3 +455,25 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
 - Next, by expected gain: mode 1 if the read thread is busy most of step 5; hot paks onto the NVMe D: (from streamio's
   pak list); reading step 5's data ahead during the main menu (RAM-limited: 1-2 GB free while the game runs); starting
   the save spot's streaming earlier (precache point, as ftpreload.cpp does). zlib-ng for the streamed blocks is last.
+- The stream pipeline, decoded 2026-10-23 (~/re/work/ft_streaming/report.md on the ProLiant; SETTLED unless marked):
+  1. a request is counted per type (`FUN_18048a190`: 1 texture, 3 terrain, 4 animation, 9 merged mesh); the readiness
+     tasks mirror these live request counts, not bytes.
+  2. ONE IO thread reads every game pak (`FUN_180465428`), pages up to 1 MB, each as synchronous 128 KB reads at queue
+     depth 1 (`FUN_180464928`). Three media threads exist (HDD, Optical, InMemory), but `FUN_18046385c` maps every
+     game pak to HDD: returning another medium for half the paks would give two readers without new thread code.
+  3. inflate is parallel: each page is cut into 32 KB "StreamInflateBlock" jobs (`FUN_18059da30`).
+  4. ONE "Streaming AsyncCallback" thread runs the consumers' callbacks, then the main thread finalizes the whole list
+     each update with no cap (`FUN_180489670`; `sys_streaming_max_finalize_per_frame` is deprecated,
+     `sys_streaming_max_bandwidth` has no reader).
+  So the read is the only serial byte stage: INFERRED, Settle is IO-bound (~75k blocks of 32 KB = ~2.4 GB packed: ~5 s
+  at 460 MB/s, ~8 s at 285 MB/s; not measured).
+- Caps (defaults read in code): textures limit work OUTSTANDING, issued once per rendered frame
+  (`r_TexturesStreamingMaxRequestedMB` 4, `MaxRequestedJobs` 32, scheduler `FUN_18085f70c`): no limit at 150 fps, but
+  in the 200-400 ms frames of a fast-travel arrival only ~10-20 MB/s (INFERRED). Objects: `e_StreamCgfMaxNewTasksPerUpdate`
+  40, `e_StreamCgfMaxTasksInProgress` 120. The save load's gate runs in PrecacheMode, which lifts the texture 3 ms time
+  limit and the object caps (not the texture MB / job caps); no PrecacheMode was found for fast travel. Textures load
+  their full wanted mips in one pass (`FUN_180771494`); `r_TexturesStreamingMipBias` +1 = about a quarter of the bytes.
+  The peer's boot of 2026-10-23 with more textures in flight was slower (save step 15 to 20 s): raising caps is not free.
+- Candidates, by expected gain: streamio mode 1 (one read per page); hot paks on an NVMe drive (this PC has two, the
+  SATA E: is the slowest; needs the user's go, and room: C: 48 GB, D: 39 GB free, Data 82 GB); a second reader by
+  medium; for fast travel only, higher texture / object caps while the "AfterFastTravel" observer waits.
