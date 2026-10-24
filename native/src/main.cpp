@@ -18,6 +18,7 @@
 #include "invtime.h"
 #include "ftpreload.h"
 #include "fastzip.h"
+#include "streamio.h"
 #include "pakahead.h"
 #include "cvars.h"
 #include "xmlahead.h"
@@ -1223,6 +1224,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "invtime")) Invtime_Command(rest);
 	else if (!strcmp(cmd, "ftpre")) Ftpre_Command(rest);
 	else if (!strcmp(cmd, "fastzip")) Fastzip_Command(rest);
+	else if (!strcmp(cmd, "streamio")) Streamio_Command(rest);
 	else if (!strcmp(cmd, "pakahead")) Pakahead_Command(rest);
 	else if (!strcmp(cmd, "cvars")) Cvars_Command(rest);
 	else if (!strcmp(cmd, "xmlahead")) Xmlahead_Command(rest);
@@ -1588,6 +1590,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
+	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
 	uintptr_t fr = FindFrustum();
 	Log("UpdateFrustumPlanes %p", (void*)fr);
 	if (fr && MH_CreateHook((void*)fr, (void*)&HkFrustum, (void**)&g_origFrustum) == MH_OK && MH_EnableHook((void*)fr) == MH_OK)

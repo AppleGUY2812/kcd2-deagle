@@ -9,7 +9,7 @@ file(GLOB MINHOOK_SRC third_party/minhook/src/*.c third_party/minhook/src/hde/hd
 # libdeflate v1.26 (MIT): unpack + crc32 only, for src/fastzip.cpp
 set(LIBDEFLATE_SRC third_party/libdeflate/lib/deflate_decompress.c third_party/libdeflate/lib/crc32.c
     third_party/libdeflate/lib/utils.c third_party/libdeflate/lib/x86/cpu_features.c)
-add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp src/ftpreload.cpp src/fastzip.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/loadwatch.cpp src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
+add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp src/ftpreload.cpp src/fastzip.cpp src/streamio.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/loadwatch.cpp src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
 target_include_directories(deagle_native PRIVATE third_party/minhook/include third_party/libdeflate src)
 target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)
