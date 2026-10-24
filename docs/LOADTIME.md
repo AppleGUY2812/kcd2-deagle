@@ -100,30 +100,50 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 - xmlahead workers at normal priority, quest job thread above normal: no change (boot 25).
 - xmlahead list re-recorded in the quests-first order (boot 26): XML phase unchanged.
 
-## Plan: the map build (Main, 0-10.7 s after level loading; boot 46) - 2026-10-24
-Split (user): kcd2-deagle-66 moves work before Continue, kcd2-deagle-5a makes the load's own code faster. 66 can't launch
-the game: it commits to master and sends "ready for a boot", 5a runs it.
-Boot 46, Main (external sampler, rough inside objects): open 0-1.7, terrain wait 1.7-3.1 (1.43 s), objects 3.1-8.5
-(entity spawn ~1.3, navmesh ~0.7, CryPak lock ~0.3, ~3 s unnamed), SmartObjectAnimations 8.5-10.0, XGenAI + concepts
-10.0-10.7. Then state 4 0.2, apply 4.8, gate 3.2-3.6, first frames 0.6.
+## Plan: 10 s from Continue (target since 2026-10-24 15:30; was 20 s)
+Boot 57 (all current work, menu path): 18.3 s = LoadLevel 8.3 + state 4 0.8 + apply 4.7 + gate 3.4 + rest 1.1.
+Shaving inside the steps reaches ~14-15 s at best (5a's LoadLevel items ~2.5 s, 66's apply ~1-1.5 s). 10 s needs whole steps
+before Continue.
+How Continue loads (S, 2026-10-24): KCD2's level changer FUN_180fc3868 (level manager states 1/3 -> 4) always runs the console
+command `map <level>`: CCryAction::MapCmd FUN_180b8f748 ("Loading level") -> game context FUN_180b6e348 / FUN_180b8ee2c ->
+BlockingConnect FUN_1817ad804 -> context establisher FUN_18066b548 -> load-level task FUN_18183ead4 -> CLevelSystem::LoadLevel.
+Then states 5 (FUN_180fc3c98), 7 (event 0x1010), 8, 9. CryEngine's same-level quick load (CGameSerialize::LoadGame
+FUN_18370f1f0 + FUN_18370fef4: reset 3D engine, physics, entities, no level load) exists but KCD2's changer never uses it;
+the "QuickLoad" script binding is an empty stub (FUN_1811cda9c).
+Measured 2026-10-24 (boots 59-61):
+- KCD2 has its own load onto the loaded level: SaveGameManager FUN_1825bdc7c(mgr, user, save) compares the save's level
+  with the loaded one; same level -> FUN_1825bda54 (the save read into the world, PostLoadGame, gate 0x3f93 "+25bdbab"),
+  no map, no LoadLevel. A normal Continue: FUN_1825bd9ac (UI and level-manager state 5) -> FUN_1825bdc7c -> level manager
+  (map, LoadLevel) -> state 5 -> FUN_1825bdc7c again, now the same level. Continue's save: user 0, save 100.
+- Boot 61 (samelevel.cpp, `samelevel load` 20 s after control): the same save loaded again onto the loaded level: 6.1 s to
+  control (apply 5.1 + gate 0.9), vs 17.7 s for that boot's Continue (map + LoadLevel 9.6, apply 4.4, gate 3.4).
+  Screenshots before / after: same place and view.
+- Boot 60 (the game's own wh_sys_AutoLoadLastSave): launch -> control 54.4 s vs ~48 s when Continue is clicked as the menu
+  work ends: the load starts before the menu work, so every menu preload is lost (load 29.3 s, gate 8.4). Dropped as is.
+- wh_sys_ForceMainMenu ("main menu over a +map level"): no reader found in the release build; the main menu over a loaded
+  level is not a game feature to rely on. The pause menu is.
+Route to 10 s ("ready at the menu", needs the user's OK: the game starts the load by itself): once the menu work is done and
+the user hasn't started anything, the plugin starts the newest save's normal load (FUN_1825bd9ac(user 0, save 100)) and
+ends it in the pause menu; Resume = control at once; another save on the same level = the same-level path (~6 s); Exit to
+main menu = the level unloaded, as now. Launch -> ready stays ~48 s, so shaving the steps still counts.
+Split: kcd2-deagle-5a the level step / route A-B; kcd2-deagle-66 apply (4.7: souls 1.2 incl. Storm 0.78, XGenAI 0.8,
+profiles + concepts 0.6, database XML 0.5, CryEngine data 0.35), gate 3.4, state 4.
 
-kcd2-deagle-5a, algorithms (in order):
-1. levelprof: timing hooks (LoadLevel 0x9b17e0, LoadEntities 0xa57aa8, navmesh 0x20b4410, object DB 0xef3afc by type,
-   XGenAI pass 0xb4403c, material dedupe 0x45b230) + questsample on Main for 30 s from LoadLevel, full unwind ->
-   fastload_lsample.csv. Names the ~3 s in objects. Sends 66 the result. [building]
-2. SmartObjectAnimations (1.5 s): the finished table from our own binary record (questreplay-style; key = level pak +
-   WHGame.dll), ~0.1 s. Reader today: rttr, ~925k elements at ~1.5 us, a string copy per property, a hash per result.
-3. Material dedupe FUN_18045b230 (0.2-0.5 s): stricmp scan over every resource per material -> hash index.
-4. Whatever 1. ranks next: Lua key interning (CScriptTable::GetValue 0x18071624c re-hashes the key each read; ~0.8 s in
-   boot 13), CryPak FReadRaw holds the open-files lock for the whole read (~0.3 s), navmesh tile linking.
-Expected from 2+3: ~1.5-2 s; the unnamed 3 s is not in that number.
-
-kcd2-deagle-66, before Continue: terrain loaders / level open (1.4 s wait + part of 0-1.7), navmesh at the menu (~0.7 s),
-Settle textures / clothing at the save's position, RLT shader parse / PSO from launch (re_pso_parallel.md R1/R2).
-Also 66's: apply save 4.8 s (Storm memo, concept BFS: re_stepG) and the Settle gate 3.2-3.6 s.
-
-Left in quests (off the normal path; not planned): port lookup FUN_1806a0674 ~1.0 s, 2a pieces ~0.5 s, activation
-0.58 s, teardown 0.27 s. No record yet for Kuttenberg (its first menu build records one, ~8.4 s once).
+## The map build (Main in LoadLevel; levelprof) - 2026-10-24
+Boot 50 (paklock on, profiler on, 20.3 s): LoadLevel 9.5 s on Main = level open + paks 2.8 (octree object reads 0.47,
+pak opens / folder scans 0.6), terrain wait 1.1, LoadEntities 2.9 (Lua 1.3, CryPhysics step-lock waits 0.47), navmesh 0.6,
+SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
+1. levelprof (7f08db1): timing hooks + 30 s full-stack sample of Main (fastload_levelprof.txt 1).
+2. paklock (358dfa2): FReadRaw outside CryPak's open-files lock. Main's FOpen/FClose waits 1.1 s -> 0.05 s, LoadLevel
+   10.1 -> 9.4-9.6 s.
+3. Terrain meshes at the menu (66, 9989499 + d252766): boot 57 LoadLevel 8.3 s, terrain step 3.0 -> 2.1. Boots 52-53
+   crashed: the async CGF load's callback is argument 6, the hook passed 5 (cdb on the BugSplat dump).
+4. Stored pak entries read in pieces (paklock windows, off): the octree object file, 153,000 reads, ~0.47 s Main. Whole-entry
+   read (boot 51) held 605 MB of sound banks: dropped. 256 KB windows: built, not yet measured (boot 52's crash was item 3).
+5. SmartObjectAnimations in the level-start job (dbahead, off): boot 58 LoadLevel -0.98 s but WRONG: at level start the
+   game-profile source is empty (0 vs 879), all 29,007 ProfileIds unknown. Table readers run only after the load.
+6. LoadEntities' 0.47 s spin: DestroyPhysicalEntity FUN_180846e10 write-locks m_lockStep (world+0x5fdc) through
+   FUN_18050b638; waits come in 15-50 ms runs. The physics thread was not in TimeStep then (outside sampler); holder unknown.
 
 ## Measuring rules
 - One change per boot; same fastload_cvars.txt (the two wh_cc lines are in it).

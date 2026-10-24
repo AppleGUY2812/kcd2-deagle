@@ -38,6 +38,8 @@
 #include "questfast.h"
 #include "levelprof.h"
 #include "paklock.h"
+#include "dbahead.h"
+#include "samelevel.h"
 
 namespace {
 
@@ -73,6 +75,7 @@ void GameplayStarted(const char* why) {
 	Applyfast_OnLoaded();
 	Terrainfast_OnLoaded();
 	Paklock_Report("LoadLevel end to gameplay");
+	Dbahead_OnLoaded();
 }
 
 void Tick() {
@@ -168,6 +171,8 @@ DWORD WINAPI Init(LPVOID) {
 	Animahead_Install(g_game.base, g_self);   // human animation sets during the terrain wait (animahead.cpp)
 	Levelprof_Install(g_game.base, g_self);   // the level load's main-thread work timed / sampled, mode file (levelprof.cpp)
 	Paklock_Install(g_game.base, g_self);   // CryPak reads outside the open-files lock, mode file (paklock.cpp)
+	Dbahead_Install(g_game.base, g_self);   // SmartObjectAnimations in the level-start database job (dbahead.cpp)
+	Samelevel_Install(g_game.base);   // save loads onto the loaded level: logged, `samelevel load` replays (samelevel.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
@@ -207,6 +212,7 @@ extern "C" __declspec(dllexport) int Fastload_Command(const char* line) {
 	else if (!strcmp(cmd, "loaded")) GameplayStarted("Lua loaded");   // a no-op when the level state already said so
 	else if (!strcmp(cmd, "streamahead")) Streamahead_Command(rest);
 	else if (!strcmp(cmd, "terrainfast")) Terrainfast_Command(rest);
+	else if (!strcmp(cmd, "samelevel")) Samelevel_Command(rest);
 	else return 0;
 	return 1;
 }
