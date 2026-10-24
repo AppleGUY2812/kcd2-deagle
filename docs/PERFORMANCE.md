@@ -407,3 +407,41 @@ Also: Unity profiling best practices (35 % headroom, CPU vs GPU bound): https://
   JobWorker_06 (12.4 s: allocator ~40 %, quest "concept" nodes, XML). Next build: a toucher thread pages the buffers
   back in ahead of the game, with copy speed and page residency in the `pakahead:` status line.
 - Step 5 ("apply save" + the frames after it) belongs to the step-5 session (kcd2-deagle-66) from 22:10.
+
+## Step 5: after the save is applied (2026-10-23, step-5 session)
+
+What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game reload of the same autosave, same spot):
+
+| | apply (one frozen frame) | frames after it until gameplay | step total |
+|---|---|---|---|
+| boot | 7.1 s (frame 3, 22:01:32.4 to 39.5) | ~2,250 frames at ~150 fps, 15.4 s | ~22.5 s |
+| in-game reload | 7.5 s (frame 10871) | 64 frames, 2.6 s | ~10 s |
+
+- The apply itself costs the same both ways. The boot's extra ~13 s is the loading screen running frames while the area
+  around the save spot streams in. On an in-game reload at the same spot those assets are already in the game's memory.
+  (The peer's table called the frozen frame "pre-save" and only the frames "apply save".)
+- The screen does not wait for streaming to finish: the streaming unpack counter (fastzip stream blocks) went 33,874
+  (22:01:38.4) to 109,890 (54.4), ~5k blocks/s, and kept the same rate after gameplay started (159,289 at 22:02:10).
+  So a specific gate opens it. The load state machine is FUN_180fc3868 (state 6 WaitingForGraphicsAndScripts, 7
+  GraphicsAndScriptsReady, 8/9 video end); what state 6 waits on is being decoded.
+- Threads during the frames (sampler, boot11): main ~65 % of ticks, 31 % of them in ZwWaitForAlertByThreadId; 8
+  JobWorkers ~6.5 s each, 56 % waits, ~15 % zlib; "Streaming File IO HDD" ran in 126 ticks, 84 of them inside
+  ZwReadFile. The sampler records a thread only on ticks where its CPU time moved, so it cannot see time blocked on
+  the disk: whether the read thread is the bottleneck is NOT measured yet.
+- Read path (CryEngine 5 source + WHGame 1.5.6): one IO thread; files over 32 KB packed are read in 1 MB pages
+  (`sys_streaming_in_blocks` 1) and each page through ZipDir::Cache::ReadFileStreaming (FUN_180464928), which with
+  `sys_UncachedStreamReads` 1 does synchronous unbuffered ReadFile calls of 128 KB into a bounce buffer, one at a time,
+  under the pak lock.
+- E: (Samsung 870 EVO, SATA), unbuffered reads measured 2026-10-23: scattered 128 KB 213 MB/s (16 in flight 276),
+  scattered 1 MB 437 MB/s (8 in flight 452), sequential 128 KB ~430, 1 MB ~505. Bigger reads help ~2x on scattered
+  data; more reads in flight barely help on this drive.
+- Memory-mapping a cold pak reads at disk speed on first touch (369 MB/s measured); only data already in RAM reads at
+  memory speed (~45,000 MB/s on the second pass). That is why the in-game reload is fast: the data is resident, not read
+  a faster way.
+- Built: native/src/streamio.cpp (4090a71) hooks FUN_180464928 and can read each request in one ReadFile. Mode 0
+  (counts only) by default; its `streamio:` lines give the read thread's busy % (wall time inside the hook), lock wait
+  and request sizes. A background recorder (scratchpad diskq.ps1) logs E: queue length, ms/read, KB/read and idle %
+  over the next boot.
+- Next, by expected gain: mode 1 if the read thread is busy most of step 5; hot paks onto the NVMe D: (from streamio's
+  pak list); reading step 5's data ahead during the main menu (RAM-limited: 1-2 GB free while the game runs); starting
+  the save spot's streaming earlier (precache point, as ftpreload.cpp does). zlib-ng for the streamed blocks is last.
