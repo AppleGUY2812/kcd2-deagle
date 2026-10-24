@@ -31,6 +31,7 @@
 #include "conceptbfs.h"
 #include "questmenu.h"
 #include "animahead.h"
+#include "questprof.h"
 #include "questfast.h"
 #include "ron.h"
 #include "probe.h"
@@ -1609,6 +1610,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
 	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
+	Questprof_Install(g_game.base);   // the quest build's inner profile for questbench N prof (questprof.cpp)
 	Animahead_Install(g_game.base, g_self);   // human animation sets during the terrain wait (animahead.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
