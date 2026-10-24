@@ -393,3 +393,17 @@ Also: Unity profiling best practices (35 % headroom, CPU vs GPU bound): https://
   ~43 % busy, half of it waiting, ~15 % zlib. "Network" (CCTPEndpoint) spins at ~90 % of a core the whole load.
   Kept: sys_SleepIfInactiveWH 0 while loading. Dropped: the texture-streaming caps (save step +5 s), shader and PSO
   thread counts (no gain seen). Unpacking ahead now runs from 4 GB free (cap free - 3.5 GB).
+
+## 22:00 boot: XML ahead, and what holds the terrain step (2026-10-23)
+
+- XML parse-ahead with the first list (3,258 files from the pak recording): 48.4 s, no gain (47.2 s before). The game makes
+  35,894 XML loads per boot (9.1 s of thread time, 7.9 s of it outside `levels/`); the list held 9 % of them. Next build:
+  the full recorded list (33,011 files), parsed while the main menu sits idle.
+- kcd.log is buffered: its stamps are when lines reach the file. Exact boundaries come from the plugin's `timing: frame`
+  lines and, for the terrain step, `loadwatch:` (native/src/loadwatch.cpp).
+- Terrain step (17.3 s): the main thread only spins over the 14,153 loaders (`while (!empty) FUN_18354ff84`). Two threads
+  run flat out until second 14: RenderLoadingThread (11.9 s busy; 35 % of it in the plugin's memcpy handing over
+  unpacked-ahead files: 3.4 GB at 0.8 GB/s, stalled on loads from our buffers, unpinned with 6.8 GB free) and
+  JobWorker_06 (12.4 s: allocator ~40 %, quest "concept" nodes, XML). Next build: a toucher thread pages the buffers
+  back in ahead of the game, with copy speed and page residency in the `pakahead:` status line.
+- Step 5 ("apply save" + the frames after it) belongs to the step-5 session (kcd2-deagle-66) from 22:10.

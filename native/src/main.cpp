@@ -21,6 +21,7 @@
 #include "pakahead.h"
 #include "cvars.h"
 #include "xmlahead.h"
+#include "loadwatch.h"
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
@@ -1583,6 +1584,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
 	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
+	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
 	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load

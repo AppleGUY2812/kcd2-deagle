@@ -1,0 +1,8 @@
+#pragma once
+#include <cstdint>
+// Exact timing of the terrain step (load step 2; user 2026-10-23 "u work on step 2"). kcd.log is buffered, so its
+// "Terrain: Waiting for N async loaders" / "DONE" lines arrive late. CTerrain::Load_T (FUN_18052c81c) waits with
+// while (loaders.begin != loaders.end) FUN_18354ff84(&loaders, 0);   // drops the loaders whose +8 is 0 (done)
+// The hook times that loop and logs how many loaders are left every 250 ms: a steady fall means the work is
+// throughput-bound; a long tail means a few late loaders hold the step.
+void Loadwatch_Install(uintptr_t gameBase);

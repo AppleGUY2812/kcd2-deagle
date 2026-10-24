@@ -13,6 +13,7 @@
 #include "libdeflate.h"
 #include <algorithm>
 #include <deque>
+#include <psapi.h>
 
 namespace {
 
@@ -50,10 +51,16 @@ size_t kCapBytes = 2048ull << 20;                  // unpacked bytes held at onc
 bool g_pin = true;                                 // VirtualLock the big ones (only with RAM to spare)
 constexpr ULONGLONG kKeepMs = 15 * 60 * 1000;     // nothing served after this: everything is freed
 struct Item {
-	uint32_t pak, dataOff, csize, usize, crc;
-	std::atomic<int> state{0};                    // 0 waiting, 1 a worker has it, 2 ready, 3 taken or dropped
+	uint32_t pak, dataOff, csize, usize, crc, idx;
+	std::atomic<int> state{0};                    // 0 waiting, 1 a worker has it, 2 ready, 3 taken or dropped, 4 being touched
 	uint8_t* data = nullptr;
 };
+std::vector<uint64_t> g_prefix;                    // unpacked bytes before item i (list order)
+std::atomic<size_t> g_servedHi{0};                 // 1 + the highest list index served so far
+// diagnostics + the toucher (22:00 boot: the loader thread copied 3.4 GB at 0.8 GB/s, its memcpy stalled on loads
+// from our buffers, unpinned with 6.8 GB free)
+std::atomic<long long> s_copyTicks{0}, s_copyBytes{0}, s_resChecked{0}, s_srcOut{0}, s_dstOut{0},
+	s_touchTicks{0}, s_touchBytes{0}, s_touchChecked{0}, s_touchOut{0}, s_touchWaits{0};
 std::vector<std::string> g_listPaks;               // pak paths of the list, lower case
 std::deque<Item> g_items;                          // deque: Items never move (atomics inside)
 std::unordered_map<uint64_t, Item*> g_byKey;       // (list pak index << 32) | data offset
@@ -125,6 +132,34 @@ void Release(Item& it) {
 	if (it.data) { FreeData(it.data, it.usize); it.data = nullptr; g_held -= it.usize; }
 }
 
+// pages of [p, p+n) not in the working set, out of up to 16 sampled evenly; adds to checked / out
+void CountOut(const void* p, size_t n, std::atomic<long long>& checked, std::atomic<long long>& out) {
+	if (!p || n < 4096) return;
+	PSAPI_WORKING_SET_EX_INFORMATION w[16];
+	const size_t pages = n / 4096, k = pages < 16 ? pages : 16;
+	for (size_t i = 0; i < k; i++) w[i].VirtualAddress = (void*)(((uintptr_t)p & ~(uintptr_t)4095) + (i * pages / k) * 4096);
+	if (!K32QueryWorkingSetEx(GetCurrentProcess(), w, (DWORD)(k * sizeof w[0]))) return;
+	long long o = 0;
+	for (size_t i = 0; i < k; i++) if (!w[i].VirtualAttributes.Valid) o++;
+	checked += (long long)k; out += o;
+}
+
+// takes a ready entry for the game; waits up to 50 ms while the toucher is on it
+bool TakeReady(Item& it) {
+	const long long lim = Now() + g_freq / 20;
+	bool waited = false;
+	for (;;) {
+		int s = 2;
+		if (it.state.compare_exchange_strong(s, 3)) { if (waited) s_touchWaits++; return true; }
+		if (s != 4 || Now() > lim) {
+			if (s == 0) { int w = 0; it.state.compare_exchange_strong(w, 3); }   // not started: the workers skip it
+			return false;                                                      // being unpacked: dropped after
+		}
+		waited = true;
+		YieldProcessor();
+	}
+}
+
 // mode 2: a finished entry for this read? copies it into the game's buffer; true = served (the game's read is skipped)
 bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, uint64_t size) {
 	if (g_items.empty() || g_stop || !uncomp || off != 0 || (size != ~0ull && size != (uint64_t)r.usize)) return false;
@@ -139,14 +174,17 @@ bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, 
 	if (f == g_byKey.end()) return false;
 	Item& it = *f->second;
 	if (it.usize != r.usize || it.csize != r.csize || it.crc != r.crc) return false;   // same pak, place, sizes, crc32
-	int ready = 2;
-	if (!it.state.compare_exchange_strong(ready, 3)) {
-		int waiting = 0;
-		it.state.compare_exchange_strong(waiting, 3);   // not started: the workers skip it; being unpacked: dropped after
-		s_missNotReady++;
-		return false;
+	if (!TakeReady(it)) { s_missNotReady++; return false; }
+	static std::atomic<unsigned> sample{0};
+	if (it.usize >= kBig && (sample++ & 7) == 0) {   // every 8th big one: are the pages in RAM?
+		CountOut(it.data, it.usize, s_resChecked, s_srcOut);
+		std::atomic<long long> dummy{0};
+		CountOut(uncomp, it.usize, dummy, s_dstOut);
 	}
+	const long long c0 = Now();
 	memcpy(uncomp, it.data, it.usize);
+	if (it.usize >= kBig) { s_copyTicks += Now() - c0; s_copyBytes += it.usize; }
+	for (size_t hi = g_servedHi.load(); hi < it.idx + 1 && !g_servedHi.compare_exchange_weak(hi, it.idx + 1);) {}
 	Release(it);
 	s_served++;
 	s_servedBytes += r.usize;
@@ -255,6 +293,34 @@ DWORD WINAPI Worker(LPVOID) {
 	return 0;
 }
 
+// The toucher: reads one byte per page of the ready entries up to 256 MB ahead of the game (list order), so pages
+// Windows moved out of the game's working set come back on this thread instead of the game's loader thread.
+constexpr uint64_t kTouchAhead = 256ull << 20;
+DWORD WINAPI Toucher(LPVOID) {
+	const size_t n = g_items.size();
+	size_t t = 0;
+	while (!g_stop && t < n) {
+		const size_t hi = g_servedHi.load();
+		if (t < hi) t = hi;                                        // fell behind the game: catch up
+		if (t >= n) break;
+		if (g_prefix[t] - g_prefix[hi] >= kTouchAhead) { Sleep(1); continue; }
+		Item& it = g_items[t];
+		int s = 2;
+		if (it.state.compare_exchange_strong(s, 4)) {
+			const long long a = Now();
+			CountOut(it.data, it.usize, s_touchChecked, s_touchOut);
+			volatile uint8_t sink = 0;
+			for (size_t o = 0; o < it.usize; o += 4096) sink += it.data[o];
+			if (it.usize) sink += it.data[it.usize - 1];
+			s_touchTicks += Now() - a;
+			s_touchBytes += it.usize;
+			it.state.store(2);
+		}
+		t++;   // not unpacked yet: its worker writes it fresh; taken: nothing to do
+	}
+	return 0;
+}
+
 bool LoadList() {
 	FILE* f = fopen((g_dir + "deagle_pakahead_list.txt").c_str(), "r");
 	if (!f) { Log("pakahead: no deagle_pakahead_list.txt - nothing to unpack ahead"); return false; }
@@ -269,11 +335,13 @@ bool LoadList() {
 		if (idx == g_listPaks.size()) g_listPaks.push_back(p);
 		g_items.emplace_back();
 		Item& it = g_items.back();
-		it.pak = idx; it.dataOff = off; it.csize = cs; it.usize = us; it.crc = crc;
+		it.pak = idx; it.dataOff = off; it.csize = cs; it.usize = us; it.crc = crc; it.idx = (uint32_t)(g_items.size() - 1);
 		g_byKey.emplace(((uint64_t)idx << 32) | off, &it);
 		bytes += us;
 	}
 	fclose(f);
+	g_prefix.assign(g_items.size() + 1, 0);
+	for (size_t i = 0; i < g_items.size(); i++) g_prefix[i + 1] = g_prefix[i] + g_items[i].usize;
 	Log("pakahead: list %zu entries from %zu paks, %.0f MB unpacked", g_items.size(), g_listPaks.size(), bytes / 1e6);
 	return !g_items.empty();
 }
@@ -298,6 +366,7 @@ void StartAhead() {
 	                                           QUOTA_LIMITS_HARDWS_MIN_DISABLE | QUOTA_LIMITS_HARDWS_MAX_DISABLE);
 	Log("pakahead: working set minimum %s (%zu MB -> +%zu MB)", ws ? "raised" : "NOT raised", mn >> 20, (kCapBytes >> 20) + 128);
 	for (int i = 0; i < kWorkers; i++) CloseHandle(CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr));
+	CloseHandle(CreateThread(nullptr, 0, Toucher, nullptr, 0, nullptr));
 	Log("pakahead: %d workers unpacking ahead (%llu MB RAM free, cap %zu MB, %s)", kWorkers, freeMb, kCapBytes >> 20,
 	    g_pin ? "pinned" : "not pinned: little RAM");
 }
@@ -331,12 +400,18 @@ DWORD WINAPI Writer(LPVOID) {
 			    "came first %lld, held %.0f MB, pinned %lld (not %lld)", s_prefetched.load(), g_items.size(), s_readMs.load(),
 			    s_unpackMs.load(), s_bad.load(), s_served.load(), s_servedBytes.load() / 1e6, s_missNotReady.load(),
 			    g_held.load() / 1e6, s_locked.load(), s_lockFail.load());
+			const double ct = (double)s_copyTicks.load() / g_freq, tt = (double)s_touchTicks.load() / g_freq;
+			Log("pakahead: copies into the game %.0f MB in %.2f s (%.2f GB/s); sampled pages not in RAM: ours %lld of %lld, "
+			    "game's buffer %lld; toucher %.0f MB in %.2f s, %lld of %lld sampled pages were out, game waited on it %lld x",
+			    s_copyBytes.load() / 1e6, ct, ct > 0 ? s_copyBytes.load() / 1e9 / ct : 0.0, s_srcOut.load(), s_resChecked.load(),
+			    s_dstOut.load(), s_touchBytes.load() / 1e6, tt, s_touchOut.load(), s_touchChecked.load(), s_touchWaits.load());
 		}
 		if (!g_items.empty() && !g_stop && GetTickCount64() - g_start > kKeepMs) {
 			g_stop = true;
 			Sleep(500);
 			size_t freed = 0;
-			for (Item& it : g_items) { int r2 = 2; if (it.state.compare_exchange_strong(r2, 3)) { freed += it.usize; Release(it); } }
+			Sleep(100);   // the toucher stops at g_stop; an entry it held is back at 2 by now
+		for (Item& it : g_items) { int r2 = 2; if (it.state.compare_exchange_strong(r2, 3)) { freed += it.usize; Release(it); } }
 			Log("pakahead: unpack-ahead store closed, %.0f MB never asked for, freed", freed / 1e6);
 		}
 		if (GetTickCount64() - g_start > kRecordMs + 10000 && (g_items.empty() || g_stop)) {
