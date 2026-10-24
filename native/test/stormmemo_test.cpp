@@ -1,7 +1,9 @@
 // stormmemo_core.h against the game's rule pass (FUN_180698e84 written out below without the memo). Random rule
 // sets: named condition sets shared by many rules and nested in each other, plain and/or/not, actions that change the
 // very fields the conditions read. Every character must fire the same rules in the same order and end up the same,
-// and the memo must actually be used. Then a condition that is not read-only: the check must catch it.
+// and the memo must actually be used: once with every action marking everything stale, once with exact read/write
+// groups (a field = a group), which must reuse more. Then a condition that is not read-only, and an action that writes
+// a group it doesn't declare: the check must catch both.
 #include "../src/stormmemo_core.h"
 #include <cstdio>
 #include <random>
@@ -25,9 +27,17 @@ struct Group { int maxLevel = 0; std::vector<Rule> rules; };
 smemo::Memo g_m;
 smemo::Stats g_st;
 bool g_useMemo = false, g_check = false, g_mismatch = false;
+int g_masks = 0;   // 0: every action writes everything; 1: exact groups (field i = group i); 2: actions declare the wrong group
 long g_leafEvals = 0;
 
 bool Eval(Cond* c, Soul* s);
+int64_t Reads(const Cond* c) {   // the fields a set reads
+	if (!c) return 0;
+	if (c->kind == Leaf) return (int64_t)1 << c->a;
+	int64_t m = 0;
+	for (size_t i = 0; i < c->kids.size(); i += 2) m |= Reads((const Cond*)c->kids[i]);
+	return m;
+}
 bool Kids(Cond* c, Soul* s, bool all) {
 	for (size_t i = 0; i < c->kids.size(); i += 2) {
 		if (!c->kids[i]) continue;
@@ -47,7 +57,7 @@ bool Eval(Cond* c, Soul* s) {
 	case NamedAnd: case NamedOr: {
 		auto orig = [&] { return Kids(c, s, c->kind == NamedAnd); };
 		if (!g_useMemo) return orig();
-		return smemo::EvalNamed(g_m, c, s, [] { return true; }, [] { return g_check; }, orig, g_st, &g_mismatch);
+		return smemo::EvalNamed(g_m, c, s, [&] { return Reads(c); }, [] { return g_check; }, orig, g_st, &g_mismatch);
 	}
 	}
 	return false;
@@ -63,6 +73,10 @@ struct Acc {
 	void** Actions(Rule* r, void*** end) { *end = r->actions.data() + r->actions.size(); return r->actions.data(); }
 	void** NextEntry(void** p) { return p + 2; }
 	bool Eval(void* c, void* s) { return ::Eval((Cond*)c, (Soul*)s); }
+	smemo::Memo::Mask Writes(void* a) {
+		const int idx = ((Action*)a)->idx;
+		return g_masks == 0 ? smemo::Memo::kAll : g_masks == 1 ? 1u << idx : 1u << ((idx + 1) % 6);
+	}
 	void Run(void* a, void* s, Rule* r) {
 		Soul* so = (Soul*)s;
 		so->f[((Action*)a)->idx] = ((Action*)a)->val;
@@ -141,30 +155,49 @@ int main() {
 			g.rules.push_back(r);
 		}
 	}
-	int bad = 0;
-	long gameLeaves = 0, memoLeaves = 0;
-	for (int i = 0; i < 3000; i++) {
-		Soul a;
-		for (int& v : a.f) v = R(3);
-		Soul b = a;
-		g_leafEvals = 0;
-		Apply(gs, &a, 3, false);
-		gameLeaves += g_leafEvals;
-		g_leafEvals = 0;
-		g_useMemo = true;
-		g_check = (i % 7) == 0;   // the check path must not change the outcome either
+	unsigned long long hits[2] = {};
+	for (g_masks = 0; g_masks <= 1; g_masks++) {
+		g_st = {};
+		int bad = 0;
+		long gameLeaves = 0, memoLeaves = 0;
+		for (int i = 0; i < 3000; i++) {
+				Soul a;
+				for (int& v : a.f) v = R(3);
+				Soul b = a;
+				g_leafEvals = 0;
+				Apply(gs, &a, 3, false);
+				gameLeaves += g_leafEvals;
+				g_leafEvals = 0;
+				g_useMemo = true;
+				g_check = (i % 7) == 0;   // the check path must not change the outcome either
+				Apply(gs, &b, 3, true);
+				g_useMemo = false;
+				memoLeaves += g_leafEvals;
+				bool same = a.fired == b.fired;
+				for (int k = 0; k < 6; k++) same = same && a.f[k] == b.f[k];
+				if (!same) bad++;
+		}
+		printf("masks %d, souls 3000: %d differ; leaf evaluations %ld (game) vs %ld (memo, %.0f %% fewer); named looked up %llu, "
+		       "from the memo %llu; checked %llu, mismatches %llu\n", g_masks, bad, gameLeaves, memoLeaves,
+		       100.0 * (gameLeaves - memoLeaves) / gameLeaves, (unsigned long long)g_st.looked,
+		       (unsigned long long)g_st.hits, (unsigned long long)g_st.checked, (unsigned long long)g_st.bad);
+		if (bad || g_st.bad || g_mismatch || g_st.hits == 0 || memoLeaves * 10 > gameLeaves * 9) { puts("FAIL"); return 1; }
+		hits[g_masks] = g_st.hits;
+
+	}
+	if (hits[1] <= hits[0]) { puts("FAIL: exact groups reused no more than marking everything stale"); return 1; }
+
+	// An action that writes a field it doesn't declare: some remembered answers go wrong, the check must see it.
+	g_masks = 2; g_st = {}; g_mismatch = false;
+	for (int i = 0; i < 300 && !g_mismatch; i++) {
+		Soul b;
+		for (int& v : b.f) v = R(3);
+		g_useMemo = true; g_check = true;
 		Apply(gs, &b, 3, true);
 		g_useMemo = false;
-		memoLeaves += g_leafEvals;
-		bool same = a.fired == b.fired;
-		for (int k = 0; k < 6; k++) same = same && a.f[k] == b.f[k];
-		if (!same) bad++;
 	}
-	printf("souls 3000: %d differ; leaf evaluations %ld (game) vs %ld (memo, %.0f %% fewer); named looked up %llu, "
-	       "from the memo %llu; checked %llu, mismatches %llu\n", bad, gameLeaves, memoLeaves,
-	       100.0 * (gameLeaves - memoLeaves) / gameLeaves, (unsigned long long)g_st.looked,
-	       (unsigned long long)g_st.hits, (unsigned long long)g_st.checked, (unsigned long long)g_st.bad);
-	if (bad || g_st.bad || g_mismatch || g_st.hits == 0 || memoLeaves * 10 > gameLeaves * 9) { puts("FAIL"); return 1; }
+	if (!g_mismatch) { puts("FAIL: the check missed an action writing an undeclared group"); return 1; }
+	g_masks = 0; g_check = false;
 
 	// A condition that isn't read-only (its answer changes from call to call): the check must catch it.
 	Cond* fl = new Cond; fl->kind = Flaky;

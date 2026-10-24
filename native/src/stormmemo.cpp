@@ -25,28 +25,72 @@ const unsigned char kWalkBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x8
                                      0x4c,0x8b,0xe2,0x44,0x3b,0x41,0x58 };
 const unsigned char kCustomBytes[] = { 0x48,0x83,0xec,0x28,0x83,0x79,0x28,0x00,0x75,0x10,0x48,0x83,0xc1,0x08 };
 
-// Every storm condition class (RTTI), its vtable and its evaluate (vt+8). All 26 leaves read the character (or a
-// global like the game mode) and return a bool: no writes, no random draws (hasRandomValue hashes the character's
-// name). Composites: and / or / named set keep their children at +8..+0x10 (16-byte entries), not at +8.
+// The character state groups (re_storm_invalidate.md, 2026-10-24, static RE): what each condition kind reads and each
+// action kind writes. Identity, faction and global reads (name, archetype, gender, faction, game mode ...) are in no
+// group: no action writes them, only a new pass (Changed(kAll)) makes them stale.
+using Mask = smemo::Memo::Mask;
+constexpr Mask kAll = smemo::Memo::kAll;
+constexpr Mask kGRoles = 1, kGCtx = 2, kGSched = 4, kGPerks = 8, kGAttr = 16, kGCombat = 32, kGName = 64;
+constexpr Mask kGState = kGRoles | kGCtx | kGSched | kGPerks | kGAttr | kGCombat | kGName;
+
+// Every storm condition class (RTTI: all 27 that derive from I_Selector), its vtable, its evaluate (vt+8) and the
+// groups it reads. The 23 leaves read the character (or a global like the game mode) and return a bool: no writes, no
+// random draws (hasRandomValue hashes the character's id). Composites: and / or / named set keep their children at
+// +8..+0x10 (16-byte entries), not at +8.
 enum Kids { kLeaf, kVector, kOne };
-struct Kind { uintptr_t vt, eval; Kids kids; const char* name; };
+struct Kind { uintptr_t vt, eval; Kids kids; const char* name; Mask reads; };
 const Kind kKinds[] = {
-	{ 0x3b30d50, 0x6990f4, kVector, "C_CustomSelector" },   { 0x3b30da8, 0xf4df74, kVector, "C_AndSelector" },
-	{ 0x3b30cf8, 0x699070, kVector, "C_OrSelector" },       { 0x3b770b8, 0x6990d0, kOne, "C_NotSelector" },
-	{ 0x3c35970, 0x3f4940, kLeaf, "C_HasACharacter" },      { 0x3f505e0, 0x2d85064, kLeaf, "C_HasAFaction" },
-	{ 0x3b756d0, 0x11730d4, kLeaf, "C_HasAttribute" },      { 0x3b7db58, 0x2d850a0, kLeaf, "C_HasCharacterName" },
-	{ 0x3bc6588, 0xa2f214, kLeaf, "C_HasCombatLevel" },     { 0x4733e08, 0x2d8510c, kLeaf, "C_HasContext" },
-	{ 0x3b65318, 0xc95ccc, kLeaf, "C_HasFaction" },         { 0x3be9ba8, 0x4756b8, kLeaf, "C_HasFactionLabel" },
-	{ 0x3be67b0, 0x14bc310, kLeaf, "C_HasGender" },         { 0x3f510b0, 0x2d85144, kLeaf, "C_HasLocation" },
-	{ 0x3a4fc40, 0x698f40, kLeaf, "C_HasName" },            { 0x3f50548, 0x2d851a0, kLeaf, "C_HasNameNumberModulo" },
-	{ 0x3f51118, 0x23d1160, kLeaf, "C_HasPerk" },           { 0x3badde0, 0x105df58, kLeaf, "C_HasRandomValue" },
-	{ 0x3c0bc98, 0xc960a4, kLeaf, "C_HasRole" },            { 0x3f50578, 0x2dab1a4, kLeaf, "C_HasScheduleItemCount" },
-	{ 0x3b41798, 0x69911c, kLeaf, "C_HasSocialClass" },     { 0x3b8e460, 0xdcc048, kLeaf, "C_HasSoulArchetype" },
-	{ 0x3f505b0, 0x2d853ac, kLeaf, "C_HasSoulCrimeRole" },  { 0x3b48180, 0xcf5f9c, kLeaf, "C_HasVoice" },
-	{ 0x3c352d0, 0xe55ae8, kLeaf, "C_IsContentFilterActive" }, { 0x3f50f80, 0x1fea310, kLeaf, "C_IsGameMode" },
-	{ 0x3be4530, 0x4755e4, kLeaf, "C_IsPublicEnemy" },
+	{ 0x3b30d50, 0x6990f4, kVector, "C_CustomSelector", 0 },   { 0x3b30da8, 0xf4df74, kVector, "C_AndSelector", 0 },
+	{ 0x3b30cf8, 0x699070, kVector, "C_OrSelector", 0 },       { 0x3b770b8, 0x6990d0, kOne, "C_NotSelector", 0 },
+	{ 0x3c35970, 0x3f4940, kLeaf, "C_HasACharacter", kGName },      { 0x3f505e0, 0x2d85064, kLeaf, "C_HasAFaction", 0 },
+	{ 0x3b756d0, 0x11730d4, kLeaf, "C_HasAttribute", kGAttr },      { 0x3b7db58, 0x2d850a0, kLeaf, "C_HasCharacterName", kGName },
+	{ 0x3bc6588, 0xa2f214, kLeaf, "C_HasCombatLevel", kGCombat },     { 0x4733e08, 0x2d8510c, kLeaf, "C_HasContext", kGCtx },
+	{ 0x3b65318, 0xc95ccc, kLeaf, "C_HasFaction", 0 },         { 0x3be9ba8, 0x4756b8, kLeaf, "C_HasFactionLabel", 0 },
+	{ 0x3be67b0, 0x14bc310, kLeaf, "C_HasGender", 0 },         { 0x3f510b0, 0x2d85144, kLeaf, "C_HasLocation", 0 },
+	{ 0x3a4fc40, 0x698f40, kLeaf, "C_HasName", 0 },            { 0x3f50548, 0x2d851a0, kLeaf, "C_HasNameNumberModulo", 0 },
+	{ 0x3f51118, 0x23d1160, kLeaf, "C_HasPerk", kGPerks },           { 0x3badde0, 0x105df58, kLeaf, "C_HasRandomValue", 0 },
+	{ 0x3c0bc98, 0xc960a4, kLeaf, "C_HasRole", kGRoles },            { 0x3f50578, 0x2dab1a4, kLeaf, "C_HasScheduleItemCount", kGSched },
+	{ 0x3b41798, 0x69911c, kLeaf, "C_HasSocialClass", 0 },     { 0x3b8e460, 0xdcc048, kLeaf, "C_HasSoulArchetype", 0 },
+	{ 0x3f505b0, 0x2d853ac, kLeaf, "C_HasSoulCrimeRole", 0 },  { 0x3b48180, 0xcf5f9c, kLeaf, "C_HasVoice", 0 },
+	{ 0x3c352d0, 0xe55ae8, kLeaf, "C_IsContentFilterActive", 0 }, { 0x3f50f80, 0x1fea310, kLeaf, "C_IsGameMode", 0 },
+	{ 0x3be4530, 0x4755e4, kLeaf, "C_IsPublicEnemy", 0 },
 };
 uintptr_t g_base = 0;
+
+// Every storm action class (RTTI: the 34 concrete ones that derive from I_Operator), its vtable, its execute (vt+8)
+// and the groups it writes. kAll where the RE didn't follow every call: PerkRemove (an un-apply virtual),
+// SetReputation (the faction's shared totals: C_IsPublicEnemy may read them), SetEquipDirectives and
+// SetReincarnationParams (virtuals on soul+0x198). Attribute actions fire an attribute-change event to listeners that
+// weren't followed: they mark every state group. C_CustomOperator = its children (+8..+0x10, 16-byte entries).
+// A class not in this table, or whose execute moved, writes kAll.
+struct Op { uintptr_t vt, exec; Mask writes; const char* name; };
+const Op kOps[] = {
+	{ 0x3a4f980, 0x46bb94, kGRoles, "RoleAdd" },          { 0x3b43aa8, 0x46bf14, kGRoles, "RoleRemove" },
+	{ 0x3f4c190, 0x1a94dd0, kGRoles, "ClearRoles" },
+	{ 0x3b79f50, 0xff3b18, kGCtx, "ContextAdd" },         { 0x3c33b60, 0x19d24dc, kGCtx, "ContextRemove" },
+	{ 0x3c14368, 0xff3acc, kGCtx, "ContextPresetAdd" },   { 0x4733868, 0x2d4df18, kGCtx, "ContextPresetRemove" },
+	{ 0x3f4c1d8, 0x2d4e0b0, kGCtx, "ClearContexts" },
+	{ 0x47338b0, 0x2d4df3c, kGSched, "AddScheduleItem" }, { 0x3f4c220, 0x2d4e0c8, kGSched, "ClearScheduleItems" },
+	{ 0x4733e38, 0x2d85034, kGSched, "RemoveScheduleActivity" },
+	{ 0x3be6438, 0x3c5678, 0, "MetaRoleAdd" },            { 0x4733dc0, 0x2d84ffc, 0, "MetaRoleRemove" },
+	{ 0x4733790, 0x2d4de10, kGName, "CharacterAdd" },
+	{ 0x3a6b690, 0xa203d0, kGPerks, "PerkAdd" },          { 0x3c359c8, 0x2d4dfd8, kGPerks, "AutolearnPerks" },
+	{ 0x3a6b700, 0xa20370, kAll, "PerkRemove" },
+	{ 0x3b2e668, 0x46bdbc, kGState, "AttributeSet" },     { 0x3b72c40, 0x46cd8c, kGState, "AttributeModify" },
+	{ 0x47337e8, 0x2d4dde8, kGState, "AttributeRemove" },
+	{ 0x47338f8, 0x2d4dfa0, 0, "AssignVoiceGroup" },      { 0x3b81c88, 0x13c5ba8, 0, "SetUiName" },
+	{ 0x3b0ff60, 0x973318, 0, "SetBody" },                { 0x3b0fe70, 0x973318, 0, "SetHead" },
+	{ 0x3b0fdf8, 0x973318, 0, "SetHair" },                { 0x3b0fee8, 0x973318, 0, "SetBeard" },
+	{ 0x3b0ffd8, 0x973318, 0, "SetUnderwear" },
+	{ 0x3b2f280, 0x1220ba8, 0, "SetInventory" },          { 0x3b2f2f8, 0x1220ba8, 0, "AddInventory" },
+	{ 0x3b2f370, 0x1220ba8, 0, "SetLootInventory" },
+	{ 0x3bccf78, 0x3f2dd0, kAll, "SetReputation" },       { 0x3c15bf8, 0x16b4edc, kAll, "SetEquipDirectives" },
+	{ 0x3bf7898, 0x12d8244, kAll, "SetReincarnationParams" },
+};
+constexpr uintptr_t kVtCustomOp = 0x3bdcaa0, kExecCustomOp = 0x1397d70;
+constexpr int kNOps = sizeof kOps / sizeof kOps[0];
+bool g_opOk[kNOps] = {};   // its execute is where 1.5.6 has it (checked at start)
+bool g_customOk = false;
 
 using PassFn = void(__fastcall*)(void* rules, void* soul, uint16_t mask);
 using WalkFn = void(__fastcall*)(uint8_t* group, void* soul, int level);
@@ -91,29 +135,60 @@ const Kind* KindOf(const void* p) {
 	return nullptr;
 }
 
-// A named set is remembered only when everything under it is a known read-only kind (worked out once per set).
-bool AllKnown(const void* p, int depth) {
-	if (!p) return true;
+// A named set is remembered only when everything under it is a known read-only kind; it remembers the groups its
+// leaves read (worked out once per set). -1 = not remembered.
+int64_t ReadMask(const void* p, int depth) {
+	if (!p) return 0;
 	const Kind* k = KindOf(p);
-	if (!k || depth > 64) return false;
+	if (!k || depth > 64) return -1;
+	int64_t m = k->reads;
 	const uint8_t* b = (const uint8_t*)p;
-	if (k->kids == kOne) return AllKnown(*(void* const*)(b + 8), depth + 1);
+	if (k->kids == kOne) {
+		const int64_t c = ReadMask(*(void* const*)(b + 8), depth + 1);
+		return c < 0 ? -1 : m | c;
+	}
 	if (k->kids == kVector) {
 		void* const* e = *(void* const* const*)(b + 0x10);
-		for (void* const* c = *(void* const* const*)(b + 8); c != e; c += 2)
-			if (!AllKnown(*c, depth + 1)) return false;
+		for (void* const* c = *(void* const* const*)(b + 8); c != e; c += 2) {
+			const int64_t x = ReadMask(*c, depth + 1);
+			if (x < 0) return -1;
+			m |= x;
+		}
 	}
-	return true;
+	return m;
 }
-bool Cacheable(const void* self) {
-	thread_local std::unordered_map<const void*, bool> known;
+int64_t Cacheable(const void* self) {
+	thread_local std::unordered_map<const void*, int64_t> known;
 	auto it = known.find(self);
 	if (it != known.end()) return it->second;
-	const bool ok = AllKnown(self, 0);
-	if (!ok) Log("stormmemo: named set \"%.60s\" has a condition kind I don't know - not remembered",
-	             *(const char* const*)((const uint8_t*)self + 0x20));
-	known.emplace(self, ok);
-	return ok;
+	const int64_t m = ReadMask(self, 0);
+	if (m < 0) Log("stormmemo: named set \"%.60s\" has a condition kind I don't know - not remembered",
+	               *(const char* const*)((const uint8_t*)self + 0x20));
+	known.emplace(self, m);
+	return m;
+}
+
+// The groups an action writes (worked out once per action object; a custom operator = its children).
+Mask WriteMask(const void* a, int depth) {
+	if (!a) return 0;
+	const uintptr_t vt = *(const uintptr_t*)a - g_base;
+	if (vt == kVtCustomOp && g_customOk && depth < 16) {
+		const uint8_t* b = (const uint8_t*)a;
+		Mask m = 0;
+		void* const* e = *(void* const* const*)(b + 0x10);
+		for (void* const* c = *(void* const* const*)(b + 8); c != e && m != kAll; c += 2) m |= WriteMask(*c, depth + 1);
+		return m;
+	}
+	for (int i = 0; i < kNOps; i++) if (kOps[i].vt == vt) return g_opOk[i] ? kOps[i].writes : kAll;
+	return kAll;
+}
+Mask ActionWrites(const void* a) {
+	thread_local std::unordered_map<const void*, Mask> known;
+	auto it = known.find(a);
+	if (it != known.end()) return it->second;
+	const Mask m = WriteMask(a, 0);
+	known.emplace(a, m);
+	return m;
 }
 
 struct GameRules {
@@ -127,6 +202,7 @@ struct GameRules {
 	void** NextEntry(void** p) { return p + 2; }
 	bool Eval(void* c, void* soul) { return ((CondFn)(*(void***)c)[1])(c, soul); }
 	void Run(void* a, void* soul, Rule* r) { ((ActionFn)(*(void***)a)[1])(a, soul, r); }
+	Mask Writes(void* a) { return ActionWrites(a); }
 };
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
@@ -222,6 +298,12 @@ void Stormmemo_Install(uintptr_t base, void* self) {
 	int badKind = -1;
 	for (int i = 0; ok && i < (int)(sizeof kKinds / sizeof kKinds[0]); i++)
 		if (((uintptr_t*)(base + kKinds[i].vt))[1] != base + kKinds[i].eval) { ok = false; badKind = i; }
+	int opsOk = 0;
+	for (int i = 0; i < kNOps; i++) opsOk += g_opOk[i] = ((uintptr_t*)(base + kOps[i].vt))[1] == base + kOps[i].exec;
+	g_customOk = ((uintptr_t*)(base + kVtCustomOp))[1] == base + kExecCustomOp;
+	if (opsOk < kNOps || !g_customOk)
+		Log("stormmemo: %d of %d action kinds where 1.5.6 has them%s: the others make every answer stale", opsOk, kNOps,
+		    g_customOk ? "" : ", custom operator not");
 	if (!ok) {
 		Log("stormmemo: code check failed%s%s - not installed (other game version?)", badKind >= 0 ? " at " : "",
 		    badKind >= 0 ? kKinds[badKind].name : "");
@@ -237,7 +319,8 @@ void Stormmemo_Install(uintptr_t base, void* self) {
 	         MH_CreateHook(fc, (void*)&HkCustom, (void**)&g_origCustom) == MH_OK &&
 	         MH_EnableHook(fw) == MH_OK && MH_EnableHook(fc) == MH_OK && MH_EnableHook(fp) == MH_OK;
 	if (!h) { MH_DisableHook(fp); MH_DisableHook(fc); MH_DisableHook(fw); }
-	Log("stormmemo: Storm's named condition sets remembered per character %s (%s)", h ? "on" : "FAILED",
+	Log("stormmemo: Storm's named condition sets remembered per character %s, kept across actions that don't touch "
+	    "what they read (%s)", h ? "on" : "FAILED",
 	    g_mode == 2 ? "every remembered answer checked" : "the first 100000 remembered answers checked, then every 64th");
 	if (h) CloseHandle(CreateThread(nullptr, 0, Reporter, nullptr, 0, nullptr));
 }
