@@ -3,6 +3,7 @@
 #include "loadwatch.h"
 #include "questsample.h"
 #include "readiness.h"
+#include "paklock.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -26,7 +27,7 @@ LHook g_h[] = {
 constexpr int kN = sizeof g_h / sizeof g_h[0];
 constexpr int kLoadLevel = 0, kDb = 3, kDedupe = 5;
 
-int g_mode = 0;
+int g_mode = 2;   // timing only unless the file says otherwise
 long long g_freq = 1;
 std::atomic<DWORD> g_mainTid{0};
 std::atomic<int> g_phase{0};      // the innermost timed hook on Main (0 = none)
@@ -88,6 +89,7 @@ template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, ui
 		g_mainTid = GetCurrentThreadId();
 		g_inLoad = true;
 		for (int i = 0; i < kN; i++) for (int k = 0; k < 2; k++) { g_calls[i][k] = 0; g_ticks[i][k] = 0; }
+		Paklock_Report("before LoadLevel");   // the counters start over for the load
 		if (g_mode == 1) {
 			const bool on = Questsample_BeginEx(&Phase, &PhaseName, 30000, "level load", "fastload_lsample.csv");
 			Log("levelprof: LoadLevel starts (thread %lu); Main sampled for 30 s: %s", GetCurrentThreadId(), on ? "on" : "NOT STARTED (a profile runs)");
@@ -113,7 +115,7 @@ template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, ui
 			if (I == kDb) Log("levelprof: object database type 0x%x %.0f ms (thread %lu%s)", (uint32_t)b, Ms(dt), GetCurrentThreadId(), main ? ", Main" : "");
 			else Log("levelprof: %s %.0f ms (thread %lu%s)", g_h[I].name, Ms(dt), GetCurrentThreadId(), main ? ", Main" : "");
 		}
-		if (I == kLoadLevel) { g_inLoad = false; Totals("LoadLevel done"); }
+		if (I == kLoadLevel) { g_inLoad = false; Totals("LoadLevel done"); Paklock_Report("LoadLevel"); }
 	}
 	return r;
 }
@@ -129,11 +131,11 @@ void Levelprof_Install(uintptr_t base, void* self) {
 	std::string dir = path;
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((dir + "fastload_levelprof.txt").c_str(), "r")) {
-		int m = 0;
+		int m = 2;
 		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 1 || m == 2 ? m : 0;
 		fclose(fp);
 	}
-	if (!g_mode) { Log("levelprof: off (fastload_levelprof.txt: 1 = timing + Main sampled, 2 = timing only)"); return; }
+	if (!g_mode) { Log("levelprof: off (fastload_levelprof.txt: 1 = timing + Main sampled, 2 = timing only, the default)"); return; }
 	int on = 0;
 	std::string off;
 	for (int i = 0; i < kN; i++) {

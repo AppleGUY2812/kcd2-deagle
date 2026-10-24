@@ -37,6 +37,7 @@
 #include "questreplay.h"
 #include "questfast.h"
 #include "levelprof.h"
+#include "paklock.h"
 
 namespace {
 
@@ -71,6 +72,7 @@ void GameplayStarted(const char* why) {
 	Streamahead_OnLoaded();
 	Applyfast_OnLoaded();
 	Terrainfast_OnLoaded();
+	Paklock_Report("LoadLevel end to gameplay");
 }
 
 void Tick() {
@@ -164,6 +166,7 @@ DWORD WINAPI Init(LPVOID) {
 	Questdump_Install(g_game.base);   // the quest graph dump for questbench N dump (questdump.cpp)
 	Animahead_Install(g_game.base, g_self);   // human animation sets during the terrain wait (animahead.cpp)
 	Levelprof_Install(g_game.base, g_self);   // the level load's main-thread work timed / sampled, mode file (levelprof.cpp)
+	Paklock_Install(g_game.base, g_self);   // CryPak reads outside the open-files lock, mode file (paklock.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
