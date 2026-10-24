@@ -20,6 +20,7 @@
 #include "fastzip.h"
 #include "streamio.h"
 #include "readiness.h"
+#include "streamahead.h"
 #include "pakahead.h"
 #include "cvars.h"
 #include "xmlahead.h"
@@ -1229,7 +1230,8 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "pakahead")) Pakahead_Command(rest);
 	else if (!strcmp(cmd, "cvars")) Cvars_Command(rest);
 	else if (!strcmp(cmd, "xmlahead")) Xmlahead_Command(rest);
-	else if (!strcmp(cmd, "loaded")) Cvars_OnLoaded();
+	else if (!strcmp(cmd, "loaded")) { Cvars_OnLoaded(); Streamahead_OnLoaded(); }
+	else if (!strcmp(cmd, "streamahead")) Streamahead_Command(rest);
 	else if (!strcmp(cmd, "fastkey")) {
 		char k[24] = {};
 		sscanf_s(rest, "%23s", k, (unsigned)sizeof(k));

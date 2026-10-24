@@ -1,6 +1,7 @@
 // Bigger streaming reads: see streamio.h. Addresses: WHGame.dll 1.5.6, checked against the installed DLL at start.
 #include "streamio.h"
 #include "log.h"
+#include "streamahead.h"
 #include <windows.h>
 #include <algorithm>
 #include <atomic>
@@ -251,7 +252,10 @@ uint32_t __fastcall HkRead(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t
 	uint32_t r = 0;
 	bool verify = mode == 2;
 	if (mode == 1 && g_selfCheck.load(std::memory_order_relaxed) > 0) verify = true;
-	if (mode == 0) {
+	const int served = Streamahead_Serve(cache, entry, out, offset, size, want, g_orig);   // read ahead (streamahead.cpp)
+	if (served >= 0) {
+		r = (uint32_t)served;
+	} else if (mode == 0) {
 		const long long a = Now();
 		r = g_orig(cache, entry, out, offset, size);
 		readTicks += Now() - a;   // lock wait included: the game's function takes the lock itself
@@ -289,6 +293,7 @@ uint32_t __fastcall HkRead(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t
 	n_size[want <= (32 << 10) ? 0 : want <= (128 << 10) ? 1 : want <= (512 << 10) ? 2 : want <= (1 << 20) ? 3
 	       : want <= (4 << 20) ? 4 : 5]++;
 	CountPak(cache, *(HANDLE*)(cache + 0x10), want);
+	Streamahead_Record(cache, entry, offset, want, Now() - t0);
 	n_ticks += Now() - t0;
 	return r;
 }
@@ -309,12 +314,15 @@ DWORD WINAPI Reporter(LPVOID) {
 		char sizes[200] = "";
 		int o = 0;
 		for (int i = 0; i < 6; i++) o += snprintf(sizes + o, sizeof sizes - o, "%s%s %lld", i ? ", " : "", kSizeName[i], n_size[i].load());
+		long long aServed = 0, aFirst = 0, aNot = 0;
+		Streamahead_Stats(&aServed, &aFirst, &aNot);
 		Log("streamio: mode %d  +%lld requests %.1f MB in %.1f s = %.0f MB/s, read thread busy %.0f %% (ReadFile %.0f ms, "
 		    "lock wait %.0f ms)  total %lld requests %.1f MB, one-read %lld, fallback %lld, verified %lld, mismatches %lld, "
-		    "buffered path %lld  sizes: %s", g_mode.load(), c - lastCalls, (b - lastBytes) / 1e6, secs,
+		    "buffered path %lld, read ahead: served %lld, game first %lld, not listed %lld  sizes: %s", g_mode.load(),
+		    c - lastCalls, (b - lastBytes) / 1e6, secs,
 		    (b - lastBytes) / 1e6 / (secs > 0 ? secs : 1), 100.0 * Ms(t - lastTicks) / (secs * 1000.0), Ms(rd - lastRead),
 		    Ms(lk - lastLock), c, b / 1e6, n_one.load(), n_fallback.load(), n_verified.load(), n_bad.load(),
-		    n_buffered.load(), sizes);
+		    n_buffered.load(), aServed, aFirst, aNot, sizes);
 		lastCalls = c; lastBytes = b; lastTicks = t; lastLock = lk; lastRead = rd; lastT = now; lastLine = now;
 		if (now - lastPaks >= 30000) {
 			lastPaks = now;
@@ -364,6 +372,7 @@ void Streamio_Install(uintptr_t base, void* self) {
 	g_lock = (LockFn)lk;
 	g_unlock = (LockFn)ul;
 	g_uncached = (const int*)(base + kRvaUncached);
+	Streamahead_Install(self);   // before the hook goes on: it serves and records from the hook (streamahead.cpp)
 	const bool h = MH_CreateHook(rd, (void*)&HkRead, (void**)&g_orig) == MH_OK && MH_EnableHook(rd) == MH_OK;
 	Log("streamio: mode %d (%s), ReadFileStreaming hook %s, sys_UncachedStreamReads %d", g_mode.load(),
 	    g_mode == 0 ? "game reads, counted" : g_mode == 1 ? "one read per request, self-check first" : "verify both",
