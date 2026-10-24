@@ -5,43 +5,29 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
 "Control" = the end of the first gameplay frames. Times in s after the first level file ("level loading").
 
 ## The user's path vs the test boots (M)
-- **Best so far, boot 40 (2026-10-24 10:20, menu path, 1490 MB free): 22.7 s** from Continue, with animahead (human
-  animation sets at the menu, 7f34635) and kcd2-deagle-66's conceptbfs: terrain 4.6 (less RAM), level done 12.2, state 4
-  0.2, apply 4.9, gate 3.9. Main's part after terrain 8.8 -> 7.6 s. One boot: +-1 s noise.
-- Boot 38 (2026-10-24 09:37, menu path, 2213 MB free): 24.0 s from Continue. The two Checkers mods
-  repacked stored (tools/paks/repack_stored.py; originals in E:\Tools\deagle-dev\mod_backup): gate 11.0 -> 3.2 s, opened
-  by itself (TextureStreaming ready last, no early rule fired); Checkers paks no longer in the most-read list. Steps:
-  terrain 3.8, level done 12.6 (quests kept), state 4 1.6, apply 5.2 (kcd2-deagle-66's now), gate 3.2.
-- Best so far, boot 35 (2026-10-24 08:24, menu path, 2910 MB free): **30.6 s** with the quest graph built at the menu
-  and kept (questmenu); boots 34 / 36 without it: 33.8 / 33.7 s. Steps in boot 35: terrain 3.5, level done 12.5 (16.1
-  without), state 4 1.4, apply 5.0, gate 10.6 s. The gate grew from 8.2-9.0 s (boots 32-33) to 10.6-11.7 s in boots
-  34-36 (streamahead 6fb0c4c era; kcd2-deagle-66 told). Boot 37 (c40fb0a, gate readers stopped, repeats served
-  from kept copies: 415 hits): gate still 11.0 s, TextureStreaming last at 10.5 s; 32.1 s total, quests kept again.
-  r_TexturesStreamPoolSize 5120 is only the fallback: the pool is dynamic (r_TexturesStreamDynamicPool 1, kcd2-deagle-66).
-- **The gate's texture tail is two mods** (re_texture_early.md, boot 37 trace): Mods/checkersfacesandbody (1.68 GB) and
-  checkershair ship each texture as one deflated 4K .dds (201 entries, 2.3 GB unpacked); vanilla splits per mip. Every
-  mip request re-reads and re-inflates the whole entry (299/299 passes, 5-9 per texture): gate seconds 5-11 spent 90 % of
-  the IO thread's read time on them; TextureStreaming ready 0.06 s after the last mod read; mod MB read tracks the ready
-  time across boots. The RLT's RT_Precache also inflates all 2.1 GB of them (U2's +2.28 GB). Fix candidate: repack them
-  stored (lossless, +0.6 GB disk), user's call; expected gate -5 s (I, one traced boot). Starting view textures before
-  state 4 gains <= 0.5 s (vanilla view textures ~155 MB) and is blocked by the frame-bound scheduler: dropped.
-- Menu + Continue (boot 27, 2026-10-24 02:31): **34.4 s from the click** (1.4 s click -> level loading, then 33.0 s).
-  With 3b: 34.6 s (boot 29, gate 9.4 s) and 33.4 s (boot 30, + readiness temp 128). The gate varies +-1 s per boot.
-- Auto-load test boots (wh_sys_AutoLoadLastSave; boots 24-26): 38.3-39.4 s. They carry two costs the user's path does
-  not: NVIDIA NGX/DLSS start-up (~4 s first gameplay frame; on the menu path it happens before the load) and less
-  menu time for the read-ahead (gate 10-11 s vs 8.7 s). Compare test boots with test boots.
+- **Best so far, boots 42 / 44 (2026-10-24 13:31 / 13:47, menu path, 1949 / 2902 MB free): 19.2 / 20.0 s** from the
+  first level file to control, + 0.3-0.9 s for the Continue click (thread sampler: last menu frame -> first load code),
+  so ~19.5-20.9 s from the click. Boot 42: terrain 3.0, level done 10.3, state 4 0.2, apply 4.8 (one 4.75 s main frame,
+  kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
+  One boot: +-1 s noise.
+- Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
+  (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
+  (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
+- The gate's texture tail was two mods (Checkers faces/body + hair: one deflated 4K .dds per texture, every mip request
+  re-inflated the whole entry); repacked stored 2026-10-24 (tools/paks/repack_stored.py; originals in
+  E:\Tools\deagle-dev\mod_backup): gate 11.0 -> 3.2 s.
 
-## Where the time goes (boot 27, menu path, 33.0 s)
+## Where the time goes (boot 27, menu path, 33.0 s; boot 42 19.2 s in brackets)
 | Step | s | What holds it |
 |---|---|---|
-| open + terrain | 0-3.7 | terrain loaders (RAM-bound read-ahead) |
-| objects + entities (Main) | -12.3 | 35,889 entities 2.7 s, human anim sets 2.2 s, navmesh 0.7 s, CryPak lock waits |
-| Main waits for the quest job | -13.7 | job 13.7 s: XML 2.25 s + nodes 6.0 s + ports 1.0 s + edges 3.3 s, one worker |
+| open + terrain | 0-3.7 [3.0] | terrain loaders (RAM-bound read-ahead) |
+| objects + entities (Main) | -12.3 [10.3 with the next] | 35,889 entities 2.7 s, human anim sets 2.2 s, navmesh 0.7 s, CryPak lock waits |
+| Main waits for the quest job | -13.7 [0] | job 13.7 s, one worker [built at the menu in 4.4 s and kept] |
 | finish level | -15.7 | SmartObjectAnimations table 1.43 s, XGenAI global pass 0.55 s (re_stepEF) |
-| state 4 | -18.1 | PSO precache 2.4 s: 71 shaders parsed (~15 ms each, real CPU) + 15,989 PSOs |
-| state 5 apply save | -23.4 | Storm 0.86 s, concept BFS 0.35 s, RandomEvent project 0.4 s, XML 0.3 s, ~1.8 s scattered |
-| settle gate | -32.1 | textures 7.9 s, clothing 6.3 s |
-| first gameplay frames | -33.0 | 0.3 + 0.6 s |
+| state 4 | -18.1 [10.5] | PSO precache 2.4 s: 71 shaders parsed (~15 ms each, real CPU) + 15,989 PSOs |
+| state 5 apply save | -23.4 [15.3] | Storm 0.86 s, concept BFS 0.35 s, RandomEvent project 0.4 s, XML 0.3 s, ~1.8 s scattered |
+| settle gate | -32.1 [18.5] | textures 7.9 s, clothing 6.3 s |
+| first gameplay frames | -33.0 [19.2] | 0.3 + 0.6 s |
 
 ## RAM is the system limit (M)
 User's own loads vs free RAM at level loading: 2122 MB 33.4 s (boot 32), 1597 MB 38.5 s (U1), 1320 MB 48.3 s (U2,
@@ -78,6 +64,14 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
   the graph on a plugin thread (11.5 s, free RAM 2710 -> 2030 MB) and the load keeps it (mgr+0x378 = 0, body skipped).
   Concept messages at the menu during the build: 0x1, 0xc, 0x24; before the load: 0x38, 0x3a (none touch projects).
   Journal after the load identical to a normal load (boots 35 vs 36). Skips below 1200 MB free.
+- questreplay (f9cf471, 9b6805e, f237548, 8a9ca19): the quest build replayed from deagle_questreplay_<level>.bin (29 MB;
+  key: WHGame.dll, 72 paks / manifests incl. Workshop mods, the job inputs). Phase 2a calls the game's leaf functions in
+  the recorded order (same resolver id order, #4838fed6bbbf53ef); phase 1 (21,808 quest XML files) is skipped and
+  xmlahead no longer parses them (~250 MB less at the menu). Menu build 14.4 -> 8.43 -> 4.35-4.59 s (2a 2.0, ports 0.37,
+  edges 1.35, activation 0.56). A load that builds its own (menu build not kept, a level switch): 6.26 s in the load
+  (boot 45, deagle_questmenu.txt 2; it shares the CPU with the level load). A same-level reload during play runs no
+  quest job at all (boot 43, ~6 s reload). Checked: questdump equal to the game's own build except the quest's random
+  roll (as between two game builds); journal identical in boots 41-45. A failed replay drops the file, the game builds.
 - animahead (f71b7da, 7f34635; deagle_animahead.txt 1): female.cdf + male.cdf through the game's LoadAndLockResources on a
   plugin thread at the menu, after the quest build (2.2 + 1.1 s there); the load's 30+ human skeleton loads hit the
   cache (0 ms). "Loading level" (FUN_180b8f748) waits for a running preload. **Never during the load**: boot 39 ran it on
@@ -92,7 +86,7 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 | unpack (pakahead) | launch +1 s | done; 2 GB cap: 17,650 of 23,338 files ready before the menu |
 | ground meshes (streamahead) | launch +1 s | done; 512 MB held cap |
 | XML parse (xmlahead) | menu idle (~launch +22 s) | capped 3,000 files ahead of the game: 4 workers idle most of the menu; level files wait for level loading |
-| quest graph 13.7 s | save list read (~launch +20 s) | done (questmenu): -2.4 s (31.35 s in boots 35/37 vs 33.75 s in 34/36); on |
+| quest graph (4.4 s, replayed) | save list read (~launch +20 s) | done (questmenu + questreplay); kept by the first load |
 | Main: human anim sets 1.9-2.2 s | menu, after the quest build | done (animahead): boot 40 |
 | Main: SmartObjectAnimations 1.43, XGenAI 0.55, material dedupe 0.5 s | in the load | next (re_stepEF E1, re_menu_main) |
 | RLT: shader parse 4-8 s, texture precache, PSO | in the load | RE running: re_menu_render.md |
@@ -107,19 +101,11 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 
 ## Open, by expected gain
 1. Settle gate 8.7 s (kcd2-deagle-66): textures, clothing.
-2. Quest job: off the load path when the menu build is kept, 11.5-14 s otherwise (loads during play, quick Continue).
-   **Target (user): 5 s or less.** Path (re_quest_builder.md 5 + re_quest_dump_binary.md + re_quest_replay_parallel.md):
-   graph-dump comparator first (exactness check), binary DOM (phase 1 2.3 -> ~0.4 s), replay builder + more cores for
-   2a (6.2 s) and pre-resolved edges for 2b (4.5 s). Step 1: questfast (d352a75) rttr sorted insert; questbench (78a3fde,
-   menu, 6 builds A/B): 2a 4.46-4.79 s on vs 5.25-5.51 s off, **-0.75 s on every build** (types register again per
-   build: +1948 inserts each). Bench builds take 13.9-15.6 s (XML 4.3 s: no xmlahead lead for rebuilds; +0.3 s drift per
-   build). 0095dd5 fixed xmlahead's ReleaseNode (vt+0x10 = createNode, not Release: late/unused trees leaked).
-   Step 2: questprof (`questbench N prof`, 45 hooks, self time per function): the edges phase is port wiring (add port
-   1.5 s self, port find-or-create 1.2 s self / 2.8 s incl); 2a is rttr property reads (property 1.36 s self, variant
-   convert 0.8 s / 6.0 M calls, metadata 11 M calls). A replay still calls ~3.2 s of it (add port is half).
-   Step 3: rttr metadata cache (7f97f0e, self-checked, 92,699 checks equal): 2a 4.39/4.54 s on vs 5.38/5.50 off (sort +
-   cache). Menu build now 10.6 s: XML + definitions 1.5, 2a 4.3, ports 0.9, edges 2.9, after 1.0.
-   Next: exact port-definition cache (edges), graph-dump checker, record + replay of 2a.
+2. Quest build 4.4 s at the menu, 6.3 s in a load (target 5 s: met at the menu). Left, from the sampler (questbench N
+   filesample): edges 1.35 + ports 0.37 s, of which ~1.0 s is the port lookup FUN_1806a0674 walking per-instance
+   enumerators the port cache does not cover (needs RE: are repeated (node, name) lookups stable?); 2a 2.0 s
+   (attribute conversion FUN_1804fb74c 19 %, slot 2/4 handlers 14 %, pending entries 8 %); activation FUN_18069551c
+   0.58 s; teardown frees 0.27 s. No record yet for Kuttenberg (its first menu build records one, ~8.4 s once).
 3. Apply save 5.3 s: Storm memo ~0.45 s, concept BFS ~0.4 s (re_stepG).
 4. The three build chains end together (quest 14.0, RLT ~14.4, Main 12.3 + E 2.1 s): one alone gains < 1 s; move all
    three to the menu (table above).
