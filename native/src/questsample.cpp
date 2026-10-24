@@ -1,4 +1,4 @@
-// Sampling profile of a quest build thread: see questsample.h.
+// Sampling profile of one thread (a quest build, the level load's main thread): see questsample.h.
 #include "questsample.h"
 #include "loadwatch.h"
 #include "log.h"
@@ -15,15 +15,22 @@ namespace {
 
 constexpr size_t kStackCopy = 128 << 10;
 constexpr int kMaxFrames = 128;
-struct Sample { int phase; std::vector<uint64_t> f; };   // function starts, innermost first
+constexpr int kMaxPhases = 32;
+struct Sample { int phase; unsigned ms; std::vector<uint64_t> f; };   // function starts, innermost first
 
 HANDLE g_thread = nullptr, g_sampler = nullptr;
 uintptr_t g_stackBase = 0;
 std::atomic<bool> g_run{false};
 std::vector<Sample> g_s;
-long long g_t0 = 0, g_freq = 1;
-std::string g_dir;
+long long g_t0 = 0, g_freq = 1, g_stopAt = 0;   // g_stopAt: the sampler stops and reports by itself (0 = at End)
+std::string g_dir, g_tag, g_csv;
+bool g_csvTime = false;
+int (*g_phase)() = nullptr;
+const char* (*g_phaseName)(int) = nullptr;
 std::unordered_map<uint64_t, std::string> g_mod;   // image base -> short module name
+std::unordered_map<uint64_t, std::string> g_names;   // function start -> name
+
+inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 
 uint64_t FuncStart(uint64_t pc, uint64_t* base) {   // the primary function's start (follows chained unwind info)
 	DWORD64 ib = 0;
@@ -61,12 +68,24 @@ void Unwind(CONTEXT& c, const uint8_t* copy, uint64_t rsp0, size_t len, std::vec
 	}
 }
 
+void Report(const std::string& tag, double sec);
+
 DWORD WINAPI SamplerThread(LPVOID) {
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 	std::vector<uint8_t> copy(kStackCopy);
 	while (g_run.load()) {
 		Sleep(1);
-		const int phase = Loadwatch_QuestPhase();
+		if (g_stopAt && Now() >= g_stopAt) {   // a timed profile: stop and report on this thread
+			if (!g_run.exchange(false)) break;
+			const double sec = (Now() - g_t0) * 1.0 / g_freq;
+			CloseHandle(g_thread); g_thread = nullptr;
+			Report(g_tag, sec);
+			HANDLE self = g_sampler;
+			g_sampler = nullptr;   // the next profile may start
+			if (self) CloseHandle(self);
+			return 0;
+		}
+		const int phase = g_phase ? g_phase() : 0;
 		if (SuspendThread(g_thread) == (DWORD)-1) break;
 		CONTEXT c{};
 		c.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
@@ -78,10 +97,11 @@ DWORD WINAPI SamplerThread(LPVOID) {
 			len = rsp0 < g_stackBase ? std::min<size_t>(kStackCopy, g_stackBase - rsp0) : 0;
 			if (len) memcpy(copy.data(), (void*)rsp0, len);
 		}
-		ResumeThread(g_thread);
+		ResumeThread(g_thread);   // nothing above allocates: the thread may hold the heap lock while suspended
 		if (!got || !len) continue;
 		Sample s;
 		s.phase = phase;
+		s.ms = (unsigned)((Now() - g_t0) * 1000 / g_freq);
 		s.f.reserve(48);
 		Unwind(c, copy.data(), rsp0, len, s.f);
 		g_s.push_back(std::move(s));
@@ -89,26 +109,30 @@ DWORD WINAPI SamplerThread(LPVOID) {
 	return 0;
 }
 
-std::string Name(uint64_t f) {
-	if (f >> 63) { char b[48]; snprintf(b, sizeof b, "leaf@%llx", (unsigned long long)(f & ~(1ull << 63))); return b; }
-	HMODULE m = nullptr;
-	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)f, &m);
-	const uint64_t mb = (uint64_t)m;
-	auto it = g_mod.find(mb);
-	if (it == g_mod.end()) {
-		char p[MAX_PATH] = "?";
-		if (m) GetModuleFileNameA(m, p, MAX_PATH);
-		std::string s = p;
-		s = s.substr(s.find_last_of("\\/") + 1);
-		it = g_mod.emplace(mb, s).first;
-	}
+const std::string& Name(uint64_t f) {
+	auto hit = g_names.find(f);
+	if (hit != g_names.end()) return hit->second;
 	char b[96];
-	if (!_stricmp(it->second.c_str(), "WHGame.dll")) snprintf(b, sizeof b, "FUN_%llx", (unsigned long long)(f - mb + 0x180000000ull));
-	else snprintf(b, sizeof b, "%s+%llx", it->second.c_str(), (unsigned long long)(f - mb));
-	return b;
+	if (f >> 63) snprintf(b, sizeof b, "leaf@%llx", (unsigned long long)(f & ~(1ull << 63)));
+	else {
+		HMODULE m = nullptr;
+		GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)f, &m);
+		const uint64_t mb = (uint64_t)m;
+		auto it = g_mod.find(mb);
+		if (it == g_mod.end()) {
+			char p[MAX_PATH] = "?";
+			if (m) GetModuleFileNameA(m, p, MAX_PATH);
+			std::string s = p;
+			s = s.substr(s.find_last_of("\\/") + 1);
+			it = g_mod.emplace(mb, s).first;
+		}
+		if (!_stricmp(it->second.c_str(), "WHGame.dll")) snprintf(b, sizeof b, "FUN_%llx", (unsigned long long)(f - mb + 0x180000000ull));
+		else snprintf(b, sizeof b, "%s+%llx", it->second.c_str(), (unsigned long long)(f - mb));
+	}
+	return g_names.emplace(f, b).first->second;
 }
 
-const char* PhaseName(int p) {
+const char* QuestPhaseName(int p) {
 	switch (p) {
 	case 1: return "job (outside projects)";
 	case 2: return "project (phase 1, activation)";
@@ -119,53 +143,25 @@ const char* PhaseName(int p) {
 	}
 }
 
-}  // namespace
-
-void Questsample_Begin() {
-	if (g_run.load()) return;
-	if (g_dir.empty()) {
-		char p[MAX_PATH] = {};
-		HMODULE self = nullptr;
-		GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&Questsample_Begin, &self);
-		GetModuleFileNameA(self, p, MAX_PATH);
-		g_dir = p;
-		g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
-		LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
-	}
-	g_stackBase = (uintptr_t)((NT_TIB*)NtCurrentTeb())->StackBase;
-	if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_thread,
-	                     THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0)) { g_thread = nullptr; return; }
-	g_s.clear();
-	g_s.reserve(20000);
-	LARGE_INTEGER t; QueryPerformanceCounter(&t); g_t0 = t.QuadPart;
-	g_run = true;
-	g_sampler = CreateThread(nullptr, 0, SamplerThread, nullptr, 0, nullptr);
-	if (!g_sampler) { g_run = false; CloseHandle(g_thread); g_thread = nullptr; }
-}
-
-void Questsample_End(const char* tag) {
-	if (!g_run.exchange(false)) return;
-	WaitForSingleObject(g_sampler, 5000);
-	CloseHandle(g_sampler); g_sampler = nullptr;
-	CloseHandle(g_thread); g_thread = nullptr;
-	LARGE_INTEGER t; QueryPerformanceCounter(&t);
-	const double sec = (t.QuadPart - g_t0) * 1.0 / g_freq;
+void Report(const std::string& tag, double sec) {
 	// per phase: self (innermost frame) and inclusive (anywhere, once per sample)
 	struct Agg { long long n = 0; std::unordered_map<uint64_t, long long> self, incl; };
-	Agg ph[6];
+	std::vector<Agg> ph(kMaxPhases);
 	for (const Sample& s : g_s) {
-		Agg& a = ph[(std::min)((std::max)(s.phase, 0), 5)];
+		Agg& a = ph[(std::min)((std::max)(s.phase, 0), kMaxPhases - 1)];
 		a.n++;
 		if (s.f.empty()) continue;
 		a.self[s.f[0]]++;
 		std::unordered_set<uint64_t> seen;
 		for (uint64_t f : s.f) if (seen.insert(f).second) a.incl[f]++;
 	}
-	Log("questsample: %s: %zu samples in %.2f s (%.0f a second)", tag, g_s.size(), sec, g_s.size() / (sec > 0 ? sec : 1));
-	for (int p = 0; p < 6; p++) {
+	const char* t = tag.c_str();
+	Log("questsample: %s: %zu samples in %.2f s (%.0f a second)", t, g_s.size(), sec, g_s.size() / (sec > 0 ? sec : 1));
+	const double msPer = sec * 1000.0 / (g_s.empty() ? 1 : g_s.size());
+	for (int p = 0; p < kMaxPhases; p++) {
 		if (!ph[p].n) continue;
-		const double msPer = sec * 1000.0 / (g_s.empty() ? 1 : g_s.size());
-		Log("questsample: %s: phase %s: %lld samples (~%.0f ms)", tag, PhaseName(p), ph[p].n, ph[p].n * msPer);
+		Log("questsample: %s: phase %s: %lld samples (~%.0f ms)", t, g_phaseName ? g_phaseName(p) : QuestPhaseName(p), ph[p].n,
+		    ph[p].n * msPer);
 		for (int k = 0; k < 2; k++) {
 			std::vector<std::pair<long long, uint64_t>> v;
 			for (auto& e : (k ? ph[p].incl : ph[p].self)) v.emplace_back(e.second, e.first);
@@ -177,16 +173,59 @@ void Questsample_End(const char* tag) {
 				snprintf(b, sizeof b, "%s%s %.1f%%", line.empty() ? "" : ", ", Name(v[i].second).c_str(), v[i].first * 100.0 / ph[p].n);
 				line += b;
 			}
-			Log("questsample: %s:   %s: %s", tag, k ? "inclusive" : "self", line.c_str());
+			Log("questsample: %s:   %s: %s", t, k ? "inclusive" : "self", line.c_str());
 		}
 	}
-	if (FILE* f = fopen((g_dir + "fastload_qsample.csv").c_str(), "a")) {
+	if (FILE* f = fopen((g_dir + g_csv).c_str(), "a")) {
 		for (const Sample& s : g_s) {
-			fprintf(f, "%s,%d,", tag, s.phase);
+			if (g_csvTime) fprintf(f, "%s,%d,%u,", t, s.phase, s.ms);
+			else fprintf(f, "%s,%d,", t, s.phase);
 			for (size_t i = 0; i < s.f.size(); i++) fprintf(f, "%s%s", i ? ";" : "", Name(s.f[i]).c_str());
 			fputc('\n', f);
 		}
 		fclose(f);
 	}
 	std::vector<Sample>().swap(g_s);
+	Log("questsample: %s: samples appended to %s", t, g_csv.c_str());
+}
+
+}  // namespace
+
+bool Questsample_BeginEx(int (*phase)(), const char* (*phaseName)(int), unsigned stopAfterMs, const char* tag, const char* csv) {
+	if (g_run.load() || g_sampler) return false;   // one profile at a time (a timed one may still be reporting)
+	if (g_dir.empty()) {
+		char p[MAX_PATH] = {};
+		HMODULE self = nullptr;
+		GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&Questsample_Begin, &self);
+		GetModuleFileNameA(self, p, MAX_PATH);
+		g_dir = p;
+		g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
+		LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
+	}
+	g_phase = phase; g_phaseName = phaseName;
+	g_tag = tag ? tag : "";
+	g_csv = csv ? csv : "fastload_qsample.csv";
+	g_csvTime = csv != nullptr;
+	g_stackBase = (uintptr_t)((NT_TIB*)NtCurrentTeb())->StackBase;
+	if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_thread,
+	                     THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0)) { g_thread = nullptr; return false; }
+	g_s.clear();
+	g_s.reserve(stopAfterMs ? stopAfterMs + 1000 : 20000);
+	g_t0 = Now();
+	g_stopAt = stopAfterMs ? g_t0 + (long long)stopAfterMs * g_freq / 1000 : 0;
+	g_run = true;
+	g_sampler = CreateThread(nullptr, 0, SamplerThread, nullptr, 0, nullptr);
+	if (!g_sampler) { g_run = false; CloseHandle(g_thread); g_thread = nullptr; return false; }
+	return true;
+}
+
+void Questsample_Begin() { Questsample_BeginEx(&Loadwatch_QuestPhase, nullptr, 0, nullptr, nullptr); }
+
+void Questsample_End(const char* tag) {
+	if (g_stopAt || !g_run.exchange(false)) return;   // a timed profile ends by itself
+	WaitForSingleObject(g_sampler, 5000);
+	CloseHandle(g_sampler); g_sampler = nullptr;
+	CloseHandle(g_thread); g_thread = nullptr;
+	const double sec = (Now() - g_t0) * 1.0 / g_freq;
+	Report(tag, sec);
 }

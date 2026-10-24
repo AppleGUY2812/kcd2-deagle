@@ -89,7 +89,7 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 | XML parse (xmlahead) | menu idle (~launch +22 s) | capped 3,000 files ahead of the game: 4 workers idle most of the menu; level files wait for level loading |
 | quest graph (4.4 s, replayed) | save list read (~launch +20 s) | done (questmenu + questreplay); kept by the first load |
 | Main: human anim sets 1.9-2.2 s | menu, after the quest build | done (animahead): boot 40 |
-| Main: SmartObjectAnimations 1.43, XGenAI 0.55, material dedupe 0.5 s | in the load | next (re_stepEF E1, re_menu_main) |
+| Main: navmesh ~0.7 s, terrain loaders / level open | in the load | kcd2-deagle-66 (plan below) |
 | RLT: shader parse 4-8 s, texture precache, PSO | in the load | RE running: re_menu_render.md |
 | save read, mapClouds/Storm, Settle textures at the save's position | in the load | asked kcd2-deagle-66 |
 Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
@@ -100,17 +100,30 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 - xmlahead workers at normal priority, quest job thread above normal: no change (boot 25).
 - xmlahead list re-recorded in the quests-first order (boot 26): XML phase unchanged.
 
-## Open, by expected gain
-1. Settle gate 8.7 s (kcd2-deagle-66): textures, clothing.
-2. Quest build 4.4 s at the menu, 6.3 s in a load (target 5 s: met at the menu). Left, from the sampler (questbench N
-   filesample): edges 1.35 + ports 0.37 s, of which ~1.0 s is the port lookup FUN_1806a0674 walking per-instance
-   enumerators the port cache does not cover (needs RE: are repeated (node, name) lookups stable?); 2a 2.0 s
-   (attribute conversion FUN_1804fb74c 19 %, slot 2/4 handlers 14 %, pending entries 8 %); activation FUN_18069551c
-   0.58 s; teardown frees 0.27 s. No record yet for Kuttenberg (its first menu build records one, ~8.4 s once).
-3. Apply save 5.3 s: Storm memo ~0.45 s, concept BFS ~0.4 s (re_stepG).
-4. The three build chains end together (quest 14.0, RLT ~14.4, Main 12.3 + E 2.1 s): one alone gains < 1 s; move all
-   three to the menu (table above).
-5. Objects step 8.6 s (re_stepC): entities 2.7 s, CryPak lock waits ~1.8 s.
+## Plan: the map build (Main, 0-10.7 s after level loading; boot 46) - 2026-10-24
+Split (user): kcd2-deagle-66 moves work before Continue, kcd2-deagle-5a makes the load's own code faster. 66 can't launch
+the game: it commits to master and sends "ready for a boot", 5a runs it.
+Boot 46, Main (external sampler, rough inside objects): open 0-1.7, terrain wait 1.7-3.1 (1.43 s), objects 3.1-8.5
+(entity spawn ~1.3, navmesh ~0.7, CryPak lock ~0.3, ~3 s unnamed), SmartObjectAnimations 8.5-10.0, XGenAI + concepts
+10.0-10.7. Then state 4 0.2, apply 4.8, gate 3.2-3.6, first frames 0.6.
+
+kcd2-deagle-5a, algorithms (in order):
+1. levelprof: timing hooks (LoadLevel 0x9b17e0, LoadEntities 0xa57aa8, navmesh 0x20b4410, object DB 0xef3afc by type,
+   XGenAI pass 0xb4403c, material dedupe 0x45b230) + questsample on Main for 30 s from LoadLevel, full unwind ->
+   fastload_lsample.csv. Names the ~3 s in objects. Sends 66 the result. [building]
+2. SmartObjectAnimations (1.5 s): the finished table from our own binary record (questreplay-style; key = level pak +
+   WHGame.dll), ~0.1 s. Reader today: rttr, ~925k elements at ~1.5 us, a string copy per property, a hash per result.
+3. Material dedupe FUN_18045b230 (0.2-0.5 s): stricmp scan over every resource per material -> hash index.
+4. Whatever 1. ranks next: Lua key interning (CScriptTable::GetValue 0x18071624c re-hashes the key each read; ~0.8 s in
+   boot 13), CryPak FReadRaw holds the open-files lock for the whole read (~0.3 s), navmesh tile linking.
+Expected from 2+3: ~1.5-2 s; the unnamed 3 s is not in that number.
+
+kcd2-deagle-66, before Continue: terrain loaders / level open (1.4 s wait + part of 0-1.7), navmesh at the menu (~0.7 s),
+Settle textures / clothing at the save's position, RLT shader parse / PSO from launch (re_pso_parallel.md R1/R2).
+Also 66's: apply save 4.8 s (Storm memo, concept BFS: re_stepG) and the Settle gate 3.2-3.6 s.
+
+Left in quests (off the normal path; not planned): port lookup FUN_1806a0674 ~1.0 s, 2a pieces ~0.5 s, activation
+0.58 s, teardown 0.27 s. No record yet for Kuttenberg (its first menu build records one, ~8.4 s once).
 
 ## Measuring rules
 - One change per boot; same fastload_cvars.txt (the two wh_cc lines are in it).
