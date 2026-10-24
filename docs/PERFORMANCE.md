@@ -538,3 +538,8 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   bytes 8.0 GB (11.7 GB 10 s into play), WSL's VM 3.2 GB. About 340 MB was read back in those 2 s: that matches the DLSS
   DLLs NGX may map (nvngx_dlss 47 MB used, DLSS Enabler's unused nvngx_dlssd 76 MB and nvngx_dlssnr 166 MB next to the
   exe), but the page file would look the same in these counters. a50aeaf lists what the frame opens.
+- What the frozen frame may be (decoded 2026-10-24, docs/whgame_re/first_gameplay_frame.md): DLSS is set up lazily
+  in the first frame that draws the world (NGX start-up and feature creation), and so are the ~120k pipeline states not
+  precached at level load. With Warhorse's shipped `system.cfg` (`r_EnableNvidiaAftermath 1`,
+  `r_EnableNvidiaAftermathShaderDumps 1`), each new shader also takes one global lock, an Aftermath driver call and a
+  bytecode copy kept for the session. Next: A/B boots with the shader dumps off, then Aftermath off.
