@@ -360,3 +360,8 @@ Also: Unity profiling best practices (35 % headroom, CPU vs GPU bound): https://
 - Stream unpack hook (FUN_1803d9224) counts: of ~145k blocks, 0 were a first block with a fresh z_stream: ~119k
   later blocks of a file, ~18.6k with no z_stream (one-shot, a local stream), ~6.9k overlapping. The one-shot ones
   are the next candidate for libdeflate.
+- Fixed boot (20:32): **47.3 s** (54.3 with libdeflate only, 61-62 with neither). 23,240 of 23,335 entries served
+  (3.4 GB, 0 bad), the game came first on 505. Steps: open 5.9, terrain 14.7 (unchanged: not bound by these
+  unpacks), one-thread 2.4 (8.0), pre-save 6.9, save 17.5 s. Worker time: read 46 s + unpack 7 s over 6 threads,
+  all before or during the load at background priority. The streaming engine's zlib (~25 s of thread time during
+  the load, FUN_1803d9224 blocks) is now the biggest unpack cost left.
