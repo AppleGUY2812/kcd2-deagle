@@ -15,6 +15,8 @@
 //   Mode 1 checks itself first: its first 300 requests run as verify, and one mismatch drops it to 0 for the session.
 // Every 2 s with activity the log gets one "streamio:" line: requests, MB, MB/s, how busy the read threads were (time
 // inside the hook over wall time, summed over the threads that call it), time waiting for the pak lock, request
-// sizes; every 30 s the paks read the most.
+// sizes; every 30 s the paks read the most. A "streamio locks:" line (every 2 s with reads, first 15 minutes) says how
+// often a pak IO lock was held, by which thread, and how often a thread was queued behind it: the lock is held across
+// the whole 128 KB read loop, and the main thread's own pak reads take the same lock.
 void Streamio_Install(uintptr_t gameBase, void* selfModule);   // before the level load
 void Streamio_Command(const char* args);

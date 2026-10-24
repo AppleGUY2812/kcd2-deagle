@@ -50,6 +50,127 @@ std::unordered_map<uint8_t*, Pak> g_paks;
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long t) { return 1000.0 * (double)t / (double)g_freq; }
 
+// ---- Lock probe: who holds the pak IO locks, and whether a thread is queued behind them (the step-2 session's note,
+// 2026-10-23: this lock function is the top frame in 29 % of Main's step-5 samples). The lock is the game's recursive
+// mutex (FUN_1803d902c / FUN_18042dc54): +0 SRWLOCK (bit 1 set = a thread is queued on it), +8 recursion count,
+// +0xc owner thread id, written right after the acquire and zeroed right before the release. A thread looks at every
+// pak lock the stream reads have used, about once a millisecond while reads come in. It only reads.
+constexpr int kMaxLocks = 64;
+std::atomic<uint8_t*> g_lockAt[kMaxLocks];
+uint8_t* g_lockCache[kMaxLocks];          // the cache (pak) each lock belongs to, for its name
+std::atomic<int> g_nLocks{0};
+std::mutex g_lockRegMu;
+std::atomic<ULONGLONG> g_lastReq{0};      // GetTickCount64 of the latest stream read
+
+void NoteLock(uint8_t* cache) {
+	uint8_t* m = *(uint8_t**)(cache + 0x998) + 8;
+	const int n = g_nLocks.load(std::memory_order_acquire);
+	for (int i = 0; i < n; i++) if (g_lockAt[i].load(std::memory_order_relaxed) == m) return;
+	std::lock_guard<std::mutex> g(g_lockRegMu);
+	const int k = g_nLocks.load(std::memory_order_relaxed);
+	for (int i = 0; i < k; i++) if (g_lockAt[i].load(std::memory_order_relaxed) == m) return;
+	if (k >= kMaxLocks) return;
+	g_lockCache[k] = cache;
+	g_lockAt[k].store(m, std::memory_order_relaxed);
+	g_nLocks.store(k + 1, std::memory_order_release);
+}
+
+// Guarded: a pak closed since its lock was noted can't crash the game. No C++ objects here (MSVC forbids __try next
+// to unwinding).
+bool PeekLock(const uint8_t* m, uintptr_t* word, uint32_t* owner) {
+	__try { *word = *(volatile const uintptr_t*)m; *owner = *(volatile const uint32_t*)(m + 0xc); return true; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+std::string ThreadName(DWORD tid) {
+	using GetDesc = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+	static const GetDesc get = (GetDesc)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetThreadDescription");
+	char out[96];
+	snprintf(out, sizeof out, "thread %lu", tid);
+	if (!get) return out;
+	const HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, tid);
+	if (!h) return out;
+	PWSTR w = nullptr;
+	if (SUCCEEDED(get(h, &w)) && w) {
+		if (*w) WideCharToMultiByte(CP_UTF8, 0, w, -1, out, sizeof out, nullptr, nullptr);
+		LocalFree(w);
+	}
+	CloseHandle(h);
+	return out;
+}
+
+std::string PakName(uint8_t* cache);
+
+// Every 2 s with reads: "streamio locks:" = share of looks where a pak lock was held, by holder thread, and where a
+// thread was queued behind it, by holder; the busiest pak. Runs for the first 15 minutes after start.
+DWORD WINAPI LockProbe(LPVOID) {
+	struct Who { DWORD tid; long long held, queued; };
+	constexpr int kWho = 12;                      // the last slot gathers everyone else
+	Who who[kWho] = {};
+	long long looks = 0, anyHeld = 0, anyQueued = 0, perLock[kMaxLocks] = {};
+	std::unordered_map<DWORD, std::string> names;
+	const ULONGLONG start = GetTickCount64();
+	ULONGLONG first = 0;
+	while (GetTickCount64() - start < 15ull * 60 * 1000) {
+		const ULONGLONG now = GetTickCount64();
+		if (now - g_lastReq.load(std::memory_order_relaxed) > 3000) {
+			if (!looks) { Sleep(100); continue; }   // idle: flush what was gathered below, then wait
+		} else {
+			Sleep(1);
+			if (!first) first = now;
+			const int n = g_nLocks.load(std::memory_order_acquire);
+			bool held = false, queued = false;
+			for (int i = 0; i < n; i++) {
+				uintptr_t w = 0;
+				uint32_t owner = 0;
+				if (!PeekLock(g_lockAt[i].load(std::memory_order_relaxed), &w, &owner) || !owner) continue;
+				held = true;
+				perLock[i]++;
+				int s = 0;
+				while (s < kWho - 1 && who[s].tid && who[s].tid != owner) s++;
+				if (s < kWho - 1 && !who[s].tid) who[s].tid = owner;
+				who[s].held++;
+				if (w & 2) { who[s].queued++; queued = true; }
+			}
+			looks++;
+			anyHeld += held;
+			anyQueued += queued;
+			if (now - first < 2000) continue;
+		}
+		const double secs = (GetTickCount64() - first) / 1000.0;
+		std::string h, q;
+		for (int s = 0; s < kWho; s++) {
+			if (!who[s].held) continue;
+			std::string nm = "others";
+			if (s < kWho - 1) {
+				auto it = names.find(who[s].tid);
+				if (it == names.end()) it = names.emplace(who[s].tid, ThreadName(who[s].tid)).first;
+				nm = it->second;
+			}
+			char one[160];
+			snprintf(one, sizeof one, "%s%s %.0f %%", h.empty() ? "" : ", ", nm.c_str(), 100.0 * who[s].held / looks);
+			h += one;
+			if (who[s].queued) {
+				snprintf(one, sizeof one, "%s%s %.0f %%", q.empty() ? "" : ", ", nm.c_str(), 100.0 * who[s].queued / looks);
+				q += one;
+			}
+		}
+		int top = -1;
+		const int n = g_nLocks.load(std::memory_order_acquire);
+		for (int i = 0; i < n; i++) if (perLock[i] && (top < 0 || perLock[i] > perLock[top])) top = i;
+		Log("streamio locks: %lld looks in %.1f s, a pak lock held %.0f %% [%s], a thread queued behind it %.0f %% [behind "
+		    "%s]; busiest %s %.0f %% (%d locks)", looks, secs, 100.0 * anyHeld / looks, h.empty() ? "-" : h.c_str(),
+		    100.0 * anyQueued / looks, q.empty() ? "-" : q.c_str(), top >= 0 ? PakName(g_lockCache[top]).c_str() : "-",
+		    top >= 0 ? 100.0 * perLock[top] / looks : 0.0, n);
+		for (auto& x : who) x.held = x.queued = 0;   // slots keep their thread
+		looks = anyHeld = anyQueued = 0;
+		for (auto& x : perLock) x = 0;
+		first = 0;
+	}
+	Log("streamio locks: probe off (15 minutes after start)");
+	return 0;
+}
+
 void CountPak(uint8_t* cache, HANDLE h, long long bytes) {
 	std::lock_guard<std::mutex> g(g_pakMu);
 	Pak& p = g_paks[cache];
@@ -67,6 +188,12 @@ void CountPak(uint8_t* cache, HANDLE h, long long bytes) {
 	}
 	p.bytes += bytes;
 	p.calls++;
+}
+
+std::string PakName(uint8_t* cache) {
+	std::lock_guard<std::mutex> g(g_pakMu);
+	auto it = g_paks.find(cache);
+	return it != g_paks.end() ? it->second.name : "?";
 }
 
 // One positional read of the whole request (sector-aligned) under the pak's lock, into a per-thread buffer.
@@ -118,6 +245,8 @@ uint32_t __fastcall HkRead(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t
 		return g_orig(cache, entry, out, offset, size);
 	}
 	const int64_t want = size ? size : (int64_t)*(uint32_t*)(entry + 4);
+	g_lastReq.store(GetTickCount64(), std::memory_order_relaxed);
+	NoteLock(cache);
 	long long lockTicks = 0, readTicks = 0;
 	uint32_t r = 0;
 	bool verify = mode == 2;
@@ -239,7 +368,10 @@ void Streamio_Install(uintptr_t base, void* self) {
 	Log("streamio: mode %d (%s), ReadFileStreaming hook %s, sys_UncachedStreamReads %d", g_mode.load(),
 	    g_mode == 0 ? "game reads, counted" : g_mode == 1 ? "one read per request, self-check first" : "verify both",
 	    h ? "on" : "FAILED", *g_uncached);
-	if (h) CloseHandle(CreateThread(nullptr, 0, Reporter, nullptr, 0, nullptr));
+	if (h) {
+		CloseHandle(CreateThread(nullptr, 0, Reporter, nullptr, 0, nullptr));
+		CloseHandle(CreateThread(nullptr, 0, LockProbe, nullptr, 0, nullptr));
+	}
 }
 
 void Streamio_Command(const char* args) {
