@@ -4,7 +4,8 @@
 //   streamahead_test serve     reads the list ahead and serves the same requests: every byte checked, most served
 //   streamahead_test shed      RAM gets short after the read-ahead: every copy is freed, the game reads them itself
 //   streamahead_test changed   the pak's write time changed since the list: nothing may be served
-//   streamahead_test gate      RAM short the whole time, but a loading screen waits: the 64 MB window still serves most
+//   streamahead_test gate      RAM short the whole time, but a loading screen waits: the 64 MB window still serves most,
+//                              read by up to 16 readers at once ("most reads in flight" in the status line)
 // Exit code 0 = pass.
 #include "../src/streamahead.h"
 #include "../src/ramgov.h"

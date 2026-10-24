@@ -24,6 +24,7 @@ void Streamahead_Record(uint8_t* cache, uint8_t* entry, int64_t offset, int64_t 
 void Streamahead_Stats(long long* served, long long* gameFirst, long long* notListed);
 void Streamahead_OnLoaded();                  // gameplay started (Lua "loaded")
 // A save-load / fast-travel screen waits (readiness.cpp, every frame). While it does, the readers also read below the
-// free-RAM rule: at most 64 MB held, just ahead of the game, down to 400 MB free (boot 31: nothing was held in Settle).
+// free-RAM rule: at most 64 MB held, just ahead of the game, down to 400 MB free (boot 31: nothing was held in Settle),
+// and 12 more readers join the 4 (16 reads of up to 1 MB in flight).
 void Streamahead_SetGate(bool open);
 void Streamahead_Command(const char* args);
