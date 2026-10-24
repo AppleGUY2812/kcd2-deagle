@@ -38,6 +38,9 @@ if command -v g++ >/dev/null; then
   # the concept graph's find-by-name without the deque (native/src/conceptbfs_core.h) against the game's algorithm
   { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/conceptbfs_test.cpp -o native/build/test/conceptbfs_test &&
     native/build/test/conceptbfs_test >/dev/null; } || { echo "FAIL conceptbfs_test"; fail=1; }
+  # Storm's rule pass with remembered condition sets (native/src/stormmemo_core.h) against the game's rule walk
+  { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/stormmemo_test.cpp -o native/build/test/stormmemo_test &&
+    native/build/test/stormmemo_test >/dev/null; } || { echo "FAIL stormmemo_test"; fail=1; }
   # the quest build's rttr registry sorted insert (native/src/questfast_sort.h) against std::stable_sort
   { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/questfast_sort_test.cpp -o native/build/test/questfast_sort_test &&
     native/build/test/questfast_sort_test >/dev/null; } || { echo "FAIL questfast_sort_test"; fail=1; }

@@ -29,6 +29,7 @@
 #include "loadwatch.h"
 #include "applyfast.h"
 #include "conceptbfs.h"
+#include "stormmemo.h"
 #include "questmenu.h"
 #include "animahead.h"
 #include "questprof.h"
@@ -1607,6 +1608,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
 	Applyfast_Install(g_game.base, g_self);   // faster pieces of the save load's apply step (applyfast.cpp)
 	Conceptbfs_Install(g_game.base, g_self);   // the concept graph's name lookup without its deque (conceptbfs.cpp)
+	Stormmemo_Install(g_game.base, g_self);   // Storm's named condition sets remembered per character (stormmemo.cpp)
 	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
 	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
