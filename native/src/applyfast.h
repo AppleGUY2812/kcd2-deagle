@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-// Faster pieces of the save load's "apply save" step (level state 5, ~6 s on the main thread; RE report 2026-10-24,
+// Faster pieces of the save load: the "apply save" step (level state 5, ~6 s on the main thread; RE report 2026-10-24,
 // scratchpad re_stepG.md). Every fast path gives the game's own answer.
 // 1. Map clouds vs fog of war (~0.86 s in boot 13). After the save's fog of war is read, every map cloud (2,601:
 //    mapClouds.xml, trosecko 1137 + kutnohorsko 1464) asks C_FogOfWar<3,4> "is any revealed cell inside this 12-point
@@ -9,6 +9,9 @@
 //    ~99 % of the tests can't hit. The hook computes the cloud's box and answers "no" for every 64 m grid node
 //    (FUN_180b59c54) that lies outside it padded by 1 m. Exact: a point outside a polygon's box has an even crossing
 //    count (FUN_180b59d88 is the even-odd test), and a rectangle outside the box can't overlap the polygon.
+// 2. The facial DBA list (objects step, ~0.66 s in boot 13): the chrparams loader inserts 19,800 facial .dba paths
+//    one by one into a sorted array, in the file finder's order, so every insert shifted the tail (O(n^2)). The hook
+//    sorts the finder's result by the array's own key first, so every insert lands at the end. Same set either way.
 // Mode in deagle_applyfast.txt next to the plugin: 0 off, 1 on, 2 on + every 64th skipped node also asked the game's
 // way (a "MISMATCH" line if it ever says yes; default until boots confirm). Totals go to the log at gameplay start.
 void Applyfast_Install(uintptr_t gameBase, void* selfModule);

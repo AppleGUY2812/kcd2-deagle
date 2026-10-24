@@ -3,7 +3,9 @@
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
+#include <algorithm>
 #include <atomic>
+#include <intrin.h>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -99,12 +101,64 @@ uint64_t __fastcall HkFogNode(void* node, uint8_t* fog, float* rect, uint8_t* po
 
 std::atomic<long long> s_lastClouds{0}, s_lastTicks{0};
 
+// ---- 2. the facial DBA list, sorted before the game inserts it (objects step; RE report re_stepC.md)
+// male/female.chrparams: `$TracksDatabase path="Animations\humans\facials\*.dba"` makes the file finder
+// FUN_18041d194 (recursive) return 19,800 paths into the vector at its 5th argument. The caller (return address
+// 0x1803c5e35) inserts each into a sorted array (FUN_1803c6c60: '\' -> '/', ASCII lower case; lower_bound
+// FUN_1803c6b0c compares unsigned bytes). The paths come unsorted, so every insert shifted the tail: 0.66 s in boot 13.
+// Sorted by the same key first, every insert lands at the end. The set holds the same paths in any order.
+constexpr uintptr_t kRvaFind = 0x41d194, kRvaFindChrparams = 0x3c5e35;
+const unsigned char kFindBytes[] = { 0x40,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48 };
+const unsigned char kFindCallBytes[] = { 0x48,0x8d,0x4d,0x90 };   // at the return address: lea rcx,[rbp-70h]
+using FindFn = void(__fastcall*)(void* a1, void* a2, void* a3, void* a4, uint64_t* out);
+FindFn g_find = nullptr;
+uintptr_t g_base = 0;
+std::atomic<long long> s_sorts{0}, s_sorted{0}, s_moved{0}, s_sortTicks{0};
+
+inline unsigned char DbaKey(char c) {
+	const unsigned char u = (unsigned char)c;
+	return u == '\\' ? '/' : ((unsigned)(u - 'A') < 26u ? (unsigned char)(u + 32) : u);
+}
+bool DbaLess(uint64_t a, uint64_t b) {
+	const char* x = (const char*)a;
+	const char* y = (const char*)b;
+	if (!x || !y) return x < y;
+	for (;; x++, y++) {
+		const unsigned char p = DbaKey(*x), q = DbaKey(*y);
+		if (p != q) return p < q;
+		if (!p) return false;
+	}
+}
+
+void __fastcall HkFind(void* a1, void* a2, void* a3, void* a4, uint64_t* out) {
+	const uintptr_t ret = (uintptr_t)_ReturnAddress();
+	g_find(a1, a2, a3, a4, out);
+	if (g_mode && out && ret == g_base + kRvaFindChrparams) {
+		const long long t0 = Now();
+		uint64_t* b = (uint64_t*)out[0];
+		uint64_t* e = (uint64_t*)out[1];
+		if (b && e && b < e) {
+			const size_t n = (size_t)(e - b);
+			size_t out_of_order = 0;
+			for (size_t i = 1; i < n; i++) out_of_order += DbaLess(b[i], b[i - 1]);
+			if (out_of_order) std::sort(b, e, DbaLess);
+			s_sorted += (long long)n;
+			s_moved += (long long)out_of_order;
+		}
+		s_sorts++;
+		s_sortTicks += Now() - t0;
+	}
+}
+
 }  // namespace
 
 void Applyfast_OnLoaded() {
 	const long long c = s_clouds.load(), t = s_ticks.load();
 	const long long dc = c - s_lastClouds.exchange(c), dt = t - s_lastTicks.exchange(t);
-	if (!dc) return;
+	if (!dc && !s_sorts.load()) return;
+	if (s_sorts.load())
+		Log("applyfast: facial DBA lists sorted before the game inserts them: %lld lists, %lld paths (%lld out of order), "
+		    "%.1f ms", s_sorts.load(), s_sorted.load(), s_moved.load(), s_sortTicks.load() * 1000.0 / g_freq);
 	Log("applyfast: fog: %lld cloud asks in %.0f ms (%lld said yes); grid nodes %lld, skipped %lld (outside the cloud's box), "
 	    "checked the game's way %lld, mismatches %lld; mode %d", dc, dt * 1000.0 / g_freq, s_yes.load(), s_nodes.load(),
 	    s_culled.load(), s_checked.load(), s_bad.load(), g_mode);
@@ -126,6 +180,9 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	const bool b = a && Hook(base, kRvaFogNode, kFogNodeBytes, sizeof kFogNodeBytes, (void*)&HkFogNode, (void**)&g_fogNode,
 	                         "fog node");
 	if (a && !b) MH_DisableHook((void*)(base + kRvaFogAny));
-	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s", g_mode,
-	    g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF");
+	g_base = base;
+	const bool c = !memcmp((void*)(base + kRvaFindChrparams), kFindCallBytes, sizeof kFindCallBytes) &&
+	               Hook(base, kRvaFind, kFindBytes, sizeof kFindBytes, (void*)&HkFind, (void**)&g_find, "facial DBA list");
+	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s", g_mode,
+	    g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF", c ? "on" : "OFF");
 }
