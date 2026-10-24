@@ -20,6 +20,7 @@
 #include "fastzip.h"
 #include "pakahead.h"
 #include "cvars.h"
+#include "xmlahead.h"
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
@@ -1223,6 +1224,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "fastzip")) Fastzip_Command(rest);
 	else if (!strcmp(cmd, "pakahead")) Pakahead_Command(rest);
 	else if (!strcmp(cmd, "cvars")) Cvars_Command(rest);
+	else if (!strcmp(cmd, "xmlahead")) Xmlahead_Command(rest);
 	else if (!strcmp(cmd, "loaded")) Cvars_OnLoaded();
 	else if (!strcmp(cmd, "fastkey")) {
 		char k[24] = {};
@@ -1581,6 +1583,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
 	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
+	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	uintptr_t fr = FindFrustum();
