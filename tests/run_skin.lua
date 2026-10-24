@@ -31,6 +31,10 @@ local rig = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_"
 check("mirror: the body's 10 rigid pieces on their bones (Silhouette POM needs static meshes)",
 	M.attachCgf and M.attachCgf.vm_rigid_mirror_J_Gun == rig .. "j_gun.cgf" and M.attachCgf.vm_rigid_mirror_tag_slide == rig .. "tag_slide.cgf"
 	and M.hidden.vm_rigid_mirror_tag_mag_release == false, M.attachCgf and M.attachCgf.vm_rigid_mirror_J_Gun)
+check("mirror: the pieces wear plain POM by default", M.attachMtl.vm_rigid_mirror_J_Gun == "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_pom", M.attachMtl.vm_rigid_mirror_J_Gun)
+M.console("deagle_spom", "spom"); step(0.1)
+check("deagle_spom spom: every piece switched to Silhouette POM, live", M.attachMtl.vm_rigid_mirror_tag_slide == "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid", M.attachMtl.vm_rigid_mirror_tag_slide)
+M.console("deagle_spom", "pom"); step(0.1)
 local made = M.runtimeCgf
 M.console("deagle_skin", "main"); step(0.1)
 M.console("deagle_skin", "main"); step(0.1)

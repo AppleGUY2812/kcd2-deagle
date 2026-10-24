@@ -14,8 +14,14 @@ local PARTS = { "vm_mesh", "vm_mag1", "vm_mag2", "vm_round_1", "vm_round_2", "vm
 -- A skin's body as RIGID pieces on the gun's bones (2026-10-23, the gun-mirror session; tools/ron/mk_grizzly_rigid.py):
 -- KCD2's Silhouette POM only works on static meshes (on the skinned body every ray missed: the gun went invisible).
 -- Every vertex of the Grizzly's body rides one bone, so each bone's piece is a CGF in that bone's frame, attached with
--- CreateBoneAttachment(.., false) + SetAttachmentCGF: it moves exactly like the skin. That skin's .mtl draws the
+-- CreateBoneAttachment(.., true) + SetAttachmentCGF (the CGF in model space; the engine's projection adds the inverse
+-- default joint): it moves exactly like the skin. That skin's .mtl draws the
 -- skinned body NoDraw; any other skin hides the pieces.
+-- The pieces' material: "pom" (plain POM, the default) or "spom" (Silhouette POM: on the viewmodel it still drew
+-- nothing on 2026-10-23, even on these static pieces; deagle_spom test / spom / pom to find out why, live).
+Deagle.SKIN_RIGID_MTL = { pom = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_pom",
+	spom = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid" }
+Deagle.skinRigidLook = Deagle.skinRigidLook or "pom"
 Deagle.SKIN_RIGID = { ron_grizzly = { mirror = { cgf = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_",
 	bones = { "J_Gun", "tag_slide", "tag_sight", "tag_barrel", "tag_grip_safety", "tag_hammer", "tag_slidelock_safety",
 		"tag_slidelock", "tag_trigger", "tag_mag_release" } } } }
@@ -61,10 +67,11 @@ function Deagle:SkinRigid(vm, want)
 			local att = "vm_rigid_" .. name .. "_" .. bone
 			if name == want then
 				if not made[att] then
-					pcall(vm.CreateBoneAttachment, vm, 0, bone, att, false)
+					pcall(vm.CreateBoneAttachment, vm, 0, bone, att, true)   -- projected: the CGF is in model space (bind pose), the engine adds inverse(default joint)
 					local ok = pcall(vm.SetAttachmentCGF, vm, 0, att, d.cgf .. string.lower(bone) .. ".cgf")   -- also shows it
 					made[att] = ok
 					if not ok then log("skin " .. name .. ": rigid piece " .. bone .. " failed to load") end
+					pcall(vm.ChangeAttachmentMaterial, vm, att, self.SKIN_RIGID_MTL[self.skinRigidLook] or self.SKIN_RIGID_MTL.pom)
 				else
 					pcall(vm.HideAttachment, vm, 0, att, false, false)
 				end
@@ -75,6 +82,37 @@ function Deagle:SkinRigid(vm, want)
 		end
 	end
 	return shown
+end
+
+-- deagle_spom pom | spom: the rigid pieces' material, live; deagle_spom test: two 5x copies of the frame piece 1.5 m
+-- ahead as plain world objects, Silhouette POM on the left, plain POM on the right (does SilPOM draw our mesh at all,
+-- away from the viewmodel?)
+function Deagle:SpomCmd(arg)
+	if arg == "test" then
+		for _, n in ipairs({ "deagle_spomtest_spom", "deagle_spomtest_pom" }) do local e = System.GetEntityByName(n) if e then System.RemoveEntity(e.id) end end
+		local p, d = System.GetViewCameraPos(), System.GetViewCameraDir()
+		local rl = math.sqrt(d.x * d.x + d.y * d.y); local r = rl > 0 and { x = d.y / rl, y = -d.x / rl } or { x = 1, y = 0 }
+		local cgf = (self.SKIN_RIGID.ron_grizzly.mirror.cgf) .. "j_gun.cgf"
+		for _, c in ipairs({ { "deagle_spomtest_spom", -0.4, self.SKIN_RIGID_MTL.spom }, { "deagle_spomtest_pom", 0.4, self.SKIN_RIGID_MTL.pom } }) do
+			local pos = { x = p.x + d.x * 1.5 + r.x * c[2], y = p.y + d.y * 1.5 + r.y * c[2], z = p.z + d.z * 1.5 - 0.4 }
+			local e = System.SpawnEntity({ class = "BasicEntity", name = c[1], position = pos, flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = cgf } })
+			if e then pcall(e.LoadObject, e, 0, cgf); pcall(e.SetScale, e, 5); pcall(e.SetMaterial, e, c[3]) end
+			log(string.format("spom test: %s %s at %.1f %.1f %.1f", c[1], e and "spawned" or "FAILED", pos.x, pos.y, pos.z))
+		end
+		self:Notify("left: Silhouette POM, right: plain POM (deagle_spom clear removes them)")
+	elseif arg == "clear" then
+		for _, n in ipairs({ "deagle_spomtest_spom", "deagle_spomtest_pom" }) do local e = System.GetEntityByName(n) if e then System.RemoveEntity(e.id) end end
+	elseif self.SKIN_RIGID_MTL[arg] then
+		self.skinRigidLook = arg
+		local vm = self.vmId and System.GetEntity(self.vmId)
+		local n = 0
+		for att, ok in pairs(self.skinRigidMade or {}) do
+			if ok and vm and pcall(vm.ChangeAttachmentMaterial, vm, att, self.SKIN_RIGID_MTL[arg]) then n = n + 1 end
+		end
+		log("spom: the rigid pieces wear " .. arg .. " (" .. n .. " pieces)"); self:Notify("gun pieces: " .. arg)
+	else
+		self:Notify("deagle_spom pom | spom | test | clear")
+	end
 end
 
 function Deagle:SkinCmd(arg)
@@ -109,3 +147,4 @@ end
 Deagle:SkinWatchKick()
 
 System.AddCCommand("deagle_skin", "Deagle:SkinWatchKick(); Deagle:SkinCmd(Deagle.Arg([[%1]]))", "deagle_skin [name]: the gun's finish (Grizzly: main, silver, mirror), kept; no name lists them")
+System.AddCCommand("deagle_spom", "Deagle:SpomCmd(Deagle.Arg([[%1]]))", "deagle_spom pom|spom|test|clear: the mirror gun pieces' material (plain or Silhouette POM), or a side-by-side SilPOM test in the world")

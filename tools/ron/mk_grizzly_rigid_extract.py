@@ -49,9 +49,14 @@ for b, ts in sorted(parts.items(), key=lambda kv: -len(kv[1])):
     inv = mats[joints.index(b)]
     tri = idx[ts]
     p = P[tri[:, :, vo]].reshape(-1, 3); n = N[tri[:, :, no]].reshape(-1, 3); uv = UV[tri[:, :, to]].reshape(-1, 2)
-    ph = (np.c_[p, np.ones(len(p))] @ bsm.T) @ inv.T
-    nl = n @ np.linalg.inv(inv[:3, :3]); nl /= np.linalg.norm(nl, axis=1, keepdims=True)
+    # MODEL space (the bind pose, as the .skin holds it): CreateBoneAttachment(.., true) projects the attachment
+    # (CE 5.7.1 CAttachmentBONE::ProjectAttachment: relative = inverse(default joint) x absolute default (identity)),
+    # so the engine places the piece with its own joint frames: world = joint x inverse(default joint) x model vertex,
+    # the skinning itself. The bone-space version (x the DAE's inverse bind, attached unprojected) landed rotated and
+    # off the gun in game (the user's screenshot 2026-10-23): the DAE's frames are not the engine's.
+    ph = np.c_[p, np.ones(len(p))] @ bsm.T
+    nl = n @ np.linalg.inv(bsm[:3, :3]); nl /= np.linalg.norm(nl, axis=1, keepdims=True)
     np.savez(os.path.join(OUT, f'part_{b}.npz'), p=ph[:, :3], n=nl, uv=uv)
     out[b] = len(ts)
-    print('%-22s tris %5d  bone-space bbox %s .. %s' % (b, len(ts), ph[:, :3].min(0).round(3), ph[:, :3].max(0).round(3)))
+    print('%-22s tris %5d  model-space bbox %s .. %s' % (b, len(ts), ph[:, :3].min(0).round(3), ph[:, :3].max(0).round(3)))
 json.dump(out, open(os.path.join(OUT, 'parts.json'), 'w'), indent=1)
