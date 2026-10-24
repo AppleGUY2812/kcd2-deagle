@@ -74,3 +74,25 @@ Chain, bottom up (all SETTLED):
   `r_EnableNvidiaAftermathShaderDumps 0` (and one with `r_EnableNvidiaAftermath 0`, which must land before the device
   is created; the log line "NVidia Aftermath: Enabled/Disabled" shows which took). Cost of turning them off: GPU crash
   dumps for Warhorse's crash reporter only.
+
+## MEASURED 2026-10-24 01:46 boot (the load session's, a50aeaf's file list + stacks): the 4 s is NGX start-up
+- The 3994 ms first gameplay frame is the render thread starting NVIDIA NGX (DLSS core), not shaders: `_nvngx.dll`
+  loads at 113 ms; then CUDA + an NGX model .bin (913 ms), nvngx_dlssg.dll from the exe folder (960 ms, loaded and
+  dropped), vulkan-1 + the NVIDIA store's nvngx_dlssg (1296 ms), nvngx_dlssd.dll from the exe folder (76 MB, 1539 ms,
+  stays loaded), the store's nvngx_dlssd (1943 ms), NvTelemetryAPI64 (2860 ms). The exe-folder dlssd/dlssg are DLSS
+  Enabler leftovers (2026-10-21) that KCD2 never uses.
+- In between, about 15 rounds of ~200 ms (3.1 of the 3.7 s): each re-reads the driver settings database
+  (`C:\ProgramData\NVIDIA Corporation\Drs\nvdrsdb0.bin`, 1.9 MB, 18 times) and checks for d3d9/ddraw/opengl32 next
+  to the exe (195 times each), which looks like the driver re-matching its application profile for each NGX query; plus
+  Windows signature checks of each DLL (wintrust/catroot, bcrypt hashing of the whole file).
+- Stacks (in-game scan): `_nvngx.dll` on 35 % of samples, nvapi64_impl 53 %, wintrust 24 %, bcrypt 23 %, WHGame 5 %.
+- The 2026-10-23 18:31 OptiScaler run had the same start-up as one 5.15 s frame at 18:31:31-36 (26 s after launch),
+  not in the first gameplay frame (1.4 s there, DLSS feature creation 0.6 s). So it is a once-per-launch cost whose
+  place depends on when the game first runs the super-resolution settings pass. The measured boots load the save with
+  `wh_sys_AutoLoadLastSave` (no main menu): whether a normal launch pays it at the main menu instead is NOT known.
+- Moving it: `FUN_181e0b7c0` (DLSS NGX init, sets +0x8d4) has no early return before the full NGX init, and
+  `FUN_182555bb8` (Init) skips creating the 3 DLSS targets once +0x8d4 is set, so an early call from another thread
+  needs either a second NGX init (behaviour unknown) or the targets made off the render thread: not done.
+- Cheaper candidates (need the user's go, their files and NVIDIA app settings): move the DLSS Enabler leftovers out of
+  the exe folder (sl.*.dll, nvngx_dlssd/dlssg/dlssnr.dll, dlssg_to_fsr3_amd_is_better.dll), and turn off the NVIDIA
+  app's Ray Reconstruction / Frame Generation overrides for KCD2 (the game has neither). Each should remove rounds.
