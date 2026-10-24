@@ -22,5 +22,9 @@
 //   "readiness: gate ... let in early after N s; still loading: ..."
 // While a gate holds the screen (0.25 s or more), and 1.5 s after, every main-thread file read is logged (mainreads.h).
 void Readiness_Install(uintptr_t gameBase);   // after MH_Initialize
-void Readiness_Command(const char* args);     // "readiness [early 0|1]"
+// "readiness temp <MB>" (32-512; 0 = the game's own, the default; kept as the file's second number): while a save-load
+// or fast-travel gate waits, the stream engine's temp memory budget (sys_streaming_memory_budget, 20 MB in Warhorse's
+// system.cfg) is raised to that, then put back. The "waiting" lines show the reader: asleep with work queued (temp
+// memory or a pause holds it), asleep with nothing queued, temp memory full.
+void Readiness_Command(const char* args);     // "readiness [early 0|1] [temp 0|32-512]"
 void Readiness_Frame();   // main thread, once a drawn frame (main.cpp OnCamera)

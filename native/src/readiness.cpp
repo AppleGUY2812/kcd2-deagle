@@ -48,6 +48,11 @@ uint8_t* g_service = nullptr;
 bool g_off = true;
 int g_state = -100;
 std::atomic<int> g_earlyMode{ 0 };   // "let me in early" (readiness_early.h): 0 off, 1 on; deagle_readiness.txt
+// "readiness temp <MB>": the stream engine's temp memory budget (sys_streaming_memory_budget, Warhorse's system.cfg
+// 20480 KB) raised to this while a save-load or fast-travel gate waits, then put back; 0 = the game's own (default).
+// Kept as the second number in deagle_readiness.txt.
+std::atomic<int> g_tempMB{ 0 };
+int g_tempOrig = -1;   // KB, the value we raised from (-1: not raised)
 std::string g_modeFile;
 const early::Cfg g_earlyCfg;
 long long g_freq = 1, g_lastTick = 0, g_lastStateCheck = 0;
@@ -270,6 +275,38 @@ std::string Feed(int frames, double longest) {
 	return out + s;
 }
 
+// sys_streaming_memory_budget's variable (KB): FUN_18046459c copies it into the pool budget (engine E+0x140, i.e.
+// stream engine pointer +0x50) as `<< 10` before each request, so a write takes effect at the next request. Written
+// only while it matches the budget the pool holds (checked each time), and put back when the gates are gone.
+constexpr uintptr_t kRvaTempBudgetKB = 0x49291f8;
+bool Wr(uintptr_t a, const void* in, size_t n) {
+	__try { memcpy((void*)a, in, n); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void TempBudget(bool want) {
+	const int mb = g_tempMB.load(std::memory_order_relaxed);
+	int32_t kb = 0, pool = 0;
+	uintptr_t eng = 0;
+	if (!Rd(g_base + kRvaTempBudgetKB, &kb, 4) || !Rd(g_base + kRvaStreamEngine, &eng, 8) || !eng || !Rd(eng + 0x50, &pool, 4))
+		return;
+	if (want && mb > 0 && g_tempOrig < 0 && kb > 0 && kb < mb * 1024) {
+		if ((int64_t)kb << 10 != pool) {   // the variable isn't the budget the pool uses: leave it alone, say so once
+			static bool said = false;
+			if (!said) Log("readiness: temp budget not raised (variable %d KB, pool budget %d KB: layout differs)", kb, pool >> 10);
+			said = true;
+			return;
+		}
+		const int32_t v = mb * 1024;
+		if (Wr(g_base + kRvaTempBudgetKB, &v, 4)) {
+			g_tempOrig = kb;
+			Log("readiness: stream temp budget %d -> %d MB while the screen waits", kb / 1024, mb);
+		}
+	} else if (!want && g_tempOrig >= 0) {
+		if (kb == mb * 1024 || mb == 0) Wr(g_base + kRvaTempBudgetKB, &g_tempOrig, 4);   // not if someone else set it since
+		Log("readiness: stream temp budget back to %d MB", g_tempOrig / 1024);
+		g_tempOrig = -1;
+	}
+}
+
 // The HDD reader (the one thread that reads every game pak), from ~/re/work/settle_feed/report.md section 4 (layout
 // INFERRED, not yet checked against the game's debug views): engine E = *(base+0x547dae8) - 0xf0; reader T = *(E+0x78):
 // sorted queue T+0x70/+0x78 and incoming T+0xa0/+0xa8 (vectors of pointers), T+0xf8 the count of threads parked in
@@ -363,8 +400,10 @@ void Readiness_Install(uintptr_t base) {
 	g_modeFile = path;
 	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "deagle_readiness.txt";
 	if (FILE* fp = fopen(g_modeFile.c_str(), "r")) {
-		int m = 0;
-		if (fscanf(fp, "%d", &m) == 1 && (m == 0 || m == 1)) g_earlyMode = m;
+		int m = 0, t = 0;
+		const int n = fscanf(fp, "%d %d", &m, &t);
+		if (n >= 1 && (m == 0 || m == 1)) g_earlyMode = m;
+		if (n == 2 && t >= 0 && t <= 512) g_tempMB = t;
 		fclose(fp);
 	}
 	void* start = (void*)(base + kRvaStart);
@@ -377,23 +416,40 @@ void Readiness_Install(uintptr_t base) {
 	const bool h = MH_CreateHook(start, (void*)&HkStart, (void**)&g_origStart) == MH_OK && MH_EnableHook(start) == MH_OK;
 	g_off = !h;
 	Log("readiness: %s (logs every readiness gate that holds the screen 0.25 s or more, and which task holds it); "
-	    "let me in early %s", h ? "on" : "FAILED to hook the observer start", g_earlyMode ? "ON" : "off");
+	    "let me in early %s; stream temp budget while it waits: %s", h ? "on" : "FAILED to hook the observer start",
+	    g_earlyMode ? "ON" : "off", g_tempMB ? (std::to_string(g_tempMB.load()) + " MB").c_str() : "the game's own");
 }
 
 void Readiness_Command(const char* args) {
 	while (args && *args == ' ') args++;
+	const auto save = [] {
+		if (FILE* f = fopen(g_modeFile.c_str(), "w")) { fprintf(f, "%d %d\n", g_earlyMode.load(), g_tempMB.load()); fclose(f); }
+	};
 	if (args && !strncmp(args, "early", 5)) {
 		const char* v = args + 5;
 		while (*v == ' ') v++;
 		if ((*v == '0' || *v == '1') && (v[1] == 0 || v[1] == ' ')) {
 			g_earlyMode = *v - '0';
-			if (FILE* f = fopen(g_modeFile.c_str(), "w")) { fprintf(f, "%d\n", g_earlyMode.load()); fclose(f); }
+			save();
 			Log("readiness: let me in early %s (kept for the next start in %s)", g_earlyMode ? "ON" : "off",
 			    g_modeFile.c_str());
 			return;
 		}
 	}
-	Log("readiness: %s, let me in early %s  (readiness early 0|1)", g_off ? "off" : "on", g_earlyMode ? "ON" : "off");
+	if (args && !strncmp(args, "temp", 4)) {
+		int mb = -1;
+		if (sscanf(args + 4, "%d", &mb) == 1 && (mb == 0 || (mb >= 32 && mb <= 512))) {
+			g_tempMB = mb;
+			save();
+			Log("readiness: stream temp budget while a load screen waits: %s (kept for the next start)",
+			    mb ? (std::to_string(mb) + " MB").c_str() : "the game's own");
+			return;
+		}
+		Log("readiness: temp takes 0 (the game's own) or 32-512 MB");
+		return;
+	}
+	Log("readiness: %s, let me in early %s, temp budget %d MB (0 = the game's)  (readiness early 0|1, readiness temp 0|32-512)",
+	    g_off ? "off" : "on", g_earlyMode ? "ON" : "off", g_tempMB.load());
 }
 
 void Readiness_Frame() {
@@ -505,6 +561,11 @@ void Readiness_Frame() {
 		}
 	}
 	g_unlock(g_service + 0x38);
+	{
+		bool loadGate = false;
+		for (auto& g : g_gates) if (early::Eligible(g.mask)) loadGate = true;
+		TempBudget(loadGate);
+	}
 	// every file the main thread reads while a gate holds the screen, up to 1.5 s after (mainreads.cpp): names the
 	// XML read in the frame the fast-travel observer fires
 	if (longWait) MainReads_Log(1500);
