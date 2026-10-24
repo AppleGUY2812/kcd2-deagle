@@ -57,7 +57,7 @@ int g_tempOrig = -1;   // KB, the value we raised from (-1: not raised)
 int g_tempSet = -1;    // KB, the value we wrote (restore only while it is still there)
 std::string g_modeFile;
 const early::Cfg g_earlyCfg;
-long long g_freq = 1, g_lastTick = 0, g_lastStateCheck = 0;
+long long g_freq = 1, g_lastTick = 0;
 
 struct Task {
 	void* at;
@@ -402,6 +402,18 @@ void Opened(const Gate& g, long long now, const char* how, std::vector<std::stri
 
 int Readiness_LevelState() { return LevelState(); }
 
+// The level state's changes, from fastload's watcher thread every 10 ms: the frame tick (CSystem::Update) doesn't run
+// during state 4, so Readiness_Frame never saw it (boot 46); this sees every state, frames or not.
+void Readiness_WatchState() {
+	if (g_off || !g_base) return;
+	const int s = LevelState();
+	if (s != g_state) {
+		if (g_state == -100) Log("readiness: level state %d at the first look (-1 = no level manager yet)", s);
+		else Log("readiness: level state %d -> %d", g_state, s);
+		g_state = s;
+	}
+}
+
 void Readiness_Install(uintptr_t base) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
 	HMODULE self = nullptr;
@@ -469,15 +481,6 @@ void Readiness_Frame() {
 	const long long now = Now();
 	const double dt = g_lastTick ? Secs(now - g_lastTick) : 0.0;
 	g_lastTick = now;
-	if (now - g_lastStateCheck >= g_freq / 10) {   // the level manager's state, 10 times a second
-		g_lastStateCheck = now;
-		const int s = LevelState();
-		if (s != g_state) {
-			if (g_state == -100) Log("readiness: level state %d at the first look (-1 = no level manager yet)", s);
-			else Log("readiness: level state %d -> %d", g_state, s);
-			g_state = s;
-		}
-	}
 	{
 		std::lock_guard<std::mutex> l(g_newMu);
 		for (auto& g : g_new) g_gates.push_back(g);

@@ -136,6 +136,10 @@ uintptr_t FindEnv() {
 	return 0;
 }
 
+DWORD WINAPI StateWatch(LPVOID) {   // the level state's changes every 10 ms, frames or not (readiness.cpp)
+	for (;;) { Readiness_WatchState(); Sleep(10); }
+}
+
 DWORD WINAPI Init(LPVOID) {
 	Log("fastload v1 loaded");
 	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); i++) Sleep(100);
@@ -162,6 +166,7 @@ DWORD WINAPI Init(LPVOID) {
 	Hitch_Install(g_game.base, g_game.size, g_self);   // samples the main thread in frames over 250 ms (hitch.cpp)
 	Readiness_Install(g_game.base);   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	PatchUpdate();
+	CreateThread(nullptr, 0, StateWatch, nullptr, 0, nullptr);
 	uintptr_t env = 0;
 	for (int i = 0; i < 240 && !env; i++) { env = FindEnv(); if (!env) Sleep(500); }
 	Log("gEnv %p", (void*)env);

@@ -29,3 +29,4 @@ void Readiness_Install(uintptr_t gameBase);   // after MH_Initialize
 void Readiness_Command(const char* args);     // "readiness [early 0|1] [temp 0|32-512]"
 void Readiness_Frame();   // main thread, once a drawn frame (fastload_main.cpp)
 int Readiness_LevelState();   // the level manager's state (0 in game, 1-9 while a level loads), -1 = none yet; any thread
+void Readiness_WatchState();   // logs "readiness: level state A -> B"; fastload's watcher thread, every 10 ms

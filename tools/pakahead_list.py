@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Make deagle_pakahead_list.txt (the plugin's unpack-ahead list, native/src/pakahead.cpp) from a recording.
+"""Make fastload_pakahead_list.txt (the plugin's unpack-ahead list, native/src/pakahead.cpp) from a recording.
 
-usage: tools/pakahead_list.py <deagle_pakahead_trace.csv> <out list> [--from-ms N] [--until-ms N]
+usage: tools/pakahead_list.py <fastload_pakahead_trace.csv> <out list> [--from-ms N] [--until-ms N]
 (t_ms counts from the plugin's start; the level load is the window to keep, boot reads come before the menu anyway)
 
 Keeps each entry the game read whole and unpacked (or stored), first read only, in time order. Every entry is checked

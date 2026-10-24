@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Make deagle_xmlahead_list.txt (native/src/xmlahead.cpp: the XML files to parse ahead, in the order the load asks).
+"""Make fastload_xmlahead_list.txt (native/src/xmlahead.cpp: the XML files to parse ahead, in the order the load asks).
 
-usage: tools/xmlahead_list.py <deagle_xmlahead_trace.csv> <out list>
-   or: tools/xmlahead_list.py --from-paks <deagle_pakahead_trace.csv> <out list> [--from-ms N] [--until-ms N]
+usage: tools/xmlahead_list.py <fastload_xmlahead_trace.csv> <out list>
+   or: tools/xmlahead_list.py --from-paks <fastload_pakahead_trace.csv> <out list> [--from-ms N] [--until-ms N]
 
 The first form keeps the files the game loaded through LoadXmlFromFile (ok=1, first load only, time order). The second
 guesses from a pak recording: whole reads of .xml entries, the game path being the pak's mount folder + the entry
