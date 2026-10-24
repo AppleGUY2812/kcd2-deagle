@@ -543,3 +543,7 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   precached at level load. With Warhorse's shipped `system.cfg` (`r_EnableNvidiaAftermath 1`,
   `r_EnableNvidiaAftermathShaderDumps 1`), each new shader also takes one global lock, an Aftermath driver call and a
   bytecode copy kept for the session. Next: A/B boots with the shader dumps off, then Aftermath off.
+- CORRECTION (boot 27, 2026-10-24 02:31, normal start through the menu): the 4 s frozen frame is NVIDIA's DLSS core
+  starting up once per launch (docs/whgame_re/first_gameplay_frame.md), and it is only in the load for the auto-load
+  test boots. The user's way had no such frame (34.4 s from Continue to control, gate 8.7 s). Not the Aftermath
+  shader dumps: that guess was wrong.

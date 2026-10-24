@@ -96,3 +96,9 @@ Chain, bottom up (all SETTLED):
 - Cheaper candidates (need the user's go, their files and NVIDIA app settings): move the DLSS Enabler leftovers out of
   the exe folder (sl.*.dll, nvngx_dlssd/dlssg/dlssnr.dll, dlssg_to_fsr3_amd_is_better.dll), and turn off the NVIDIA
   app's Ray Reconstruction / Frame Generation overrides for KCD2 (the game has neither). Each should remove rounds.
+
+## ANSWERED 2026-10-24 02:31 (the load session's boot 27, the user's way: menu, 15 s wait, Continue clicked)
+No 4 s frame after the load: the first gameplay frames were 302 + 564 ms, and the click to control took 34.4 s. So a
+normal start pays the NGX start-up before the load (at or before the menu), and only the auto-load test boots
+(`wh_sys_AutoLoadLastSave`) carry it in the load. hitch.cpp cannot say whether the menu freezes for it: its frame tick
+(OnCamera) only runs once a game camera exists. Compare test boots only with test boots (docs/LOADTIME.md).
