@@ -72,6 +72,10 @@ struct Gate {
 	bool eligible = false;         // a gate "let me in early" may open (save load 0x3f93, fast travel 0x3f91)
 	early::State early;
 	double letAt = -1;             // s: let in early at this age (-1: not)
+	int frames = 0;                // frames seen while it waited
+	double longest = 0;            // s: its longest frame
+	int lineFrames = 0;            // the same, since the last "waiting" line
+	double lineLongest = 0;
 };
 std::mutex g_newMu;
 std::vector<Gate> g_new;    // started since the last frame (any thread)
@@ -229,6 +233,30 @@ std::string NameAt(void* t) {
 	return "?";
 }
 
+// What feeds the stream reader, read from the game once a "waiting" line (WHGame 1.5.6 addresses, decoded 2026-10-24,
+// ~/re/work/settle_feed/report.md on the ProLiant; raw numbers, not yet checked against the game's own debug views):
+// the skin loads in progress (checked against wh_cc_MaxSkinLoadingInProgress, 40), the texture scheduler's outstanding
+// requests and bytes (capped by r_TexturesStreamingMaxRequestedJobs 32 / ...MB 4), and the stream engine's temp memory.
+constexpr uintptr_t kRvaSkinLoading = 0x5324180, kRvaTexOutBytes = 0x55940e0, kRvaTexOutJobs = 0x55940e8,
+                    kRvaStreamEngine = 0x547dae8;
+std::string Feed(int frames, double longest) {
+	int32_t skins = -1, texBytes = -1, texJobs = -1;
+	uint32_t pool[3] = {};
+	uintptr_t eng = 0;
+	Rd(g_base + kRvaSkinLoading, &skins, 4);
+	Rd(g_base + kRvaTexOutBytes, &texBytes, 4);
+	Rd(g_base + kRvaTexOutJobs, &texJobs, 4);
+	const bool poolOk = Rd(g_base + kRvaStreamEngine, &eng, 8) && eng && Rd(eng + 0x48, pool, sizeof pool);
+	char s[200];
+	snprintf(s, sizeof s, " | %d frames (longest %.0f ms), skins loading %d, texture requests out %d (%.1f MB), stream temp ",
+	         frames, longest * 1000, skins, texJobs, texBytes / 1048576.0);
+	std::string out = s;
+	if (poolOk) snprintf(s, sizeof s, "%.1f MB (peak %.1f, budget %.1f)", pool[0] / 1048576.0, pool[1] / 1048576.0,
+	                     pool[2] / 1048576.0);
+	else snprintf(s, sizeof s, "?");
+	return out + s;
+}
+
 void Opened(const Gate& g, long long now, const char* how, std::vector<std::string>* out) {
 	const double took = Secs(now - g.t0);
 	if (took < 0.25) return;   // quick gates (most in-game checks) stay out of the log
@@ -244,9 +272,9 @@ void Opened(const Gate& g, long long now, const char* how, std::vector<std::stri
 		s += one;
 		if (g.lastBusy[i] > lastT) { lastT = g.lastBusy[i]; last = NameAt(g.taskAt[i]); }
 	}
-	char head[160];
-	snprintf(head, sizeof head, "readiness: gate 0x%x (from +%llx) %s after %.1f s; not ready for: ", g.mask,
-	         (unsigned long long)g.from, how, took);
+	char head[200];
+	snprintf(head, sizeof head, "readiness: gate 0x%x (from +%llx) %s after %.1f s (%d frames, longest %.0f ms); not ready for: ",
+	         g.mask, (unsigned long long)g.from, how, took, g.frames, g.longest * 1000);
 	std::string tail;
 	if (g.letAt >= 0) {
 		char e[96];
@@ -344,6 +372,10 @@ void Readiness_Frame() {
 			bool line = now - (g.lastLine ? g.lastLine : g.t0) >= g_freq;
 			// this frame's time, but not from before the gate started (a gate can start inside a long frame)
 			const double gdt = (std::min)(dt, (std::max)(0.0, Secs(now - g.t0)));
+			g.frames++;
+			if (gdt > g.longest) g.longest = gdt;
+			g.lineFrames++;
+			if (gdt > g.lineLongest) g.lineLongest = gdt;
 			std::string busy;
 			for (auto& t : g_tasks) {
 				if (!(t.cat & g.mask)) continue;
@@ -399,7 +431,9 @@ void Readiness_Frame() {
 				char head[96];
 				snprintf(head, sizeof head, "readiness: gate 0x%x (from +%llx) waiting %.1f s: not ready: ", g.mask,
 				         (unsigned long long)g.from, waited);
-				lines.push_back(head + busy);
+				lines.push_back(head + busy + Feed(g.lineFrames, g.lineLongest));
+				g.lineFrames = 0;
+				g.lineLongest = 0;
 			}
 			gi++;
 		}
