@@ -160,8 +160,10 @@ bool TakeReady(Item& it) {
 		if (it.state.compare_exchange_strong(s, 3)) { if (waited) s_touchWaits++; return true; }
 		if (s == 5) { YieldProcessor(); continue; }   // being freed for RAM: back at 0 in a moment, then the game reads it
 		if (s != 4 || Now() > lim) {
-			if (s == 0) { int w = 0; it.state.compare_exchange_strong(w, 3); }   // not started: the workers skip it
-			return false;                                                      // being unpacked: dropped after
+			// not started (0): the workers skip it; being unpacked (1): the worker's 1 -> 2 then fails and it frees the
+			// buffer (before 2026-10-24 it stayed held as "ready", never served, until the 15-min close)
+			if (s == 0 || s == 1) { int w = s; it.state.compare_exchange_strong(w, 3); }
+			return false;
 		}
 		waited = true;
 		YieldProcessor();
@@ -308,8 +310,9 @@ DWORD WINAPI Worker(LPVOID) {
 		const size_t i = Pick();
 		if (i >= n) break;
 		Item& it = g_items[i];
-		while (!g_stop && g_held.load() + it.usize > kCapBytes) Sleep(20);   // full: wait for the load to take some
+		while (!g_stop && g_held.load() + it.usize > kCapBytes && it.state.load() == 1) Sleep(20);   // full: wait for the load to take some
 		if (g_stop) { it.state = 3; break; }
+		if (it.state.load() != 1) continue;                                   // the game read it itself meanwhile
 		HANDLE& h = handles[it.pak];
 		if (h == INVALID_HANDLE_VALUE)
 			h = CreateFileA(g_listPaks[it.pak].c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
@@ -500,10 +503,13 @@ void Pakahead_Install(uintptr_t base, void* self) {
 	void* rd = (void*)(base + kRvaRead);
 	if (memcmp(rd, kReadBytes, sizeof kReadBytes)) { Log("pakahead: code check failed - not installed (other game version?)"); return; }
 	g_recs.reserve(150000);
+	// the list first: the hook's TryServe reads g_items / g_byKey / g_listPaks with no lock, so they must be complete before
+	// any loader thread can enter it (review 2026-10-24: the hook was on while LoadList still inserted and rehashed)
+	const bool listed = g_mode == 2 && LoadList();
 	const bool ok = MH_CreateHook(rd, (void*)&HkRead, (void**)&g_orig) == MH_OK && MH_EnableHook(rd) == MH_OK;
 	Log("pakahead: mode %d (%s), ZipDir ReadFile hook %s, pak names %s", g_mode, g_mode == 2 ? "record + unpack ahead" : "record",
 	    ok ? "on" : "FAILED", g_fileno && g_osHandle ? "via ucrtbase" : "UNAVAILABLE");
-	if (ok && g_mode == 2 && LoadList()) StartAhead();
+	if (ok && listed) StartAhead();
 	if (ok) CloseHandle(CreateThread(nullptr, 0, Writer, nullptr, 0, nullptr));
 }
 
