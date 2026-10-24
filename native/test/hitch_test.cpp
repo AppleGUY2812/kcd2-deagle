@@ -19,6 +19,12 @@ __declspec(noinline) void Busy(int ms) {
 	g_sink = x;
 }
 
+static DWORD WINAPI Render(LPVOID) {   // stands in for the game's render thread: sampled by name
+	using Fn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+	if (Fn set = (Fn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadDescription")) set(GetCurrentThread(), L"RenderThread");
+	for (;;) Busy(5);
+}
+
 __declspec(noinline) void Frames(int n) {
 	for (int i = 0; i < n; i++) { Hitch_Frame(); Sleep(10); }
 }
@@ -38,6 +44,7 @@ int main() {
 	HMODULE self = (HMODULE)&__ImageBase;
 	const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)((const char*)self + __ImageBase.e_lfanew);
 	Hitch_Install((uintptr_t)self, nt->OptionalHeader.SizeOfImage, self);   // the exe stands in for WHGame.dll
+	CloseHandle(CreateThread(nullptr, 0, Render, nullptr, 0, nullptr));
 	Frames(30);
 	Busy(700);
 	Frames(30);
@@ -51,21 +58,23 @@ int main() {
 	FILE* f = fopen(log.c_str(), "r");
 	if (!f) { printf("FAIL: no log\n"); return 1; }
 	char line[4096];
-	int hitches = 0, busyOk = 0, waitOk = 0;
+	int hitches = 0, busyOk = 0, waitOk = 0, renderOk = 0;
 	while (fgets(line, sizeof line, f)) {
 		if (!strstr(line, "hitch: #")) continue;
 		printf("%s", line);
+		if (strstr(line, " RenderThread: ") && strstr(line, "in: WHGame.dll+")) { renderOk++; continue; }
 		hitches++;
 		int ms = 0, n = 0;
 		const char* p = strstr(line, "main frame ");
 		if (p) sscanf(p, "main frame %d ms, %d samples", &ms, &n);
-		if (hitches == 1 && ms >= 650 && ms <= 900 && n >= 15 && strstr(line, "in: WHGame.dll+")) busyOk = 1;
-		if (hitches == 2 && ms >= 550 && ms <= 800 && n >= 12 && (strstr(line, "in: ntdll.dll+") || strstr(line, "in: KERNELBASE")))
+		if (hitches == 1 && ms >= 650 && ms <= 900 && n >= 8 && strstr(line, "in: WHGame.dll+")) busyOk = 1;
+		if (hitches == 2 && ms >= 550 && ms <= 800 && n >= 6 && (strstr(line, "in: ntdll.dll+") || strstr(line, "in: KERNELBASE")))
 			waitOk = 1;
 	}
 	fclose(f);
-	if (hitches != 2 || !busyOk || !waitOk) {
-		printf("FAIL: %d long frames (want 2), busy %d, wait %d\n", hitches, busyOk, waitOk);
+	if (hitches != 2 || !busyOk || !waitOk || renderOk != 2) {
+		printf("FAIL: %d long frames (want 2), busy %d, wait %d, render thread sampled in %d (want 2)\n", hitches, busyOk,
+		       waitOk, renderOk);
 		return 1;
 	}
 	printf("hitch_test: all passed\n");
