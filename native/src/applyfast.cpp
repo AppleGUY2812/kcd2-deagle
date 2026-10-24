@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <atomic>
+#include <vector>
 #include <intrin.h>
 #include <cmath>
 #include <cstdio>
@@ -184,6 +185,7 @@ void PsoMainFrame() {
 	reinterpret_cast<void(__fastcall*)()>(g_base + kRvaPsoQueue)();
 }
 
+void ShaderMenuFrame();   // piece 5, below
 std::atomic<long long> s_syncs{0};
 long long g_lastSyncAt = 0;
 uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
@@ -194,7 +196,8 @@ uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
 			    g_lastSyncAt ? (now - g_lastSyncAt) * 1000 / g_freq : -1);
 		g_lastSyncAt = now;
 	}
-	PsoMainFrame();   // before the hand-over: the queued precache goes with this frame's commands
+	PsoMainFrame();     // before the hand-over: the queued precache goes with this frame's commands
+	ShaderMenuFrame();  // piece 5: one shader parse queued per menu frame
 	return g_sync(rt, a2, a3, a4);
 }
 
@@ -211,8 +214,8 @@ uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
 // fixed 5 s wait cost the main thread 5 s, 40 s load; kcd2-deagle-66's review had flagged it). So: before the quest wait
 // it waits only while the quest job still runs (the main thread would wait there anyway); if the loading thread is
 // still busy then, the hand-over stays pending and is tried again, without waiting, at three points while the main
-// thread finishes the level (PostLoadLevel, the level-load-end system event, LoadGameGlobalPass). Not handed over by
-// the time the level is done = the game's own precache at its first frame sync, as without the plugin.
+// thread finishes the level (PostLoadLevel; see HkPostLoadLevel). Not handed over by then = the game's own precache at
+// its first frame sync, as without the plugin.
 constexpr uintptr_t kRvaRenDev = 0x547db60;   // DAT_18547db60: gRenDev; m_pRT at +0xf8
 constexpr unsigned kPsoWaitCapMs = 5000;      // safety only: the quest job normally ends the wait first
 std::atomic<long long> s_psoWaitMs{-1};
@@ -220,11 +223,9 @@ uintptr_t g_psoRt = 0;                        // m_pRT, set when the hand-over g
 std::atomic<bool> g_gamePsoQueued{false};     // PostLoadLevel has queued the game's own precache (no need for ours)
 long long g_psoPendingAt = 0;
 using Fn4 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
-Fn4 g_postLoadLevel = nullptr, g_objDbEvent = nullptr, g_xgGlobalPass = nullptr;
-constexpr uintptr_t kRvaPostLoadLevel = 0x5f8740, kRvaObjDbEvent = 0xef37d8, kRvaXgGlobalPass = 0xb4403c;
+Fn4 g_postLoadLevel = nullptr;
+constexpr uintptr_t kRvaPostLoadLevel = 0x5f8740;
 const unsigned char kPostLoadLevelBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x48,0x89,0x7c,0x24,0x18,0x41,0x56 };
-const unsigned char kObjDbEventBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x18,0x55,0x48,0x8b,0xec,0x48,0x83,0xec,0x70 };
-const unsigned char kXgGlobalPassBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0x42,0x18 };
 
 bool OnMainThread() {   // the engine names it "Main" (thread samples); m_pRT+0xf8 is not it (FUN_1809b16f8)
 	using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
@@ -263,30 +264,16 @@ void PsoRetry(const char* where) {
 	}
 }
 
+// The one later point: PostLoadLevel queues the game's own precache, and the game's next frame sync runs it (state 4).
+// Boots 32-33 showed the level-load-end event (0x1c) and the XGenAI global pass (0x7306) come after that sync, so a
+// hand-over there was only an extra sync in the frame loop; they are no longer used. Still busy here = left to the game.
 uint64_t __fastcall HkPostLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	PsoRetry("as the level finishes (PostLoadLevel)");
 	const uint64_t r = g_postLoadLevel(a, b, c, d);
-	if (g_psoState.load(std::memory_order_relaxed) == 2) g_gamePsoQueued = true;   // the game's own lambda is now queued
-	return r;
-}
-// Only the level-load-end event (0x1c) and the global-pass message (0x7306) count: boot 32 handed over at a later system
-// event, after the game's own frame sync had already run the precache (state 4), i.e. an extra sync in the frame loop.
-uint64_t __fastcall HkObjDbEvent(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // OnSystemEvent(this, event): every event
-	if ((int)b == 0x1c) PsoRetry("at the level-load-end event (before the smart-object table)");
-	return g_objDbEvent(a, b, c, d);
-}
-uint64_t __fastcall HkXgGlobalPass(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // every XGenAI module message
-	bool global = false;
-	if (g_psoState.load(std::memory_order_relaxed) == 2) {
-		__try { global = b && *(const uint16_t*)(*(const uintptr_t*)(b + 0x18) + 8) == 0x7306; }   // its own type check
-		__except (EXCEPTION_EXECUTE_HANDLER) {}
-	}
-	if (global) PsoRetry("before the XGenAI global pass");
-	const uint64_t r = g_xgGlobalPass(a, b, c, d);
-	int pending = 2;   // the last point before the game's own first frame sync: after it, the game does it (state 4)
-	if (global && g_psoState.compare_exchange_strong(pending, -1))
-		Log("applyfast: PSO precache during the load: the render loading thread was busy at every point, left to the game "
-		    "(%.2f s pending)", (Now() - g_psoPendingAt) * 1.0 / g_freq);
+	int pending = 2;
+	if (g_psoState.compare_exchange_strong(pending, -1))
+		Log("applyfast: PSO precache during the load: the render loading thread was still busy at PostLoadLevel, left to "
+		    "the game (%.2f s pending)", (Now() - g_psoPendingAt) * 1.0 / g_freq);
 	return r;
 }
 }  // namespace
@@ -382,6 +369,116 @@ void __fastcall HkConceptOnMsg(void* mod, void* msg) {
 
 }  // namespace
 
+namespace {
+// ---- 5. Shaders parsed at the main menu (re_menu_render.md plan A, 2026-10-24)
+// In the load the render loading thread first parses a backlog of ~416 shaders (4.3-8.7 s; the PSO precache another 71,
+// ~1.1 s) before its texture precache, so the main thread later waits for it. The set comes from the pipeline-state
+// cache, not the level (FUN_180bad1c4 lists its entries; FUN_180bad714 creates an instance and keeps only new ones).
+// Here, once per game start: on the first menu frame where that cache is built and its job idle, the list is walked
+// with FUN_180bad714 diverted to record the keys (nothing created). Then each menu frame (main thread, render sync,
+// no loading screen) calls the game's own CShaderMan::mfForName (FUN_1807e8fe4) for keys until one is new: creating it
+// queues its parse (RC_ParseShader) with this frame's commands, so the render thread parses one shader per frame
+// (~10-11 ms, boot 22) and the menu keeps drawing. Parsed shaders survive into the first level (UnLoadLevel does
+// nothing with no level; the renderer's events flush no shaders). Continue mid-way leaves the rest to the load, as
+// without the plugin. Boots 22-23 (the same parse in one go, menu frozen 6 s): the load's backlog went from 150-170 to
+// 9-13 samples and the texture precache started at 6.2-6.6 s instead of 8.7-9.3 s. The list call reserves its vector
+// (~3 MB, the game's allocator) and returns it empty; it is left allocated, once.
+constexpr uintptr_t kRvaPsoMgr = 0x52ba440, kRvaKeyList = 0xbad1c4, kRvaKeyOne = 0xbad714, kRvaShaderForName = 0x7e8fe4,
+                    kRvaParse = 0x1390424;
+const unsigned char kKeyListBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x55,0x56,0x57,0x48,0x8d,0x6c,0x24,0xb9,0x48,0x81,0xec };
+const unsigned char kKeyOneBytes[] = { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x08,0x49,0x89,0x73,0x10,0x49,0x89,0x7b,0x18,0x55 };
+const unsigned char kForNameBytes[] = { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x08,0x49,0x89,0x73,0x10,0x49,0x89,0x7b,0x18,0x55 };
+const unsigned char kParseBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x18,0x56,0x57,0x41,0x54,0x41,0x56 };
+bool g_menuShaders = true;
+int g_shState = 0;   // 0 waiting for the cache, 1 pacing, 2 done or stopped, -1 off
+struct ShaderKey { char* name; uint32_t flags; uint64_t mask; };
+std::vector<ShaderKey> g_keys;
+size_t g_keyNext = 0;
+thread_local bool t_collect = false;
+long long s_shStart = 0, s_shFrames = 0, s_shCalls = 0, s_shQueued = 0, s_shReady = 0, s_shMaxGapMs = 0, s_shLastSync = 0;
+using KeyOneFn = uint64_t*(__fastcall*)(uint64_t, uint64_t*, const char*, uint32_t, uint64_t);
+KeyOneFn g_keyOne = nullptr;
+uint64_t* __fastcall HkKeyOne(uint64_t sm, uint64_t* out, const char* name, uint32_t flags, uint64_t mask) {
+	if (!t_collect) return g_keyOne(sm, out, name, flags, mask);
+	if (name) g_keys.push_back({ _strdup(name), flags, mask });
+	out[0] = 0; out[1] = 0; *(uint32_t*)(out + 2) = 0;   // "not new": the list stays empty
+	return out;
+}
+Fn4 g_parse = nullptr;
+std::atomic<long long> s_parseN[2], s_parseTicks[2], s_parseMax[2];   // [0] before the level load, [1] after
+uint64_t __fastcall HkParse(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // RT_ParseShader, any thread: timing only
+	const long long t0 = Now();
+	const uint64_t r = g_parse(a, b, c, d);
+	const long long dt = Now() - t0;
+	const int i = Xmlahead_LevelSeen() ? 1 : 0;
+	s_parseN[i]++;
+	s_parseTicks[i] += dt;
+	for (long long m = s_parseMax[i].load(); dt > m && !s_parseMax[i].compare_exchange_weak(m, dt);) {}
+	return r;
+}
+
+void ShaderSummary(const char* why) {
+	Log("applyfast: shaders at the main menu %s: %zu keys, %lld looked up, %lld parses queued, %lld already parsed, in %lld "
+	    "menu frames over %.1f s (longest gap between frames %lld ms); parses so far %lld at the menu (%.0f ms, longest "
+	    "%.1f ms)", why, g_keys.size(), s_shCalls, s_shQueued, s_shReady, s_shFrames, (Now() - s_shStart) * 1.0 / g_freq,
+	    s_shMaxGapMs, s_parseN[0].load(), s_parseTicks[0].load() * 1000.0 / g_freq, s_parseMax[0].load() * 1000.0 / g_freq);
+}
+
+void ShaderMenuFrameInner() {
+	if (Xmlahead_LevelSeen()) {
+		const bool wasPacing = g_shState == 1;
+		g_shState = 2;
+		if (wasPacing) ShaderSummary("stopped by the level load");
+		return;
+	}
+	const uintptr_t rd = *(uintptr_t*)(g_base + kRvaRenDev);
+	const uintptr_t rt = rd ? *(uintptr_t*)(rd + 0xf8) : 0;
+	if (!rt || *(volatile int*)(rt + 0x140) != 0) return;   // a loading screen or video thread is up
+	if (g_shState == 0) {
+		const uintptr_t mgr = g_base + kRvaPsoMgr;
+		const uintptr_t js = *(uintptr_t*)(mgr + 0x100);
+		if (!js || *(volatile int*)(js + 0x10) != 0 || *(uint64_t*)(mgr + 0xe0) == 0) return;   // cache not built / job running
+		uint64_t vec[3] = {};
+		const long long t0 = Now();
+		t_collect = true;
+		reinterpret_cast<void(__fastcall*)(uint64_t*, uintptr_t, int)>(g_base + kRvaKeyList)(vec, mgr + 0xd8, 2);
+		t_collect = false;
+		g_shState = 1;
+		s_shStart = s_shLastSync = Now();
+		Log("applyfast: shaders at the main menu: %zu keys from the pipeline cache (%llu entries) in %.0f ms; one parse per menu "
+		    "frame from now", g_keys.size(), (unsigned long long)*(uint64_t*)(mgr + 0xe0), (s_shStart - t0) * 1000.0 / g_freq);
+		return;
+	}
+	const long long now = Now(), gap = (now - s_shLastSync) * 1000 / g_freq;
+	if (gap > s_shMaxGapMs) s_shMaxGapMs = gap;
+	s_shLastSync = now;
+	s_shFrames++;
+	const uintptr_t sm = rd + 0xf00;
+	using ForNameFn = uintptr_t(__fastcall*)(uintptr_t, const char*, uint32_t, uint64_t, uint64_t);
+	for (int checks = 0; g_keyNext < g_keys.size() && checks < 64; checks++) {
+		const ShaderKey& k = g_keys[g_keyNext++];
+		const uintptr_t sh = reinterpret_cast<ForNameFn>(g_base + kRvaShaderForName)(sm, k.name, k.flags, 0, k.mask);
+		s_shCalls++;   // the reference it returns is kept: the level uses these shaders
+		if (sh && (*(volatile uint32_t*)(sh + 0x94) & 0x100)) { s_shReady++; continue; }
+		s_shQueued++;
+		break;   // one new shader per frame: its parse runs on the render thread next frame
+	}
+	if (g_keyNext >= g_keys.size()) {
+		g_shState = 2;
+		ShaderSummary("done");
+	}
+}
+
+void ShaderMenuFrame() {   // main thread, every render sync
+	if (g_shState != 0 && g_shState != 1) return;
+	__try { ShaderMenuFrameInner(); }
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		g_shState = -1;
+		Log("applyfast: shaders at the main menu: exception, stopped (the load parses the rest, as without the plugin)");
+	}
+}
+}  // namespace
+
 void Applyfast_OnLoaded() {
 	if (s_qeEarly.load())
 		Log("applyfast: quests first: %lld level data messages, concept turn skipped %lld times", s_qeEarly.load(),
@@ -390,6 +487,13 @@ void Applyfast_OnLoaded() {
 		g_psoState = -1;
 		Log("applyfast: PSO precache during the load: still pending when the level was done, left to the game (%.2f s pending)",
 		    (Now() - g_psoPendingAt) * 1.0 / g_freq);
+	}
+	static bool shTold = false;
+	if (!shTold && g_shState != -1 && (s_parseN[0].load() || s_parseN[1].load())) {
+		shTold = true;
+		Log("applyfast: shader parses: at the menu %lld (%.0f ms, longest %.1f ms), in the load %lld (%.0f ms, longest %.1f ms)",
+		    s_parseN[0].load(), s_parseTicks[0].load() * 1000.0 / g_freq, s_parseMax[0].load() * 1000.0 / g_freq,
+		    s_parseN[1].load(), s_parseTicks[1].load() * 1000.0 / g_freq, s_parseMax[1].load() * 1000.0 / g_freq);
 	}
 	static bool psoTold = false;
 	if (!psoTold && g_psoState.load() >= 0) {
@@ -458,17 +562,29 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	const bool d = g_psoMode && psoCode &&
 	               (g_psoMode == 2 || Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync"));
 	if (!d) g_psoState = -1;
-	int retries = 0;   // the later hand-over points (3b); without them it is tried only before the quest wait
-	if (d && g_psoMode == 2) {
-		retries += Hook(base, kRvaPostLoadLevel, kPostLoadLevelBytes, sizeof kPostLoadLevelBytes, (void*)&HkPostLoadLevel,
-		                (void**)&g_postLoadLevel, "PostLoadLevel");
-		retries += Hook(base, kRvaObjDbEvent, kObjDbEventBytes, sizeof kObjDbEventBytes, (void*)&HkObjDbEvent,
-		                (void**)&g_objDbEvent, "object database system event");
-		retries += Hook(base, kRvaXgGlobalPass, kXgGlobalPassBytes, sizeof kXgGlobalPassBytes, (void*)&HkXgGlobalPass,
-		                (void**)&g_xgGlobalPass, "XGenAI global pass");
+	const bool retry = d && g_psoMode == 2 &&   // the later hand-over point (3b); without it, only before the quest wait
+	                   Hook(base, kRvaPostLoadLevel, kPostLoadLevelBytes, sizeof kPostLoadLevelBytes, (void*)&HkPostLoadLevel,
+	                        (void**)&g_postLoadLevel, "PostLoadLevel");
+	// piece 5: shaders parsed at the main menu, one per frame (deagle_menushaders.txt: 1 on, default; 0 off)
+	if (FILE* fp = fopen((dir + "deagle_menushaders.txt").c_str(), "r")) {
+		int m = 1;
+		if (fscanf(fp, "%d", &m) == 1) g_menuShaders = m != 0;
+		fclose(fp);
 	}
+	bool sh = g_menuShaders && psoCode &&
+	          !memcmp((void*)(base + kRvaKeyList), kKeyListBytes, sizeof kKeyListBytes) &&
+	          !memcmp((void*)(base + kRvaShaderForName), kForNameBytes, sizeof kForNameBytes) &&
+	          Hook(base, kRvaKeyOne, kKeyOneBytes, sizeof kKeyOneBytes, (void*)&HkKeyOne, (void**)&g_keyOne, "shader key");
+	if (sh && !g_sync && !Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync")) {
+		MH_DisableHook((void*)(base + kRvaKeyOne));
+		sh = false;
+	}
+	if (sh) Hook(base, kRvaParse, kParseBytes, sizeof kParseBytes, (void*)&HkParse, (void**)&g_parse, "shader parse (timing)");
+	else g_shState = -1;
 	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s; "
 	    "PSO precache: %s; quests first in the level data message: %s", g_mode, g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF",
-	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? (retries == 3 ? "during the load (3 later hand-over points)" : "during the load (later hand-over points: some OFF)") : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (deagle_psoahead.txt 0)",
+	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? (retry ? "during the load (+ PostLoadLevel)" : "during the load (PostLoadLevel point OFF)") : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (deagle_psoahead.txt 0)",
 	    e ? "on" : g_questsFirst ? "OFF (code differs)" : "off (deagle_questearly.txt)");
+	Log("applyfast: shaders parsed at the main menu: %s", sh ? "on (one per menu frame)" :
+	    g_menuShaders ? "OFF (code differs or hook failed)" : "off (deagle_menushaders.txt)");
 }

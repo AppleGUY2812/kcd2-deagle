@@ -24,3 +24,5 @@ void Xmlahead_Command(const char* args);
 // The main menu has loaded and waits: 1,500+ XML loads, none for quietMs, and no levels/ file asked for yet. Needs
 // mode 1 or 2 (the hook counts the loads); false in mode 0.
 bool Xmlahead_MenuQuiet(unsigned quietMs);
+// A level load has begun (the game asked for a levels/ file). Needs mode 1 or 2; false in mode 0.
+bool Xmlahead_LevelSeen();

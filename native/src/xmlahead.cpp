@@ -279,6 +279,8 @@ bool LoadList() {
 
 }  // namespace
 
+bool Xmlahead_LevelSeen() { return g_levelSeen.load(); }
+
 bool Xmlahead_MenuQuiet(unsigned quietMs) {
 	return g_loads >= kMenuLoads && !g_levelSeen && GetTickCount64() - g_lastLoad >= quietMs;
 }
