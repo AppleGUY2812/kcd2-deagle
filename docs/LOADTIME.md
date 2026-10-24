@@ -8,7 +8,9 @@ RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a sc
 - Best so far, boot 35 (2026-10-24 08:24, menu path, 2910 MB free): **30.6 s** with the quest graph built at the menu
   and kept (questmenu); boots 34 / 36 without it: 33.8 / 33.7 s. Steps in boot 35: terrain 3.5, level done 12.5 (16.1
   without), state 4 1.4, apply 5.0, gate 10.6 s. The gate grew from 8.2-9.0 s (boots 32-33) to 10.6-11.7 s in boots
-  34-36 (streamahead 6fb0c4c era; kcd2-deagle-66 told).
+  34-36 (streamahead 6fb0c4c era; kcd2-deagle-66 told). Boot 37 (c40fb0a, gate readers stopped, repeats served
+  from kept copies: 415 hits): gate still 11.0 s, TextureStreaming last at 10.5 s; 32.1 s total, quests kept again.
+  r_TexturesStreamPoolSize at runtime: 5120 (auto, 8 GB card).
 - Menu + Continue (boot 27, 2026-10-24 02:31): **34.4 s from the click** (1.4 s click -> level loading, then 33.0 s).
   With 3b: 34.6 s (boot 29, gate 9.4 s) and 33.4 s (boot 30, + readiness temp 128). The gate varies +-1 s per boot.
 - Auto-load test boots (wh_sys_AutoLoadLastSave; boots 24-26): 38.3-39.4 s. They carry two costs the user's path does
