@@ -123,9 +123,19 @@ Measured 2026-10-24 (boots 59-61):
 - wh_sys_ForceMainMenu ("main menu over a +map level"): no reader found in the release build; the main menu over a loaded
   level is not a game feature to rely on. The pause menu is.
 Route to 10 s ("ready at the menu", needs the user's OK: the game starts the load by itself): once the menu work is done and
-the user hasn't started anything, the plugin starts the newest save's normal load (FUN_1825bd9ac(user 0, save 100)) and
-ends it in the pause menu; Resume = control at once; another save on the same level = the same-level path (~6 s); Exit to
-main menu = the level unloaded, as now. Launch -> ready stays ~48 s, so shaving the steps still counts.
+the user hasn't started anything, the plugin starts the newest save's normal load and ends it in the pause menu; Resume =
+control at once; another save on the same level = the same-level path (~6 s); Exit to main menu = the level unloaded, as
+now. Launch -> ready stays ~48 s, so shaving the steps still counts.
+The game's pieces for it (static RE, 2026-10-24, not built):
+- "Loading last saved game..." FUN_182ba7c10(C_UISaveLoad): the newest save of user saveMgr+0x188 (FUN_180f685a4 ->
+  FUN_1819c0b1c), then FUN_182ba7ca8 queues FUN_1825bd9ac. The Continue lambda FUN_181f90aa0 (busy flag obj+0x122) and the
+  start-up check FUN_180da1d54 (wh_sys_AutoLoadLastSave = C_UISaveLoad+0x8c) both call it: no save id needed.
+- FUN_180da1d54(C_UISaveLoad) runs once at start-up: a hook there gives the pointer. Without the auto-load it shows the
+  main menu with (*(ui+0x120)+0x58)->vt[1](1).
+- The pause menu: action "open_pause_menu" (FUN_180612a18, bound to C_UIMenu by its init FUN_18061377c) -> FUN_181f90330:
+  (C_UIMenu+0x58)->vt[1](3); ui+0x120 is the same C_UIMenu (same +0x58 controller).
+Open: the trigger (menu work done, RAM >= 1.5 GB, the user not in a submenu: game not foreground or idle >= 10 s), and
+whether vt[1](3) at gameplay start pauses before the first frame of play.
 Split: kcd2-deagle-5a the level step / route A-B; kcd2-deagle-66 apply (4.7: souls 1.2 incl. Storm 0.78, XGenAI 0.8,
 profiles + concepts 0.6, database XML 0.5, CryEngine data 0.35), gate 3.4, state 4.
 
