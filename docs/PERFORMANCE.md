@@ -222,6 +222,27 @@ The 22 s that started this hunt was the **first** load after the whole level had
 22 mods on this machine. The honest lesson: measure the same event twice before crediting a change - the 22 s was a
 different event masquerading as the same one.
 
+### Boot to play, timed step by step (2026-10-23 18:44, game log lines stamped from outside + `tools/loadprofile.ps1`)
+
+From "Loading last saved game" to `[Deagle] gameplay started` = **62 s** (engine start to the menu before it: ~42 s).
+
+| step | time | game CPU (cores) | disk read | what it looks like |
+|---|---|---|---|---|
+| level open, paks, brush list | 18:45:15.5 -> 22.3 = **7 s** | 3-4.6 | 127-218 MB/s | parallel reading |
+| `Terrain: Waiting for 14153 async loaders` (CTerrain::Load_T: the level's brush models, `wh_e_StreamCgfHeaders` 1, `e_StreamCgfMaxTasksInProgress` 120) | 22.3 -> 42.3 = **20 s** | 4.7 falling to 2.5 | 25-142 MB/s | parallel, neither CPU nor disk full |
+| outdoor instances, entities, action map | 42.3 -> 54.2 = **12 s** | **~0.9** | ~90 MB/s flat | ONE thread reading one file after another |
+| PSO precache (2.2 s) + up to the save load | 54.2 -> 01.3 = **7 s** | 1.2-3.5 | burst 222, then ~5 MB/s | mostly one thread |
+| `Loading saved game` -> gameplay | 01.3 -> 17.1 = **16 s** | 4-6.5 | 150-253 MB/s | parallel; VRAM 3.5 -> 5 GB |
+
+The disk never got near the 870 EVO's ~550 MB/s and the game never used more than ~6.5 of 12 threads, so it is
+neither "the SSD is too slow" nor "the CPU is too slow" as such. About 19 s are one thread waiting on reads in a row.
+
+**Memory is short:** with the game up, 1.3 GB of 16 GB is free and Windows' file cache holds 0.7 GB; 32.9 GB is
+committed (page file on C:, 3.7 GB in use). The game has 10.6 GB committed but only 4.0 GB in RAM. Other RAM users
+at the time: Brave 2.4 GB (23 processes), WSL 2.1 GB, Discord 0.8 GB, Steam's web helper 0.7 GB. Even in normal play
+Windows reads 140-560 pages a second back from the page file. Whether paging costs load time is the next measurement
+(`loadprofile.ps1` now logs pages in/out, free RAM and the game's commit, one row a second).
+
 ## Sources
 
 [1] Unreal Animation Budget Allocator: https://dev.epicgames.com/documentation/en-us/unreal-engine/animation-budget-allocator-in-unreal-engine
