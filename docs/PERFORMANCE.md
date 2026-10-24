@@ -386,3 +386,10 @@ Also: Unity profiling best practices (35 % headroom, CPU vs GPU bound): https://
   native/src/cvars.cpp from now on (see docs/DEBUG.md "cvars").
 - RAM: 16 GB PC; at 21:12 WSL held 3.8 GB, Brave + Discord ~1.7 GB, and Windows had 3.8 GB free at game start
   (the game grows to ~6.5 GB during a load): unpacking ahead turned itself off.
+- 21:36 boot with all five settings: **57.9 s** (unpacking ahead off: only 4466 MB free). Steps: open 6.4, terrain
+  16.2, one-thread 5.0, pre-save 10.0, save 20.4 s. Thread names (sampler): the terrain/one-thread work runs on
+  RenderLoadingThread (CryPak reads, our libdeflate unpack: 30-57 % of it with unpacking ahead off, the shader
+  preprocessor); the 4 ShaderCompile threads stayed idle. Save step: Main 65 % busy (no throttle now), 7 JobWorkers
+  ~43 % busy, half of it waiting, ~15 % zlib. "Network" (CCTPEndpoint) spins at ~90 % of a core the whole load.
+  Kept: sys_SleepIfInactiveWH 0 while loading. Dropped: the texture-streaming caps (save step +5 s), shader and PSO
+  thread counts (no gain seen). Unpacking ahead now runs from 4 GB free (cap free - 3.5 GB).

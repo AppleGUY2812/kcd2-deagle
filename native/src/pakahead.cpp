@@ -285,7 +285,7 @@ void StartAhead() {
 	// The game itself grows by ~6 GB during a load (16 GB PC, 2026-10-23). Hold at most what is left after that plus
 	// 1.5 GB for everything else, between 512 MB and 2 GB; pin only with 3 GB of that to spare. (21:12 boot: 3.8 GB
 	// free with WSL holding 3.8 GB - the old all-or-nothing 4 GB gate turned unpacking ahead off.)
-	const long long spare = (long long)freeMb - 4500;
+	const long long spare = (long long)freeMb - 3500;   // 21:36 boot: 4466 MB free was refused at - 4500, and the load paid 3-5 s
 	if (spare < 512) { Log("pakahead: only %llu MB RAM free - not unpacking ahead", freeMb); g_items.clear(); g_byKey.clear(); return; }
 	kCapBytes = (size_t)(spare > 2048 ? 2048 : spare) << 20;
 	g_pin = freeMb >= 7500;

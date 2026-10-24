@@ -33,12 +33,12 @@ struct Want {
 std::vector<Want> g_want;
 std::mutex g_mu;
 
+// 2026-10-23 21:36 boot measured the others and dropped them: r_TexturesStreamingMaxRequestedMB 32 / Jobs 128 made
+// the save step 20.4 s (15.3 before: more texture data loaded before gameplay starts); r_ShadersAsyncMaxThreads 4
+// did nothing (the ShaderCompile threads sat idle; the shader parsing runs on RenderLoadingThread);
+// r_PSOCompilationWorkerThreads 6: pre-save step 10.0 s vs 6.9 (not separated from the low-RAM boot).
 const char* kDefaults =
-	"sys_SleepIfInactiveWH 0 load\n"
-	"r_ShadersAsyncMaxThreads 4\n"
-	"r_PSOCompilationWorkerThreads 6\n"
-	"r_TexturesStreamingMaxRequestedMB 32 load\n"
-	"r_TexturesStreamingMaxRequestedJobs 128 load\n";
+	"sys_SleepIfInactiveWH 0 load\n";
 
 void Parse(const char* text) {
 	const char* p = text;
