@@ -180,6 +180,31 @@ uint32_t Faults() {
 	return K32GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof pmc) ? pmc.PageFaultCount : 0;
 }
 
+// System-wide page counters (SYSTEM_PERFORMANCE_INFORMATION, NtQuerySystemInformation class 2): which kind of fault a
+// long frame's page faults were. Pages read from disk = hard faults (paging in what Windows had moved out); transition =
+// soft (back from the standby / modified lists); demand-zero = fresh memory. Whole system, but a load dominates it.
+struct SysPf { bool ok = false; uint32_t avail = 0, trans = 0, dz = 0, reads = 0, readIos = 0, dirty = 0; };
+SysPf SysFaults() {
+	using Fn = LONG(NTAPI*)(ULONG, PVOID, ULONG, PULONG);
+	static const Fn f = (Fn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQuerySystemInformation");
+	uint64_t buf[128] = {};   // 1 KB, 8-byte aligned (the struct is ~0x158 bytes)
+	const unsigned char* b = (const unsigned char*)buf;
+	ULONG len = 0;
+	SysPf r;
+	if (!f) return r;
+	LONG st = f(2, buf, sizeof buf, &len);
+	if (st < 0 && len >= 100 && len < sizeof buf) st = f(2, buf, len, &len);   // a class that wants its exact size
+	if (st < 0 || len < 100) return r;
+	r.ok = true;
+	r.avail = *(uint32_t*)(b + 44);   // AvailablePages (checks the layout against free RAM in the log line)
+	r.trans = *(uint32_t*)(b + 68);   // TransitionCount
+	r.dz = *(uint32_t*)(b + 76);      // DemandZeroCount
+	r.reads = *(uint32_t*)(b + 80);   // PageReadCount
+	r.readIos = *(uint32_t*)(b + 84); // PageReadIoCount
+	r.dirty = *(uint32_t*)(b + 96);   // DirtyPagesWriteCount (written out to the page file)
+	return r;
+}
+
 void RefreshModules() {
 	HMODULE hm[1024];
 	DWORD need = 0;
@@ -376,9 +401,18 @@ void ReportFiles(int no, long long a, long long b) {
 	fclose(f);
 }
 
-void Report(int no, double frameMs, const std::vector<Sample>& ss, uint32_t faults0) {
+void Report(int no, double frameMs, const std::vector<Sample>& ss, uint32_t faults0, const SysPf& sys0) {
 	if (ss.empty()) return;
 	const uint32_t df = ss.back().faults - faults0;
+	const SysPf sys1 = SysFaults();
+	if (sys0.ok && sys1.ok) {
+		MEMORYSTATUSEX m{ sizeof m };
+		GlobalMemoryStatusEx(&m);
+		Log("hitch: #%d system pages: read from disk %u (%.0f MB in %u reads), back from standby %u, fresh %u, written to the "
+		    "page file %u; free %u MB (Windows says %llu)", no, sys1.reads - sys0.reads, (sys1.reads - sys0.reads) / 256.0,
+		    sys1.readIos - sys0.readIos, sys1.trans - sys0.trans, sys1.dz - sys0.dz, sys1.dirty - sys0.dirty, sys1.avail / 256,
+		    m.ullAvailPhys >> 20);
+	}
 	for (size_t who = 0; who < g_targets.size(); who++) {
 		std::map<std::string, int> in, from;
 		int n = 0;
@@ -415,6 +449,7 @@ DWORD WINAPI Watch(LPVOID) {
 	int no = 0;
 	long long start = 0;
 	uint32_t faults0 = 0;
+	SysPf sys0;
 	for (;;) {
 		Sleep(kIntervalMs);
 		const long long last = g_lastFrame.load(std::memory_order_acquire);
@@ -424,7 +459,7 @@ DWORD WINAPI Watch(LPVOID) {
 		const double gapMs = (now - last) * 1000.0 / (double)g_freq;
 		if (!ss.empty() && (last != start || !g_on)) {   // the long frame ended (or sampling was turned off)
 			const double frameMs = (last != start ? last - start : now - start) * 1000.0 / (double)g_freq;
-			Report(no, frameMs, ss, faults0);
+			Report(no, frameMs, ss, faults0, sys0);
 			ReportFiles(no, start, last != start ? last : now);
 			ss.clear();
 		}
@@ -434,6 +469,7 @@ DWORD WINAPI Watch(LPVOID) {
 			start = last;
 			no++;
 			faults0 = Faults();
+			sys0 = SysFaults();
 			RefreshModules();
 			FindTargets();
 		}
