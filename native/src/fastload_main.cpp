@@ -80,6 +80,7 @@ void Tick() {
 	if (s >= 4) g_world = true;
 	if (s >= 1) { if (!g_loading) { g_loading = true; g_firedThisLoad = false; } }
 	else if (s == 0 && g_loading) { g_loading = false; GameplayStarted("level state 0"); }
+	Terrainfast_Frame();   // the terrain meshes asked for at the menu (terrainfast.cpp)
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)

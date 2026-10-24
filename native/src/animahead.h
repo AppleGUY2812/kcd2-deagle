@@ -17,3 +17,6 @@ void Animahead_Install(uintptr_t gameBase, void* self);
 // questmenu's boot event 0x24 hook (Main, once): starts the preload thread; waitFirst = an event to wait for first
 // (questmenu's build: the two never run at the same time), or null.
 void Animahead_AtMenu(void* waitFirst);
+// Boot event 0x24 has come, and neither the preload nor questmenu's build (or a questbench) is running or still to come:
+// the menu loads no animations now. terrainfast's menu preload waits for this (its meshes may add animation headers).
+bool Animahead_MenuSettled();

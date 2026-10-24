@@ -34,6 +34,8 @@ std::atomic<bool> g_busy{false};           // our preload is inside the characte
 std::atomic<bool> g_levelStarted{false};   // "Loading level" ran: no preload may start after it
 std::atomic<DWORD> g_preloadTid{0};
 HANDLE g_done = nullptr;   // manual reset, set while no preload runs
+std::atomic<int> g_menuState{0};   // Animahead_MenuSettled: 0 boot event 0x24 not yet, 1 preload pending/running, 2 settled
+std::atomic<HANDLE> g_waitFirst{nullptr};
 using Fn3 = uint64_t(__fastcall*)(void*, const char*, uint64_t);
 using Fn4 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
 Fn3 g_chr = nullptr, g_skel = nullptr;
@@ -99,6 +101,7 @@ void Finish() {
 	g_preloadTid = 0;
 	g_busy = false;
 	SetEvent(g_done);
+	g_menuState = 2;
 }
 
 DWORD WINAPI Preload(LPVOID arg) {
@@ -108,7 +111,7 @@ DWORD WINAPI Preload(LPVOID arg) {
 		const long long t = Now();
 		const DWORD w = WaitForSingleObject(job.waitFirst, 120000);
 		Log("animahead: waited %.0f ms for the quest graph's menu build%s", Ms(t, Now()), w == WAIT_OBJECT_0 ? "" : " (gave up)");
-		if (w != WAIT_OBJECT_0) return 0;
+		if (w != WAIT_OBJECT_0) { g_menuState = 2; return 0; }
 	}
 	// Dekker with "Loading level" (seq_cst): either we see its flag, or it sees us busy and waits for g_done
 	g_preloadTid = GetCurrentThreadId();
@@ -147,6 +150,8 @@ uint64_t __fastcall HkLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t d) 
 }  // namespace
 
 void Animahead_AtMenu(void* waitFirst) {
+	g_waitFirst = (HANDLE)waitFirst;
+	g_menuState = 2;   // set back to 1 below when a preload thread starts
 	if (g_mode != 1 || !g_loadLevel) return;
 	const char* why = nullptr;
 	void* cm = ReadPtr(g_base + kRvaCharMgr);
@@ -157,9 +162,10 @@ void Animahead_AtMenu(void* waitFirst) {
 	else if (g_levelStarted || Xmlahead_LevelSeen()) why = "a level load has already begun";
 	else if (ramgov::AvailMb() < 1500) why = "less than 1500 MB RAM free";
 	if (why) { Log("animahead: no preload at the menu: %s", why); return; }
+	g_menuState = 1;
 	HANDLE h = CreateThread(nullptr, 1 << 20, Preload, new Job{ fn, (HANDLE)waitFirst }, 0, nullptr);
 	if (h) CloseHandle(h);
-	else Log("animahead: could not start the preload thread");
+	else { g_menuState = 2; Log("animahead: could not start the preload thread"); }
 }
 
 void Animahead_Install(uintptr_t base, void* self) {
@@ -181,4 +187,10 @@ void Animahead_Install(uintptr_t base, void* self) {
 	const bool skel = Hook(kRvaModelSkel, kModelSkelBytes, sizeof kModelSkelBytes, (void*)&HkSkel, (void**)&g_skel, "LoadModelSKEL");
 	Log("animahead: mode %d (%s; fastload_animahead.txt), level-load gate %s, chrparams log %s, skeleton log %s", g_mode,
 	    g_mode ? "human animation sets at the main menu" : "off", lvl ? "on" : "OFF", chr ? "on" : "OFF", skel ? "on" : "OFF");
+}
+
+bool Animahead_MenuSettled() {   // terrainfast's menu preload: nothing loads animations at the menu now (any thread)
+	if (g_menuState.load() != 2) return false;
+	const HANDLE w = g_waitFirst.load();
+	return !w || WaitForSingleObject(w, 0) == WAIT_OBJECT_0;   // questmenu's build (or a questbench) has finished
 }

@@ -16,6 +16,17 @@
 // Log: "terrainfast: terrain wait ..." when the terrain wait ends (loadwatch.cpp), and "terrainfast: load ..." when
 // gameplay starts: finalize calls (the game's / ours), their main-thread ms, CGF and LOD completions and their ms, and the
 // loading-screen ticks' ms.
+// Menu preload (the third number in fastload_terrainfast.txt, 1 = on by default; re_terrain_menu.md, 2026-10-24): every
+// load records the global mesh names (not levels/<level>/... or %level%/...) it hands the async CGF load (FUN_18052d91c)
+// to fastload_terrainahead_<level>.txt. At the next start, once the newest save's level is known (questmenu's save scan)
+// and before the session's first load, the main thread asks for those meshes at the menu, 16 a frame, at most 128
+// unfinished, while the RAM rule allows, with no callback (as the game's own brushlist preloader does). Nothing frees
+// CObjManager's objects between the menu and the terrain step on a first load (UnLoadLevel is a no-op with no level;
+// FreeNotUsedCGFs runs at LEVEL_LOAD_END, after the terrain step has taken its references), so the terrain step finds
+// them finished and skips their read and build. A mesh that fails to load is not registered (FUN_18052c6dc), so the
+// level loads it itself. Only global meshes: 75 % of Trosecko's 14,153 live in level paks mounted after Continue.
+// "terrainfast: menu preload ..." lines say how many were asked and finished at the menu, and when the load came.
+void Terrainfast_Frame();   // main thread, every frame (fastload_main.cpp)
 void Terrainfast_Install(uintptr_t gameBase, void* self);   // after MH_Initialize
 void Terrainfast_OnLoaded();                // gameplay started (fastload_main.cpp): the load's summary line
-void Terrainfast_Command(const char* args);   // "terrainfast [0|1|2] [ms]"
+void Terrainfast_Command(const char* args);   // "terrainfast [0|1|2] [ms] [ahead 0|1]"

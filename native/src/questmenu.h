@@ -29,3 +29,4 @@ void Questmenu_SetConceptHook(bool on);   // applyfast: that hook is installed
 // one "questbench:" line per build with the time of each part (the profile/test loop without a boot). ab = questfast on
 // for odd builds, off for even ones. A pending main-menu build stays kept (re-snapshotted). No args: the state.
 void Questmenu_Bench(const char* args);
+const char* Questmenu_SaveLevel();   // the newest save's level (what Continue loads) once the save scan is done, else nullptr

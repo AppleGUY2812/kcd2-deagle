@@ -560,3 +560,8 @@ void Questmenu_Install(uintptr_t base, void* self) {
 	    " projects").c_str() : "none yet");
 	(void)kJobBodyBytes;
 }
+
+const char* Questmenu_SaveLevel() {   // terrainfast's menu preload: the level Continue loads (read-only)
+	if (!g_scanDone || WaitForSingleObject(g_scanDone, 0) != WAIT_OBJECT_0 || g_saveLevel.empty()) return nullptr;
+	return g_saveLevel.c_str();
+}
