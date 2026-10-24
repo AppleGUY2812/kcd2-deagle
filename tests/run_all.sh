@@ -35,6 +35,9 @@ if command -v g++ >/dev/null; then
   # "let me in early" for the save-load / fast-travel readiness gates (native/src/readiness_early.h)
   { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/readiness_early_test.cpp -o native/build/test/readiness_early_test &&
     native/build/test/readiness_early_test >/dev/null; } || { echo "FAIL readiness_early_test"; fail=1; }
+  # the concept graph's find-by-name without the deque (native/src/conceptbfs_core.h) against the game's algorithm
+  { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/conceptbfs_test.cpp -o native/build/test/conceptbfs_test &&
+    native/build/test/conceptbfs_test >/dev/null; } || { echo "FAIL conceptbfs_test"; fail=1; }
 elif [ "${SKIP_NATIVE:-}" = 1 ]; then echo "SKIP run_round_contract --native (SKIP_NATIVE=1)"
 else echo "FAIL run_round_contract --native: no g++ (SKIP_NATIVE=1 skips it on purpose)"; fail=1; fi
 luajit tests/run_accuracy.lua >/dev/null || { echo "FAIL run_accuracy"; fail=1; }
