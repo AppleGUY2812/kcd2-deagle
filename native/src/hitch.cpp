@@ -26,8 +26,9 @@ uintptr_t g_game = 0, g_gameEnd = 0;
 long long g_freq = 1;
 std::string g_csvPath;
 size_t g_csvBytes = 0;
-constexpr size_t kStackBytes = 32 * 1024, kMaxCsvBytes = 48u << 20;
-constexpr int kIntervalMs = 20, kMaxSamples = 6000, kKeep = 16;
+constexpr size_t kStackBytes = 128 * 1024, kMaxCsvBytes = 48u << 20;   // 128 KB, 64 kept: a 5 s load frame
+// (the save-load apply step, 2026-10-24) needs the outer phases, which 32 KB / 16 return addresses cut off
+constexpr int kIntervalMs = 20, kMaxSamples = 6000, kKeep = 64;
 alignas(16) uint8_t g_stack[kStackBytes];   // the watcher's only buffer while a thread is suspended
 
 // The threads sampled with the main thread, by name (the engine names its threads); `hitch threads A,B`.
