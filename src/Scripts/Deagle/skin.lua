@@ -22,6 +22,9 @@ local PARTS = { "vm_mesh", "vm_mag1", "vm_mag2", "vm_round_1", "vm_round_2", "vm
 Deagle.SKIN_RIGID_MTL = { pom = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_pom",
 	spom = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid" }
 Deagle.skinRigidLook = Deagle.skinRigidLook or "pom"
+-- the rigid pieces are an experiment until they sit right and SilPOM draws on them: off by default (the skinned body
+-- shows); deagle_spom on swaps the body to its NoDraw variant (<skin>_rigid.mtl) and attaches the pieces
+Deagle.skinRigidOn = Deagle.skinRigidOn or false
 Deagle.SKIN_RIGID = { ron_grizzly = { mirror = { cgf = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_",
 	bones = { "J_Gun", "tag_slide", "tag_sight", "tag_barrel", "tag_grip_safety", "tag_hammer", "tag_slidelock_safety",
 		"tag_slidelock", "tag_trigger", "tag_mag_release" } } } }
@@ -45,12 +48,14 @@ function Deagle:SkinApply()
 	self.skinApplied = key
 	local mtl = self:SkinMtl(want) or self:SkinMtl("main")
 	if not mtl then return end   -- a gun without skins keeps its own material
+	local defs = self.gun and self.SKIN_RIGID[self.gun.id]
+	if self.skinRigidOn and defs and defs[want] then mtl = mtl .. "_rigid" end   -- the skinned body NoDraw: the pieces show it
 	local n = 0
 	for _, part in ipairs(PARTS) do
 		local ok, r = pcall(vm.ChangeAttachmentMaterial, vm, part, mtl)
 		if ok and r ~= false then n = n + 1 end
 	end
-	local rigid = self:SkinRigid(vm, want)
+	local rigid = self:SkinRigid(vm, self.skinRigidOn and want or "")
 	log(string.format("skin %s on %s: %s (%d parts%s)", want, tostring(self.gun.id), mtl, n, rigid > 0 and (", " .. rigid .. " rigid pieces") or ""))
 end
 
@@ -93,8 +98,9 @@ function Deagle:SpomCmd(arg)
 		local p, d = System.GetViewCameraPos(), System.GetViewCameraDir()
 		local rl = math.sqrt(d.x * d.x + d.y * d.y); local r = rl > 0 and { x = d.y / rl, y = -d.x / rl } or { x = 1, y = 0 }
 		local cgf = (self.SKIN_RIGID.ron_grizzly.mirror.cgf) .. "j_gun.cgf"
+		local cen = { x = 0.0913, y = 0.2028, z = -0.3662 }   -- the piece's middle in model space (the CGF origin is the viewmodel's): x5
 		for _, c in ipairs({ { "deagle_spomtest_spom", -0.4, self.SKIN_RIGID_MTL.spom }, { "deagle_spomtest_pom", 0.4, self.SKIN_RIGID_MTL.pom } }) do
-			local pos = { x = p.x + d.x * 1.5 + r.x * c[2], y = p.y + d.y * 1.5 + r.y * c[2], z = p.z + d.z * 1.5 - 0.4 }
+			local pos = { x = p.x + d.x * 1.5 + r.x * c[2] - cen.x * 5, y = p.y + d.y * 1.5 + r.y * c[2] - cen.y * 5, z = p.z + d.z * 1.5 - cen.z * 5 }
 			local e = System.SpawnEntity({ class = "BasicEntity", name = c[1], position = pos, flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = cgf } })
 			if e then pcall(e.LoadObject, e, 0, cgf); pcall(e.SetScale, e, 5); pcall(e.SetMaterial, e, c[3]) end
 			log(string.format("spom test: %s %s at %.1f %.1f %.1f", c[1], e and "spawned" or "FAILED", pos.x, pos.y, pos.z))
@@ -102,6 +108,9 @@ function Deagle:SpomCmd(arg)
 		self:Notify("left: Silhouette POM, right: plain POM (deagle_spom clear removes them)")
 	elseif arg == "clear" then
 		for _, n in ipairs({ "deagle_spomtest_spom", "deagle_spomtest_pom" }) do local e = System.GetEntityByName(n) if e then System.RemoveEntity(e.id) end end
+	elseif arg == "on" or arg == "off" then
+		self.skinRigidOn = arg == "on"; self.skinApplied = nil; self:SkinApply()
+		self:Notify("gun pieces " .. arg .. (arg == "on" and " (" .. self.skinRigidLook .. ")" or ""))
 	elseif self.SKIN_RIGID_MTL[arg] then
 		self.skinRigidLook = arg
 		local vm = self.vmId and System.GetEntity(self.vmId)
@@ -111,7 +120,7 @@ function Deagle:SpomCmd(arg)
 		end
 		log("spom: the rigid pieces wear " .. arg .. " (" .. n .. " pieces)"); self:Notify("gun pieces: " .. arg)
 	else
-		self:Notify("deagle_spom pom | spom | test | clear")
+		self:Notify("deagle_spom on | off | pom | spom | test | clear")
 	end
 end
 
@@ -147,4 +156,4 @@ end
 Deagle:SkinWatchKick()
 
 System.AddCCommand("deagle_skin", "Deagle:SkinWatchKick(); Deagle:SkinCmd(Deagle.Arg([[%1]]))", "deagle_skin [name]: the gun's finish (Grizzly: main, silver, mirror), kept; no name lists them")
-System.AddCCommand("deagle_spom", "Deagle:SpomCmd(Deagle.Arg([[%1]]))", "deagle_spom pom|spom|test|clear: the mirror gun pieces' material (plain or Silhouette POM), or a side-by-side SilPOM test in the world")
+System.AddCCommand("deagle_spom", "Deagle:SpomCmd(Deagle.Arg([[%1]]))", "deagle_spom on|off|pom|spom|test|clear: the mirror gun as rigid pieces (on/off), the pieces' material (plain or Silhouette POM), or a side-by-side SilPOM test in the world")
