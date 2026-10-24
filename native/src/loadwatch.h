@@ -9,3 +9,5 @@
 // (2a node building, 2b CreatePorts / CreateEdges) and the main thread's wait for it, one "loadwatch: quest" line per
 // call of 20 ms or more (timing only; every hook checks its first 10 bytes against WHGame.dll 1.5.6).
 void Loadwatch_Install(uintptr_t gameBase);
+// The quest job (piece 3b's wait): -1 unknown (the job-body hook is off), 0 not finished since its last submit, 1 done.
+int Loadwatch_QuestJob();

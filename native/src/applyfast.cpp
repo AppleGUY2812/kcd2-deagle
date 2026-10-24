@@ -1,5 +1,6 @@
 // Faster pieces of the save load's "apply save" step. See applyfast.h.
 #include "applyfast.h"
+#include "loadwatch.h"
 #include "log.h"
 #include "xmlahead.h"
 #include "MinHook.h"
@@ -206,9 +207,24 @@ uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
 // m_pRT+0x50 is 0 (SyncMainWithRender sets it, the loading thread clears it in FUN_180fbbdb8); the engine's own texture
 // precache request syncs the same way, only when that byte is 0 (FUN_1809b165c), so the hand-over never blocks.
 // The load's own precache (PostLoadLevel) then finds the PSOs made.
+// Never longer than the game would wait (boot 31, 2026-10-24: with little free RAM the loading thread stayed busy and a
+// fixed 5 s wait cost the main thread 5 s, 40 s load; kcd2-deagle-66's review had flagged it). So: before the quest wait
+// it waits only while the quest job still runs (the main thread would wait there anyway); if the loading thread is
+// still busy then, the hand-over stays pending and is tried again, without waiting, at three points while the main
+// thread finishes the level (PostLoadLevel, the level-load-end system event, LoadGameGlobalPass). Not handed over by
+// the time the level is done = the game's own precache at its first frame sync, as without the plugin.
 constexpr uintptr_t kRvaRenDev = 0x547db60;   // DAT_18547db60: gRenDev; m_pRT at +0xf8
-constexpr unsigned kPsoWaitCapMs = 5000;      // longer than the 1.4-3.0 s seen; after it, queue without handing over
+constexpr unsigned kPsoWaitCapMs = 5000;      // safety only: the quest job normally ends the wait first
 std::atomic<long long> s_psoWaitMs{-1};
+uintptr_t g_psoRt = 0;                        // m_pRT, set when the hand-over goes pending (state 2)
+std::atomic<bool> g_gamePsoQueued{false};     // PostLoadLevel has queued the game's own precache (no need for ours)
+long long g_psoPendingAt = 0;
+using Fn4 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
+Fn4 g_postLoadLevel = nullptr, g_objDbEvent = nullptr, g_xgGlobalPass = nullptr;
+constexpr uintptr_t kRvaPostLoadLevel = 0x5f8740, kRvaObjDbEvent = 0xef37d8, kRvaXgGlobalPass = 0xb4403c;
+const unsigned char kPostLoadLevelBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x48,0x89,0x7c,0x24,0x18,0x41,0x56 };
+const unsigned char kObjDbEventBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x7c,0x24,0x18,0x55,0x48,0x8b,0xec,0x48,0x83,0xec,0x70 };
+const unsigned char kXgGlobalPassBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0x42,0x18 };
 
 bool OnMainThread() {   // the engine names it "Main" (thread samples); m_pRT+0xf8 is not it (FUN_1809b16f8)
 	using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
@@ -219,6 +235,48 @@ bool OnMainThread() {   // the engine names it "Main" (thread samples); m_pRT+0x
 	return ok;
 }
 
+}  // namespace
+
+namespace {
+// main thread, the loading thread idle (flush byte 0): queue the game's precache (unless PostLoadLevel already did) and
+// hand it over; the sync does not block because the byte is 0
+void PsoHandOver(const char* where, long long waitedMs) {
+	const bool queueOurs = !g_gamePsoQueued.load();
+	if (queueOurs) reinterpret_cast<void(__fastcall*)()>(g_base + kRvaPsoQueue)();
+	reinterpret_cast<void(__fastcall*)(uintptr_t, char)>(g_base + kRvaSync)(g_psoRt, 0);
+	g_psoState = 1;
+	s_psoWaitMs = waitedMs;
+	Log("applyfast: PSO precache during the load: handed to the render loading thread %s (waited %lld ms, %.2f s after it "
+	    "went pending; %s)", where, waitedMs, g_psoPendingAt ? (Now() - g_psoPendingAt) * 1.0 / g_freq : 0.0,
+	    queueOurs ? "queued by us" : "the game's own, queued by PostLoadLevel");
+}
+
+// a later point on the main thread: hand over if pending and the loading thread is idle, never wait
+void PsoRetry(const char* where) {
+	if (g_psoState.load(std::memory_order_relaxed) != 2) return;
+	__try {
+		if (*(volatile char*)(g_psoRt + 0x50) || !OnMainThread()) return;
+		PsoHandOver(where, 0);
+	} __except (EXCEPTION_EXECUTE_HANDLER) {
+		g_psoState = -1;
+		Log("applyfast: PSO precache during the load: exception at %s, left to the game", where);
+	}
+}
+
+uint64_t __fastcall HkPostLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+	PsoRetry("as the level finishes (PostLoadLevel)");
+	const uint64_t r = g_postLoadLevel(a, b, c, d);
+	if (g_psoState.load(std::memory_order_relaxed) == 2) g_gamePsoQueued = true;   // the game's own lambda is now queued
+	return r;
+}
+uint64_t __fastcall HkObjDbEvent(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // every system event: cheap when not pending
+	PsoRetry("at the level-load-end event (before the smart-object table)");
+	return g_objDbEvent(a, b, c, d);
+}
+uint64_t __fastcall HkXgGlobalPass(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // every XGenAI module message
+	PsoRetry("before the XGenAI global pass");
+	return g_xgGlobalPass(a, b, c, d);
+}
 }  // namespace
 
 void Applyfast_BeforeQuestWait() {   // main thread, from loadwatch's hook of FUN_1811414d8 (msg 0x18)
@@ -234,18 +292,19 @@ void Applyfast_BeforeQuestWait() {   // main thread, from loadwatch's hook of FU
 			    rt ? *(DWORD*)(rt + 0xf0) : 0, GetCurrentThreadId(), main ? "yes" : "no");
 			return;
 		}
+		g_psoRt = rt;
 		const long long t0 = Now();
 		long long ms = 0;
-		while (*(volatile char*)(rt + 0x50) && (ms = (Now() - t0) * 1000 / g_freq) < kPsoWaitCapMs) Sleep(1);
-		const bool idle = !*(volatile char*)(rt + 0x50);
+		int job = Loadwatch_QuestJob();   // -1 unknown (hook off), 0 running, 1 done
+		while (*(volatile char*)(rt + 0x50) && (job = Loadwatch_QuestJob()) != 1 &&
+		       (ms = (Now() - t0) * 1000 / g_freq) < (job < 0 ? 2000u : kPsoWaitCapMs))
+			Sleep(1);
 		ms = (Now() - t0) * 1000 / g_freq;
-		reinterpret_cast<void(__fastcall*)()>(g_base + kRvaPsoQueue)();
-		if (idle) reinterpret_cast<void(__fastcall*)(uintptr_t, char)>(g_base + kRvaSync)(rt, 0);
-		g_psoState = 1;
-		s_psoWaitMs = ms;
-		Log("applyfast: PSO precache during the load: %s after waiting %lld ms for the render loading thread (main thread %lu)",
-		    idle ? "handed to the render loading thread" : "queued (the loading thread stayed busy; it goes at the next sync)",
-		    ms, GetCurrentThreadId());
+		if (!*(volatile char*)(rt + 0x50)) { PsoHandOver("before the quest wait", ms); return; }
+		g_psoPendingAt = Now();
+		g_psoState = 2;
+		Log("applyfast: PSO precache during the load: pending after %lld ms (quest job %s, the render loading thread still "
+		    "busy); tried again while the level finishes, without waiting", ms, job == 1 ? "done" : job == 0 ? "still running" : "unknown");
 	} __except (EXCEPTION_EXECUTE_HANDLER) {
 		Log("applyfast: PSO precache during the load: exception, left to the game");
 	}
@@ -315,6 +374,11 @@ void Applyfast_OnLoaded() {
 	if (s_qeEarly.load())
 		Log("applyfast: quests first: %lld level data messages, concept turn skipped %lld times", s_qeEarly.load(),
 		    s_qeSkipped.load());
+	if (g_psoState.load() == 2) {   // never handed over: the game's own precache ran at its first frame sync
+		g_psoState = -1;
+		Log("applyfast: PSO precache during the load: still pending when the level was done, left to the game (%.2f s pending)",
+		    (Now() - g_psoPendingAt) * 1.0 / g_freq);
+	}
 	static bool psoTold = false;
 	if (!psoTold && g_psoState.load() >= 0) {
 		psoTold = true;
@@ -382,8 +446,17 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	const bool d = g_psoMode && psoCode &&
 	               (g_psoMode == 2 || Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync"));
 	if (!d) g_psoState = -1;
+	int retries = 0;   // the later hand-over points (3b); without them it is tried only before the quest wait
+	if (d && g_psoMode == 2) {
+		retries += Hook(base, kRvaPostLoadLevel, kPostLoadLevelBytes, sizeof kPostLoadLevelBytes, (void*)&HkPostLoadLevel,
+		                (void**)&g_postLoadLevel, "PostLoadLevel");
+		retries += Hook(base, kRvaObjDbEvent, kObjDbEventBytes, sizeof kObjDbEventBytes, (void*)&HkObjDbEvent,
+		                (void**)&g_objDbEvent, "object database system event");
+		retries += Hook(base, kRvaXgGlobalPass, kXgGlobalPassBytes, sizeof kXgGlobalPassBytes, (void*)&HkXgGlobalPass,
+		                (void**)&g_xgGlobalPass, "XGenAI global pass");
+	}
 	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s; "
 	    "PSO precache: %s; quests first in the level data message: %s", g_mode, g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF",
-	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? "during the load" : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (deagle_psoahead.txt 0)",
+	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? (retries == 3 ? "during the load (3 later hand-over points)" : "during the load (later hand-over points: some OFF)") : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (deagle_psoahead.txt 0)",
 	    e ? "on" : g_questsFirst ? "OFF (code differs)" : "off (deagle_questearly.txt)");
 }

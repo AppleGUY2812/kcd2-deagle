@@ -63,6 +63,8 @@ QHook g_q[] = {
 };
 constexpr int kQ = sizeof g_q / sizeof g_q[0];
 constexpr int kQuestWait = 6;   // "main thread waits for the job"
+constexpr int kJobSubmit = 0, kJobBody = 1;
+std::atomic<int> g_jobState{-1};   // Loadwatch_QuestJob(); -1 until the body hook is on
 std::atomic<long long> g_qCalls[kQ], g_qTicks[kQ];
 std::atomic<int> g_qLines{0};
 long long g_t0 = 0;
@@ -80,10 +82,12 @@ void QNote(int i, long long a, long long b) {
 template <int I> uint64_t __fastcall QWrap(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	thread_local int depth = 0;
 	if (I == kQuestWait && depth == 0) Applyfast_BeforeQuestWait();   // its own wait is logged by applyfast
+	if (I == kJobSubmit && depth == 0 && g_jobState.load() >= 0) g_jobState = 0;
 	const long long t = Now();
 	depth++;
 	const uint64_t r = ((Fn4)g_q[I].orig)(a, b, c, d);
 	depth--;
+	if (I == kJobBody && depth == 0 && g_jobState.load() >= 0) g_jobState = 1;
 	if (depth == 0) QNote(I, t, Now());
 	return r;
 }
@@ -92,6 +96,8 @@ void* const g_qWrap[] = { (void*)&QWrap<0>, (void*)&QWrap<1>, (void*)&QWrap<2>, 
 static_assert(sizeof g_qWrap / sizeof g_qWrap[0] == kQ, "one wrapper per hook");
 
 }  // namespace
+
+int Loadwatch_QuestJob() { return g_jobState.load(); }
 
 void Loadwatch_Install(uintptr_t base) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
@@ -107,6 +113,7 @@ void Loadwatch_Install(uintptr_t base) {
 		if (memcmp(t, g_q[i].bytes, sizeof g_q[i].bytes) ||
 		    MH_CreateHook(t, g_qWrap[i], &g_q[i].orig) != MH_OK || MH_EnableHook(t) != MH_OK) { off += off.empty() ? "" : ", "; off += g_q[i].name; continue; }
 		on++;
+		if (i == kJobBody) g_jobState = 1;   // no job yet = nothing to wait for; a submit sets 0
 	}
 	Log("loadwatch: quest load timing %d of %d hooks on%s%s", on, kQ, off.empty() ? "" : "; off: ", off.c_str());
 }
