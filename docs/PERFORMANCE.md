@@ -547,3 +547,17 @@ What it is, from the plugin's `timing: frame` lines (22:00 boot vs an in-game re
   starting up once per launch (docs/whgame_re/first_gameplay_frame.md), and it is only in the load for the auto-load
   test boots. The user's way had no such frame (34.4 s from Continue to control, gate 8.7 s). Not the Aftermath
   shader dumps: that guess was wrong.
+- Settle on the user's path (boot 27, 2026-10-24 02:31, menu then Continue): 8.7 s; textures not ready for 7.9 s,
+  clothing 6.3, animations 5.9; "readiness early 1" would have let them in at 6.6 s (2.1 s sooner). The stream engine's
+  temp fallback read 21.3 MB against its 20 MB budget (`sys_streaming_memory_budget = 20480` in Warhorse's system.cfg;
+  engine default 32768) from 4 to 7 s, peaks 85 MB, while `streamio` showed the read thread busy only 39-63 % (160-260
+  MB/s) and texture requests out at 510-660. When the 12 MB heap and the fallback are both full the reader parks with
+  requests queued (settle_feed report item 4), so this may be what feeds the texture tail. NOT proven: bc4bbc3 adds the
+  reader's state to every waiting line (asleep with work queued / with nothing queued / temp memory full), and 0031c95
+  `readiness temp <MB>` raises the budget only while a load screen waits (off by default). Needs one A/B pair of
+  menu-path boots.
+- Threads in the gate, from the outside sampler (boots 13 / 15 / 16, ~60 Hz, a thread counts on ticks where its CPU
+  time moved): Main 72-74 % of ticks, Streaming AsyncCallback 12-17 % (the one thread that runs every stream callback,
+  so not saturated), Streaming File IO HDD 12-16 % of CPU (time blocked in ReadFile doesn't show), 8 JobWorkers ~40 %
+  each, RenderThread ~10 %. No single thread is saturated, which fits a capped resource (temp memory) or a latency
+  chain, not a busy one.
