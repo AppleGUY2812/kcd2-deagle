@@ -269,13 +269,25 @@ uint64_t __fastcall HkPostLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t
 	if (g_psoState.load(std::memory_order_relaxed) == 2) g_gamePsoQueued = true;   // the game's own lambda is now queued
 	return r;
 }
-uint64_t __fastcall HkObjDbEvent(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // every system event: cheap when not pending
-	PsoRetry("at the level-load-end event (before the smart-object table)");
+// Only the level-load-end event (0x1c) and the global-pass message (0x7306) count: boot 32 handed over at a later system
+// event, after the game's own frame sync had already run the precache (state 4), i.e. an extra sync in the frame loop.
+uint64_t __fastcall HkObjDbEvent(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // OnSystemEvent(this, event): every event
+	if ((int)b == 0x1c) PsoRetry("at the level-load-end event (before the smart-object table)");
 	return g_objDbEvent(a, b, c, d);
 }
 uint64_t __fastcall HkXgGlobalPass(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // every XGenAI module message
-	PsoRetry("before the XGenAI global pass");
-	return g_xgGlobalPass(a, b, c, d);
+	bool global = false;
+	if (g_psoState.load(std::memory_order_relaxed) == 2) {
+		__try { global = b && *(const uint16_t*)(*(const uintptr_t*)(b + 0x18) + 8) == 0x7306; }   // its own type check
+		__except (EXCEPTION_EXECUTE_HANDLER) {}
+	}
+	if (global) PsoRetry("before the XGenAI global pass");
+	const uint64_t r = g_xgGlobalPass(a, b, c, d);
+	int pending = 2;   // the last point before the game's own first frame sync: after it, the game does it (state 4)
+	if (global && g_psoState.compare_exchange_strong(pending, -1))
+		Log("applyfast: PSO precache during the load: the render loading thread was busy at every point, left to the game "
+		    "(%.2f s pending)", (Now() - g_psoPendingAt) * 1.0 / g_freq);
+	return r;
 }
 }  // namespace
 
