@@ -35,6 +35,7 @@
 #include "questprof.h"
 #include "questdump.h"
 #include "questreplay.h"
+#include "rttrname.h"
 #include "questfast.h"
 #include "levelprof.h"
 #include "applyprof.h"
@@ -224,6 +225,7 @@ DWORD WINAPI Init(LPVOID) {
 	else if (g_earlyHooks == -2) Log("fastload: DllMain ran before WHGame.dll was loaded: no early sort hooks");
 	else Log("fastload: DllMain ran after WHGame.dll's start-up code (the ASI loader's default); global.ini DontLoadFromDllMain=0 "
 	         "next to dinput8.dll loads it before");
+	Rttrname_Report();
 	MH_SetFreezeLast(Early_MainThread());
 	MH_DeferEnables(TRUE);   // the hooks below go on in two freezes, not one each
 	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
@@ -335,6 +337,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 			if (nt->OptionalHeader.SizeOfImage > kRvaAllocInit && !*(volatile unsigned char*)(b + kRvaAllocInit)) {
 				g_mhEarly = MH_Initialize() == MH_OK;
 				g_earlyHooks = g_mhEarly ? Questfast_EarlyInstall(b, h) : 0;
+				if (g_mhEarly) Rttrname_EarlyInstall(b, h);   // rttr's type naming without the no-op re-derivations (rttrname.cpp)
 			}
 		}
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
