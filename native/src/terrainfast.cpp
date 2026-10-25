@@ -69,6 +69,7 @@ std::vector<std::string> g_list;
 std::string g_listLevel;
 size_t g_next = 0;
 long long g_menuCgf = 0, g_menuCgfT = 0, g_menuFinMax = 0, g_aT0 = 0, g_lastIssue = 0, g_ramWaits = 0, g_aEnd = 0, g_animWaits = 0;
+std::atomic<long long> g_ramSince{0};   // the menu preload has waited for RAM since this time (0 = not waiting): readymenu
 
 // "levels/<name>/..." or "%level%/..." -> a level's own file (from its level paks, mounted only after Continue)
 bool LevelName(const char* name, std::string* level) {
@@ -209,7 +210,8 @@ void Terrainfast_Frame() {   // main thread, every frame (fastload_main.cpp Tick
 		Log("terrainfast: menu preload of %zu terrain meshes for level %s starts (%d a frame, RAM rule)", g_list.size(),
 		    g_listLevel.c_str(), kPerFrame);
 	}
-	if (!ramgov::CanTake(64ll << 20)) { g_ramWaits++; return; }
+	if (!ramgov::CanTake(64ll << 20)) { g_ramWaits++; if (!g_ramSince) g_ramSince = Now(); return; }
+	g_ramSince = 0;
 	const long long now = Now();
 	if ((long long)g_next - g_menuCgf >= kInFlight && now - g_lastIssue < g_freq) return;   // 1 s: some come back without a completion
 	g_ourCall = true;
@@ -221,6 +223,11 @@ void Terrainfast_Frame() {   // main thread, every frame (fastload_main.cpp Tick
 
 bool Terrainfast_MenuPreloadDone() {
 	return !g_base || !g_ahead.load(std::memory_order_relaxed) || g_loadSeen || g_aState == Ahead::Done;
+}
+
+int Terrainfast_MenuRamBlockedMs() {
+	const long long t = g_ramSince.load();
+	return t && g_aState == Ahead::Run ? (int)((Now() - t) * 1000 / g_freq) : 0;
 }
 
 void Terrainfast_OnLoaded() {

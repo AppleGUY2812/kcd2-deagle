@@ -114,12 +114,16 @@ void Readymenu_Frame(int s) {
 	}
 	g_lastState = s;
 	if (!g_mode || g_fired || g_other || s != 0 || Xmlahead_LevelSeen()) return;
-	if (!Questmenu_SaveLevel() || !Animahead_MenuSettled() || !Terrainfast_MenuPreloadDone()) return;
+	if (!Questmenu_SaveLevel() || !Animahead_MenuSettled()) return;
+	// The terrain preload waits for RAM (the 1.5 GB rule); blocked for 1 s, the load reads the rest of its meshes itself
+	// (boot 77: 1,267 frames of RAM waits, 14.4 s instead of 6.3 s, and the load started 8 s later for it).
+	const int ramMs = Terrainfast_MenuRamBlockedMs();
+	if (!Terrainfast_MenuPreloadDone() && ramMs < 1000) return;
 	const ULONGLONG now = GetTickCount64();
 	if (!g_readyAt) {
 		g_readyAt = now;
-		Log("readymenu: menu work done %.1f s after the plugin (%.1f s after the menu's start-up)", (now - g_start) / 1000.0,
-		    (now - g_startupAt) / 1000.0);
+		Log("readymenu: menu work done %.1f s after the plugin (%.1f s after the menu's start-up)%s", (now - g_start) / 1000.0,
+		    (now - g_startupAt) / 1000.0, Terrainfast_MenuPreloadDone() ? "" : "; the terrain preload is waiting for RAM, the load does the rest");
 	}
 	if (now - g_readyAt < 1000) return;   // the last preloads' requests come back
 	const ULONGLONG idle = IdleMs();

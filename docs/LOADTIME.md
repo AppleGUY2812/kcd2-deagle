@@ -139,6 +139,12 @@ with no frame over 250 ms. Plugin start -> control 54.3 s vs 74.8-76.0 s in the 
 ~15 s after the menu work). The load itself took 18.4 s (boot 75: 16.3 s): it starts 1 s after the menu work, with 1.8 GB
 RAM free (boot 75: 2.8 GB). Another save on the same level from the pause menu = the same-level path (~6 s). Open: the
 5 s idle rule is system-wide (GetLastInputInfo), so a user idle inside a menu page (Settings) for 5 s gets the load too.
+Boot 77 (installed build, 1.8 GB free): menu work done 18.5 s after the menu's start-up, not 10.5: the terrain preload
+waited 1,267 frames on the 1.5 GB RAM rule (14.4 s, not 6.3), and readymenu waited for it; journal identical to boot 75's.
+Since then readymenu goes once the preload has been RAM-blocked for 1 s (the load reads the rest). Boot 78: it did (menu work
+done 3.9 s after start-up; 6.5 s more waiting on the user's input), but only 1.4 GB was free at the load's start (Discord,
+browser, WSL's 6 GB VM; 16 GB PC): load 24.0 s (terrain 5.7, level 13.1), in game 57.5 s after the plugin (boot 77: 58.2).
+Free RAM now sets the load time more than any step.
 Split: kcd2-deagle-5a the level step / route A-B; kcd2-deagle-66 apply (4.7: souls 1.2 incl. Storm 0.78, XGenAI 0.8,
 profiles + concepts 0.6, database XML 0.5, CryEngine data 0.35), gate 3.4, state 4.
 
