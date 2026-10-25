@@ -32,10 +32,12 @@ FindFn g_orig = nullptr;
 RefFn g_addRef = nullptr, g_release = nullptr;
 ContainerFn g_container = nullptr;
 
-std::atomic<int> g_mode{1};               // 0 off, 1 on (the first kCheck calls also run the game's and compare)
+std::atomic<int> g_mode{2};               // 0 off, 1 the walk without the deque, 2 + the walk remembered per root
+                                          // (the first kCheck calls, then every 64th, also run the game's and compare)
 constexpr long long kCheck = 200;
 std::atomic<long long> g_checkLeft{kCheck};
 std::atomic<long long> n_calls{0}, n_nodes{0}, n_found{0}, n_bad{0}, n_ticks{0}, n_origTicks{0}, n_checked{0};
+std::atomic<long long> n_roots{0}, n_builds{0}, n_stale{0}, n_idx{0};
 long long g_freq = 1;
 
 struct Ops {
@@ -44,6 +46,8 @@ struct Ops {
 	void AddRef(void* n) { g_addRef(n); }
 	void Release(void* n) { g_release(n); }
 	const char* Name(void* n) { return *(const char**)((uint8_t*)n + 0x10); }
+	const void* Vt(void* n) { return *(const void* const*)n; }
+	int NameLen(void* n) { return *(const int*)(Name(n) - 8); }   // CryString length header
 	void** Kids(void* n, void*** end) {
 		*end = *(void***)((uint8_t*)n + 0x48);
 		return *(void***)((uint8_t*)n + 0x40);
@@ -62,14 +66,38 @@ void** __fastcall HkFind(uint8_t* root, void** out, const char*** name) {
 	size_t visited = 0;
 	const long long t0 = Now();
 	depth++;
-	void* mine = cbfs::Find(root, **name, o, q, &visited);
+	void* mine = nullptr;
+	if (depth == 1 && g_mode.load(std::memory_order_relaxed) == 2) {
+		// the remembered walks, one per root (the game asks under a few roots): reuse the root's, else the oldest slot
+		struct Slot { cbfs::Snap s; long long used = 0; };
+		thread_local Slot slots[8];
+		thread_local long long tick = 0;
+		Slot* sl = nullptr;
+		for (Slot& x : slots) if (x.s.root == root) { sl = &x; break; }
+		if (!sl) {
+			sl = &slots[0];
+			for (Slot& x : slots) if (x.used < sl->used) sl = &x;
+			if (!sl->s.root) n_roots++;
+			sl->s.root = nullptr;   // a new root: Build runs
+		}
+		sl->used = ++tick;
+		const size_t b0 = sl->s.builds, st0 = sl->s.stale;
+		mine = cbfs::FindIndexed(root, **name, o, sl->s);
+		n_builds += (long long)(sl->s.builds - b0);
+		n_stale += (long long)(sl->s.stale - st0);
+		n_idx++;
+	} else {
+		mine = cbfs::Find(root, **name, o, q, &visited);
+	}
 	depth--;
 	const long long t1 = Now();
 	n_calls++;
 	n_nodes += (long long)visited;
 	n_ticks += t1 - t0;
 	if (mine) n_found++;
-	if (g_checkLeft.load(std::memory_order_relaxed) > 0) {   // self-check: the game's own answer, then its reference back
+	thread_local long long callNo = 0;
+	const bool check = g_checkLeft.load(std::memory_order_relaxed) > 0 || (++callNo & 63) == 0;
+	if (check) {   // self-check: the game's own answer, then its reference back
 		void* game = nullptr;
 		const long long a = Now();
 		g_orig(root, &game, name);
@@ -81,7 +109,7 @@ void** __fastcall HkFind(uint8_t* root, void** out, const char*** name) {
 			if (g_mode.exchange(0))
 				Log("conceptbfs: MISMATCH for \"%.80s\" (ours %p, the game's %p, %zu nodes looked at) - off for this session",
 				    **name, mine, game, visited);
-		} else if (g_checkLeft.fetch_sub(1) == 1) {
+		} else if (g_checkLeft.load() > 0 && g_checkLeft.fetch_sub(1) == 1) {
 			Log("conceptbfs: self-check done (%lld finds matched the game's: ours %.1f ms, the game's %.1f ms), ours only now",
 			    n_checked.load(), 1000.0 * n_ticks.load() / g_freq, 1000.0 * n_origTicks.load() / g_freq);
 		}
@@ -97,9 +125,10 @@ DWORD WINAPI Reporter(LPVOID) {
 		const long long c = n_calls.load();
 		if (c == last) continue;
 		last = c;
-		Log("conceptbfs: %lld finds (%lld found), %lld nodes looked at, %.0f ms; checked %lld, mismatches %lld%s", c,
+		Log("conceptbfs: %lld finds (%lld found), %lld nodes looked at, %.0f ms; checked %lld, mismatches %lld%s; "
+		    "remembered walks: %lld finds, %lld roots, %lld walks built (%lld after a change)", c,
 		    n_found.load(), n_nodes.load(), 1000.0 * n_ticks.load() / g_freq, n_checked.load(), n_bad.load(),
-		    g_mode.load() ? "" : " (off)");
+		    g_mode.load() ? "" : " (off)", n_idx.load(), n_roots.load(), n_builds.load(), n_stale.load());
 	}
 	return 0;
 }
@@ -114,7 +143,7 @@ void Conceptbfs_Install(uintptr_t base, void* self) {
 	file = file.substr(0, file.find_last_of('\\') + 1) + "fastload_conceptbfs.txt";
 	if (FILE* fp = fopen(file.c_str(), "r")) {
 		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1 && (m == 0 || m == 1)) g_mode = m;
+		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
 		fclose(fp);
 	}
 	if (!g_mode) { Log("conceptbfs: off (fastload_conceptbfs.txt)"); return; }
@@ -131,7 +160,7 @@ void Conceptbfs_Install(uintptr_t base, void* self) {
 	g_release = (RefFn)(base + kRvaRelease);
 	g_container = (ContainerFn)(base + kRvaContainer);
 	const bool h = MH_CreateHook(fn, (void*)&HkFind, (void**)&g_orig) == MH_OK && MH_EnableHook(fn) == MH_OK;
-	Log("conceptbfs: concept find-by-name without the deque %s (the first %lld finds also run the game's and must match)",
-	    h ? "on" : "FAILED", kCheck);
+	Log("conceptbfs: concept find-by-name without the deque %s%s (the first %lld finds, then every 64th, also run the "
+	    "game's and must match)", h ? "on" : "FAILED", g_mode == 2 ? ", the walk remembered per root" : "", kCheck);
 	if (h) CloseHandle(CreateThread(nullptr, 0, Reporter, nullptr, 0, nullptr));
 }
