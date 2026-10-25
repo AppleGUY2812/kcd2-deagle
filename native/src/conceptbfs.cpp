@@ -32,13 +32,14 @@ FindFn g_orig = nullptr;
 RefFn g_addRef = nullptr, g_release = nullptr;
 ContainerFn g_container = nullptr;
 
-std::atomic<int> g_mode{1};               // 0 off, 1 the walk without the deque (default), 2 + the walk remembered
-                                          // per root (opt-in: boot 66 crashed in it, fixed; boot 66: slower in the first 200)
+// 0 off, 1 on (the first kCheck finds, then every 64th, also run the game's and compare). A remembered walk per root
+// (ff0b486, mode 2) was deleted 2026-10-24: boots 66 and 68 crashed in it (it read nodes it held no reference to, and
+// at first a field that isn't a name), and it wasn't faster in either self-check window (79 vs 73 ms, 61.5 vs 68.9).
+std::atomic<int> g_mode{1};
                                           // (the first kCheck calls, then every 64th, also run the game's and compare)
 constexpr long long kCheck = 200;
 std::atomic<long long> g_checkLeft{kCheck};
 std::atomic<long long> n_calls{0}, n_nodes{0}, n_found{0}, n_bad{0}, n_ticks{0}, n_origTicks{0}, n_checked{0};
-std::atomic<long long> n_roots{0}, n_builds{0}, n_stale{0}, n_idx{0};
 long long g_freq = 1;
 
 struct Ops {
@@ -47,7 +48,6 @@ struct Ops {
 	void AddRef(void* n) { g_addRef(n); }
 	void Release(void* n) { g_release(n); }
 	const char* Name(void* n) { return *(const char**)((uint8_t*)n + 0x10); }
-	const void* Vt(void* n) { return *(const void* const*)n; }
 	void** Kids(void* n, void*** end) {
 		*end = *(void***)((uint8_t*)n + 0x48);
 		return *(void***)((uint8_t*)n + 0x40);
@@ -66,36 +66,7 @@ void** __fastcall HkFind(uint8_t* root, void** out, const char*** name) {
 	size_t visited = 0;
 	const long long t0 = Now();
 	depth++;
-	void* mine = nullptr;
-	if (depth == 1 && g_mode.load(std::memory_order_relaxed) == 2) {
-		// the remembered walks, one per root (the game asks under a few roots): reuse the root's, else the oldest slot
-		struct Slot { cbfs::Snap s; long long used = 0; };
-		thread_local Slot slots[8];
-		thread_local long long tick = 0;
-		Slot* sl = nullptr;
-		for (Slot& x : slots) if (x.s.root == root) { sl = &x; break; }
-		if (!sl) {
-			sl = &slots[0];
-			for (Slot& x : slots) if (x.used < sl->used) sl = &x;
-			if (!sl->s.root) n_roots++;
-			sl->s.root = nullptr;   // a new root: Build runs
-		}
-		sl->used = ++tick;
-		const size_t b0 = sl->s.builds, st0 = sl->s.stale;
-		mine = cbfs::FindIndexed(root, **name, o, sl->s);
-		n_builds += (long long)(sl->s.builds - b0);
-		n_stale += (long long)(sl->s.stale - st0);
-		const long long k = ++n_idx;
-		// a walk is a full one: if the graph changes between most finds it costs more than the game's walk
-		if (k == 200 && n_builds.load() * 2 > k) {
-			int two = 2;
-			if (g_mode.compare_exchange_strong(two, 1))
-				Log("conceptbfs: remembered walk off for this session: %lld walks built in %lld finds (the graph changes "
-				    "between finds), the walk without the deque only", n_builds.load(), k);
-		}
-	} else {
-		mine = cbfs::Find(root, **name, o, q, &visited);
-	}
+	void* mine = cbfs::Find(root, **name, o, q, &visited);
 	depth--;
 	const long long t1 = Now();
 	n_calls++;
@@ -132,10 +103,9 @@ DWORD WINAPI Reporter(LPVOID) {
 		const long long c = n_calls.load();
 		if (c == last) continue;
 		last = c;
-		Log("conceptbfs: %lld finds (%lld found), %lld nodes looked at, %.0f ms; checked %lld, mismatches %lld%s; "
-		    "remembered walks: %lld finds, %lld roots, %lld walks built (%lld after a change)", c,
+		Log("conceptbfs: %lld finds (%lld found), %lld nodes looked at, %.0f ms; checked %lld, mismatches %lld%s", c,
 		    n_found.load(), n_nodes.load(), 1000.0 * n_ticks.load() / g_freq, n_checked.load(), n_bad.load(),
-		    g_mode.load() ? "" : " (off)", n_idx.load(), n_roots.load(), n_builds.load(), n_stale.load());
+		    g_mode.load() ? "" : " (off)");
 	}
 	return 0;
 }
@@ -150,7 +120,7 @@ void Conceptbfs_Install(uintptr_t base, void* self) {
 	file = file.substr(0, file.find_last_of('\\') + 1) + "fastload_conceptbfs.txt";
 	if (FILE* fp = fopen(file.c_str(), "r")) {
 		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
+		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m ? 1 : 0;   // 2 (deleted) = 1
 		fclose(fp);
 	}
 	if (!g_mode) { Log("conceptbfs: off (fastload_conceptbfs.txt)"); return; }
@@ -167,7 +137,7 @@ void Conceptbfs_Install(uintptr_t base, void* self) {
 	g_release = (RefFn)(base + kRvaRelease);
 	g_container = (ContainerFn)(base + kRvaContainer);
 	const bool h = MH_CreateHook(fn, (void*)&HkFind, (void**)&g_orig) == MH_OK && MH_EnableHook(fn) == MH_OK;
-	Log("conceptbfs: concept find-by-name without the deque %s%s (the first %lld finds, then every 64th, also run the "
-	    "game's and must match)", h ? "on" : "FAILED", g_mode == 2 ? ", the walk remembered per root" : "", kCheck);
+	Log("conceptbfs: concept find-by-name without the deque %s (the first %lld finds, then every 64th, also run the "
+	    "game's and must match)", h ? "on" : "FAILED", kCheck);
 	if (h) CloseHandle(CreateThread(nullptr, 0, Reporter, nullptr, 0, nullptr));
 }
