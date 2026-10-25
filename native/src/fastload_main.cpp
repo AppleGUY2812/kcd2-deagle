@@ -78,6 +78,7 @@ void GameplayStarted(const char* why) {
 	Terrainfast_OnLoaded();
 	Paklock_Report("LoadLevel end to gameplay");
 	Dbahead_OnLoaded();
+	Xmlahead_OnLoaded();   // the XML read-ahead list for the next start, from this run (xmlahead.cpp)
 }
 
 void Tick() {

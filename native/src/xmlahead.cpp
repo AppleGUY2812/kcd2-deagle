@@ -8,7 +8,9 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <algorithm>
 #include <string>
+#include <unordered_set>
 #include <unordered_map>
 #include <vector>
 #include "MinHook.h"
@@ -231,6 +233,38 @@ void Flush() {
 	MoveFileExA(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
+// The list for the next start, from this run's recording (the same filter as tools/xmlahead_list.py: loads that
+// returned a tree, first load of each path, in start-time order, %user% files left out). Written once, 20 s after the
+// first load reaches gameplay, when the recording holds a level load. A list recorded before a change to the load
+// went stale and cost the apply 0.5 s (boot 72: questreplay had removed 19,400 menu files from the load).
+std::atomic<ULONGLONG> g_loadedAt{0};
+bool g_listWritten = false;
+void WriteList() {
+	std::vector<Rec> recs;
+	{ std::lock_guard<std::mutex> lk(g_mu); recs = g_recs; }
+	std::stable_sort(recs.begin(), recs.end(), [](const Rec& a, const Rec& b) { return a.tMs < b.tMs; });
+	std::unordered_set<std::string> seen;
+	std::vector<const std::string*> keep;
+	size_t level = 0;
+	for (const Rec& r : recs) {
+		if (!r.ok || r.file.empty() || r.file.compare(0, 6, "%user%") == 0 || !seen.insert(r.file).second) continue;
+		keep.push_back(&r.file);
+		if (IsLevel(r.file)) level++;
+	}
+	if (keep.size() < 5000 || !level) {
+		Log("xmlahead: list not rewritten (%zu files, %zu level files: no full load recorded)", keep.size(), level);
+		return;
+	}
+	const std::string tmp = g_dir + "fastload_xmlahead_list.tmp", out = g_dir + "fastload_xmlahead_list.txt";
+	FILE* f = fopen(tmp.c_str(), "w");
+	if (!f) return;
+	fprintf(f, "# written by the plugin from this run's recording (xmlahead.cpp WriteList)\n");
+	for (const std::string* p : keep) fprintf(f, "%s\n", p->c_str());
+	const bool ok = fclose(f) == 0 && MoveFileExA(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING);
+	Log("xmlahead: list for the next start %s: %zu files (%zu level), was %zu", ok ? "written" : "NOT written", keep.size(),
+	    level, g_items.size());
+}
+
 DWORD WINAPI Writer(LPVOID) {
 	size_t written = 0;
 	long long lastServed = -1, lastReady = -1;
@@ -238,6 +272,10 @@ DWORD WINAPI Writer(LPVOID) {
 		Sleep(500);
 		if (!g_items.empty() && !g_started[0] && g_loads >= kMenuLoads && GetTickCount64() - g_lastLoad >= kMenuQuietMs)
 			StartQueue(0, "main menu idle");
+		if (g_mode == 2 && !g_listWritten && g_loadedAt && GetTickCount64() - g_loadedAt > 20000) {
+			g_listWritten = true;
+			WriteList();
+		}
 		if (tick % 10) continue;
 		size_t n; { std::lock_guard<std::mutex> lk(g_mu); n = g_recs.size(); }
 		if (n != written) { Flush(); written = n; }
@@ -297,6 +335,8 @@ bool LoadList() {
 }  // namespace
 
 bool Xmlahead_LevelSeen() { return g_levelSeen.load(); }
+
+void Xmlahead_OnLoaded() { ULONGLONG z = 0; g_loadedAt.compare_exchange_strong(z, GetTickCount64()); }
 
 void Xmlahead_StartMenuNow(const char* why) { if (!g_items.empty() && !g_levelSeen) StartQueue(0, why); }
 

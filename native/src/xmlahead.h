@@ -26,6 +26,9 @@ void Xmlahead_Command(const char* args);
 bool Xmlahead_MenuQuiet(unsigned quietMs);
 // A level load has begun (the game asked for a levels/ file). Needs mode 1 or 2; false in mode 0.
 bool Xmlahead_LevelSeen();
+// The first load reached gameplay: 20 s later (mode 2) the list for the next start is rewritten from this run's
+// recording, so it follows changes to the load (fastload_xmlahead_list.txt).
+void Xmlahead_OnLoaded();
 // Start the menu workers now instead of at "main menu idle" (questmenu: the quest job at the menu loads XML, so the
 // menu never looks idle). No effect once started or with no list.
 void Xmlahead_StartMenuNow(const char* why);
