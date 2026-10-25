@@ -322,10 +322,24 @@ static HANDLE FreezeMutex(VOID)
     return h;
 }
 
+// How long this plugin's MinHook kept the game's threads suspended (fastload.asi logs it at start-up, 2026-10-24):
+// from the first suspend to the last resume, per freeze. MH_FreezeStats reads the totals.
+static volatile LONG64 g_freezeUs = 0, g_freezeLongestUs = 0, g_freezeCount = 0;
+static volatile LONG g_freezeMaxThreads = 0;
+static LARGE_INTEGER g_freezeStart;
+void WINAPI MH_FreezeStats(ULONGLONG* us, ULONGLONG* count, ULONGLONG* longestUs, ULONG* maxThreads)
+{
+    if (us) *us = (ULONGLONG)g_freezeUs;
+    if (count) *count = (ULONGLONG)g_freezeCount;
+    if (longestUs) *longestUs = (ULONGLONG)g_freezeLongestUs;
+    if (maxThreads) *maxThreads = (ULONG)g_freezeMaxThreads;
+}
+
 static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 {
     if (FreezeMutex() != NULL)
         WaitForSingleObject(FreezeMutex(), INFINITE);   // WAIT_ABANDONED: the other plugin's thread died holding it; ours now
+    QueryPerformanceCounter(&g_freezeStart);   // under the mutex: one freeze at a time
     pThreads->pItems   = NULL;
     pThreads->capacity = 0;
     pThreads->size     = 0;
@@ -364,6 +378,17 @@ static VOID Unfreeze(PFROZEN_THREADS pThreads)
         }
 
         HeapFree(g_hHeap, 0, pThreads->pItems);
+    }
+    {
+        LARGE_INTEGER f, e;
+        LONG64 us;
+        QueryPerformanceFrequency(&f);
+        QueryPerformanceCounter(&e);
+        us = (LONG64)((e.QuadPart - g_freezeStart.QuadPart) * 1000000 / f.QuadPart);
+        g_freezeUs += us;
+        g_freezeCount++;
+        if (us > g_freezeLongestUs) g_freezeLongestUs = us;
+        if ((LONG)pThreads->size > g_freezeMaxThreads) g_freezeMaxThreads = (LONG)pThreads->size;
     }
     if (FreezeMutex() != NULL)
         ReleaseMutex(FreezeMutex());

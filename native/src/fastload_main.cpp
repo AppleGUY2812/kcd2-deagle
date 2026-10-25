@@ -158,7 +158,32 @@ DWORD WINAPI StateWatch(LPVOID) {   // the level state's changes every 10 ms, fr
 	for (;;) { Readiness_WatchState(); Sleep(10); }
 }
 
+// Start-up cost of our own installs (2026-10-24, launch -> menu): each one's time and how long MinHook kept the game's
+// threads suspended for it (Freeze suspends every other thread while it patches), logged when >= 20 ms.
+extern "C" void WINAPI MH_FreezeStats(ULONGLONG* us, ULONGLONG* count, ULONGLONG* longestUs, ULONG* maxThreads);
+long long g_initStart = 0;
+double MsSince(long long t) {
+	LARGE_INTEGER n, f;
+	QueryPerformanceCounter(&n);
+	QueryPerformanceFrequency(&f);
+	return (n.QuadPart - t) * 1000.0 / f.QuadPart;
+}
+void StepLog(const char* what, long long t0, ULONGLONG us0, ULONGLONG n0) {
+	ULONGLONG us = 0, n = 0;
+	MH_FreezeStats(&us, &n, nullptr, nullptr);
+	const double ms = MsSince(t0);
+	if (ms >= 20 || us - us0 >= 20000) {
+		char name[64] = {};
+		size_t i = 0;
+		for (; what[i] && what[i] != '(' && i + 1 < sizeof name; i++) name[i] = what[i];
+		Log("fastload: install %s %.0f ms (game threads suspended %.0f ms, %llu times)", name, ms, (us - us0) / 1000.0, n - n0);
+	}
+}
+#define STEP(call) do { LARGE_INTEGER t0_; QueryPerformanceCounter(&t0_); ULONGLONG us0_ = 0, n0_ = 0; \
+	MH_FreezeStats(&us0_, &n0_, nullptr, nullptr); call; StepLog(#call, t0_.QuadPart, us0_, n0_); } while (0)
+
 DWORD WINAPI Init(LPVOID) {
+	{ LARGE_INTEGER t; QueryPerformanceCounter(&t); g_initStart = t.QuadPart; }
 	Log("fastload v1 loaded");
 	Crashlog_Install(g_self);   // crash-type exceptions to fastload_crash.txt (crashlog.cpp)
 	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); i++) Sleep(100);
@@ -166,35 +191,43 @@ DWORD WINAPI Init(LPVOID) {
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
-	Memsite_Install(g_self);   // who holds the memory, a diagnostic, off by default (memsite.cpp)
-	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
-	Startfast_Install(g_game.base, g_self);   // the controller list asked for without waiting (startfast.cpp)
-	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
-	Terrainfast_Install(g_game.base, g_self);   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)
-	Applyfast_Install(g_game.base, g_self);   // faster pieces of the save load's apply step (applyfast.cpp)
-	Conceptbfs_Install(g_game.base, g_self);   // the concept graph's name lookup without its deque (conceptbfs.cpp)
-	Stormmemo_Install(g_game.base, g_self);   // Storm's named condition sets remembered per character (stormmemo.cpp)
-	Xmlahead_Install(g_game.base, g_self);   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
-	Questmenu_Install(g_game.base, g_self);   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
-	Questfast_Install(g_game.base, g_self);   // the quest graph build made faster (questfast.cpp)
-	Questreplay_Install(g_game.base);   // phase 2a record / replay: the menu build, questbench N rec (questreplay.cpp); before questprof
-	Questprof_Install(g_game.base);   // the quest build's inner profile for questbench N prof (questprof.cpp)
-	Questdump_Install(g_game.base);   // the quest graph dump for questbench N dump (questdump.cpp)
-	Animahead_Install(g_game.base, g_self);   // human animation sets during the terrain wait (animahead.cpp)
-	Levelprof_Install(g_game.base, g_self);   // the level load's main-thread work timed / sampled, mode file (levelprof.cpp)
-	Applyprof_Install(g_game.base, g_self);   // the apply step's pieces timed, log only (applyprof.cpp)
-	Paklock_Install(g_game.base, g_self);   // CryPak reads outside the open-files lock, mode file (paklock.cpp)
-	Dbahead_Install(g_game.base, g_self);   // SmartObjectAnimations in the level-start database job (dbahead.cpp)
-	Samelevel_Install(g_game.base);   // save loads onto the loaded level: logged, `samelevel load` replays (samelevel.cpp)
-	Readymenu_Install(g_game.base, g_self);   // the newest save loaded by itself at the menu, off by default (readymenu.cpp)
-	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
-	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
-	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
-	Ftplaces_Install(g_game.base, g_self);   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
-	Hitch_Install(g_game.base, g_game.size, g_self);   // samples the main thread in frames over 250 ms (hitch.cpp)
-	Readiness_Install(g_game.base);   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
-	Startfast_TickReady(PatchUpdate());   // startfast hands controller callbacks over at the frame tick
+	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
+	STEP(Hitch_Install(g_game.base, g_game.size, g_self));   // samples the main thread in frames over 250 ms (hitch.cpp)
+	STEP(Memsite_Install(g_self));   // who holds the memory, a diagnostic, off by default (memsite.cpp)
+	STEP(Cvars_Install(g_game.base, g_self));      // load-time game settings at registration (cvars.cpp)
+	STEP(Startfast_Install(g_game.base, g_self));   // the controller list asked for without waiting (startfast.cpp)
+	STEP(Loadwatch_Install(g_game.base));   // exact terrain-step timing (loadwatch.cpp)
+	STEP(Terrainfast_Install(g_game.base, g_self));   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)
+	STEP(Applyfast_Install(g_game.base, g_self));   // faster pieces of the save load's apply step (applyfast.cpp)
+	STEP(Conceptbfs_Install(g_game.base, g_self));   // the concept graph's name lookup without its deque (conceptbfs.cpp)
+	STEP(Stormmemo_Install(g_game.base, g_self));   // Storm's named condition sets remembered per character (stormmemo.cpp)
+	STEP(Xmlahead_Install(g_game.base, g_self));   // parses the load's XML files ahead on idle threads (xmlahead.cpp)
+	STEP(Questmenu_Install(g_game.base, g_self));   // the quest graph built at the main menu, kept by the first load (questmenu.cpp)
+	STEP(Questfast_Install(g_game.base, g_self));   // the quest graph build made faster (questfast.cpp)
+	STEP(Questreplay_Install(g_game.base));   // phase 2a record / replay: the menu build, questbench N rec (questreplay.cpp); before questprof
+	STEP(Questprof_Install(g_game.base));   // the quest build's inner profile for questbench N prof (questprof.cpp)
+	STEP(Questdump_Install(g_game.base));   // the quest graph dump for questbench N dump (questdump.cpp)
+	STEP(Animahead_Install(g_game.base, g_self));   // human animation sets during the terrain wait (animahead.cpp)
+	STEP(Levelprof_Install(g_game.base, g_self));   // the level load's main-thread work timed / sampled, mode file (levelprof.cpp)
+	STEP(Applyprof_Install(g_game.base, g_self));   // the apply step's pieces timed, log only (applyprof.cpp)
+	STEP(Paklock_Install(g_game.base, g_self));   // CryPak reads outside the open-files lock, mode file (paklock.cpp)
+	STEP(Dbahead_Install(g_game.base, g_self));   // SmartObjectAnimations in the level-start database job (dbahead.cpp)
+	STEP(Samelevel_Install(g_game.base));   // save loads onto the loaded level: logged, `samelevel load` replays (samelevel.cpp)
+	STEP(Readymenu_Install(g_game.base, g_self));   // the newest save loaded by itself at the menu, off by default (readymenu.cpp)
+	STEP(Pakahead_Install(g_game.base, g_self));   // records which pak entries the load reads, in order (pakahead.cpp)
+	STEP(Fastzip_Install(g_game.base, g_self));   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
+	STEP(Streamio_Install(g_game.base, g_self));  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
+	STEP(Ftplaces_Install(g_game.base, g_self));   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
+	STEP(Readiness_Install(g_game.base));   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
+	STEP(Startfast_TickReady(PatchUpdate()));   // startfast hands controller callbacks over at the frame tick
 	CreateThread(nullptr, 0, StateWatch, nullptr, 0, nullptr);
+	{
+		ULONGLONG us = 0, n = 0, longest = 0;
+		ULONG threads = 0;
+		MH_FreezeStats(&us, &n, &longest, &threads);
+		Log("fastload: start-up installs done in %.0f ms; MinHook suspended the game's threads %llu times, %.0f ms in all "
+		    "(longest %.1f ms, up to %lu threads)", MsSince(g_initStart), n, us / 1000.0, longest / 1000.0, threads);
+	}
 	uintptr_t env = 0;
 	for (int i = 0; i < 240 && !env; i++) { env = FindEnv(); if (!env) Sleep(500); }
 	Log("gEnv %p", (void*)env);
