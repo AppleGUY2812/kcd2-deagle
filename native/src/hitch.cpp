@@ -268,7 +268,7 @@ void FindTargets(bool window, bool appendOnly = false) {
 		g_namesChanged = false;
 	}
 	if (window) for (const char* n : kWindowNames) if (std::find(names.begin(), names.end(), n) == names.end()) names.push_back(n);
-	if (g_inStartup.load()) names.push_back("JobWorker_*");
+	if (g_inStartup.load()) { names.push_back("JobWorker_*"); names.push_back("AudioThread*"); names.push_back("FMOD *"); }   // Main waits ~0.5 s for audio start-up
 	{   // the same threads as now: nothing to do
 		std::vector<std::string> have;
 		for (size_t i = 1; i < g_targets.size(); i++) have.push_back(g_targets[i].name);
