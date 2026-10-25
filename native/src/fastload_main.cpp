@@ -45,6 +45,7 @@
 #include "startfast.h"
 #include "dbprof.h"
 #include "tblcache.h"
+#include "early.h"
 #include "memsite.h"
 #include "crashlog.h"
 
@@ -201,6 +202,7 @@ DWORD WINAPI Init(LPVOID) {
 	g_game = GetModule("WHGame.dll");
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
+	Early_Report(g_game.base, g_game.size);   // what ran before this thread could start (early.cpp)
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
 	MH_DeferEnables(TRUE);   // the hooks below go on in two freezes, not one each
 	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
@@ -288,6 +290,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 		g_self = h;
 		DisableThreadLibraryCalls(h);
 		LogInit(h);
+		Early_Start(h);   // the time, and a sampler of this thread until Init runs (early.cpp)
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
 	}
 	return TRUE;
