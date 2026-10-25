@@ -36,6 +36,7 @@
 #include "questdump.h"
 #include "questreplay.h"
 #include "rttrname.h"
+#include "gpuwarm.h"
 #include "questfast.h"
 #include "levelprof.h"
 #include "applyprof.h"
@@ -102,6 +103,7 @@ void Tick() {
 	Applyprof_SetMainThread(GetCurrentThreadId());   // applyprof counts the main thread apart
 	Tblcache_Frame(s);   // new table records written when loading is quiet (tblcache.cpp)
 	Dbasync_Frame();     // the first frame waits for the dubbing database's worker (dbasync.cpp)
+	Gpuwarm_Frame();     // the driver warm-up's time, once (gpuwarm.cpp)
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)
@@ -226,6 +228,7 @@ DWORD WINAPI Init(LPVOID) {
 	else Log("fastload: DllMain ran after WHGame.dll's start-up code (the ASI loader's default); global.ini DontLoadFromDllMain=0 "
 	         "next to dinput8.dll loads it before");
 	Rttrname_Report();
+	Gpuwarm_Report();
 	MH_SetFreezeLast(Early_MainThread());
 	MH_DeferEnables(TRUE);   // the hooks below go on in two freezes, not one each
 	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
@@ -338,6 +341,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 				g_mhEarly = MH_Initialize() == MH_OK;
 				g_earlyHooks = g_mhEarly ? Questfast_EarlyInstall(b, h) : 0;
 				if (g_mhEarly) Rttrname_EarlyInstall(b, h);   // rttr's type naming without the no-op re-derivations (rttrname.cpp)
+				if (g_mhEarly) Gpuwarm_EarlyInstall(b, h);   // the graphics driver loaded on a worker (gpuwarm.cpp)
 			}
 		}
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
