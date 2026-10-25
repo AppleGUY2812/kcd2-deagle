@@ -13,6 +13,14 @@
 // The renderer's query and the later ones run as before, after the worker is done (they wait for it).
 // gpumemo (answering later queries from the first) is a different thing: it made boot 110's PSO precache 28 s. This
 // keeps every query the renderer and spec detection see real; a test boot checks the precache time.
+// devahead (2026-10-25): the renderer's own device creation (FUN_181df7bc0, D3D12CreateDevice on the first
+// high-performance adapter with a display) took 1.3-1.7 s of main in boots 116-119 (the driver's DLLs loaded and their
+// signatures checked: imagehlp, nvwgf2umx, nvgpucomp64 in the outside sampler at 3.9-5.6 s from process start). The
+// same worker now makes that device right after the support checks; D3D12 keeps one device per adapter in a process,
+// so the renderer's call gets it back. Its hook waits for the worker, lets the worker's device go first when the debug
+// layer or DRED is on (enabling those with a device alive removes it / misses it), and drops the worker's reference
+// after. NVIDIA Aftermath (on in this install) makes GPU crash dumps only for devices made after its set-up: this one
+// is made before, so the game's GPU crash dumps are lost. "devahead:" lines. fastload_devahead.txt: 1 on (default), 0 off.
 // fastload_gpuwarm.txt next to the plugin: 1 on (default), 0 off. Needs the plugin loaded before WHGame's static
 // initializers (global.ini DontLoadFromDllMain=0). "gpuwarm:" lines in the log.
 bool Gpuwarm_EarlyInstall(uintptr_t gameBase, void* selfModule);   // DllMain, MinHook initialized

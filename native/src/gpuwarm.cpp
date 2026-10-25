@@ -6,6 +6,7 @@
 #include <windows.h>
 #include <intrin.h>
 #include <dxgi1_6.h>
+#include <d3d12.h>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -25,15 +26,29 @@ constexpr uintptr_t kRvaIidAdapter = 0x3a407f8;
 constexpr uintptr_t kRvaIidDevice = 0x3dba500;    // ID3D12Device (FUN_181dd8940)
 constexpr uintptr_t kRvaLevels = 0x3dba530;       // its feature levels, 12_1 .. 11_0
 const UINT kLevels[] = { 0xc100, 0xc000, 0xb100, 0xb000 };
+// devahead: the renderer's device (FUN_181df7bc0: CDevice*, adapter wrapper (+0x18 IDXGIAdapter), out level) made ahead
+constexpr uintptr_t kRvaDevCreate = 0x1df7bc0;
+const unsigned char kDevCreateBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x55,0x56,0x41,0x56,0x48,0x8d,0x6c,0x24,0xb9,0x48,0x81 };
+constexpr uintptr_t kRvaDebugLayer = 0x55712bc;   // r_EnableDebugLayer: enabling it with a device alive removes the device
+constexpr uintptr_t kRvaDred = 0x55712a4;         // r_D3D12EnableDRED: its settings apply to devices made after them
+constexpr uintptr_t kRvaAftermath = 0x50dc264;    // r_EnableNvidiaAftermath: crash dumps only for devices made after
+using DevCreateFn = char(__fastcall*)(void* dev, void* adapter, unsigned* level);
+DevCreateFn g_origDev = nullptr;
+ID3D12Device* g_dev = nullptr;   // ours, until the renderer's own creation has its reference
+UINT g_devLevel = 0;
+LUID g_devLuid{};
+long long g_dt0 = 0, g_dt1 = 0;
+HRESULT g_devHr = S_FALSE;
+bool g_devahead = false;
 
 using QueryFn = char(__fastcall*)(char* desc, size_t n, unsigned* a, unsigned* b, unsigned long long* mem, int* level);
 QueryFn g_orig = nullptr;
 uintptr_t g_base = 0;
-HANDLE g_done = nullptr;
+HANDLE g_done = nullptr, g_devDone = nullptr;   // the support checks done; the device made (or not)
 std::atomic<bool> g_started{ false }, g_skipped{ false }, g_skippedSys{ false }, g_waitLogged{ false };
 std::atomic<int> g_state{ 0 };   // 0 not installed, 1 on, -1 off by file, -2 code differs, -3 hook failed
 long long g_freq = 1, g_t0 = 0, g_t1 = 0;
-int g_adapters = 0, g_ok = 0;
+int g_adapters = 0, g_ok = 0, g_devMode = 1;
 char g_note[160] = "";
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
@@ -80,12 +95,32 @@ DWORD WINAPI Warm(LPVOID) {
 				g_ok += ok;
 				a->Release();
 			}
+			SetEvent(g_done);   // the GPU queries can go on: the device comes next
+			// devahead: the device the renderer will ask for (FUN_180c19664: the first adapter by high-performance
+			// preference with a display output and a D3D12 device, levels 12_1 .. 11_0). D3D12 devices are one per
+			// adapter in a process: the renderer's D3D12CreateDevice then gets this one back.
+			g_dt0 = Now();
+			for (UINT i = 0; g_devahead && d3d12 && !g_dev; i++) {
+				IDXGIAdapter1* a = nullptr;
+				if (f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, iidA, (void**)&a) != S_OK) break;
+				if (!a) continue;
+				IDXGIOutput* o = nullptr;
+				const bool out = SUCCEEDED(a->EnumOutputs(0, &o)) && o;
+				if (o) o->Release();
+				if (out)
+					for (UINT lv : kLevels)
+						if (SUCCEEDED(g_devHr = d3d12(a, lv, iidD, (void**)&g_dev)) && g_dev) { g_devLevel = lv; break; }
+				if (g_dev) { DXGI_ADAPTER_DESC1 d; a->GetDesc1(&d); g_devLuid = d.AdapterLuid; }
+				a->Release();
+			}
+			g_dt1 = Now();
 		} else snprintf(g_note, sizeof g_note, "no IDXGIFactory6 / D3D");
 		if (f6) f6->Release();
 		f1->Release();
 	}
 	g_t1 = Now();
 	SetEvent(g_done);
+	SetEvent(g_devDone);
 	return 0;
 }
 
@@ -110,6 +145,42 @@ char __fastcall HkQuery(char* desc, size_t n, unsigned* a, unsigned* b, unsigned
 	return g_orig(desc, n, a, b, mem, level);
 }
 
+// The renderer's device creation: waits for the worker, then runs as before; D3D12 hands it the worker's device.
+char __fastcall HkDevCreate(void* devObj, void* adapter, unsigned* level) {
+	const long long w = Now();
+	if (g_started) WaitForSingleObject(g_devDone, 30000);
+	const double waited = Ms(w, Now());
+	ID3D12Device* mine = g_dev;
+	g_dev = nullptr;
+	const char* note = "";
+	if (mine && (*(volatile int*)(g_base + kRvaDebugLayer) || *(volatile int*)(g_base + kRvaDred))) {
+		mine->Release();   // the last reference: gone before the game's debug layer / DRED set-up
+		mine = nullptr;
+		note = " (debug layer or DRED on: the worker's device let go first, the game made its own)";
+	}
+	const long long t0 = Now();
+	const char r = g_origDev(devObj, adapter, level);
+	const long long t1 = Now();
+	bool same = false;
+	if (mine && r) {
+		IUnknown* theirs = *(IUnknown**)((char*)devObj + 0x10);   // the device interface FUN_181df7bc0 keeps
+		IUnknown *u1 = nullptr, *u2 = nullptr;
+		if (theirs) theirs->QueryInterface(__uuidof(IUnknown), (void**)&u1);
+		mine->QueryInterface(__uuidof(IUnknown), (void**)&u2);
+		same = u1 && u1 == u2;
+		if (u1) u1->Release();
+		if (u2) u2->Release();
+	}
+	if (mine) mine->Release();   // the game holds its own reference now
+	static std::atomic<bool> logged{ false };
+	if (!logged.exchange(true))
+		Log("devahead: the renderer's device creation took %.0f ms (waited %.0f ms for the worker; the worker's device: %s, %.0f ms, "
+		    "level %x, HRESULT 0x%08x; %s%s%s)", Ms(t0, t1), waited, g_devahead ? (g_devLevel ? "made" : "not made") : "off",
+		    Ms(g_dt0, g_dt1), g_devLevel, (unsigned)g_devHr, same ? "the same device came back" : "not the same device",
+		    *(volatile int*)(g_base + kRvaAftermath) ? "; Aftermath on: its GPU crash dumps miss this device" : "", note);
+	return r;
+}
+
 }  // namespace
 
 bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
@@ -125,6 +196,11 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 		fclose(fp);
 	}
 	if (mode != 1) { g_state = -1; return false; }
+	int dmode = 1;
+	if (FILE* fp = fopen((dir + "fastload_devahead.txt").c_str(), "r")) {
+		if (fscanf(fp, "%d", &dmode) != 1) dmode = 1;
+		fclose(fp);
+	}
 	auto callsQuery = [&](uintptr_t ret) {   // a call rel32 to the query just before the return address
 		return *(const unsigned char*)(base + ret - 5) == 0xe8 && *(const int32_t*)(base + ret - 4) == (int32_t)(kRvaQuery - ret);
 	};
@@ -133,8 +209,13 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 	void* t = (void*)(base + kRvaQuery);
 	if (MH_CreateHook(t, (void*)&HkQuery, (void**)&g_orig) != MH_OK) { g_state = -3; return false; }
 	if (MH_EnableHook(t) != MH_OK) { MH_RemoveHook(t); g_state = -3; return false; }
+	void* dc = (void*)(base + kRvaDevCreate);
+	g_devMode = dmode;
+	g_devahead = dmode == 1 && !memcmp(dc, kDevCreateBytes, sizeof kDevCreateBytes) &&
+	             MH_CreateHook(dc, (void*)&HkDevCreate, (void**)&g_origDev) == MH_OK && MH_EnableHook(dc) == MH_OK;
 	g_done = CreateEventA(nullptr, TRUE, FALSE, nullptr);
-	HANDLE th = g_done ? CreateThread(nullptr, 0, Warm, nullptr, 0, nullptr) : nullptr;   // runs once the loader is done
+	g_devDone = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+	HANDLE th = g_done && g_devDone ? CreateThread(nullptr, 0, Warm, nullptr, 0, nullptr) : nullptr;   // runs once the loader is done
 	if (!th) { MH_DisableHook(t); g_state = -3; return false; }
 	CloseHandle(th);
 	g_started = true;
@@ -150,6 +231,8 @@ void Gpuwarm_Report() {
 	case -3: Log("gpuwarm: hook or thread failed - off"); return;
 	}
 	Log("gpuwarm: on (the graphics driver loads on a worker; the crash reporter's GPU query is skipped; fastload_gpuwarm.txt)");
+	Log("devahead: %s", g_devahead ? "on (the renderer's D3D12 device made on the same worker; fastload_devahead.txt)"
+	                               : g_devMode != 1 ? "off (fastload_devahead.txt)" : "the device creation code differs or its hook failed - off");
 }
 
 void Gpuwarm_Frame() {
