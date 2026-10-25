@@ -29,5 +29,6 @@ bool Xmlahead_LevelSeen();
 // Start the menu workers now instead of at "main menu idle" (questmenu: the quest job at the menu loads XML, so the
 // menu never looks idle). No effect once started or with no list.
 void Xmlahead_StartMenuNow(const char* why);
-// The quests/ files will not be asked for (questreplay skips the quest build's XML phase): not parsed ahead, no boost.
+// The quest build's quests/ files will not be asked for (questreplay skips its XML phase): not parsed ahead, no boost.
+// quests/ files listed after the level load starts (the save load's place graphs) are kept.
 void Xmlahead_SkipQuests(const char* why);

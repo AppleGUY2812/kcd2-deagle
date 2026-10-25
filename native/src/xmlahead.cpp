@@ -83,6 +83,7 @@ std::unordered_map<std::string, Item*> g_byPath;
 std::vector<Item*> g_queue[2];        // 0: files outside levels/ (parsed at the menu), 1: levels/ files (from the load)
 std::atomic<size_t> g_next[2];
 std::vector<Item*> g_quests;          // the quests/ files of queue 0, in list order: the boost workers' own queue
+size_t g_firstLevel = SIZE_MAX;       // list index of the first levels/ file: the level load starts there
 std::atomic<size_t> g_nextQuest{0};
 std::atomic<bool> g_started[2], g_stop{false}, g_lowRam{false};
 std::atomic<long long> g_loads{0};
@@ -284,6 +285,7 @@ bool LoadList() {
 		it.idx = idx++;
 		g_byPath.emplace(p, &it);
 		g_queue[IsLevel(p) ? 1 : 0].push_back(&it);
+		if (g_firstLevel == SIZE_MAX && IsLevel(p)) g_firstLevel = it.idx;
 		if (p.compare(0, 7, "quests/") == 0) g_quests.push_back(&it);
 	}
 	fclose(f);
@@ -299,15 +301,20 @@ bool Xmlahead_LevelSeen() { return g_levelSeen.load(); }
 void Xmlahead_StartMenuNow(const char* why) { if (!g_items.empty() && !g_levelSeen) StartQueue(0, why); }
 
 void Xmlahead_SkipQuests(const char* why) {
-	size_t n = 0;
+	// Only the quest build's own files: those listed before the level load starts. The save load's place graphs read
+	// quests/ files too (boot 72: 2,398 on Main in the apply step, ~0.5 s), listed after the first levels/ file: kept,
+	// the queue-0 workers parse them ahead as any other file.
+	size_t n = 0, kept = 0;
 	g_nextQuest = g_quests.size();   // the boost workers have nothing left
 	for (Item* it : g_quests) {
+		if (it->idx > g_firstLevel) { kept++; continue; }
 		int w = 0;
 		if (it->state.compare_exchange_strong(w, 3)) { n++; continue; }
 		int r = 2;
 		if (it->state.compare_exchange_strong(r, 3)) { ReleaseNode(it->node); it->node = nullptr; n++; }
 	}
-	Log("xmlahead: %zu quests/ files not parsed ahead (%s)", n, why);
+	Log("xmlahead: %zu quests/ files not parsed ahead (%s); %zu listed after the level load starts kept (the save "
+	    "load's place graphs)", n, why, kept);
 }
 
 bool Xmlahead_MenuQuiet(unsigned quietMs) {

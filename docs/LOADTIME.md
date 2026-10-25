@@ -44,6 +44,12 @@ menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free a
 ## Built and measured
 - fastzip (libdeflate) + pakahead: 61 -> 47 s (2026-10-23 boots, older clock).
 - xmlahead bounded lead (8d38d00): quest XML phase 5.0 -> 1.0 s (2.25 s since quests go first, see below).
+- xmlahead keeps the save load's quests/ files (boot 74): the apply's place graph (the place the save stands in,
+  ttkc_villageCenter) reads 2,398 quests/ files through the Skald loader FUN_180979068 (no cache), and SkipQuests had
+  dropped every quests/ file once the menu build replays. Now only those listed before the first levels/ file are
+  dropped, and the list was re-recorded after questreplay (13,601 files, was 33,012 from before it): the place job's
+  node walk 557 -> 28 ms, apply 4.7 -> 4.3 s. The list goes stale when the load changes: re-record it
+  (tools/xmlahead_list.py on fastload_xmlahead_trace.csv).
 - streamahead, 4 readers + RAM rule (a168e6d, d587a0e): terrain wait 3.4 -> 0.9-2.3 s, depends on free RAM.
 - applyfast fog cull (d587a0e): map clouds vs fog of war 0.86 s -> 60 ms, 0 mismatches in 71k checks.
 - applyfast facial DBA sort (2195bf8): lists arrive nearly sorted (10 breaks in 40k), 80-95 ms; gain not measurable.
