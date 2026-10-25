@@ -28,6 +28,12 @@ const unsigned char kModelSkelBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x4
 constexpr uintptr_t kRvaHeaderAdd = 0xb14d68;
 const unsigned char kHeaderAddBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x48 };
 constexpr DWORD kHeaderWaitMs = 10000;
+// CharacterManager::OnFacialsPakChanged (Main, start-up): logs "CharacterManager::OnFacialsPakChanged()
+// m_LanguageGahBaseIndexStart" right after the language's facial paks open. After it the animation system has every pak
+// and the language's facial header range; the game itself loads no character until the level (boots 76-103: no
+// chrparams or skeleton load before "Loading level").
+constexpr uintptr_t kRvaFacials = 0x20f35e0;
+const unsigned char kFacialsBytes[] = { 0x40,0x55,0x56,0x48,0x8d,0x6c,0x24,0x98,0x48,0x81,0xec,0x68,0x01,0x00,0x00 };
 
 const char* const kCdf[] = { "objects/characters/humans/female/skeleton/female.cdf",
                              "objects/characters/humans/male/skeleton/male.cdf" };
@@ -42,6 +48,9 @@ std::atomic<DWORD> g_preloadTid{0};
 HANDLE g_done = nullptr;   // manual reset, set while no preload runs
 std::atomic<int> g_menuState{0};   // Animahead_MenuSettled: 0 boot event 0x24 not yet, 1 preload pending/running, 2 settled
 std::atomic<HANDLE> g_waitFirst{nullptr};
+std::atomic<bool> g_early{false};          // mode 1: the preload was started at start-up (after the facial paks)
+std::atomic<bool> g_atMenu{false};         // Animahead_AtMenu has run (boot event 0x24)
+long long g_installAt = 0;
 using Fn3 = uint64_t(__fastcall*)(void*, const char*, uint64_t);
 using Fn4 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
 Fn3 g_chr = nullptr, g_skel = nullptr;
@@ -127,6 +136,11 @@ void Finish() {
 DWORD WINAPI Preload(LPVOID arg) {
 	const Job job = *(Job*)arg;
 	delete (Job*)arg;
+	{   // hitch's start-up window samples threads named "JobWorker_*": so this one shows up in fastload_hitch.csv
+		using SetDescFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+		static const SetDescFn f = (SetDescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadDescription");
+		if (f) f(GetCurrentThread(), L"JobWorker_fastload animahead");
+	}
 	if (job.waitFirst && g_mode == 2) {   // mode 2: the quest graph's menu build first (the rule before 2026-10-24)
 		const long long t = Now();
 		const DWORD w = WaitForSingleObject(job.waitFirst, 120000);
@@ -148,10 +162,10 @@ DWORD WINAPI Preload(LPVOID arg) {
 	for (const char* cdf : kCdf) {
 		const long long freeBefore = ramgov::AvailMb(), a = Now();
 		const bool ok = ((LoadLockFn)job.fn)(cm, cdf, 0);
-		Log("animahead: %s %s in %.0f ms at the main menu (free RAM %lld -> %lld MB)", cdf, ok ? "preloaded" : "FAILED", Ms(a, Now()),
-		    freeBefore, ramgov::AvailMb());
+		Log("animahead: %s %s in %.0f ms %s (free RAM %lld -> %lld MB)", cdf, ok ? "preloaded" : "FAILED", Ms(a, Now()),
+		    g_early ? "at start-up" : "at the main menu", freeBefore, ramgov::AvailMb());
 	}
-	Log("animahead: preload done in %.0f ms", Ms(t, Now()));
+	Log("animahead: preload done in %.0f ms (%.1f s after the install)", Ms(t, Now()), Ms(g_installAt, Now()) / 1000.0);
 	Finish();
 	return 0;
 }
@@ -169,20 +183,56 @@ uint64_t __fastcall HkLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t d) 
 
 }  // namespace
 
-void Animahead_AtMenu(void* waitFirst) {
-	g_waitFirst = (HANDLE)waitFirst;
-	g_menuState = 2;   // set back to 1 below when a preload thread starts
-	if ((g_mode != 1 && g_mode != 2) || !g_loadLevel) return;
-	if (g_mode == 1 && !g_headerAdd) { Log("animahead: header add not guarded - after the quest build (mode 2's rule)"); g_mode = 2; }
-	const char* why = nullptr;
+namespace {
+// the game's preload, or null and why not
+void* PreloadFn(const char** why) {
+	*why = nullptr;
 	void* cm = ReadPtr(g_base + kRvaCharMgr);
 	void** vt = cm ? (void**)ReadPtr((uintptr_t)cm) : nullptr;
 	void* fn = vt ? ReadPtr((uintptr_t)(vt + 0x70 / 8)) : nullptr;
 	if (!fn || (uintptr_t)fn != g_base + kRvaLoadLock || memcmp(fn, kLoadLockBytes, sizeof kLoadLockBytes))
-		why = "the character manager's preload isn't where 1.5.6 has it";
-	else if (g_levelStarted || Xmlahead_LevelSeen()) why = "a level load has already begun";
-	else if (ramgov::AvailMb() < 1500) why = "less than 1500 MB RAM free";
-	if (why) { Log("animahead: no preload at the menu: %s", why); return; }
+		*why = "the character manager's preload isn't where 1.5.6 has it";
+	else if (g_levelStarted || Xmlahead_LevelSeen()) *why = "a level load has already begun";
+	else if (ramgov::AvailMb() < 1500) *why = "less than 1500 MB RAM free";
+	return *why ? nullptr : fn;
+}
+
+// mode 1: start-up, right after the language's facial paks (Main, once). Boot 102: the preload started at the menu
+// (event 0x24), the auto-load 0.5 s later, and "Loading level" waited 3.2 s for it on Main. From here it has ~4 s
+// before the menu.
+Fn4 g_facials = nullptr;
+uint64_t __fastcall HkFacials(uint64_t cm, uint64_t a2, uint64_t a3, uint64_t a4) {
+	const uint64_t r = g_facials(cm, a2, a3, a4);
+	static std::atomic<bool> once{false};
+	if (once.exchange(true)) return r;
+	const char* why = nullptr;
+	void* fn = PreloadFn(&why);
+	if (!fn) { Log("animahead: no preload at start-up (%s): at the menu instead", why); return r; }
+	g_early = true;
+	g_menuState = 1;
+	Log("animahead: preload starts at start-up, after the facial paks (%.1f s after the install, thread %lu)",
+	    Ms(g_installAt, Now()) / 1000.0, GetCurrentThreadId());
+	HANDLE h = CreateThread(nullptr, 1 << 20, Preload, new Job{ fn, nullptr }, 0, nullptr);
+	if (h) CloseHandle(h);
+	else { g_early = false; g_menuState = 0; Log("animahead: could not start the preload thread: at the menu instead"); }
+	return r;
+}
+}  // namespace
+
+void Animahead_AtMenu(void* waitFirst) {
+	g_waitFirst = (HANDLE)waitFirst;
+	g_atMenu = true;
+	if (g_early) {   // started at start-up: running (state 1) or done (2); the load waits for it as before
+		Log("animahead: at the menu: the start-up preload is %s", g_menuState.load() == 2 ? "done" : "still running");
+		return;
+	}
+	g_menuState = 2;   // set back to 1 below when a preload thread starts
+	if (g_mode != 1 && g_mode != 2 && g_mode != 3) return;
+	if (!g_loadLevel) return;
+	if (g_mode != 2 && !g_headerAdd) { Log("animahead: header add not guarded - after the quest build (mode 2's rule)"); g_mode = 2; }
+	const char* why = nullptr;
+	void* fn = PreloadFn(&why);
+	if (!fn) { Log("animahead: no preload at the menu: %s", why); return; }
 	g_menuState = 1;
 	HANDLE h = CreateThread(nullptr, 1 << 20, Preload, new Job{ fn, (HANDLE)waitFirst }, 0, nullptr);
 	if (h) CloseHandle(h);
@@ -191,6 +241,7 @@ void Animahead_AtMenu(void* waitFirst) {
 
 void Animahead_Install(uintptr_t base, void* self) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
+	g_installAt = Now();
 	g_base = base;
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
@@ -198,7 +249,7 @@ void Animahead_Install(uintptr_t base, void* self) {
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((dir + "fastload_animahead.txt").c_str(), "r")) {
 		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 1 || m == 2 ? m : 0;
+		if (fscanf(fp, "%d", &m) == 1) g_mode = m >= 1 && m <= 3 ? m : 0;
 		fclose(fp);
 	}
 	g_done = CreateEventA(nullptr, TRUE, TRUE, nullptr);
@@ -206,16 +257,22 @@ void Animahead_Install(uintptr_t base, void* self) {
 	                                     "Loading level");
 	const bool chr = Hook(kRvaChrparams, kChrparamsBytes, sizeof kChrparamsBytes, (void*)&HkChr, (void**)&g_chr, "LoadCHRPARAMS");
 	const bool skel = Hook(kRvaModelSkel, kModelSkelBytes, sizeof kModelSkelBytes, (void*)&HkSkel, (void**)&g_skel, "LoadModelSKEL");
-	const bool hdr = g_mode == 1 && Hook(kRvaHeaderAdd, kHeaderAddBytes, sizeof kHeaderAddBytes, (void*)&HkHeaderAdd,
+	const bool hdr = (g_mode == 1 || g_mode == 3) && Hook(kRvaHeaderAdd, kHeaderAddBytes, sizeof kHeaderAddBytes, (void*)&HkHeaderAdd,
 	                                     (void**)&g_headerAdd, "animation header add");
+	// mode 1 starts at start-up only with the level-load gate and the header-add guard (else at the menu, as mode 3)
+	const bool fac = g_mode == 1 && lvl && hdr && Hook(kRvaFacials, kFacialsBytes, sizeof kFacialsBytes, (void*)&HkFacials,
+	                                                   (void**)&g_facials, "OnFacialsPakChanged");
 	Log("animahead: mode %d (%s; fastload_animahead.txt), level-load gate %s, chrparams log %s, skeleton log %s, header-add "
-	    "guard %s", g_mode, g_mode == 1 ? "human animation sets at the main menu, beside the quest build" :
+	    "guard %s, start-up trigger %s", g_mode,
+	    g_mode == 1 ? "human animation sets at start-up, after the facial paks" :
+	    g_mode == 3 ? "human animation sets at the main menu, beside the quest build" :
 	    g_mode == 2 ? "human animation sets at the main menu, after the quest build" : "off", lvl ? "on" : "OFF",
-	    chr ? "on" : "OFF", skel ? "on" : "OFF", hdr ? "on" : g_mode == 1 ? "OFF" : "off");
+	    chr ? "on" : "OFF", skel ? "on" : "OFF", hdr ? "on" : g_mode != 2 && g_mode ? "OFF" : "off",
+	    fac ? "on" : g_mode == 1 ? "OFF (at the menu instead)" : "off");
 }
 
 bool Animahead_MenuSettled() {   // terrainfast's menu preload: nothing loads animations at the menu now (any thread)
-	if (g_menuState.load() != 2) return false;
+	if (!g_atMenu.load() || g_menuState.load() != 2) return false;
 	const HANDLE w = g_waitFirst.load();
 	return !w || WaitForSingleObject(w, 0) == WAIT_OBJECT_0;   // questmenu's build (or a questbench) has finished
 }

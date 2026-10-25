@@ -15,6 +15,10 @@
 // in (dump: FUN_18083f874, an entry of the global header array CM+0x280 read after the array moved), while the
 // terrain's own loaders (JobWorker_05) added hen/book/tongs animations to it. So the preload runs only before any level
 // load: "Loading level" (FUN_180b8f748) waits for it to finish, and it doesn't start once a level file was asked for.
+// Mode 1 since 2026-10-25: the preload starts at start-up, right after CharacterManager::OnFacialsPakChanged (Main, the
+// language's facial paks just opened, ~11 s after the install, ~4 s before the menu), so it is done before the auto-load
+// begins (boot 102: started at 0x24, the load began 0.5 s later and "Loading level" waited 3.2 s on Main). If it can't
+// start there it starts at 0x24 as before. Mode 3 = at 0x24 beside the quest build (mode 1 before 2026-10-25).
 // Every LoadCHRPARAMS call is logged ("animahead: chrparams": path, thread, ms; a call from another thread during the
 // preload is marked), and every human skeleton load with its flags, so a test boot shows the load doesn't build those
 // two again (flags bit 2 = the cache bypassed).

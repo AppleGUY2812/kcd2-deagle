@@ -940,3 +940,18 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   3. writes that one block.
   The per-call time goes to the plugin log.
 - **Untested in game:** whether the perk screen follows a write to the live block alone. The old code wrote all 3 copies.
+
+## 2026-10-25: the loading screen's start, the menu video, the NVIDIA PSO cache (kcd2-deagle-5a)
+- `StartLoadtimePlayback` is FUN_1807a1f98 (CryEngine's, unchanged): stores the loading-screen callback at
+  m_pRT+0xf8 -> +0x10, sends the start command, then loops FlushAndWait (FUN_1807a2138) + Sleep(0) until the render
+  thread's video mode m_pRT+0x140 is 2. Modes seen (applyfast's log): 0 off, 1 asked, 2 running, 4 stopping. The caller
+  chain: FUN_1807a3884 (checks `wh_sys_HideLoadingScreen`) -> FUN_1807a338c (`r_MultiThreaded` on, `g_asynclevelload`
+  off) -> FUN_1807a1f98.
+- The main menu's background video is Bink: FUN_180892e30 runs BinkDoFrameAsyncMulti / BinkDoFrameAsyncWait(-1) on the
+  render thread, decoded by 4 `BinkAsy*` threads. Boot 107 hung there 20 ms after an auto-load started: the render
+  thread waited forever, the BinkAsy threads asleep, Main in SyncMainWithRender. Once in ~70 auto-loads; the same build
+  went through in boot 109. Only seen with the load starting 0.5 s after the menu shows (readymenu).
+- The load's PSO precache (kcd.log "Precached 15989 Graphics PSOs (PrecachingMode = 'NonBlocking') ... in N seconds") is
+  1.9-2.0 s normally. Boot 110, with the start-up GPU adapter query answered from its first run (gpumemo, ebd0bf6): 28.4 s
+  and a 54.7 s load; boot 111, same build with gpumemo off: 1.95 s. Why is open (the NVIDIA DXCache files are rewritten by
+  every run, no new cache key). Check that line first when a load is suddenly ~30 s slower.

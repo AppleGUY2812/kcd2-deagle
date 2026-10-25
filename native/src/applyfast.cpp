@@ -191,6 +191,21 @@ void PsoMainFrame() {
 void ShaderMenuFrame();   // piece 5, below
 std::atomic<long long> s_syncs{0};
 long long g_lastSyncAt = 0;
+// m_pRT+0x140 = the render thread's video (loading screen) mode: 0 off, 1 asked, 2 running (StartLoadtimePlayback
+// FUN_1807a1f98 waits for 2), 4 stopping. Logged when it changes, so a hang at the loading screen's start shows in the
+// log (boot 107: the render thread waited forever in the menu video's Bink frame, FUN_180892e30, 20 ms after the load
+// started; once in ~70 auto-loads, not seen again; MODLOG).
+void VideoModeWatch(void* rt) {
+	static int last = 0;
+	__try {
+		const int m = *(volatile int*)((uintptr_t)rt + 0x140);
+		if (m != last) {
+			Log("applyfast: render sync %lld: the render thread's video mode %d -> %d (level state %d)", s_syncs.load(), last,
+			    m, Readiness_LevelState());
+			last = m;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
 uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
 	{   // when the main thread syncs during start-up (measurement: can the precache run before the menu shows?)
 		const long long n = ++s_syncs, now = Now();
@@ -199,6 +214,7 @@ uint64_t __fastcall HkSync(void* rt, uint64_t a2, uint64_t a3, uint64_t a4) {
 			    g_lastSyncAt ? (now - g_lastSyncAt) * 1000 / g_freq : -1);
 		g_lastSyncAt = now;
 	}
+	VideoModeWatch(rt);
 	PsoMainFrame();     // before the hand-over: the queued precache goes with this frame's commands
 	ShaderMenuFrame();  // piece 5: one shader parse queued per menu frame
 	return g_sync(rt, a2, a3, a4);
@@ -520,7 +536,8 @@ void ShaderMenuFrameInner() {
 		s_shCalls++;   // the reference it returns is kept: the level uses these shaders
 		if (sh && (*(volatile uint32_t*)(sh + 0x94) & 0x100)) { s_shReady++; continue; }
 		s_shQueued++;
-		break;   // one new shader per frame: its parse runs on the render thread next frame
+		break;   // one new shader per frame: its parse runs on the render thread next frame (boot 109: up to 24 per start-up
+		         // sync made the menu 1.2-1.6 s later, Main waiting for the render thread, and the load no faster)
 	}
 	if (g_keyNext >= g_keys.size()) {
 		g_shState = 2;

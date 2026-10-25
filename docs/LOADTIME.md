@@ -1,6 +1,7 @@
 # First save load: findings (current state only; replace, don't append)
 
-Goal 20 s from Continue to control. Owners: steps 1-4 kcd2-deagle-5a, step 5 + first gameplay frame kcd2-deagle-66.
+Goals: 10 s from Continue to control (since 2026-10-24), launch -> main menu 5 s. Owners: steps 1-4 kcd2-deagle-5a, step 5
++ first gameplay frame kcd2-deagle-66.
 RE notes: ProLiant ~/re (KCD2.gpr), WHGame.dll 1.5.6; agent reports in the 5a scratchpad (re_step*.md, re_questearly.md).
 Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt; native/src/fastload_main.cpp).
 "Control" = the end of the first gameplay frames. Times in s after the first level file ("level loading").
@@ -11,6 +12,8 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
   so ~19.5-20.9 s from the click. Boot 42: terrain 3.0, level done 10.3, state 4 0.2, apply 4.8 (one 4.75 s main frame,
   kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
   One boot: +-1 s noise.
+- **Auto-load boots now (boot 108, 2026-10-25): launch -> in control 38.1 s** = 2.5 s before the plugin + 14.1 s start-up
+  to the menu + 0.5 s + 20.6 s load (level step 14.3 s). Boot 102: 45.3 s.
 - Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
   (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
   (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
@@ -95,8 +98,11 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
   quest job at all (boot 43, ~6 s reload). Checked: questdump equal to the game's own build except the quest's random
   roll (as between two game builds); journal identical in boots 41-45. A failed replay drops the file, the game builds.
 - animahead (f71b7da, 7f34635; fastload_animahead.txt 1): female.cdf + male.cdf through the game's LoadAndLockResources on a
-  plugin thread at the menu, after the quest build (2.2 + 1.1 s there); the load's 30+ human skeleton loads hit the
-  cache (0 ms). "Loading level" (FUN_180b8f748) waits for a running preload. **Never during the load**: boot 39 ran it on
+  plugin thread; the load's 30+ human skeleton loads hit the cache (0 ms). Mode 1 (2026-10-25) starts it at start-up,
+  right after CharacterManager::OnFacialsPakChanged (~10.6 s after the plugin), 4.0-5.0 s, done by the load start; boot
+  104 -> 105 (one change): the load no longer waits 3.2 s for it, load 23.6 -> 21.1 s, but the menu +1.3 s (female.cdf
+  4.0 s there vs 2.2 s at the menu: it shares the CPU with start-up), launch -> control 42.1 -> 41.1 s. Mode 3 = the old
+  start at the save list read, mode 2 = after the quest build. "Loading level" (FUN_180b8f748) waits for a running preload. **Never during the load**: boot 39 ran it on
   Main in the terrain wait and crashed (the global animation header array CM+0x280 has no lock; the terrain loaders on
   job workers add to it; dump: FUN_18083f874).
 - skin cap (kcd2-deagle-66): wh_cc_MaxSkinLoadingInProgress 120 / JobQueueSize 80 (load): clothing 10.2 -> 7.2 s
@@ -109,7 +115,7 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
 | ground meshes (streamahead) | launch +1 s | done; 512 MB held cap |
 | XML parse (xmlahead) | menu idle (~launch +22 s) | capped 3,000 files ahead of the game: 4 workers idle most of the menu; level files wait for level loading |
 | quest graph (4.4 s, replayed) | save list read (~launch +20 s) | done (questmenu + questreplay); kept by the first load |
-| Main: human anim sets 1.9-2.2 s | menu, after the quest build | done (animahead): boot 40 |
+| Main: human anim sets 1.9-2.2 s | start-up, after the facial paks | done (animahead mode 1): boot 105 |
 | Main: navmesh ~0.7 s, terrain loaders / level open | in the load | kcd2-deagle-66 (plan below) |
 | RLT: shader parse 4-8 s, texture precache, PSO | in the load | RE running: re_menu_render.md |
 | save read, mapClouds/Storm, Settle textures at the save's position | in the load | asked kcd2-deagle-66 |
@@ -123,7 +129,9 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 - Menu shaders queued in proportion to the frame gap (1-32 a render sync, boot 93): all 457 parsed before the load (20 left
   in it), but the main menu came ~5 s later (= the 5.1 s of parsing: the render thread is on start-up's critical path) and
   the post-LoadLevel part of state 4 stayed 3.5 s, so it is not the render loading thread's shader backlog. Reverted; the
-  parse itself (436 shaders, ~11 ms each on one thread) is the cost wherever it runs.
+  parse itself (436 shaders, ~11 ms each on one thread) is the cost wherever it runs. Again with up to 24 a sync (boot
+  109): 281 parsed before the load, 196 in it; start-up +1.2-1.6 s (Main's syncs wait for the render thread), load no
+  faster. Dropped.
 
 ## Plan: 10 s from Continue (target since 2026-10-24 15:30; was 20 s)
 Boot 57 (all current work, menu path): 18.3 s = LoadLevel 8.3 + state 4 0.8 + apply 4.7 + gate 3.4 + rest 1.1.
@@ -207,7 +215,14 @@ SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
    Main's other render waits before the menu: ~1.85 s in FlushAndWait (FUN_1807a2138), spread over small pieces.
 9. response_depot_wave_file (dbprof 1.08-1.13 s on Main before the menu: ~0.43 s XML parse, the rest row building) is
    the one XML file in Localization\english-part3.pak (63,435 .ogg), which mounts last, ~20 ms before the game reads it:
-   xmlahead's parse-ahead can't reach it through CryPak. Needs a read straight from the pak, or a table record.
+   xmlahead's parse-ahead can't reach it through CryPak. dbasync (kcd2-deagle-66, 2eb78d9) loads it on a worker: boot
+   108 Main never waited, menu -1.6 s.
+
+## Hang at the loading screen's start (boot 107, once in ~70 auto-loads)
+20 ms after readymenu started the load, the render thread waited forever in the menu video's Bink frame (FUN_180892e30:
+BinkDoFrameAsyncMulti / BinkDoFrameAsyncWait(-1)), the 4 BinkAsy threads asleep, Main in SyncMainWithRender. Not seen
+again (boot 109 = the same build). applyfast logs the render thread's video mode (m_pRT+0x140: 0 off, 1 asked, 2 running,
+4 stopping) at each change, so a repeat shows how far the loading screen got. Samples: 5a scratchpad boot107_samples.csv.
 
 ## Measuring rules
 - One change per boot; same fastload_cvars.txt (the two wh_cc lines are in it).
