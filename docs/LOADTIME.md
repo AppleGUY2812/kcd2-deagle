@@ -13,7 +13,8 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
   kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
   One boot: +-1 s noise.
 - **Auto-load boots now (boot 118, 2026-10-25): launch -> in control 35.7 s** = menu ready 15.9 s after the process
-  start + 0.5 s + 19.3 s load (level step 12.9 s). Boot 108: 38.1 s; boot 102: 45.3 s.
+  start + 0.5 s + 19.3 s load (level step 12.9 s). Boot 120 (+ pipelib, gpuwarm fix, text cap): menu 14.96 s, 35.8 s.
+  Boot 108: 38.1 s; boot 102: 45.3 s.
 - Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
   (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
   (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
@@ -217,6 +218,13 @@ SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
    the one XML file in Localization\english-part3.pak (63,435 .ogg), which mounts last, ~20 ms before the game reads it:
    xmlahead's parse-ahead can't reach it through CryPak. dbasync (kcd2-deagle-66, 2eb78d9) loads it on a worker: boot
    108 Main never waited, menu -1.6 s.
+10. Main's text step (text_ui_*.xml into the string table, FUN_18071aec0 / FUN_180a5a084, right after the language's
+   XML paks mount) is 1.4-1.55 s, ~60 % of it waiting on the Windows heap lock (RtlEnterCriticalSection under
+   RtlAllocateHeap / RtlFreeHeap). Lifting xmlahead's cap at the mount (boot 114) removed Main's 0.4 s wait for the files
+   but made this step 0.27 s longer. Since then (xmlahead text cap) the workers parse only localization/ files until the
+   game reads its last one: boot 119 -> 120 step 1.55 -> 1.37 s (heap-lock samples 46 -> 37), menu 15.65 -> 14.96 s from
+   process start (one pair). The animahead thread waits on the same lock (34 of 43 samples): the holder is a thread the
+   sampler did not name (xmlahead workers named since boot 121).
 
 ## Hang at the loading screen's start (boot 107, once in ~70 auto-loads)
 20 ms after readymenu started the load, the render thread waited forever in the menu video's Bink frame (FUN_180892e30:

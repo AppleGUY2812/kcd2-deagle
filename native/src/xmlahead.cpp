@@ -125,6 +125,14 @@ std::atomic<size_t> g_nextQuest{0};
 std::atomic<bool> g_started[2], g_stop{false}, g_lowRam{false}, g_boosted{false};
 std::atomic<size_t> g_cap{SIZE_MAX};   // start-up: list positions from here wait for the localization paks
 size_t g_firstLoc = SIZE_MAX;          // list position of the first localization/ file
+// While the game turns the localization files into its string table (boot 114: ~1.5 s on Main right after the XML paks
+// mount), the workers parse only the localization/ files: the rest of their list allocated alongside and Main waited on
+// the Windows heap lock (RtlEnterCriticalSection in RtlAllocateHeap / RtlFreeHeap: 40 of 70 samples in boot 114, 16 of 56
+// in 113). The rest from when the game reads its last localization/ file (or 5 s on). fastload_xmlahead_textcap.txt 0 = off.
+std::atomic<size_t> g_textEnd{SIZE_MAX};   // list position after the last localization/ file while that cap is on
+std::atomic<ULONGLONG> g_textCapAt{0};
+bool g_textCapOn = true;
+constexpr ULONGLONG kTextCapMaxMs = 5000;
 std::atomic<long long> s_capWaits{0};
 std::atomic<long long> g_loads{0};
 std::atomic<size_t> g_gamePos{0};     // furthest list position the game has asked for
@@ -148,6 +156,14 @@ DWORD WINAPI Worker(LPVOID arg) {
 	const int q = (int)(intptr_t)arg & 0xff;
 	const bool boost = ((intptr_t)arg >> 8) & 1;   // a quest boost worker: only the quests/ files, then it stops
 	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);   // (normal tried in boot 25: no change)
+	{   // named so the hitch sampler (threads "JobWorker_*") sees them: boot 120's text step waited on a heap lock no
+		// sampled thread held
+		using SetDescFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+		static const SetDescFn f = (SetDescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadDescription");
+		wchar_t name[64];
+		swprintf(name, 64, L"JobWorker_fastload xmlahead %d%ls", q, boost ? L" quests" : L"");
+		if (f) f(GetCurrentThread(), name);
+	}
 	const size_t n = boost ? g_quests.size() : g_queue[q].size();
 	for (size_t k = 0;; k++) {
 		if (g_stop) break;
@@ -201,7 +217,21 @@ void LiftCapAtLocPaks() {
 		if (it.state.compare_exchange_strong(z, 3)) left++;
 	}
 	if (left) Log("xmlahead: %ld files in localization/ subfolders left to the game (the audio paks mount after the XML paks)", left);
-	LiftCap("the localization XML paks mounted");
+	size_t last = SIZE_MAX;
+	for (const Item& it : g_items)
+		if (it.path.compare(0, 13, "localization/") == 0 && (last == SIZE_MAX || it.idx > last)) last = it.idx;
+	if (!g_textCapOn || last == SIZE_MAX || last + 1 <= g_cap.load()) { LiftCap("the localization XML paks mounted"); return; }
+	g_textCapAt = GetTickCount64();
+	g_textEnd = last + 1;
+	g_cap = last + 1;
+	Log("xmlahead: the localization XML paks mounted - the localization/ files now (list to %zu), the rest once the game has "
+	    "read its last one (it builds its string table meanwhile)", last);
+}
+
+void LiftTextCap(const char* why) {
+	if (g_textEnd.exchange(SIZE_MAX) == SIZE_MAX) return;
+	LiftCap(why);
+	Log("xmlahead: the localization-only cap held %.2f s", (GetTickCount64() - g_textCapAt.load()) / 1000.0);
 }
 
 // queue 0 at the start-up: no quest boost (that is for the quest job at the menu), the cap on
@@ -256,7 +286,7 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 			const ULONGLONG quiet = GetTickCount64() - g_lastPak.load();
 			if (!g_started[0] && g_pakOpens >= kStartPaks && quiet >= kStartQuietMs && g_dataPaks > 0 &&
 			    g_modPaks >= g_modPaksOnDisk) StartEarly();
-			if (g_cap.load() != SIZE_MAX && quiet >= kLocQuietMs) {
+			if (g_cap.load() != SIZE_MAX && g_textEnd.load() == SIZE_MAX && quiet >= kLocQuietMs) {
 				if (g_locMountedAt.load()) LiftCap("the localization paks mounted");
 				else if (path.compare(0, 13, "localization/") == 0) LiftCap("the game's first localization/ load");
 			}
@@ -265,6 +295,7 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 		if (f != g_byPath.end()) {
 			Item& it = *f->second;
 			for (size_t pos = g_gamePos.load(); it.idx > pos && !g_gamePos.compare_exchange_weak(pos, it.idx);) {}
+			if (g_textEnd.load() != SIZE_MAX && it.idx + 1 >= g_textEnd.load()) LiftTextCap("the game read its last localization/ file");
 			int r = 2;
 			if (it.state.compare_exchange_strong(r, 3)) {
 				*ret = it.node;          // the worker's reference goes to the caller
@@ -404,7 +435,10 @@ DWORD WINAPI Writer(LPVOID) {
 	long long lastServed = -1, lastReady = -1;
 	for (unsigned tick = 1;; tick++) {
 		Sleep(500);
-		if (g_cap.load() != SIZE_MAX && g_locMountedAt.load() && GetTickCount64() - g_lastPak.load() >= kLocQuietMs)
+		if (g_textEnd.load() != SIZE_MAX && GetTickCount64() - g_textCapAt.load() >= kTextCapMaxMs)
+			LiftTextCap("5 s after the localization XML paks (safety)");
+		if (g_cap.load() != SIZE_MAX && g_textEnd.load() == SIZE_MAX && g_locMountedAt.load() &&
+		    GetTickCount64() - g_lastPak.load() >= kLocQuietMs)
 			LiftCap("the localization paks mounted");
 		if (!g_items.empty() && (!g_started[0] || g_cap.load() != SIZE_MAX) && g_loads >= kMenuLoads &&
 		    GetTickCount64() - g_lastLoad >= kMenuQuietMs)
@@ -546,6 +580,9 @@ void Xmlahead_Install(uintptr_t base, void* self) {
 	g_dir = path; g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((g_dir + "fastload_xmlahead.txt").c_str(), "r")) {
 		int m = 1; if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m; fclose(fp);
+	}
+	if (FILE* fp = fopen((g_dir + "fastload_xmlahead_textcap.txt").c_str(), "r")) {
+		int m = 1; if (fscanf(fp, "%d", &m) == 1) g_textCapOn = m != 0; fclose(fp);
 	}
 	if (g_mode == 0) { Log("xmlahead: off"); return; }
 	const std::string root = g_dir + "..\\..\\";   // Bin\Win64MasterMasterSteamPGO\ -> the game folder
