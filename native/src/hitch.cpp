@@ -250,7 +250,7 @@ uintptr_t StackBaseOf(HANDLE h) {
 }
 
 // Finds the named threads (once each; again after `hitch threads`), at the start of a long frame.
-void FindTargets(bool window) {
+void FindTargets(bool window, bool appendOnly = false) {
 	std::vector<std::string> names;
 	{
 		std::lock_guard<std::mutex> l(g_namesMu);
@@ -266,8 +266,10 @@ void FindTargets(bool window) {
 		std::sort(want.begin(), want.end());
 		if (have == want) return;
 	}
-	for (size_t i = 1; i < g_targets.size(); i++) CloseHandle(g_targets[i].h);
-	g_targets.resize(1);
+	if (!appendOnly) {   // appendOnly: keep the threads found so far (their samples' index stays the same)
+		for (size_t i = 1; i < g_targets.size(); i++) CloseHandle(g_targets[i].h);
+		g_targets.resize(1);
+	}
 	using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
 	static DescFn desc = (DescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
 	if (!desc) return;
@@ -573,6 +575,9 @@ DWORD WINAPI Watch(LPVOID) {
 			FindTargets(false);
 		}
 		const uint32_t tMs = (uint32_t)((now - start) * 1000 / g_freq);
+		// the start-up window begins before the render threads exist: look for them again every second
+		static unsigned ticks = 0;
+		if (no == 0 && g_startup && ++ticks % 50 == 0) FindTargets(false, true);
 		for (size_t who = 0; who < g_targets.size() && ss.size() < (size_t)kMaxSamples; who++) {
 			Sample s;
 			if (Grab(g_targets[who], (uint8_t)who, &s, tMs)) ss.push_back(s);
