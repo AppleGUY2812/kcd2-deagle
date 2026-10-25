@@ -197,8 +197,17 @@ SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
    early hand-over (applyfast 3b) failed in every boot 88-94: the loading thread is busy at the quest wait and at
    PostLoadLevel even when only 20 shaders are left to it (boot 93). What else keeps it busy: unmeasured, needs its
    samples (hitch start-up window since 040a78d).
-8. The menu's first frame (menu ready -> load start, 4.2-4.8 s): Main also waits in SyncMainWithRender (194 of 205
-   samples, boot 94), i.e. on the render thread (the DLSS start-up measured earlier).
+8. The menu's first frame (menu ready -> load start, 4.2-4.8 s) is NVIDIA NGX start-up on the render thread. Boot 96
+   (render-thread samples): t 17.10-21.38 s after the plugin all in the DLSS plugin's FUN_181e0b7c0 -> FUN_181dffa40
+   (NVSDK_NGX_D3D12_Init + GetCapabilityParameters: signature checks, driver-profile re-reads), Main in
+   SyncMainWithRender the whole time. The render thread idles t 10-16.8 s before it. ngxearly.cpp runs that init on a
+   plugin thread once the D3D device exists (~4.5 s after the plugin, 4.3-4.8 s long) and hands the result to the game's
+   call (0 ms). Boots 97 -> 98 (one change): menu ready -> load start 5.2 -> 0.5 s, launch -> in control 46.8 -> 42.9 s;
+   boots 99-101 41.8-42.2 s.
+   Main's other render waits before the menu: ~1.85 s in FlushAndWait (FUN_1807a2138), spread over small pieces.
+9. response_depot_wave_file (dbprof 1.08-1.13 s on Main before the menu: ~0.43 s XML parse, the rest row building) is
+   the one XML file in Localization\english-part3.pak (63,435 .ogg), which mounts last, ~20 ms before the game reads it:
+   xmlahead's parse-ahead can't reach it through CryPak. Needs a read straight from the pak, or a table record.
 
 ## Measuring rules
 - One change per boot; same fastload_cvars.txt (the two wh_cc lines are in it).
