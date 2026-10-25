@@ -159,3 +159,6 @@ SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
 - One change per boot; same fastload_cvars.txt (the two wh_cc lines are in it).
 - Test boots: scratchpad bootrun.sh N (auto-load) or bootmenu.sh N + a Continue click at (1497, 348) client px
   (the user's path). steps.py N... tabulates the steps from the plugin log.
+- A crash: fastload_crash.txt next to the plugin (crashlog.cpp, since 7a9eb8c) has the faulting address as module+offset,
+  the registers and the stack's code addresses; the last block before the crash is the crash. A clean boot (69) writes 2
+  handled faults (readiness.cpp's guarded read, one in a module without exports), so not every block is a crash.
