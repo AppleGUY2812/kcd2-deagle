@@ -128,8 +128,8 @@ Measured 2026-10-24 (boots 59-61):
   work ends: the load starts before the menu work, so every menu preload is lost (load 29.3 s, gate 8.4). Dropped as is.
 - wh_sys_ForceMainMenu ("main menu over a +map level"): no reader found in the release build; the main menu over a loaded
   level is not a game feature to rely on. The pause menu is.
-Route to 10 s, "ready at the menu" (readymenu.cpp, built 2026-10-24, OFF by default until the user says yes; the game starts
-the load by itself): once the menu work is done (save scan, quest build, animations, terrain meshes asked) and no keyboard or
+Route to 10 s, "ready at the menu" (readymenu.cpp, built 2026-10-24, off by default; ON in the user's game since 2026-10-24
+19:00, fastload_readymenu.txt "1 5"; the game starts the load by itself): once the menu work is done (save scan, quest build, animations, terrain meshes asked) and no keyboard or
 mouse input for 5 s, the plugin calls the game's "Loading last saved game..." FUN_182ba7c10(C_UISaveLoad) (what Continue and
 wh_sys_AutoLoadLastSave call; the pointer from a hook on its start-up method FUN_180da1d54, which runs ~20 s after the
 plugin), skipped if a load was started any other way or the menu's busy byte C_UISaveLoad+0x72 is set; at gameplay start
