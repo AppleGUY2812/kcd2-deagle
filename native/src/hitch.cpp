@@ -40,6 +40,11 @@ alignas(16) uint8_t g_stack[kStackBytes];   // the watcher's only buffer while a
 std::mutex g_namesMu;
 std::vector<std::string> g_names = { "RenderThread", "RenderLoadingThread" };
 bool g_namesChanged = true;
+// Settle window (readiness.cpp, 2026-10-24): while a save-load gate holds the screen, frames are short, so nothing above
+// samples it. Hitch_Window(true) samples Main, the threads above and the stream engine's two serial stages (the one pak
+// reader and the one callback thread) until Hitch_Window(false), reported as one "window", with each thread's CPU use.
+std::atomic<bool> g_window{false};
+const char* const kWindowNames[] = { "Streaming File IO HDD", "Streaming AsyncCallback" };
 
 struct Target { HANDLE h; uintptr_t stackBase; std::string name; DWORD tid; };
 std::vector<Target> g_targets;   // [0] = main; watcher thread only
@@ -245,13 +250,21 @@ uintptr_t StackBaseOf(HANDLE h) {
 }
 
 // Finds the named threads (once each; again after `hitch threads`), at the start of a long frame.
-void FindTargets() {
+void FindTargets(bool window) {
 	std::vector<std::string> names;
 	{
 		std::lock_guard<std::mutex> l(g_namesMu);
-		if (!g_namesChanged && g_targets.size() == 1 + g_names.size()) return;
 		names = g_names;
 		g_namesChanged = false;
+	}
+	if (window) for (const char* n : kWindowNames) if (std::find(names.begin(), names.end(), n) == names.end()) names.push_back(n);
+	{   // the same threads as now: nothing to do
+		std::vector<std::string> have;
+		for (size_t i = 1; i < g_targets.size(); i++) have.push_back(g_targets[i].name);
+		std::vector<std::string> want = names;
+		std::sort(have.begin(), have.end());
+		std::sort(want.begin(), want.end());
+		if (have == want) return;
 	}
 	for (size_t i = 1; i < g_targets.size(); i++) CloseHandle(g_targets[i].h);
 	g_targets.resize(1);
@@ -407,7 +420,14 @@ void ReportFiles(int no, long long a, long long b) {
 	fclose(f);
 }
 
-void Report(int no, double frameMs, const std::vector<Sample>& ss, uint32_t faults0, const SysPf& sys0) {
+uint64_t CpuUs(HANDLE h) {   // the thread's user + kernel time so far, in microseconds
+	FILETIME c, e, k, u;
+	if (!GetThreadTimes(h, &c, &e, &k, &u)) return 0;
+	return ((((uint64_t)k.dwHighDateTime << 32) | k.dwLowDateTime) + (((uint64_t)u.dwHighDateTime << 32) | u.dwLowDateTime)) / 10;
+}
+
+void Report(int no, double frameMs, const std::vector<Sample>& ss, uint32_t faults0, const SysPf& sys0,
+            const std::vector<uint64_t>* cpu0 = nullptr) {
 	if (ss.empty()) return;
 	const uint32_t df = ss.back().faults - faults0;
 	const SysPf sys1 = SysFaults();
@@ -428,12 +448,16 @@ void Report(int no, double frameMs, const std::vector<Sample>& ss, uint32_t faul
 			in[Where(s.rip)]++;
 			if (s.n > 0) from[Where(s.ret[0])]++;
 		}
+		char cpu[48] = "";
+		if (cpu0 && who < cpu0->size() && frameMs > 0)
+			snprintf(cpu, sizeof cpu, ", CPU %.0f %%", (CpuUs(g_targets[who].h) - (*cpu0)[who]) / (frameMs * 10.0));
 		if (who == 0)
-			Log("hitch: #%d main frame %.0f ms, %d samples, page faults +%u (%.0f a second); in: %s; called from: %s", no,
-			    frameMs, n, df, frameMs > 0 ? df * 1000.0 / frameMs : 0.0, Top(in, n, 6).c_str(), Top(from, n, 6).c_str());
+			Log("hitch: #%d %s %.0f ms, %d samples%s, page faults +%u (%.0f a second); in: %s; called from: %s", no,
+			    cpu0 ? "settle window: Main," : "main frame", frameMs, n, cpu, df, frameMs > 0 ? df * 1000.0 / frameMs : 0.0,
+			    Top(in, n, 6).c_str(), Top(from, n, 6).c_str());
 		else if (n)
-			Log("hitch: #%d %s: %d samples; in: %s; called from: %s", no, g_targets[who].name.c_str(), n, Top(in, n, 6).c_str(),
-			    Top(from, n, 6).c_str());
+			Log("hitch: #%d %s: %d samples%s; in: %s; called from: %s", no, g_targets[who].name.c_str(), n, cpu,
+			    Top(in, n, 6).c_str(), Top(from, n, 6).c_str());
 	}
 	if (g_csvPath.empty() || g_csvBytes > kMaxCsvBytes) return;
 	FILE* f = fopen(g_csvPath.c_str(), "a");
@@ -482,6 +506,9 @@ DWORD WINAPI Watch(LPVOID) {
 	long long start = 0;
 	uint32_t faults0 = 0;
 	SysPf sys0;
+	bool inWin = false;
+	long long winStart = 0;
+	std::vector<uint64_t> cpu0;
 	for (;;) {
 		Sleep(kIntervalMs);
 		if (HANDLE fix = g_fixMain.exchange(nullptr)) {   // the start-up guess was not the main thread
@@ -494,6 +521,40 @@ DWORD WINAPI Watch(LPVOID) {
 		if (g_targets.empty()) g_targets.push_back({ g_main, g_mainStack, "Main", GetThreadId(g_main) });
 		const long long now = Now();
 		const double gapMs = (now - last) * 1000.0 / (double)g_freq;
+		const bool win = g_window.load(std::memory_order_acquire) && g_on;
+		if (win != inWin) {
+			if (!ss.empty()) {   // whatever was being sampled ends here
+				const double ms = (now - (inWin ? winStart : start)) * 1000.0 / (double)g_freq;
+				if (inWin) Log("hitch: #%d below is the settle window: a save-load gate holding the screen", no);
+				Report(no, ms, ss, faults0, sys0, inWin ? &cpu0 : nullptr);
+				ReportFiles(no, inWin ? winStart : start, now);
+				ss.clear();
+			}
+			inWin = win;
+			start = last;   // a long frame running now is not sampled again as a new one
+			if (win) {
+				winStart = now;
+				no++;
+				faults0 = Faults();
+				sys0 = SysFaults();
+				RefreshModules();
+				FindTargets(true);
+				cpu0.clear();
+				for (const Target& t : g_targets) cpu0.push_back(CpuUs(t.h));
+				std::string found;
+				for (size_t i = 1; i < g_targets.size(); i++) found += (i > 1 ? ", " : "") + g_targets[i].name;
+				Log("hitch: #%d settle window on (a save-load gate holds the screen): sampling Main%s%s", no, found.empty() ? "" : ", ",
+				    found.c_str());
+			} else FindTargets(false);
+		}
+		if (inWin) {
+			const uint32_t tMs = (uint32_t)((now - winStart) * 1000 / g_freq);
+			for (size_t who = 0; who < g_targets.size() && ss.size() < (size_t)kMaxSamples; who++) {
+				Sample s;
+				if (Grab(g_targets[who], (uint8_t)who, &s, tMs)) ss.push_back(s);
+			}
+			continue;
+		}
 		if (!ss.empty() && (last != start || !g_on)) {   // the long frame ended (or sampling was turned off)
 			const double frameMs = (last != start ? last - start : now - start) * 1000.0 / (double)g_freq;
 			if (no == 0 && g_startup) Log("hitch: #0 below is the start-up: plugin start -> the first frame tick (the main menu)");
@@ -509,7 +570,7 @@ DWORD WINAPI Watch(LPVOID) {
 			faults0 = Faults();
 			sys0 = SysFaults();
 			RefreshModules();
-			FindTargets();
+			FindTargets(false);
 		}
 		const uint32_t tMs = (uint32_t)((now - start) * 1000 / g_freq);
 		for (size_t who = 0; who < g_targets.size() && ss.size() < (size_t)kMaxSamples; who++) {
@@ -580,6 +641,8 @@ void Hitch_Frame() {
 	}
 	g_lastFrame.store(Now(), std::memory_order_release);
 }
+
+void Hitch_Window(bool on) { g_window.store(on, std::memory_order_release); }
 
 void Hitch_Command(const char* args) {
 	while (args && *args == ' ') args++;

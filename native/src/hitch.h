@@ -15,5 +15,9 @@
 // symbolizing offline (WHGame.dll+offset). Start-up: from install to the first frame tick (the main menu) the main thread
 // (guessed as the process's first thread, checked at the first tick) is sampled as long frame #0. On by default; `hitch off`, `hitch on`, `hitch <ms>` (threshold, 50-5000).
 void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self);   // starts the watcher
+// Settle window: while on (readiness.cpp: a save-load gate holds the screen), Main, the threads above and the stream
+// engine's pak reader and callback thread are sampled every 20 ms however short the frames are, and reported as one
+// "hitch: #N settle window" with each thread's CPU use. Any thread; idempotent.
+void Hitch_Window(bool on);
 void Hitch_Frame();                       // main thread, once a drawn frame (fastload_main.cpp)
 void Hitch_Command(const char* args);     // "hitch [on|off|<ms>]"

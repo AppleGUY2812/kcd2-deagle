@@ -3,6 +3,7 @@
 #include "readiness.h"
 #include "readiness_early.h"
 #include "log.h"
+#include "hitch.h"
 #include "mainreads.h"
 #include "streamahead.h"
 #include <windows.h>
@@ -593,6 +594,7 @@ void Readiness_Frame() {
 		for (auto& g : g_gates) if (early::Eligible(g.mask)) loadGate = true;
 		TempBudget(loadGate);
 		Streamahead_SetGate(loadGate);
+		Hitch_Window(loadGate);
 	}
 	// every file the main thread reads while a gate holds the screen, up to 1.5 s after (mainreads.cpp): names the
 	// XML read in the frame the fast-travel observer fires
