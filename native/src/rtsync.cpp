@@ -15,7 +15,7 @@ namespace {
 constexpr uintptr_t kRvaFlush = 0x7a2138;      // void (CRenderThread*): flush and wait unless on the render thread
 constexpr uintptr_t kRvaQualityRet = 0x24f238b;   // FUN_1824f2370's return from FUN_181de6260 (-> FUN_181de6270, tail jump)
 constexpr uintptr_t kRvaTail = 0x1de6367;      // FUN_181de6270's tail jump to the flush
-const unsigned char kFlushBytes[] = { 0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xe8 };   // push rbx; sub rsp,20; mov rbx,rcx; call
+const unsigned char kFlushBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xe8 };   // push rbx; sub rsp,20; mov rbx,rcx; call
 const unsigned char kRetBytes[] = { 0x48,0x8b,0x0d };   // mov rcx, [rip+..] after the call
 const unsigned char kTailBytes[] = { 0xe9,0xcc,0xbd,0x9b,0xfe };   // jmp 0x1807a2138
 
