@@ -44,6 +44,7 @@
 #include "readymenu.h"
 #include "startfast.h"
 #include "dbprof.h"
+#include "tblcache.h"
 #include "memsite.h"
 #include "crashlog.h"
 
@@ -94,6 +95,7 @@ void Tick() {
 	Terrainfast_Frame();   // the terrain meshes asked for at the menu (terrainfast.cpp)
 	Readymenu_Frame(s);    // the newest save loaded at the menu, then the pause menu (readymenu.cpp)
 	Applyprof_SetMainThread(GetCurrentThreadId());   // applyprof counts the main thread apart
+	Tblcache_Frame(s);   // new table records written when loading is quiet (tblcache.cpp)
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)
@@ -230,6 +232,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Streamio_Install(g_game.base, g_self));  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
 	STEP(Ftplaces_Install(g_game.base, g_self));   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
 	STEP(Dbprof_Install(g_game.base));   // the object database tables timed one by one, log only (dbprof.cpp)
+	STEP(Tblcache_Install(g_game.base, g_self));   // the XML tables recorded once and replayed (tblcache.cpp)
 	STEP(Readiness_Install(g_game.base));   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	STEP(ApplyHooks("start-up"));
 	MH_DeferEnables(FALSE);   // hooks made later (commands, ftpre) go on at once again
