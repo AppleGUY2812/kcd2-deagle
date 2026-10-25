@@ -43,6 +43,7 @@
 #include "samelevel.h"
 #include "readymenu.h"
 #include "startfast.h"
+#include "dbprof.h"
 #include "memsite.h"
 #include "crashlog.h"
 
@@ -228,6 +229,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Fastzip_Install(g_game.base, g_self));   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	STEP(Streamio_Install(g_game.base, g_self));  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
 	STEP(Ftplaces_Install(g_game.base, g_self));   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
+	STEP(Dbprof_Install(g_game.base));   // the object database tables timed one by one, log only (dbprof.cpp)
 	STEP(Readiness_Install(g_game.base));   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	STEP(ApplyHooks("start-up"));
 	MH_DeferEnables(FALSE);   // hooks made later (commands, ftpre) go on at once again

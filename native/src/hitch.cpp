@@ -33,7 +33,7 @@ std::string g_csvPath;
 size_t g_csvBytes = 0;
 constexpr size_t kStackBytes = 128 * 1024, kMaxCsvBytes = 48u << 20;   // 128 KB, 64 kept: a 5 s load frame
 // (the save-load apply step, 2026-10-24) needs the outer phases, which 32 KB / 16 return addresses cut off
-constexpr int kIntervalMs = 20, kMaxSamples = 6000, kKeep = 64;
+constexpr int kIntervalMs = 20, kMaxSamples = 30000, kKeep = 64;   // 30000: the start-up window samples ~11 threads
 alignas(16) uint8_t g_stack[kStackBytes];   // the watcher's only buffer while a thread is suspended
 
 // The threads sampled with the main thread, by name (the engine names its threads); `hitch threads A,B`.
@@ -45,6 +45,14 @@ bool g_namesChanged = true;
 // reader and the one callback thread) until Hitch_Window(false), reported as one "window", with each thread's CPU use.
 std::atomic<bool> g_window{false};
 const char* const kWindowNames[] = { "Streaming File IO HDD", "Streaming AsyncCallback" };
+// The start-up window (#0, plugin load -> the first frame tick) also samples the job workers ("JobWorker_00 (Regular)"
+// ... "JobWorker_08 (Helper)"): a name ending in '*' matches by prefix. Until #0 is reported.
+std::atomic<bool> g_inStartup{false};
+bool NameMatches(const std::vector<std::string>& names, const std::string& nm) {
+	for (const std::string& n : names)
+		if (!n.empty() && n.back() == '*' ? nm.compare(0, n.size() - 1, n, 0, n.size() - 1) == 0 : nm == n) return true;
+	return false;
+}
 
 struct Target { HANDLE h; uintptr_t stackBase; std::string name; DWORD tid; };
 std::vector<Target> g_targets;   // [0] = main; watcher thread only
@@ -258,6 +266,7 @@ void FindTargets(bool window, bool appendOnly = false) {
 		g_namesChanged = false;
 	}
 	if (window) for (const char* n : kWindowNames) if (std::find(names.begin(), names.end(), n) == names.end()) names.push_back(n);
+	if (g_inStartup.load()) names.push_back("JobWorker_*");
 	{   // the same threads as now: nothing to do
 		std::vector<std::string> have;
 		for (size_t i = 1; i < g_targets.size(); i++) have.push_back(g_targets[i].name);
@@ -289,10 +298,10 @@ void FindTargets(bool window, bool appendOnly = false) {
 			nm = a;
 			LocalFree(w);
 		}
-		const bool want = std::find(names.begin(), names.end(), nm) != names.end() &&
+		const bool want = NameMatches(names, nm) &&
 		                  std::none_of(g_targets.begin(), g_targets.end(), [&](const Target& t) { return t.name == nm; });
 		const uintptr_t sb = want ? StackBaseOf(h) : 0;
-		if (want && sb && g_targets.size() < 8) g_targets.push_back({ h, sb, nm, te.th32ThreadID });
+		if (want && sb && g_targets.size() < 16) g_targets.push_back({ h, sb, nm, te.th32ThreadID });
 		else CloseHandle(h);
 	}
 	CloseHandle(snap);
@@ -560,6 +569,7 @@ DWORD WINAPI Watch(LPVOID) {
 		if (!ss.empty() && (last != start || !g_on)) {   // the long frame ended (or sampling was turned off)
 			const double frameMs = (last != start ? last - start : now - start) * 1000.0 / (double)g_freq;
 			if (no == 0 && g_startup) Log("hitch: #0 below is the start-up: plugin start -> the first frame tick (the main menu)");
+			if (no == 0) g_inStartup = false;
 			Report(no, frameMs, ss, faults0, sys0);
 			ReportFiles(no, start, last != start ? last : now);
 			ss.clear();
@@ -618,7 +628,7 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self) {
 	g_evOn = g_watchOk;
 	uintptr_t sb = 0;
 	if (HANDLE m = FirstThread(&sb)) {   // start-up window: sampled from now until the first frame tick
-		g_main = m; g_mainStack = sb; g_startup = true;
+		g_main = m; g_mainStack = sb; g_startup = true; g_inStartup = true;
 		g_lastFrame.store(Now(), std::memory_order_release);
 		Log("hitch: start-up window on: main thread guessed as %lu (the process's first), sampled until the first frame tick",
 		    GetThreadId(m));

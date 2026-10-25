@@ -22,7 +22,7 @@ target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)
 set_target_properties(deagle_native PROPERTIES SUFFIX ".asi" OUTPUT_NAME "deagle_native")
 # fastload.asi: the load-time work as a plugin of its own (src/fastload_main.cpp; docs/LOADTIME.md)
 add_library(fastload SHARED src/fastload_main.cpp src/scan.cpp src/log.cpp src/ftpreload.cpp src/fastzip.cpp src/streamio.cpp src/streamahead.cpp src/readiness.cpp src/hitch.cpp src/ftplaces.cpp src/pakahead.cpp src/cvars.cpp src/xmlahead.cpp src/mainreads.cpp src/loadwatch.cpp src/applyfast.cpp src/conceptbfs.cpp src/stormmemo.cpp src/terrainfast.cpp src/questmenu.cpp src/questfast.cpp src/animahead.cpp src/questprof.cpp
-    src/questports.cpp src/questdump.cpp src/questreplay.cpp src/questsample.cpp src/levelprof.cpp src/applyprof.cpp src/paklock.cpp src/dbahead.cpp src/samelevel.cpp src/readymenu.cpp src/memsite.cpp src/crashlog.cpp src/startfast.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
+    src/questports.cpp src/questdump.cpp src/questreplay.cpp src/questsample.cpp src/levelprof.cpp src/applyprof.cpp src/paklock.cpp src/dbahead.cpp src/samelevel.cpp src/readymenu.cpp src/memsite.cpp src/crashlog.cpp src/startfast.cpp src/dbprof.cpp ${MINHOOK_SRC} ${LIBDEFLATE_SRC})
 target_include_directories(fastload PRIVATE ${MINHOOK_INC} third_party/libdeflate src)
 target_compile_options(fastload PRIVATE /W3 /EHa /O2)
 set_target_properties(fastload PROPERTIES SUFFIX ".asi" OUTPUT_NAME "fastload")
