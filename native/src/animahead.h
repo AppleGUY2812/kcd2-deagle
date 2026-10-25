@@ -13,8 +13,12 @@
 // the quest build. Mode 2 = the old rule (after the quest build).
 // The animation header list takes no lock: boot 39 called the preload on Main during the terrain wait and crashed 1.1 s
 // in (dump: FUN_18083f874, an entry of the global header array CM+0x280 read after the array moved), while the
-// terrain's own loaders (JobWorker_05) added hen/book/tongs animations to it. So the preload runs only before any level
-// load: "Loading level" (FUN_180b8f748) waits for it to finish, and it doesn't start once a level file was asked for.
+// terrain's own loaders (JobWorker_05) added hen/book/tongs animations to it. So the preload never starts once a level
+// load began, and while it runs another thread's LoadModelSKEL / LoadCHRPARAMS (and the header add) waits for it: gate 1
+// (the second number in fastload_animahead.txt, the default since 2026-10-25). Those entries hold no character-manager
+// lock (LoadModelSKEL's cache lookup unlocks CM+0xa8 before it returns). Boots 135/136: the level load starts at once,
+// the preload ends 1.6 s into it, one terrain loader's hen_v2.chr waited 9-10 ms; to LoadLevel 1.4 -> 0.3 s, launch ->
+// control 31.0 / 31.8 s (boots 131-134: 32.5-33.7). Gate 0 = "Loading level" (FUN_180b8f748) waits on Main (the old rule).
 // Mode 1 since 2026-10-25: the preload starts at start-up, right after CharacterManager::OnFacialsPakChanged (Main, the
 // language's facial paks just opened, ~11 s after the install, ~4 s before the menu), so it is done before the auto-load
 // begins (boot 102: started at 0x24, the load began 0.5 s later and "Loading level" waited 3.2 s on Main). If it can't

@@ -12,10 +12,10 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
   so ~19.5-20.9 s from the click. Boot 42: terrain 3.0, level done 10.3, state 4 0.2, apply 4.8 (one 4.75 s main frame,
   kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
   One boot: +-1 s noise.
-- **Auto-load boots now (boots 131-133, 2026-10-25): launch -> in control 32.6 / 32.9 / 32.5 s** = menu ready
-  12.6-13.1 s after the process start + 0.5 s + 19.5 / 19.2 / 19.1 s load. Boot 133's load: to LoadLevel 1.48 (Main waits
-  for animahead's preload: LoadLevel starts as it ends) + LoadLevel 10.25 + to state 5 0.89 + apply 4.08 + screen 2.39.
-  Boots 126-130: 32.4-34.0 s. One boot: +-0.6 s noise; gains under ~1 s need repeat boots.
+- **Auto-load boots now (boots 135/136, 2026-10-25): launch -> in control 31.0 / 31.8 s** = menu ready 12.2 / 12.7 s
+  after the process start + 0.5 s + 18.2 / 18.5 s load. Boot 135's load: to LoadLevel 0.34 (animahead gate 1: the load no
+  longer waits for the preload) + LoadLevel 10.65 + to state 5 0.88 + apply 3.93 + screen 2.40. Boots 131-134 (gate 0):
+  32.5-33.7 s, to LoadLevel 1.4. One boot: +-0.6 s noise; gains under ~1 s need repeat boots.
 - Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
   (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
   (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
@@ -120,7 +120,9 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
   right after CharacterManager::OnFacialsPakChanged (~10.6 s after the plugin), 4.0-5.0 s, done by the load start; boot
   104 -> 105 (one change): the load no longer waits 3.2 s for it, load 23.6 -> 21.1 s, but the menu +1.3 s (female.cdf
   4.0 s there vs 2.2 s at the menu: it shares the CPU with start-up), launch -> control 42.1 -> 41.1 s. Mode 3 = the old
-  start at the save list read, mode 2 = after the quest build. "Loading level" (FUN_180b8f748) waits for a running preload. **Never during the load**: boot 39 ran it on
+  start at the save list read, mode 2 = after the quest build. Gate 1 (default, boots 135/136): a load started meanwhile
+  goes on; only other threads' LoadModelSKEL / LoadCHRPARAMS / header adds wait (one 9-10 ms wait per boot); gate 0 = "Loading
+  level" (FUN_180b8f748) waits (1.1-1.3 s in boots 132-134). **Never start it during the load**: boot 39 ran it on
   Main in the terrain wait and crashed (the global animation header array CM+0x280 has no lock; the terrain loaders on
   job workers add to it; dump: FUN_18083f874).
 - skin cap (kcd2-deagle-66): wh_cc_MaxSkinLoadingInProgress 120 / JobQueueSize 80 (load): clothing 10.2 -> 7.2 s

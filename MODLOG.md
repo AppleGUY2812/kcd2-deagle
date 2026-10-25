@@ -991,5 +991,11 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   shader lookups found 7,952 shaders the precache had made but not parsed, each answered "new" so the caller queued a
   parse: 8,357 parses in the load instead of ~360. From start-up (pipeline cache built, boot 133) it overlaps nothing of
   the level: 3 such answers.
-- The load's start waits for animahead's preload ("Loading level" holds until it ends): it ends 0.4-1.3 s after the
-  auto-load starts (boots 131-133; 4.2-4.8 s long from the facial paks, ~8.2-8.7 s after the plugin).
+- The load's start waited for animahead's preload ("Loading level" held until it ended): it ended 0.4-1.3 s after the
+  auto-load started (boots 131-133; 4.2-4.8 s long from the facial paks, ~8.2-8.7 s after the plugin). Gate 1 (boots
+  135/136) lets the load go on and holds only other threads' LoadModelSKEL / LoadCHRPARAMS (LoadModelSKEL's cache lookup
+  FUN_180aa93b8 locks CM+0xa8 only around the lookup, so a held caller has no CM lock): the first one comes 1.6 s in
+  (a terrain loader's hen_v2.chr, held 9-10 ms). Main also gets the CryPhysics spin: in LoadEntities 23-30 of 136
+  samples (0.55-0.8 s) are FUN_180846e10 (DestroyPhysicalEntity) at 1808473c0 taking m_lockStep (+0x5fdc) through
+  FUN_18050b638 (spin, FUN_18084c3fc backoff): its queue check saw the lock free, then AddGeometry on the streaming
+  callback thread took it first (FUN_18084bf68: +0x5ff4 then +0x5fdc by try, else it queues).

@@ -28,6 +28,7 @@ const unsigned char kModelSkelBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x4
 constexpr uintptr_t kRvaHeaderAdd = 0xb14d68;
 const unsigned char kHeaderAddBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x48 };
 constexpr DWORD kHeaderWaitMs = 10000;
+constexpr DWORD kGateWaitMs = 20000;
 // CharacterManager::OnFacialsPakChanged (Main, start-up): logs "CharacterManager::OnFacialsPakChanged()
 // m_LanguageGahBaseIndexStart" right after the language's facial paks open. After it the animation system has every pak
 // and the language's facial header range; the game itself loads no character until the level (boots 76-103: no
@@ -40,6 +41,12 @@ const char* const kCdf[] = { "objects/characters/humans/female/skeleton/female.c
 
 uintptr_t g_base = 0;
 int g_mode = 1;
+// Where a level load meets a running preload (the second number in fastload_animahead.txt). 1 (default): the load starts
+// at once and only another thread's skeleton / chrparams load waits for the preload (the header add waits as before);
+// 0: "Loading level" waits for it on Main (the rule before 2026-10-25; boots 132-134 waited 1.1-1.3 s there).
+int g_gate = 1;
+std::atomic<long> g_gateHolds{0};
+long long g_levelAt = 0;
 long long g_freq = 1;
 std::atomic<int> g_lines{0};
 std::atomic<bool> g_busy{false};           // our preload is inside the character manager now
@@ -81,11 +88,23 @@ const char* When() {
 	return g_busy ? ", ANOTHER THREAD DURING OUR PRELOAD" : "";
 }
 
+// gate 1: another thread's character load waits here while our preload runs (it holds no character-manager lock at
+// these entries: LoadModelSKEL's cache lookup unlocks CM+0xa8 before it returns)
+void WaitPreload(const char* what, const char* path) {
+	if (!g_gate || !g_busy.load() || GetCurrentThreadId() == g_preloadTid.load()) return;
+	const long long a = Now();
+	const DWORD w = WaitForSingleObject(g_done, kGateWaitMs);
+	if (g_gateHolds++ < 30)
+		Log("animahead: %s %s on thread %lu held %.0f ms until our preload was done%s", what, path, GetCurrentThreadId(), Ms(a, Now()),
+		    w == WAIT_OBJECT_0 ? "" : " (GAVE UP after 20 s)");
+}
+
 uint64_t __fastcall HkChr(void* skel, const char* path, uint64_t flag) {
+	char p[200]; Copy(p, sizeof p, path);
+	WaitPreload("chrparams", p);
 	const long long a = Now();
 	const uint64_t r = g_chr(skel, path, flag);
 	const long long b = Now();
-	char p[200]; Copy(p, sizeof p, path);
 	if (g_lines++ < 80)
 		Log("animahead: chrparams %s in %.0f ms (thread %lu%s)", p, Ms(a, b), GetCurrentThreadId(), When());
 	return r;
@@ -94,6 +113,7 @@ uint64_t __fastcall HkChr(void* skel, const char* path, uint64_t flag) {
 uint64_t __fastcall HkSkel(void* cm, const char* path, uint64_t flags) {
 	char p[200]; Copy(p, sizeof p, path);
 	const bool human = strstr(p, "humans/male/skeleton") || strstr(p, "humans/female/skeleton");
+	WaitPreload("skeleton", p);
 	const long long a = Now();
 	const uint64_t r = g_skel(cm, path, flags);
 	if (human && g_lines++ < 80)
@@ -165,14 +185,20 @@ DWORD WINAPI Preload(LPVOID arg) {
 		Log("animahead: %s %s in %.0f ms %s (free RAM %lld -> %lld MB)", cdf, ok ? "preloaded" : "FAILED", Ms(a, Now()),
 		    g_early ? "at start-up" : "at the main menu", freeBefore, ramgov::AvailMb());
 	}
-	Log("animahead: preload done in %.0f ms (%.1f s after the install)", Ms(t, Now()), Ms(g_installAt, Now()) / 1000.0);
+	const long long lvl = g_levelAt;
+	char after[96] = "";
+	if (lvl) snprintf(after, sizeof after, ", %.0f ms after the level load began", Ms(lvl, Now()));
+	Log("animahead: preload done in %.0f ms (%.1f s after the install%s)", Ms(t, Now()), Ms(g_installAt, Now()) / 1000.0, after);
 	Finish();
 	return 0;
 }
 
 uint64_t __fastcall HkLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+	g_levelAt = Now();
 	g_levelStarted = true;
-	if (g_busy) {
+	if (g_busy && g_gate) {
+		Log("animahead: the level load starts with the preload still running: other threads' skeleton / chrparams loads wait for it");
+	} else if (g_busy) {
 		const long long t = Now();
 		const DWORD w = WaitForSingleObject(g_done, 20000);
 		Log("animahead: the level load waited %.0f ms for the preload%s", Ms(t, Now()), w == WAIT_OBJECT_0 ? "" : " (gave up after 20 s)");
@@ -248,8 +274,9 @@ void Animahead_Install(uintptr_t base, void* self) {
 	std::string dir = path;
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((dir + "fastload_animahead.txt").c_str(), "r")) {
-		int m = 1;
+		int m = 1, g = 1;
 		if (fscanf(fp, "%d", &m) == 1) g_mode = m >= 1 && m <= 3 ? m : 0;
+		if (fscanf(fp, "%d", &g) == 1) g_gate = g == 0 ? 0 : 1;
 		fclose(fp);
 	}
 	g_done = CreateEventA(nullptr, TRUE, TRUE, nullptr);
@@ -259,14 +286,16 @@ void Animahead_Install(uintptr_t base, void* self) {
 	const bool skel = Hook(kRvaModelSkel, kModelSkelBytes, sizeof kModelSkelBytes, (void*)&HkSkel, (void**)&g_skel, "LoadModelSKEL");
 	const bool hdr = (g_mode == 1 || g_mode == 3) && Hook(kRvaHeaderAdd, kHeaderAddBytes, sizeof kHeaderAddBytes, (void*)&HkHeaderAdd,
 	                                     (void**)&g_headerAdd, "animation header add");
+	if (g_gate && !(chr && skel && hdr)) g_gate = 0;   // gate 1 needs all three guards; else "Loading level" waits
 	// mode 1 starts at start-up only with the level-load gate and the header-add guard (else at the menu, as mode 3)
 	const bool fac = g_mode == 1 && lvl && hdr && Hook(kRvaFacials, kFacialsBytes, sizeof kFacialsBytes, (void*)&HkFacials,
 	                                                   (void**)&g_facials, "OnFacialsPakChanged");
-	Log("animahead: mode %d (%s; fastload_animahead.txt), level-load gate %s, chrparams log %s, skeleton log %s, header-add "
+	Log("animahead: mode %d (%s; fastload_animahead.txt), a running preload holds %s, level-load hook %s, chrparams log %s, skeleton log %s, header-add "
 	    "guard %s, start-up trigger %s", g_mode,
 	    g_mode == 1 ? "human animation sets at start-up, after the facial paks" :
 	    g_mode == 3 ? "human animation sets at the main menu, beside the quest build" :
-	    g_mode == 2 ? "human animation sets at the main menu, after the quest build" : "off", lvl ? "on" : "OFF",
+	    g_mode == 2 ? "human animation sets at the main menu, after the quest build" : "off",
+	    g_gate ? "only other threads' skeleton / chrparams loads (gate 1)" : "the level load's start (gate 0)", lvl ? "on" : "OFF",
 	    chr ? "on" : "OFF", skel ? "on" : "OFF", hdr ? "on" : g_mode != 2 && g_mode ? "OFF" : "off",
 	    fac ? "on" : g_mode == 1 ? "OFF (at the menu instead)" : "off");
 }
