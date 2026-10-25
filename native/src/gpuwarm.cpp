@@ -16,8 +16,9 @@ namespace {
 // WHGame 1.5.6
 constexpr uintptr_t kRvaQuery = 0x5f98ac;         // char (char* desc, size_t, u32*, u32*, u64* mem, int* level)
 const unsigned char kQueryBytes[] = { 0x40,0x55,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x8d,0x6c,0x24,0x80 };
-constexpr uintptr_t kRvaBugsplatRet = 0x1dd93b9;  // after FUN_181dd9260's call of it
-const unsigned char kBugsplatCall[] = { 0xe8 };   // the call instruction at kRvaBugsplatRet - 5
+constexpr uintptr_t kRvaBugsplatRet = 0x1dd93b9;  // after FUN_181dd9260's call of it (BugSplat's "GPU Info")
+constexpr uintptr_t kRvaSysinfoRet = 0xdcfef2;    // after FUN_180dcfe0c's (ISystem +0x548, the system info BugSplat asks
+                                                  // for first: "CPU Info"); boot 116: this one waited 689 ms for the worker
 constexpr uintptr_t kRvaIidFactory1 = 0x3a40838;  // the IIDs FUN_1805f8c78 uses
 constexpr uintptr_t kRvaIidFactory6 = 0x3a40878;
 constexpr uintptr_t kRvaIidAdapter = 0x3a407f8;
@@ -29,7 +30,7 @@ using QueryFn = char(__fastcall*)(char* desc, size_t n, unsigned* a, unsigned* b
 QueryFn g_orig = nullptr;
 uintptr_t g_base = 0;
 HANDLE g_done = nullptr;
-std::atomic<bool> g_started{ false }, g_skipped{ false }, g_waitLogged{ false };
+std::atomic<bool> g_started{ false }, g_skipped{ false }, g_skippedSys{ false }, g_waitLogged{ false };
 std::atomic<int> g_state{ 0 };   // 0 not installed, 1 on, -1 off by file, -2 code differs, -3 hook failed
 long long g_freq = 1, g_t0 = 0, g_t1 = 0;
 int g_adapters = 0, g_ok = 0;
@@ -88,7 +89,9 @@ DWORD WINAPI Warm(LPVOID) {
 }
 
 char __fastcall HkQuery(char* desc, size_t n, unsigned* a, unsigned* b, unsigned long long* mem, int* level) {
-	if (g_started && (uintptr_t)_ReturnAddress() == g_base + kRvaBugsplatRet && !g_skipped.exchange(true)) {
+	const uintptr_t ret = (uintptr_t)_ReturnAddress();
+	if (g_started && ((ret == g_base + kRvaBugsplatRet && !g_skipped.exchange(true)) ||
+	                  (ret == g_base + kRvaSysinfoRet && !g_skippedSys.exchange(true)))) {   // each the first time
 		if (desc) *desc = 0;   // what the game's wrapper leaves when the query fails
 		*a = 0; *b = 0; *mem = 0; *level = 0;
 		return 0;
@@ -121,9 +124,10 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 		fclose(fp);
 	}
 	if (mode != 1) { g_state = -1; return false; }
-	if (memcmp((void*)(base + kRvaQuery), kQueryBytes, sizeof kQueryBytes) ||
-	    memcmp((void*)(base + kRvaBugsplatRet - 5), kBugsplatCall, sizeof kBugsplatCall) ||
-	    (int32_t)(base + kRvaQuery - (base + kRvaBugsplatRet)) != *(const int32_t*)(base + kRvaBugsplatRet - 4) ||
+	auto callsQuery = [&](uintptr_t ret) {   // a call rel32 to the query just before the return address
+		return *(const unsigned char*)(base + ret - 5) == 0xe8 && *(const int32_t*)(base + ret - 4) == (int32_t)(kRvaQuery - ret);
+	};
+	if (memcmp((void*)(base + kRvaQuery), kQueryBytes, sizeof kQueryBytes) || !callsQuery(kRvaBugsplatRet) || !callsQuery(kRvaSysinfoRet) ||
 	    memcmp((void*)(base + kRvaLevels), kLevels, sizeof kLevels)) { g_state = -2; return false; }
 	void* t = (void*)(base + kRvaQuery);
 	if (MH_CreateHook(t, (void*)&HkQuery, (void**)&g_orig) != MH_OK) { g_state = -3; return false; }
@@ -151,7 +155,8 @@ void Gpuwarm_Frame() {
 	static std::atomic<bool> done{ false };
 	if (g_state != 1 || done.exchange(true)) return;
 	if (WaitForSingleObject(g_done, 0) == WAIT_OBJECT_0)
-		Log("gpuwarm: the driver warm-up took %.0f ms on the worker (%d adapters, %d usable%s%s); the crash reporter's query %s",
-		    Ms(g_t0, g_t1), g_adapters, g_ok, g_note[0] ? "; " : "", g_note, g_skipped ? "skipped" : "never came");
+		Log("gpuwarm: the driver warm-up took %.0f ms on the worker (%d adapters, %d usable%s%s); the crash reporter's two queries: %s, %s",
+		    Ms(g_t0, g_t1), g_adapters, g_ok, g_note[0] ? "; " : "", g_note, g_skippedSys ? "system info skipped" : "system info never came",
+		    g_skipped ? "GPU info skipped" : "GPU info never came");
 	else Log("gpuwarm: the driver warm-up is still running at the first frame");
 }
