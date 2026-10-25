@@ -191,6 +191,7 @@ int InFlight(const Task& t) {
 
 uintptr_t LevelMgr() {
 	uintptr_t lm = 0, vt = 0;
+	if (!g_base) return 0;   // asked before Readiness_Install (applyprof's reporter starts earlier: boot 70's crash file)
 	if (!Rd(g_base + kRvaGame + 0xa8, &lm, 8) || !lm || !Rd(lm, &vt, 8) || vt != g_base + kRvaLevelMgrVt) return 0;
 	return lm;
 }
