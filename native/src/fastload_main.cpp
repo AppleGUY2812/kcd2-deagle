@@ -37,6 +37,7 @@
 #include "questreplay.h"
 #include "rttrname.h"
 #include "gpuwarm.h"
+#include "pipelib.h"
 #include "questfast.h"
 #include "levelprof.h"
 #include "applyprof.h"
@@ -238,6 +239,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Startfast_Install(g_game.base, g_self));   // the controller list asked for without waiting (startfast.cpp)
 	STEP(Gpumemo_Install(g_game.base, g_game.size, g_self));   // the GPU adapter query asked once, not 3 times (gpumemo.cpp)
 	STEP(Ngxearly_Install(g_game.base, g_self));   // NVIDIA NGX (DLSS) started once the device exists, off the render thread (ngxearly.cpp)
+	STEP(Pipelib_Install(g_game.base, g_self));   // the D3D12 pipeline library made on a worker (pipelib.cpp)
 	STEP(ApplyHooks("early"));   // the settings registered early and the input init come soon: on now
 	STEP(Loadwatch_Install(g_game.base));   // exact terrain-step timing (loadwatch.cpp)
 	STEP(Terrainfast_Install(g_game.base, g_self));   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)
