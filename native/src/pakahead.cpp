@@ -324,7 +324,9 @@ bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, 
 	const long long c0 = Now();
 	memcpy(uncomp, it.data, it.usize);
 	if (it.usize >= kBig) { s_copyTicks += Now() - c0; s_copyBytes += it.usize; }
-	if (r.crc == 0) { s_repServed++; s_repBytes += it.usize; }
+	// a repeat = a serve of an entry served before (kept); it still carries the crc, since our first serve skipped the
+	// game's check that clears it
+	if (it.kept) { s_repServed++; s_repBytes += it.usize; }
 	if (it.left > 0) {   // read again later: kept (state 2) until then
 		it.left--;
 		it.lastServe = GetTickCount64();

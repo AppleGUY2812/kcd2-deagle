@@ -29,6 +29,7 @@ constexpr int kLoadLevel = 0, kDb = 3, kDedupe = 5;
 
 int g_mode = 2;   // timing only unless the file says otherwise
 void (*volatile g_dbPre)() = nullptr;   // called first in the object-database hook (Levelprof_SetDbPreCall)
+void (*volatile g_dbGate)(uint32_t) = nullptr;   // then this one, with the type (Levelprof_SetDbTypeGate)
 long long g_freq = 1;
 std::atomic<DWORD> g_mainTid{0};
 std::atomic<int> g_phase{0};      // the innermost timed hook on Main (0 = none)
@@ -38,6 +39,43 @@ std::atomic<int> g_lines{0};
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long t) { return (double)t * 1000.0 / g_freq; }
+
+int Phase();
+const char* PhaseName(int p);
+
+// The game-profile list the SmartObjectAnimations table needs (dbahead.h): C_GameProfileManager, vector of profiles at
+// +0x10 / +0x18, reached as *(*(*(WHGame+0x549d388)+0xe0)+0x158) (FUN_180d38cec's FUN_1809155c8 path; its enumerator
+// FUN_180d38fec walks that vector). Empty at level-load start (boot 58), 879 by the table's load: the watcher logs when
+// it fills, so the table can start as soon as it is full.
+uintptr_t g_base = 0;
+std::atomic<bool> g_watch{false};
+long long ProfileCount() {
+	__try {
+		const uintptr_t root = *(volatile uintptr_t*)(g_base + 0x549d388);
+		if (!root) return -1;
+		const uintptr_t sub = *(volatile uintptr_t*)(root + 0xe0);
+		if (!sub) return -2;
+		const uintptr_t mgr = *(volatile uintptr_t*)(sub + 0x158);
+		if (!mgr) return -3;
+		const uintptr_t b = *(volatile uintptr_t*)(mgr + 0x10), e = *(volatile uintptr_t*)(mgr + 0x18);
+		return e >= b && e - b < (1ull << 24) ? (long long)((e - b) / 8) : -4;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return -5; }
+}
+DWORD WINAPI ProfileWatch(void*) {   // from LoadLevel's start until 3 s after its end, every 1 ms
+	const long long t0 = Now();
+	long long last = ProfileCount(), lines = 0, endAt = 0;
+	Log("levelprof: game profiles at LoadLevel start: %lld", last);
+	while (true) {
+		Sleep(1);
+		const long long c = ProfileCount();
+		if (c != last && lines++ < 40)
+			Log("levelprof: game profiles %lld -> %lld at +%.0f ms (Main: %s)", last, c, Ms(Now() - t0), PhaseName(Phase()));
+		last = c;
+		if (!g_watch.load()) { if (!endAt) endAt = Now(); else if (Ms(Now() - endAt) > 3000) break; }
+	}
+	Log("levelprof: game profiles 3 s after LoadLevel: %lld (%lld changes)", last, lines);
+	return 0;
+}
 
 int Phase() {   // the sampler thread, each sample
 	if (Loadwatch_InTerrainWait()) return 2;
@@ -86,12 +124,19 @@ using Fn8 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64
 // Passes 8 integer arguments through (LoadEntities takes 5; none of the six takes a float).
 template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
 	thread_local int depth = 0;
-	if (I == kDb) { if (void (*pre)() = g_dbPre) pre(); }   // dbasync's gate (this hook holds FUN_180ef3afc's one slot)
+	if (I == kDb) {   // dbasync's gate, then dbahead's (this hook holds FUN_180ef3afc's one slot)
+		if (void (*pre)() = g_dbPre) pre();
+		if (void (*gate)(uint32_t) = g_dbGate) gate((uint32_t)b);
+	}
 	if (I == kLoadLevel && depth == 0) {
 		g_mainTid = GetCurrentThreadId();
 		g_inLoad = true;
 		for (int i = 0; i < kN; i++) for (int k = 0; k < 2; k++) { g_calls[i][k] = 0; g_ticks[i][k] = 0; }
 		Paklock_Report("before LoadLevel");   // the counters start over for the load
+		if (!g_watch.exchange(true)) {
+			if (HANDLE th = CreateThread(nullptr, 0, &ProfileWatch, nullptr, 0, nullptr)) CloseHandle(th);
+			else g_watch = false;
+		}
 		if (g_mode == 1) {
 			const bool on = Questsample_BeginEx(&Phase, &PhaseName, 30000, "level load", "fastload_lsample.csv");
 			Log("levelprof: LoadLevel starts (thread %lu); Main sampled for 30 s: %s", GetCurrentThreadId(), on ? "on" : "NOT STARTED (a profile runs)");
@@ -117,7 +162,7 @@ template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, ui
 			if (I == kDb) Log("levelprof: object database type 0x%x %.0f ms (thread %lu%s)", (uint32_t)b, Ms(dt), GetCurrentThreadId(), main ? ", Main" : "");
 			else Log("levelprof: %s %.0f ms (thread %lu%s)", g_h[I].name, Ms(dt), GetCurrentThreadId(), main ? ", Main" : "");
 		}
-		if (I == kLoadLevel) { g_inLoad = false; Totals("LoadLevel done"); Paklock_Report("LoadLevel"); }
+		if (I == kLoadLevel) { g_inLoad = false; g_watch = false; Totals("LoadLevel done"); Paklock_Report("LoadLevel"); }
 	}
 	return r;
 }
@@ -128,6 +173,7 @@ static_assert(sizeof g_wrap / sizeof g_wrap[0] == kN, "one wrapper per hook");
 
 void Levelprof_Install(uintptr_t base, void* self) {
 	LARGE_INTEGER fq; QueryPerformanceFrequency(&fq); g_freq = fq.QuadPart;
+	g_base = base;
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string dir = path;
@@ -156,3 +202,11 @@ bool Levelprof_SetDbPreCall(void (*f)()) {
 	g_dbPre = f;
 	return true;
 }
+
+bool Levelprof_SetDbTypeGate(void (*f)(uint32_t)) {
+	if (!g_h[kDb].orig) return false;
+	g_dbGate = f;
+	return true;
+}
+
+long long Levelprof_GameProfiles() { return g_base ? ProfileCount() : -1; }

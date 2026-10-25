@@ -14,7 +14,15 @@
 // conversions on other threads while the game's profile-map flag is set.
 // fastload_dbahead.txt: 1 on, 0 the game's order (default). Boot 58 (2026-10-24): 1 is WRONG as built: at level-load start
 // the game-profile source is still empty (0 profiles vs 879 at level end), so all 29,007 ProfileIds became unknown (hash
-// 49344503a2c40145 vs the game's 0e0db8ba0d0f0f20). Type 0x10 (loaded just before 0x11 at level end) likely fills it.
-// Saved 0.98 s of LoadLevel; no readers of the table ran during the level load (0 / 0 / 379, 0 / 0 / 47).
+// 49344503a2c40145 vs the game's 0e0db8ba0d0f0f20). Saved 0.98 s of LoadLevel; no readers of the table ran during the
+// level load (0 / 0 / 379, 0 / 0 / 47).
+// The profiles (C_GameProfileManager's list, which FUN_180d38cec copies into that map) are filled by the AI module's
+// level-load step FUN_180d38160 (a virtual called by FUN_180b43f38), right after LoadEntities: boot 129, 0 -> 879 in
+// 5 ms, ~1.1 s before Main loads the table (navmesh tiles 0.66 s in between). Type 0x10 has no tables.
+// 3 = the table on our worker as soon as the fill loop ends (FUN_180d364cc's entry, before the navmesh; the job hook takes
+// the manager and arms it, once per level load); boot 130 started it when the whole step returned (after the navmesh):
+// Main waited 1.09 s; every object-database type load on another thread waits for the worker (a gate in levelprof's hook on
+// FUN_180ef3afc, so levelprof must be on), and the game's level-end call finds the table loaded. A worker load with
+// unknown ProfileIds logs WRONG; the same save + level give the game's conversion hash.
 void Dbahead_Install(uintptr_t gameBase, void* selfModule);
 void Dbahead_OnLoaded();   // gameplay started: the counts

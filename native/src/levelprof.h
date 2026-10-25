@@ -9,3 +9,8 @@ void Levelprof_Install(uintptr_t gameBase, void* selfModule);
 // f runs first in each call of the object-database hook (FUN_180ef3afc), before the timing; false when that hook is not
 // on. For dbasync, whose own hook on that function can't be made while this one holds it (MinHook: one hook per address).
 bool Levelprof_SetDbPreCall(void (*f)());
+// f(type) runs next in each call of that hook (dbahead's gate: a type load waits for its worker); false when the hook is off.
+bool Levelprof_SetDbTypeGate(void (*f)(uint32_t type));
+// The game-profile list's size now (C_GameProfileManager, filled by the AI module's level-load step after LoadEntities);
+// negative when it can't be read.
+long long Levelprof_GameProfiles();

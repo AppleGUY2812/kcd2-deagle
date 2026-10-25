@@ -977,3 +977,19 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
 - pakahead's load position is the highest list index any thread asked for. A list in another start's order lets one
   thread jump it: boot 121, the Checkers face mod's entries (listed at 3.1 of 3.7 GB) were read at 9.7 s, before the
   menu. Since 2026-10-25 the plugin writes the list from each load's own reads.
+- The game profiles (C_GameProfileManager's list, *(*(*(WHGame+0x549d388)+0xe0)+0x158) +0x10/+0x18) are filled by the
+  AI module's level-load step FUN_180d38160 (virtual, called by FUN_180b43f38) right after LoadEntities, in its loop over
+  FUN_180d38e40; then it calls FUN_180d364cc (its only caller), then builds the navmesh tiles. Object-database type 0x10
+  has no tables. dbahead 3 starts its SmartObjectAnimations worker at FUN_180d364cc's entry.
+- CryPhysics locks (WHGame 1.5.6): world+0x5fdc m_lockStep, world+0x5fe4 + 4*caller the per-caller locks (caller 4 =
+  every non-physics thread, +0x5ff4), +0x5ff8 the deferred-command queue. Spin backoff FUN_18084c3fc = Sleep(0) every 8192
+  tries (busy). AddGeometry FUN_18084b2d4 -> FUN_18084bf68 try-locks +0x5ff4 and +0x5fdc for writing (queues the command
+  when either is busy) and then does the geometry's transform work (FUN_18084c880 -> FUN_18080fa28) inside them; the
+  streaming callback thread runs it for streamed meshes, so Main's DestroyPhysicalEntity (FUN_180846e10, write lock on
+  +0x5ff4 at 1808473c0) spins 0.47-0.57 s in LoadEntities.
+- The PSO precache made early collides with the level's own shader work: from the load's start (boot 132) the level's
+  shader lookups found 7,952 shaders the precache had made but not parsed, each answered "new" so the caller queued a
+  parse: 8,357 parses in the load instead of ~360. From start-up (pipeline cache built, boot 133) it overlaps nothing of
+  the level: 3 such answers.
+- The load's start waits for animahead's preload ("Loading level" holds until it ends): it ends 0.4-1.3 s after the
+  auto-load starts (boots 131-133; 4.2-4.8 s long from the facial paks, ~8.2-8.7 s after the plugin).

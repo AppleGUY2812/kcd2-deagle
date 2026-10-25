@@ -12,9 +12,10 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
   so ~19.5-20.9 s from the click. Boot 42: terrain 3.0, level done 10.3, state 4 0.2, apply 4.8 (one 4.75 s main frame,
   kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
   One boot: +-1 s noise.
-- **Auto-load boots now (boots 126 / 127, 2026-10-25): launch -> in control 33.2 / 33.0 s** = menu ready 12.3 / 11.7 s
-  after the process start + 0.5 s + 18.5 / 19.5 s load (level step 12.2 / 12.9 s). Boots 124 / 125 just before
-  (pakahead's old list): 36.3 / 36.5 s; boot 123 (devahead): 34.3 s; boot 118: 35.7 s; boot 102: 45.3 s.
+- **Auto-load boots now (boots 131-133, 2026-10-25): launch -> in control 32.6 / 32.9 / 32.5 s** = menu ready
+  12.6-13.1 s after the process start + 0.5 s + 19.5 / 19.2 / 19.1 s load. Boot 133's load: to LoadLevel 1.48 (Main waits
+  for animahead's preload: LoadLevel starts as it ends) + LoadLevel 10.25 + to state 5 0.89 + apply 4.08 + screen 2.39.
+  Boots 126-130: 32.4-34.0 s. One boot: +-0.6 s noise; gains under ~1 s need repeat boots.
 - Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
   (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
   (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
@@ -83,13 +84,19 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
 - applyfast facial DBA sort (2195bf8): lists arrive nearly sorted (10 breaks in 40k), 80-95 ms; gain not measurable.
 - applyfast quests first (02c973b, on): quest job starts 3.1-3.3 s earlier; Main's wait 3.3 -> 1.4-1.9 s; state 4
   ~1 s earlier. Quests not yet checked in game.
-- applyfast 3c, PSO precache on our thread (4fa48a7, default, fastload_psoahead.txt 3): the game's NonBlocking precache
+- applyfast 3c, PSO precache on our thread (4fa48a7; fastload_psoahead.txt 3): the game's NonBlocking precache
   (FUN_181dfbac0) runs on a plugin thread from the quest-wait point, ~4 s before LoadLevel's end; a gate on
   FUN_180babff8 makes the game's own call wait for it (boot 118: it found it done and added 137 PSOs in 0.15 s).
   Boot 118: 15,852 PSOs in 2.06 s, 0 parse-lock waits; Main's sync wait at LoadLevel's end 3.0 -> 1.5 s, level step
   14.2 -> 12.9 s, control 37.5 -> 35.7 s. The rest of that wait was the RLT inflating the blood mod's textures 4x
   each: served by pakahead since boot 126 (wait 0.4-0.6 s).
   Mode 2 (3b, hand-over to the RLT) never fired in time since boot 31; mode 1 (menu, on Main) froze the menu ~6.2 s.
+  With dbahead 3 the quest-wait point came 0.31 s before LoadLevel's end (boot 131): Main then waited 1.8 s at state 4.
+  Mode 5 (default since boot 133): the same thread starts when the pipeline cache is built at start-up (~5.3 s after the
+  plugin): 424 parses + 16,000 PSOs in 8.65 s, done 2.4 s into the load; the load parsed 20 shaders (boot 131: 363,
+  4.5 s on the RLT); LoadLevel's end -> state 5 3.0 -> 0.9 s; animahead's preload ran 0.5 s longer beside it. Mode 4
+  (after the load's Blocking precache, boot 132): 7.7 s, and the level's shader lookups of shaders it had made but not
+  parsed (7,952 answered "new") queued 8,357 parses in the load: LoadLevel +1.1 s. Load 19.1 (5) / 19.2 (4) / 19.5 s (3).
 - applyfast 5, shaders parsed at the main menu (6a313dd, fastload_menushaders.txt 1): boots 34-36 parsed 457 at the menu,
   20 in the load: state 4 2.7 -> 0.2 s, but no gain on the total: state 4 + gate is 11.0-12.3 s in boots 32-37 and
   state-4 start -> control 17.3-18.7 s in every boot; textures are the long pole and take the time back. U2 (user clicked ~7 s after the menu) parsed only 110.
@@ -204,11 +211,17 @@ SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
    crashed: the async CGF load's callback is argument 6, the hook passed 5 (cdb on the BugSplat dump).
 4. Stored pak entries read in pieces (paklock windows, off): the octree object file, 153,000 reads, ~0.47 s Main. Whole-entry
    read (boot 51) held 605 MB of sound banks: dropped. 256 KB windows: built, not yet measured (boot 52's crash was item 3).
-5. SmartObjectAnimations in the level-start job (dbahead, off): boot 58 LoadLevel -0.98 s but WRONG: at level start the
-   game-profile source is empty (0 vs 879), all 29,007 ProfileIds unknown. Table readers run only after the load.
-6. LoadEntities' 0.47 s spin: DestroyPhysicalEntity FUN_180846e10 write-locks m_lockStep (world+0x5fdc) through
-   FUN_18050b638; waits come in 15-50 ms runs. The physics thread was not in TimeStep then (outside sampler); holder unknown.
-7. LoadLevel's end -> state 5 (3.0-3.85 s, boots 88-94; 1.5 s since 3c, boot 118) = Main in SyncMainWithRender's timed wait (FUN_1809a6308, rip
+5. SmartObjectAnimations on a worker (dbahead 3, default since 2026-10-25): the game profiles are filled by the AI
+   module's level-load step FUN_180d38160 right after LoadEntities (0 -> 879 in 5 ms); at FUN_180d364cc's entry (the fill
+   loop done, before the navmesh) a worker loads the table; a gate in levelprof's type-load hook makes the game's
+   level-end loads wait for it. Boots 131-133: LoadLevel 10.3-10.8 -> 9.7-10.3 s, Main waits 0.19-0.23 s, hash
+   0e0db8ba0d0f0f20 as the game's (0 unknown). Mode 1 (the level-start job, boot 58) was wrong: 0 profiles then.
+6. LoadEntities' 0.47-0.57 s spin: DestroyPhysicalEntity FUN_180846e10 write-locks the shared non-physics caller slot
+   (world+0x5ff4 = 0x5fe4 + 4*4) through FUN_18050b638 (busy spin, Sleep(0) every 8192 tries). Holder (boot 129 outside
+   sampler): "Streaming AsyncCallback" in AddGeometry FUN_18084b2d4, which takes that slot and m_lockStep (+0x5fdc) as write
+   locks in FUN_18084bf68's try path and then builds the geometry's transformed data (FUN_18084c880 -> FUN_18080fa28)
+   inside them: the streamed meshes' physicalization. Not fixed.
+7. LoadLevel's end -> state 5 (3.0-3.85 s, boots 88-94; 1.5 s since 3c, boot 118; 0.9 s with psoahead 5, boot 133) = Main in SyncMainWithRender's timed wait (FUN_1809a6308, rip
    WHGame+1c1edc0): CCryAction::MapCmd FUN_180b8f748 sends system event 0x100d, the renderer's handler FUN_1807a26ac
    FlushAndWaits (FUN_1807a2138) for the render loading thread, which runs PostLoadLevel's PSO precache then: 56 shader
    parses + 15,989 graphics PSOs in 2.39 s (kcd.log "Precached ... NonBlocking"; already JobManager jobs,
