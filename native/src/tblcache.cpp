@@ -1,5 +1,6 @@
 // The object database's XML tables recorded once and replayed: see tblcache.h.
 #include "tblcache.h"
+#include "early.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -118,6 +119,7 @@ uint64_t Key() {
 std::string FilePath() { return g_dir + "fastload_tblcache.bin"; }
 
 DWORD WINAPI Preload(LPVOID) {
+	Early_NameThread(L"JobWorker_fastload tblcache read");
 	const long long t0 = Now();
 	g_key = Key();
 	const double keyMs = Ms(t0, Now());
@@ -175,6 +177,7 @@ DWORD WINAPI Preload(LPVOID) {
 }
 
 DWORD WINAPI Writer(LPVOID) {
+	Early_NameThread(L"JobWorker_fastload tblcache write");
 	const long long t0 = Now();
 	std::vector<std::pair<std::string, std::shared_ptr<Rec>>> all;
 	{

@@ -1,5 +1,6 @@
 // The D3D12 pipeline library made on a worker: see pipelib.h.
 #include "pipelib.h"
+#include "early.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -40,7 +41,7 @@ public:
 		dev->AddRef();
 		done = CreateEventA(nullptr, TRUE, FALSE, nullptr);
 	}
-	static DWORD WINAPI Work(LPVOID p) { ((Proxy*)p)->Make(); return 0; }
+	static DWORD WINAPI Work(LPVOID p) { Early_NameThread(L"JobWorker_fastload pipelib"); ((Proxy*)p)->Make(); return 0; }
 	void Make() {
 		t0 = Now();
 		hr = dev->CreatePipelineLibrary(blob, size, __uuidof(ID3D12PipelineLibrary), (void**)&real);

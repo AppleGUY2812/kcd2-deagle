@@ -1,5 +1,6 @@
 // The dialogue dubbing database loaded on a worker: see dbasync.h.
 #include "dbasync.h"
+#include "early.h"
 #include "levelprof.h"
 #include "log.h"
 #include "MinHook.h"
@@ -46,6 +47,7 @@ inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g
 
 char g_reload = 0;
 DWORD WINAPI Worker(LPVOID) {
+	Early_NameThread(L"JobWorker_fastload dbasync");
 	g_workerTid = GetCurrentThreadId();
 	g_result = g_origType(g_mgr, kTypeDubbing, g_reload);
 	g_t1 = Now();

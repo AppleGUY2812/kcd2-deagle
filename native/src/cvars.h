@@ -13,6 +13,9 @@
 // there: the value passed in is replaced (e.g. wh_sys_SkipStartupVideoWhenPossible, "cvars: ... (console-owned)").
 // Values from fastload_cvars.txt next to the plugin, one per line: "<name> <value> [load]"; "load" = only until gameplay
 // starts (Lua sends "loaded" from OnGameplayStarted), then the game's default comes back. Missing file: the defaults in cvars.cpp.
-void Cvars_Install(uintptr_t gameBase, void* selfModule);   // right after MH_Initialize, before the game registers
+// Boot 121 (2026-10-25): from Init the hooks went on at ApplyHooks("early"), DllMain +1.09 s, after the game had
+// registered sys_intromoviesduringinit and wh_sys_SkipStartupVideoWhenPossible: the intro played, the menu 7.6 s late
+// (1 of 12 boots). Now DllMain installs them when it runs before WHGame's start-up code (global.ini), enabled at once.
+void Cvars_Install(uintptr_t gameBase, void* selfModule);   // DllMain (early) or Init, before the game registers; once
 void Cvars_OnLoaded();                                       // gameplay started (fastload_main.cpp: the level state back to 0)
 void Cvars_Command(const char* args);                        // "cvars": log what was set

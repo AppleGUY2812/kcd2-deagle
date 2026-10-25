@@ -10,3 +10,10 @@ void Early_Start(HMODULE self);    // DllMain, DLL_PROCESS_ATTACH
 void Early_Report(uintptr_t gameBase, size_t gameSize);   // Init's first lines: the times, the top places, fastload_early.csv
 DWORD Early_MainThread();   // the thread that ran DllMain: the game's main thread
 void Early_Where(unsigned long long addr, uintptr_t gameBase, size_t gameSize, char* out, size_t n);   // "module+rva"
+
+// Names the calling thread "JobWorker_fastload <what>": hitch's start-up window samples threads named JobWorker_*.
+inline void Early_NameThread(const wchar_t* name) {
+	using SetDescFn = long(__stdcall*)(void*, const wchar_t*);
+	static const SetDescFn f = (SetDescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadDescription");
+	if (f) f(GetCurrentThread(), name);
+}

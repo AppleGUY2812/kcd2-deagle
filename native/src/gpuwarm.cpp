@@ -45,6 +45,7 @@ using D3D11CreateFn = HRESULT(WINAPI*)(IDXGIAdapter*, UINT, HMODULE, UINT, const
 
 // FUN_1805f8c78's D3D calls, without the log lines and with nothing kept.
 DWORD WINAPI Warm(LPVOID) {
+	Early_NameThread(L"JobWorker_fastload gpuwarm");
 	g_t0 = Now();
 	const IID& iidF1 = *(const IID*)(g_base + kRvaIidFactory1);
 	const IID& iidF6 = *(const IID*)(g_base + kRvaIidFactory6);

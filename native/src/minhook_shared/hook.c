@@ -351,8 +351,9 @@ VOID WINAPI MH_SetFreezeLast(DWORD tid) { g_freezeLast = tid; }
 typedef struct _FREEZE_INFO
 {
     ULONGLONG totalUs, slowUs, mainWaitUs, mainHeldUs, patchUs;
-    DWORD     slowTid;
-    ULONGLONG slowRip, slowStart;
+    ULONGLONG enumUs, askUs, askSlowUs, waitUs;   // the thread list, the stop requests (and the slowest one), the waits
+    DWORD     slowTid, askSlowTid;
+    ULONGLONG slowRip, slowStart, askSlowStart;
 } FREEZE_INFO;
 static FREEZE_INFO   g_cur, g_longest;
 static LARGE_INTEGER g_frozenAt, g_mainStopAt;
@@ -390,6 +391,19 @@ void WINAPI MH_FreezeSlowest(ULONGLONG* totalUs, ULONGLONG* mainHeldUs, ULONGLON
     if (slowStart) *slowStart = g_longest.slowStart;
 }
 
+// The longest freeze's parts before the patching (boot 119: 1231 ms with 1.1 ms of patching and 0.1 ms for the slowest
+// thread to stop: the rest is in one of these).
+void WINAPI MH_FreezeParts(ULONGLONG* enumUs, ULONGLONG* askUs, ULONGLONG* askSlowUs, DWORD* askSlowTid, ULONGLONG* askSlowStart,
+                           ULONGLONG* waitUs)
+{
+    if (askSlowStart) *askSlowStart = g_longest.askSlowStart;
+    if (enumUs) *enumUs = g_longest.enumUs;
+    if (askUs) *askUs = g_longest.askUs;
+    if (askSlowUs) *askSlowUs = g_longest.askSlowUs;
+    if (askSlowTid) *askSlowTid = g_longest.askSlowTid;
+    if (waitUs) *waitUs = g_longest.waitUs;
+}
+
 static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 {
     if (FreezeMutex() != NULL)
@@ -401,6 +415,7 @@ static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
     pThreads->size     = 0;
     pThreads->pHandles = NULL;
     EnumerateThreads(pThreads);
+    g_cur.enumUs = UsSince(&g_freezeStart);
 
     if (pThreads->pItems != NULL)
     {
@@ -434,9 +449,15 @@ static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
             return;
         }
         // 1: every other thread asked to stop (queued, no wait)
+        LARGE_INTEGER a0;
+        QueryPerformanceCounter(&a0);
         for (i = 0; i < others; ++i)
         {
-            HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
+            LARGE_INTEGER t1;
+            ULONGLONG us1;
+            HANDLE hThread;
+            QueryPerformanceCounter(&t1);
+            hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
             if (hThread == NULL)
                 continue;
             if (SuspendThread(hThread) == (DWORD)-1)
@@ -445,7 +466,16 @@ static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
                 continue;
             }
             pThreads->pHandles[i] = hThread;
+            us1 = UsSince(&t1);
+            if (us1 > g_cur.askSlowUs)
+            {
+                g_cur.askSlowUs = us1;
+                g_cur.askSlowTid = pThreads->pItems[i];
+                g_cur.askSlowStart = ThreadStart(hThread);
+            }
         }
+        g_cur.askUs = UsSince(&a0);
+        QueryPerformanceCounter(&a0);
         // 2: each waited for (GetThreadContext returns once it has stopped) and its instruction pointer checked
         for (i = 0; i < others; ++i)
         {
@@ -465,6 +495,7 @@ static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
                 g_cur.slowStart = ThreadStart(pThreads->pHandles[i]);
             }
         }
+        g_cur.waitUs = UsSince(&a0);
         // 3: main last
         if (others < n)
         {

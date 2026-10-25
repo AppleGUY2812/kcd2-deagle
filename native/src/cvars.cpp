@@ -129,6 +129,9 @@ void* __fastcall HkConInt(void* con, const char* name, int value, int flags, con
 }  // namespace
 
 void Cvars_Install(uintptr_t base, void* self) {
+	static bool done = false;   // DllMain's early call, then Init's: once
+	if (done) { Log("cvars: hooks on since DllMain (%zu settings)", g_want.size()); return; }
+	done = true;
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string file = path;

@@ -179,6 +179,8 @@ extern "C" void WINAPI MH_DeferEnables(BOOL defer);
 // The freeze stops main last and resumes it first (boots 96-97: main held 1.25 s while the freeze waited for another
 // thread to stop); the longest freeze's parts for the log (minhook_shared/hook.c).
 extern "C" void WINAPI MH_SetFreezeLast(DWORD tid);
+extern "C" void WINAPI MH_FreezeParts(ULONGLONG* enumUs, ULONGLONG* askUs, ULONGLONG* askSlowUs, DWORD* askSlowTid,
+                                          ULONGLONG* askSlowStart, ULONGLONG* waitUs);
 extern "C" void WINAPI MH_FreezeSlowest(ULONGLONG* totalUs, ULONGLONG* mainHeldUs, ULONGLONG* mainWaitUs, ULONGLONG* patchUs,
                                         ULONGLONG* slowUs, DWORD* slowTid, ULONGLONG* slowRip, ULONGLONG* slowStart);
 bool ApplyHooks(const char* which) {
@@ -287,6 +289,13 @@ DWORD WINAPI Init(LPVOID) {
 		Log("fastload: the longest freeze %.1f ms: main (thread %lu) held %.1f ms of it (%.1f ms to stop), patching %.1f ms; "
 		    "the slowest other thread to stop was %lu, %.1f ms (at %s, started at %s)", tot / 1000.0, Early_MainThread(),
 		    held / 1000.0, mwait / 1000.0, patch / 1000.0, tid, slow / 1000.0, at, from);
+		ULONGLONG en = 0, ask = 0, askSlow = 0, askStart = 0, wt = 0;
+		DWORD askTid = 0;
+		MH_FreezeParts(&en, &ask, &askSlow, &askTid, &askStart, &wt);
+		char af[96] = "-";
+		if (askStart) Early_Where(askStart, g_game.base, g_game.size, af, sizeof af);
+		Log("fastload: that freeze's parts: the thread list %.1f ms, the stop requests %.1f ms (the slowest %.1f ms, thread %lu "
+		    "started at %s), waiting for them to stop %.1f ms", en / 1000.0, ask / 1000.0, askSlow / 1000.0, askTid, af, wt / 1000.0);
 	}
 	uintptr_t env = 0;
 	for (int i = 0; i < 240 && !env; i++) { env = FindEnv(); if (!env) Sleep(500); }
@@ -344,6 +353,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 				g_earlyHooks = g_mhEarly ? Questfast_EarlyInstall(b, h) : 0;
 				if (g_mhEarly) Rttrname_EarlyInstall(b, h);   // rttr's type naming without the no-op re-derivations (rttrname.cpp)
 				if (g_mhEarly) Gpuwarm_EarlyInstall(b, h);   // the graphics driver loaded on a worker (gpuwarm.cpp)
+				if (g_mhEarly) Cvars_Install(b, h);   // the settings hooks on before the game registers any (cvars.cpp; boot 121)
 			}
 		}
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
