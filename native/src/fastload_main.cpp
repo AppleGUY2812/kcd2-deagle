@@ -42,6 +42,7 @@
 #include "dbahead.h"
 #include "samelevel.h"
 #include "readymenu.h"
+#include "startfast.h"
 #include "crashlog.h"
 
 namespace {
@@ -85,6 +86,7 @@ void GameplayStarted(const char* why) {
 void Tick() {
 	const int s = Readiness_LevelState();
 	if (s >= 4) g_world = true;
+	Startfast_Frame();   // controller callbacks queued off the main thread (startfast.cpp)
 	if (s >= 1) { if (!g_loading) { g_loading = true; g_firedThisLoad = false; } }
 	else if (s == 0 && g_loading) { g_loading = false; GameplayStarted("level state 0"); }
 	Terrainfast_Frame();   // the terrain meshes asked for at the menu (terrainfast.cpp)
@@ -164,6 +166,7 @@ DWORD WINAPI Init(LPVOID) {
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
 	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
+	Startfast_Install(g_game.base, g_self);   // the controller list asked for without waiting (startfast.cpp)
 	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
 	Terrainfast_Install(g_game.base, g_self);   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)
 	Applyfast_Install(g_game.base, g_self);   // faster pieces of the save load's apply step (applyfast.cpp)
@@ -188,7 +191,7 @@ DWORD WINAPI Init(LPVOID) {
 	Ftplaces_Install(g_game.base, g_self);   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
 	Hitch_Install(g_game.base, g_game.size, g_self);   // samples the main thread in frames over 250 ms (hitch.cpp)
 	Readiness_Install(g_game.base);   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
-	PatchUpdate();
+	Startfast_TickReady(PatchUpdate());   // startfast hands controller callbacks over at the frame tick
 	CreateThread(nullptr, 0, StateWatch, nullptr, 0, nullptr);
 	uintptr_t env = 0;
 	for (int i = 0; i < 240 && !env; i++) { env = FindEnv(); if (!env) Sleep(500); }
