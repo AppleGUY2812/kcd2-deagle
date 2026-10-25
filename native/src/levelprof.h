@@ -6,3 +6,6 @@
 // Timing hooks (WHGame.dll 1.5.6): LoadLevel, LoadEntities, the navmesh tile build, the object databases by type (the
 // SmartObjectAnimations table is type 0x11), XGenAI's LoadGameGlobalPass, the material resource dedupe (count + total).
 void Levelprof_Install(uintptr_t gameBase, void* selfModule);
+// f runs first in each call of the object-database hook (FUN_180ef3afc), before the timing; false when that hook is not
+// on. For dbasync, whose own hook on that function can't be made while this one holds it (MinHook: one hook per address).
+bool Levelprof_SetDbPreCall(void (*f)());

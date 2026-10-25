@@ -28,6 +28,7 @@ constexpr int kN = sizeof g_h / sizeof g_h[0];
 constexpr int kLoadLevel = 0, kDb = 3, kDedupe = 5;
 
 int g_mode = 2;   // timing only unless the file says otherwise
+void (*volatile g_dbPre)() = nullptr;   // called first in the object-database hook (Levelprof_SetDbPreCall)
 long long g_freq = 1;
 std::atomic<DWORD> g_mainTid{0};
 std::atomic<int> g_phase{0};      // the innermost timed hook on Main (0 = none)
@@ -85,6 +86,7 @@ using Fn8 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64
 // Passes 8 integer arguments through (LoadEntities takes 5; none of the six takes a float).
 template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, uint64_t d, uint64_t e, uint64_t f, uint64_t g, uint64_t h) {
 	thread_local int depth = 0;
+	if (I == kDb) { if (void (*pre)() = g_dbPre) pre(); }   // dbasync's gate (this hook holds FUN_180ef3afc's one slot)
 	if (I == kLoadLevel && depth == 0) {
 		g_mainTid = GetCurrentThreadId();
 		g_inLoad = true;
@@ -147,4 +149,10 @@ void Levelprof_Install(uintptr_t base, void* self) {
 	}
 	Log("levelprof: mode %d (%s), %d of %d hooks on%s%s", g_mode, g_mode == 1 ? "timing + Main sampled 30 s from LoadLevel" : "timing only",
 	    on, kN, off.empty() ? "" : "; FAILED: ", off.c_str());
+}
+
+bool Levelprof_SetDbPreCall(void (*f)()) {
+	if (!g_h[kDb].orig) return false;   // levelprof off or its hook failed
+	g_dbPre = f;
+	return true;
 }

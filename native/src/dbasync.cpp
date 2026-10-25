@@ -1,5 +1,6 @@
 // The dialogue dubbing database loaded on a worker: see dbasync.h.
 #include "dbasync.h"
+#include "levelprof.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -68,6 +69,7 @@ char __fastcall HkTypeLoad(void* mgr, int type, char reload) {
 	Dbasync_Gate("a database type load");
 	return g_origType(mgr, type, reload);
 }
+void RegGate() { Dbasync_Gate("a database type registration"); }
 char __fastcall HkRegLoad(void* mgr, int type) {
 	Dbasync_Gate("a database type registration");
 	return g_origReg(mgr, type);
@@ -80,7 +82,9 @@ char __fastcall HkOneLoad(void* mgr, void* table, char a) {
 bool Hook(uintptr_t base, uintptr_t rva, const unsigned char* bytes, size_t n, void* hk, void** orig, const char* what) {
 	void* t = (void*)(base + rva);
 	if (memcmp(t, bytes, n)) { Log("dbasync: %s differs - off", what); return false; }
-	if (MH_CreateHook(t, hk, orig) != MH_OK || MH_EnableHook(t) != MH_OK) { Log("dbasync: %s hook failed - off", what); return false; }
+	MH_STATUS st = MH_CreateHook(t, hk, orig);
+	if (st == MH_OK) st = MH_EnableHook(t);
+	if (st != MH_OK) { Log("dbasync: %s hook failed (MinHook %d) - off", what, (int)st); return false; }
 	return true;
 }
 
@@ -134,7 +138,9 @@ void Dbasync_Install(uintptr_t base, void* self, unsigned long mainTid, bool lis
 	g_fatal = (FatalFn)(base + kRvaFatal);
 	g_done = CreateEventA(nullptr, TRUE, FALSE, nullptr);
 	if (!g_done) return;
-	if (!Hook(base, kRvaRegLoad, kRegLoadBytes, sizeof kRegLoadBytes, (void*)&HkRegLoad, (void**)&g_origReg, "the type registration")) return;
+	// levelprof times FUN_180ef3afc and holds its hook: then its hook calls our gate first
+	if (Levelprof_SetDbPreCall(&RegGate)) Log("dbasync: the type registration gate runs in levelprof's hook");
+	else if (!Hook(base, kRvaRegLoad, kRegLoadBytes, sizeof kRegLoadBytes, (void*)&HkRegLoad, (void**)&g_origReg, "the type registration")) return;
 	if (!Hook(base, kRvaOneLoad, kOneLoadBytes, sizeof kOneLoadBytes, (void*)&HkOneLoad, (void**)&g_origOne, "the single table load")) return;
 	if (!Hook(base, kRvaTypeLoad, kTypeLoadBytes, sizeof kTypeLoadBytes, (void*)&HkTypeLoad, (void**)&g_origType, "the type load")) return;
 	g_on = true;
