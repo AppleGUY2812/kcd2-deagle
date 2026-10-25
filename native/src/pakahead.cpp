@@ -55,12 +55,21 @@ constexpr ULONGLONG kKeepMs = 15 * 60 * 1000;     // nothing served after this: 
 struct Item {
 	uint32_t pak, dataOff, csize, usize, crc, idx;
 	std::atomic<int> state{0};                    // 0 waiting, 1 a worker has it, 2 ready, 3 taken or dropped, 4 being touched,
-	                                              // 5 being freed for RAM (back to 0 right after)
+	                                              // 5 being freed for RAM (back to 0 right after), 6 ready but offered to
+	                                              // Windows (OfferVirtualMemory: may be dropped, see kWindow)
 	uint8_t* data = nullptr;
 	bool freedOnce = false;                       // freed for RAM once: the next time it is dropped for good (no re-read loop)
 };
 std::vector<uint64_t> g_prefix;                    // unpacked bytes before item i (list order)
-std::atomic<size_t> g_servedHi{0};                 // 1 + the highest list index served so far
+std::atomic<size_t> g_servedHi{0};                 // 1 + the highest list index the game asked for so far (served or not)
+// RAM (boot 85 census: at the level load's start pakahead held 976 MB of the game's 4.3 GB working set, with 1.9 GB
+// free): only the next kWindow bytes of the list (from where the load is) stay plain RAM. A big entry unpacked beyond
+// that is offered to Windows (OfferVirtualMemory): it counts as free RAM and Windows drops it before it trims the game's
+// own pages. Boot 87, lowest priority: Windows dropped 768 of 777 MB offered while the load grew (the game unpacked those
+// itself, load 25.0 s); now normal priority, so other programs' file cache goes before it. When the window reaches it, it is reclaimed (ReclaimVirtualMemory); if Windows
+// dropped it, a worker unpacks it again. Not with pinned buffers (lots of RAM free: nothing to gain).
+constexpr uint64_t kWindow = 256ull << 20;
+std::atomic<long long> s_offered{0}, s_offeredNow{0}, s_reclaimed{0}, s_lost{0}, s_lostBytes{0}, s_lostAtServe{0};
 // diagnostics + the toucher (22:00 boot: the loader thread copied 3.4 GB at 0.8 GB/s, its memcpy stalled on loads
 // from our buffers, unpinned with 6.8 GB free)
 std::atomic<long long> s_copyTicks{0}, s_copyBytes{0}, s_resChecked{0}, s_srcOut{0}, s_dstOut{0},
@@ -151,6 +160,28 @@ void CountOut(const void* p, size_t n, std::atomic<long long>& checked, std::ato
 	checked += (long long)k; out += o;
 }
 
+inline bool Beyond(const Item& it) { return g_prefix[it.idx] - g_prefix[g_servedHi.load() < g_items.size() ? g_servedHi.load() : g_items.size()] >= kWindow; }
+inline size_t PageUp(uint32_t n) { return ((size_t)n + 4095) & ~(size_t)4095; }
+
+// state 2 -> 6 when it lies beyond the window (the caller holds it in state 4)
+bool Offer(Item& it) {
+	if (g_pin || it.usize < kBig || !it.data || !Beyond(it)) return false;
+	if (OfferVirtualMemory(it.data, PageUp(it.usize), VmOfferPriorityNormal) != ERROR_SUCCESS) return false;
+	s_offered += it.usize;
+	s_offeredNow += it.usize;
+	return true;
+}
+
+// an offered entry back (the caller holds it in state 4): true = intact; false = Windows dropped it (the caller frees it)
+bool Reclaim(Item& it) {
+	const DWORD r = ReclaimVirtualMemory(it.data, PageUp(it.usize));
+	s_offeredNow -= it.usize;
+	if (r == ERROR_SUCCESS) { s_reclaimed++; return true; }
+	s_lost++;
+	s_lostBytes += it.usize;
+	return false;
+}
+
 // takes a ready entry for the game; waits up to 50 ms while the toucher is on it
 bool TakeReady(Item& it) {
 	const long long lim = Now() + g_freq / 20;
@@ -159,6 +190,14 @@ bool TakeReady(Item& it) {
 		int s = 2;
 		if (it.state.compare_exchange_strong(s, 3)) { if (waited) s_touchWaits++; return true; }
 		if (s == 5) { YieldProcessor(); continue; }   // being freed for RAM: back at 0 in a moment, then the game reads it
+		if (s == 6) {                                 // offered and not reclaimed yet: take it back here
+			if (!it.state.compare_exchange_strong(s, 4)) continue;
+			if (Reclaim(it)) { it.state.store(3); return true; }
+			Release(it);
+			it.state.store(3);
+			s_lostAtServe++;
+			return false;
+		}
 		if (s != 4 || Now() > lim) {
 			// not started (0): the workers skip it; being unpacked (1): the worker's 1 -> 2 then fails and it frees the
 			// buffer (before 2026-10-24 it stayed held as "ready", never served, until the 15-min close)
@@ -184,6 +223,7 @@ bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, 
 	if (f == g_byKey.end()) return false;
 	Item& it = *f->second;
 	if (it.usize != r.usize || it.csize != r.csize || it.crc != r.crc) return false;   // same pak, place, sizes, crc32
+	for (size_t hi = g_servedHi.load(); hi < it.idx + 1 && !g_servedHi.compare_exchange_weak(hi, it.idx + 1);) {}   // the window moves on
 	if (!TakeReady(it)) { s_missNotReady++; return false; }
 	static std::atomic<unsigned> sample{0};
 	if (it.usize >= kBig && (sample++ & 7) == 0) {   // every 8th big one: are the pages in RAM?
@@ -194,7 +234,6 @@ bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, 
 	const long long c0 = Now();
 	memcpy(uncomp, it.data, it.usize);
 	if (it.usize >= kBig) { s_copyTicks += Now() - c0; s_copyBytes += it.usize; }
-	for (size_t hi = g_servedHi.load(); hi < it.idx + 1 && !g_servedHi.compare_exchange_weak(hi, it.idx + 1);) {}
 	Release(it);
 	s_served++;
 	s_servedBytes += r.usize;
@@ -308,7 +347,13 @@ DWORD WINAPI Worker(LPVOID) {
 		for (bool counted = false; !g_stop && !ramgov::CanTake(8 << 20); Sleep(20))   // RAM first: the game comes first
 			if (!counted) { counted = true; s_ramWaits++; }
 		const size_t i = Pick();
-		if (i >= n) break;
+		if (i >= n) {   // wait at the end: entries freed for RAM or dropped by Windows come back to 0 (before boot 87 the
+		                // workers exited here and those were never unpacked again); the read buffer goes meanwhile (boot 88:
+		                // 6 waiting workers kept 120 MB)
+			if (packed.capacity()) std::vector<uint8_t>().swap(packed);
+			Sleep(50);
+			continue;
+		}
 		Item& it = g_items[i];
 		while (!g_stop && g_held.load() + it.usize > kCapBytes && it.state.load() == 1) Sleep(20);   // full: wait for the load to take some
 		if (g_stop) { it.state = 3; break; }
@@ -342,8 +387,9 @@ DWORD WINAPI Worker(LPVOID) {
 		g_held += it.usize;
 		it.data = out;
 		int working = 1;
-		if (!it.state.compare_exchange_strong(working, 2)) Release(it);   // the game asked meanwhile and did it itself
-		else s_prefetched++;
+		if (!it.state.compare_exchange_strong(working, 4)) { Release(it); continue; }   // the game asked meanwhile and did it itself
+		s_prefetched++;
+		it.state.store(Offer(it) ? 6 : 2);   // far ahead of the load: offered to Windows
 	}
 	for (HANDLE h : handles) if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
 	libdeflate_free_decompressor(d);
@@ -352,7 +398,7 @@ DWORD WINAPI Worker(LPVOID) {
 
 // The toucher: reads one byte per page of the ready entries up to 256 MB ahead of the game (list order), so pages
 // Windows moved out of the game's working set come back on this thread instead of the game's loader thread.
-constexpr uint64_t kTouchAhead = 256ull << 20;
+constexpr uint64_t kTouchAhead = kWindow;
 DWORD WINAPI Toucher(LPVOID) {
 	const size_t n = g_items.size();
 	size_t t = 0;
@@ -368,8 +414,16 @@ DWORD WINAPI Toucher(LPVOID) {
 		if (t >= n) break;
 		if (g_prefix[t] - g_prefix[hi] >= kTouchAhead) { Sleep(1); continue; }
 		Item& it = g_items[t];
-		int s = 2;
-		if (it.state.compare_exchange_strong(s, 4)) {
+		int s6 = 6;
+		if (it.state.compare_exchange_strong(s6, 4) && !Reclaim(it)) {   // the window reached an offered entry Windows dropped
+			Release(it);
+			it.state.store(0);   // a worker unpacks it again
+			{ std::lock_guard<std::mutex> lk(g_pickMu); if (t < g_cursor) g_cursor = t; }
+			t++;
+			continue;
+		}
+		int s = s6 == 6 ? 4 : 2;   // reclaimed: already ours (4)
+		if (s == 4 || it.state.compare_exchange_strong(s, 4)) {
 			const long long a = Now();
 			CountOut(it.data, it.usize, s_touchChecked, s_touchOut);
 			volatile uint8_t sink = 0;
@@ -463,6 +517,9 @@ DWORD WINAPI Writer(LPVOID) {
 			    s_servedBytes.load() / 1e6, s_missNotReady.load(), g_held.load() / 1e6, s_locked.load(), s_lockFail.load(),
 			    s_ramWaits.load(), s_shedBytes.load() / 1e6, s_shedTimes.load(), s_shedDropped.load(), ramgov::AvailMb());
 			const double ct = (double)s_copyTicks.load() / g_freq, tt = (double)s_touchTicks.load() / g_freq;
+			Log("pakahead: offered to Windows %.0f MB now (%.0f MB in all), reclaimed %lld, dropped by Windows %lld (%.0f MB, "
+			    "unpacked again; %lld at the game's read)", s_offeredNow.load() / 1e6, s_offered.load() / 1e6, s_reclaimed.load(),
+			    s_lost.load(), s_lostBytes.load() / 1e6, s_lostAtServe.load());
 			Log("pakahead: copies into the game %.0f MB in %.2f s (%.2f GB/s); sampled pages not in RAM: ours %lld of %lld, "
 			    "game's buffer %lld; toucher %.0f MB in %.2f s, %lld of %lld sampled pages were out, game waited on it %lld x",
 			    s_copyBytes.load() / 1e6, ct, ct > 0 ? s_copyBytes.load() / 1e9 / ct : 0.0, s_srcOut.load(), s_resChecked.load(),
@@ -473,7 +530,14 @@ DWORD WINAPI Writer(LPVOID) {
 			Sleep(500);
 			size_t freed = 0;
 			Sleep(100);   // the toucher stops at g_stop; an entry it held is back at 2 by now
-		for (Item& it : g_items) { int r2 = 2; if (it.state.compare_exchange_strong(r2, 3)) { freed += it.usize; Release(it); } }
+		for (Item& it : g_items) {
+				int r2 = 2, r6 = 6;
+				if (it.state.compare_exchange_strong(r2, 3) || it.state.compare_exchange_strong(r6, 3)) {
+					if (r6 == 6) s_offeredNow -= it.usize;
+					freed += it.usize;
+					Release(it);
+				}
+			}
 			Log("pakahead: unpack-ahead store closed, %.0f MB never asked for, freed", freed / 1e6);
 		}
 		if (GetTickCount64() - g_start > kRecordMs + 10000 && (g_items.empty() || g_stop)) {

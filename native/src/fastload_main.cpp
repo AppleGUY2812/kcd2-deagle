@@ -43,6 +43,7 @@
 #include "samelevel.h"
 #include "readymenu.h"
 #include "startfast.h"
+#include "memsite.h"
 #include "crashlog.h"
 
 namespace {
@@ -165,6 +166,7 @@ DWORD WINAPI Init(LPVOID) {
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
+	Memsite_Install(g_self);   // who holds the memory, a diagnostic, off by default (memsite.cpp)
 	Cvars_Install(g_game.base, g_self);      // load-time game settings at registration (cvars.cpp)
 	Startfast_Install(g_game.base, g_self);   // the controller list asked for without waiting (startfast.cpp)
 	Loadwatch_Install(g_game.base);   // exact terrain-step timing (loadwatch.cpp)
@@ -226,6 +228,7 @@ extern "C" __declspec(dllexport) int Fastload_Command(const char* line) {
 	else if (!strcmp(cmd, "terrainfast")) Terrainfast_Command(rest);
 	else if (!strcmp(cmd, "samelevel")) Samelevel_Command(rest);
 	else if (!strcmp(cmd, "readymenu")) Readymenu_Command(rest);
+	else if (!strcmp(cmd, "memsite")) Memsite_Command(rest);
 	else return 0;
 	return 1;
 }

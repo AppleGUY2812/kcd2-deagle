@@ -31,15 +31,24 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
 | first gameplay frames | -33.0 [19.2] | 0.3 + 0.6 s |
 
 ## RAM is the system limit (M)
-User's own loads vs free RAM at level loading: 2122 MB 33.4 s (boot 32), 1597 MB 38.5 s (U1), 1320 MB 48.3 s (U2,
-2026-10-24 07:48). U2: state 4 took 11.7 s (2.7 s in test boots) with 969k page faults in that frame (250k in test
-boots); 465 MB free at the gate. At launch 4.6 GB was free; pakahead filled to 2.1 GB at the menu, then shed 1.9 GB
-and served 299 MB. Other RAM then: KCD2 4.6 GB resident (11.7 GB private), WSL 2.1 GB, Brave 1.0, Steam 0.5,
-Jellyfin 0.45, Discord 0.43. The hitch line now splits a long frame's faults into disk reads / standby / fresh
-(system-wide) to tell whether the game's own pages are read back.
-16 GB PC (Ryzen 5 3600, 6 cores); WSL 2.4-3.7 GB. Read-ahead caches follow ramgov.h (read ahead while >= 1.5 GB free,
-free the farthest below 1.2 GB, each item freed at most once). Anything that holds more RAM before the load (PSOs at the
-menu, a longer XML lead) costs terrain time: boots 22-23 had ~500 MB less free and terrain 5.2-5.7 s instead of 3.7-3.9.
+User's own loads vs free RAM at level loading: 2122 MB 33.4 s, 1597 MB 38.5 s, 1320 MB 48.3 s (U2: state 4 11.7 s with
+969k page faults). 16 GB PC (Ryzen 5 3600, RTX 3070 Ti 8 GB). Other RAM (2026-10-24 21:40, game closed): WSL 2.1 GB, Brave
+1.9 GB, Windows ~2.5 GB (services 0.8, compression 0.5, kernel pools 1.0), Steam 0.5 GB; Discord + Jellyfin (1.7 GB) closed
+by kcd2-deagle-66 before boot 90, so boots 90+ have ~1.7 GB more free than 84-89: compare 90+ with each other.
+Census (memsite.cpp, fastload_memsite.txt 1; boot 91, MB in RAM): load start working set 3750 (WHGame 1375, plugin 985:
+streamahead copies 508, pakahead 372 + 32), free 2964; gameplay start 5822 (WHGame 3299, NVIDIA driver 749, plugin 518 =
+streamahead copies for the rest of the load, freed at gameplay), free 1604. The game itself grows ~2 GB during the load.
+The unseen private memory (3 GB committed) is write-combined GPU memory, only ~0.5 GB of it in RAM; DXGI: video memory
+2.3 of 7.2 GB budget at gameplay (no overflow), system RAM for GPU data 0.57 GB.
+Windows reuses offered pages (OfferVirtualMemory, any priority) before any file cache, whenever the game needs a fresh
+page: boots 89-91 took back 0-1 of ~495 pakahead entries, boot 90 0 of 10,660 streamahead copies. Offering = freeing.
+- pakahead (kept): big entries more than 256 MB ahead of the load are offered; Windows drops them and the game reads them
+  from the file cache (pakahead reads buffered) and unpacks them itself: plugin RAM at load start 1591 -> 985 MB (85 -> 91),
+  no time lost (ctl 25.5 / 25.0 / 23.5 / 24.4 in boots 85 / 87 / 88 / 91).
+- streamahead offering (boot 90): 27.1 s; mapped paks + file-cache prefetch, no copies (boot 89): 28.4 s (hard faults on
+  the game's IO thread for dropped pages; the game reads these requests unbuffered, so the file cache can't serve it).
+  Both rejected; the copies stay (512 MB cap, freed below 1.2 GB free by ramgov).
+Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 -> 256 MB (~0.25 GB each).
 
 ## Built and measured
 - fastzip (libdeflate) + pakahead: 61 -> 47 s (2026-10-23 boots, older clock).
