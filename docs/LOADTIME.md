@@ -60,6 +60,12 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
   node walk 557 -> 28 ms, apply 4.7 -> 4.3 s. The list goes stale when the load changes: re-record it
   (tools/xmlahead_list.py on fastload_xmlahead_trace.csv).
 - streamahead, 4 readers + RAM rule (a168e6d, d587a0e): terrain wait 3.4 -> 0.9-2.3 s, depends on free RAM.
+- pakahead serves the in-memory paks (Engine.pak, ShaderCache.pak, Shaders.pak; boot 94): their entries are matched to
+  the files by entry, unpacked from disk at start and kept for the game's repeat reads, freed 3 s after the last read:
+  1,832 reads (754 MB, 325 MB held) served at start-up instead of unpacked on one game thread (boot 93: 1.7 s); main
+  menu 20.0 -> 19.2 s after process start. Lists keep their lines as "mem|<path>" (tools/pakahead_list.py).
+- Start-up installs (kcd2-deagle-66's timing, boot 94): 94 MinHook enables froze every game thread 5.9 s in all during
+  the plugin's 6.5 s of installs (Applyprof 0.9 s, Streamio 0.5, Applyfast 0.46, Xmlahead 0.44, Questfast 0.44).
 - applyfast fog cull (d587a0e): map clouds vs fog of war 0.86 s -> 60 ms, 0 mismatches in 71k checks.
 - applyfast facial DBA sort (2195bf8): lists arrive nearly sorted (10 breaks in 40k), 80-95 ms; gain not measurable.
 - applyfast quests first (02c973b, on): quest job starts 3.1-3.3 s earlier; Main's wait 3.3 -> 1.4-1.9 s; state 4
@@ -114,6 +120,10 @@ Limit: ~2.8 GB free RAM at the menu (boot 30); everything held early competes.
 - Timer resolution: Sleep(1) takes 1.5 ms in the game (it calls timeBeginPeriod(1)); not the shader-parse cost.
 - xmlahead workers at normal priority, quest job thread above normal: no change (boot 25).
 - xmlahead list re-recorded in the quests-first order (boot 26): XML phase unchanged.
+- Menu shaders queued in proportion to the frame gap (1-32 a render sync, boot 93): all 457 parsed before the load (20 left
+  in it), but the main menu came ~5 s later (= the 5.1 s of parsing: the render thread is on start-up's critical path) and
+  the post-LoadLevel part of state 4 stayed 3.5 s, so it is not the render loading thread's shader backlog. Reverted; the
+  parse itself (436 shaders, ~11 ms each on one thread) is the cost wherever it runs.
 
 ## Plan: 10 s from Continue (target since 2026-10-24 15:30; was 20 s)
 Boot 57 (all current work, menu path): 18.3 s = LoadLevel 8.3 + state 4 0.8 + apply 4.7 + gate 3.4 + rest 1.1.

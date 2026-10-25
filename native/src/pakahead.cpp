@@ -56,9 +56,11 @@ struct Item {
 	uint32_t pak, dataOff, csize, usize, crc, idx;
 	std::atomic<int> state{0};                    // 0 waiting, 1 a worker has it, 2 ready, 3 taken or dropped, 4 being touched,
 	                                              // 5 being freed for RAM (back to 0 right after), 6 ready but offered to
-	                                              // Windows (OfferVirtualMemory: may be dropped, see kWindow)
+	                                              // Windows (OfferVirtualMemory: may be dropped, see kWindow), 8 an
+	                                              // in-memory pak's entry being copied to the game (back to 2 after)
 	uint8_t* data = nullptr;
 	bool freedOnce = false;                       // freed for RAM once: the next time it is dropped for good (no re-read loop)
+	bool mem = false;                             // from a pak the game holds in memory (see g_listMem): kept after a serve
 };
 std::vector<uint64_t> g_prefix;                    // unpacked bytes before item i (list order)
 std::atomic<size_t> g_servedHi{0};                 // 1 + the highest list index the game asked for so far (served or not)
@@ -75,6 +77,20 @@ std::atomic<long long> s_offered{0}, s_offeredNow{0}, s_reclaimed{0}, s_lost{0},
 std::atomic<long long> s_copyTicks{0}, s_copyBytes{0}, s_resChecked{0}, s_srcOut{0}, s_dstOut{0},
 	s_touchTicks{0}, s_touchBytes{0}, s_touchChecked{0}, s_touchOut{0}, s_touchWaits{0};
 std::vector<std::string> g_listPaks;               // pak paths of the list, lower case
+// Paks the game holds in memory (Engine/Engine.pak, ShaderCache.pak, Shaders.pak; list lines "mem|<path>"): their reads
+// come with no FILE*, only the in-memory image, and the game unpacks an entry again on every read (boot 93: Engine.pak
+// 758 first reads, 274 MB, 608 ms, plus 1,115 repeats, 449 MB, 1,079 ms, nearly all on one start-up thread at +3-7 s).
+// Workers unpack them from the pak file on disk; a read of an in-memory pak is matched to its list pak by the entry
+// (data offset, sizes, crc32) and that image is remembered. Such an entry stays after a serve (state 8 while copied),
+// so the repeats (crc32 already cleared by the game) are served too; all of them are freed once no in-memory read has
+// come for 3 s. Never offered or shed.
+std::vector<bool> g_listMem;
+bool g_anyMem = false;
+std::unordered_map<uintptr_t, int> g_memToListPak; // the game's in-memory image -> list pak index (under g_mapMu)
+std::unordered_map<uintptr_t, int> g_memMisses;
+std::atomic<long long> s_memFirst{0}, s_memFirstBytes{0}, s_memRepeat{0}, s_memRepeatBytes{0}, s_memFreedBytes{0};
+std::atomic<ULONGLONG> g_memLastServe{0};
+std::atomic<bool> g_memFreed{false};
 std::deque<Item> g_items;                          // deque: Items never move (atomics inside)
 std::unordered_map<uint64_t, Item*> g_byKey;       // (list pak index << 32) | data offset
 std::unordered_map<uintptr_t, int> g_fileToListPak; // the game's FILE* -> list pak index (-1 = not in the list)
@@ -126,6 +142,29 @@ int ListPakOf(uintptr_t file) {
 	return idx;
 }
 
+// an in-memory pak's list index, from the first read of it that matches a listed entry exactly (crc32 included)
+int MemListPak(uintptr_t inMem, const Rec& r) {
+	std::lock_guard<std::mutex> lk(g_mapMu);
+	auto it = g_memToListPak.find(inMem);
+	if (it != g_memToListPak.end()) return it->second;
+	if (r.crc == 0) return -1;
+	int found = -1, n = 0;
+	for (size_t lp = 0; lp < g_listPaks.size(); lp++) {
+		if (!g_listMem[lp]) continue;
+		auto f = g_byKey.find(((uint64_t)lp << 32) | r.dataOff);
+		if (f == g_byKey.end()) continue;
+		const Item& e = *f->second;
+		if (e.csize == r.csize && e.usize == r.usize && e.crc == r.crc) { found = (int)lp; n++; }
+	}
+	if (n == 1) {
+		g_memToListPak.emplace(inMem, found);
+		Log("pakahead: in-memory pak %p is %s", (void*)inMem, g_listPaks[found].c_str());
+		return found;
+	}
+	if (++g_memMisses[inMem] >= 256) g_memToListPak.emplace(inMem, -1);   // not one of ours
+	return -1;
+}
+
 // Ready entries of 64 KB and more live in VirtualAlloc'd, VirtualLock'd memory: the 2026-10-23 boot sampler showed
 // the game's loader thread in our memcpy 23 % of the terrain step, stalled reading these buffers (16 GB PC, the game
 // grows to ~6.5 GB during the load: Windows had paged the held buffers out). Smaller ones use malloc.
@@ -165,7 +204,7 @@ inline size_t PageUp(uint32_t n) { return ((size_t)n + 4095) & ~(size_t)4095; }
 
 // state 2 -> 6 when it lies beyond the window (the caller holds it in state 4)
 bool Offer(Item& it) {
-	if (g_pin || it.usize < kBig || !it.data || !Beyond(it)) return false;
+	if (g_pin || it.mem || it.usize < kBig || !it.data || !Beyond(it)) return false;
 	if (OfferVirtualMemory(it.data, PageUp(it.usize), VmOfferPriorityNormal) != ERROR_SUCCESS) return false;
 	s_offered += it.usize;
 	s_offeredNow += it.usize;
@@ -213,17 +252,37 @@ bool TakeReady(Item& it) {
 bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, uint64_t size) {
 	if (g_items.empty() || g_stop || !uncomp || off != 0 || (size != ~0ull && size != (uint64_t)r.usize)) return false;
 	if (!r.decompress && r.method != 0) return false;           // the caller wants the packed bytes
-	if (r.crc == 0) return false;                                // entry already read and checked once: not first use
 	uintptr_t file = 0, inMem = 0;
 	ReadZipFile(cache, file, inMem);
-	if (inMem || !file) return false;
-	const int lp = ListPakOf(file);
+	if (!inMem && r.crc == 0) return false;                      // entry already read and checked once: not first use
+	int lp = -1;
+	if (inMem) lp = g_memFreed.load() ? -1 : MemListPak(inMem, r);
+	else if (file) lp = ListPakOf(file);
 	if (lp < 0) return false;
 	auto f = g_byKey.find(((uint64_t)lp << 32) | r.dataOff);
 	if (f == g_byKey.end()) return false;
 	Item& it = *f->second;
-	if (it.usize != r.usize || it.csize != r.csize || it.crc != r.crc) return false;   // same pak, place, sizes, crc32
+	if (it.usize != r.usize || it.csize != r.csize) return false;   // same pak, place, sizes
+	if (r.crc != 0 ? it.crc != r.crc : !it.mem) return false;       // and crc32 (an in-memory repeat has it cleared)
 	for (size_t hi = g_servedHi.load(); hi < it.idx + 1 && !g_servedHi.compare_exchange_weak(hi, it.idx + 1);) {}   // the window moves on
+	if (it.mem) {   // kept for the repeats: copied under state 8
+		const long long lim = Now() + g_freq / 20;
+		for (;;) {
+			int s = 2;
+			if (it.state.compare_exchange_strong(s, 8)) break;
+			if ((s == 4 || s == 8) && Now() < lim) { YieldProcessor(); continue; }   // the toucher / another copy on it
+			if (s == 0 || s == 1) s_missNotReady++;
+			return false;
+		}
+		memcpy(uncomp, it.data, it.usize);
+		it.state.store(2);
+		g_memLastServe = GetTickCount64();
+		if (r.crc != 0) { s_memFirst++; s_memFirstBytes += it.usize; }
+		else { s_memRepeat++; s_memRepeatBytes += it.usize; }
+		s_served++;
+		s_servedBytes += r.usize;
+		return true;
+	}
 	if (!TakeReady(it)) { s_missNotReady++; return false; }
 	static std::atomic<unsigned> sample{0};
 	if (it.usize >= kBig && (sample++ & 7) == 0) {   // every 8th big one: are the pages in RAM?
@@ -264,9 +323,10 @@ uint64_t __fastcall HkRead(void* cache, int* entry, void* comp, void* uncomp, ch
 			r.decompress = 2;                         // 2 = served from the unpack-ahead store
 			uintptr_t file = 0, inMem = 0;
 			ReadZipFile(cache, file, inMem);
+			const uintptr_t key = inMem ? inMem : file;   // an in-memory pak stays "mem:" in the recording, as unserved
 			std::lock_guard<std::mutex> lk(g_mu);
-			auto it = g_pakIds.find(file);
-			if (it == g_pakIds.end()) { it = g_pakIds.emplace(file, (uint32_t)g_paks.size()).first; g_paks.push_back(PakName(file, 0)); }
+			auto it = g_pakIds.find(key);
+			if (it == g_pakIds.end()) { it = g_pakIds.emplace(key, (uint32_t)g_paks.size()).first; g_paks.push_back(PakName(file, inMem)); }
 			r.pak = it->second;
 			g_recs.push_back(r);
 			return 0;
@@ -319,6 +379,7 @@ void Shed(long long want) {
 	size_t lowest = top;
 	for (size_t i = top; i-- > floorIdx && got < want;) {
 		Item& it = g_items[i];
+		if (it.mem) continue;   // needed in the start-up's first seconds, freed after them
 		int r = 2;
 		if (!it.state.compare_exchange_strong(r, 5)) continue;
 		got += it.usize;
@@ -446,13 +507,16 @@ bool LoadList() {
 	while (fgets(line, sizeof line, f)) {
 		char path[1024]; unsigned off, cs, us, crc;
 		if (line[0] == '#' || sscanf(line, "%1023[^\t]\t%u\t%u\t%u\t%x", path, &off, &cs, &us, &crc) != 5) continue;
-		const std::string p = Lower(path);
+		const bool mem = !strncmp(path, "mem|", 4);
+		const std::string p = Lower(path + (mem ? 4 : 0));
 		uint32_t idx = 0;
 		while (idx < g_listPaks.size() && g_listPaks[idx] != p) idx++;
-		if (idx == g_listPaks.size()) g_listPaks.push_back(p);
+		if (idx == g_listPaks.size()) { g_listPaks.push_back(p); g_listMem.push_back(mem); }
 		g_items.emplace_back();
 		Item& it = g_items.back();
 		it.pak = idx; it.dataOff = off; it.csize = cs; it.usize = us; it.crc = crc; it.idx = (uint32_t)(g_items.size() - 1);
+		it.mem = g_listMem[idx];
+		if (it.mem) g_anyMem = true;
 		g_byKey.emplace(((uint64_t)idx << 32) | off, &it);
 		bytes += us;
 	}
@@ -502,10 +566,34 @@ void Flush() {
 	MoveFileExA(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
+// the in-memory paks' entries, once no read of them has come for 3 s (or at the store's close)
+void FreeMem(const char* why) {
+	if (g_memFreed.exchange(true)) return;
+	long long freed = 0;
+	for (Item& it : g_items) {
+		if (!it.mem) continue;
+		for (int k = 0; k < 1000; k++) {   // a copy under way (8) ends in microseconds
+			int s2 = 2;
+			if (it.state.compare_exchange_strong(s2, 3)) { freed += it.usize; Release(it); break; }
+			if (s2 != 8 && s2 != 4) break;
+			Sleep(0);
+		}
+	}
+	s_memFreedBytes = freed;
+	Log("pakahead: in-memory paks (%s): served %lld first reads (%.0f MB) and %lld repeats (%.0f MB); %.0f MB freed", why,
+	    s_memFirst.load(), s_memFirstBytes.load() / 1e6, s_memRepeat.load(), s_memRepeatBytes.load() / 1e6, freed / 1e6);
+}
+
 DWORD WINAPI Writer(LPVOID) {
 	size_t written = 0;
 	for (;;) {
-		Sleep(5000);
+		for (int k = 0; k < 10; k++) {   // 5 s, checking the in-memory paks' quiet every 0.5 s
+			Sleep(500);
+			const ULONGLONG last = g_memLastServe.load();
+			if (g_memFreed.load() || !g_anyMem) continue;
+			if (last && GetTickCount64() - last > 3000) FreeMem("no read of them for 3 s");
+			else if (!last && GetTickCount64() - g_start > 60000) FreeMem("none asked for in the first 60 s");
+		}
 		size_t n; { std::lock_guard<std::mutex> lk(g_mu); n = g_recs.size(); }
 		if (n != written) { Flush(); written = n; }
 		static long long lastServed = -1, lastPre = -1;
@@ -526,6 +614,7 @@ DWORD WINAPI Writer(LPVOID) {
 			    s_dstOut.load(), s_touchBytes.load() / 1e6, tt, s_touchOut.load(), s_touchChecked.load(), s_touchWaits.load());
 		}
 		if (!g_items.empty() && !g_stop && GetTickCount64() - g_start > kKeepMs) {
+			FreeMem("the store closes");
 			g_stop = true;
 			Sleep(500);
 			size_t freed = 0;

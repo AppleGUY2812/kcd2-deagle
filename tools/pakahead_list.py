@@ -7,7 +7,11 @@ usage: tools/pakahead_list.py <fastload_pakahead_trace.csv> <out list> [--from-m
 Keeps each entry the game read whole and unpacked (or stored), first read only, in time order. Every entry is checked
 against its pak's own zip directory: an entry whose data offset, sizes and crc32 don't match one directory entry is
 left out and counted, so a wrong recording can't put wrong bytes in the list.
+Paks the game holds in memory (recorded as mem:<address>; Engine/Engine.pak, Engine/ShaderCache.pak) are matched to
+their file among the game's Engine/*.pak by their entries (data offset, sizes, crc32: at least 95 % of the pak's reads
+must match one file); their lines carry the path with a "mem|" prefix, and the plugin serves them by the same match.
 """
+import glob
 import csv, struct, sys, os, collections
 
 
@@ -50,6 +54,43 @@ def zip_dir(path):
         return out
 
 
+def resolve_mem(paks, rows):
+    """mem:<address> pak index -> the file it was loaded from (by matching entries against Engine/*.pak)."""
+    mem = {i for i, p in paks.items() if p.startswith('mem:')}
+    roots = set()
+    for p in paks.values():
+        k = p.lower().find('\\data\\')
+        if k > 0:
+            roots.add(p[:k])
+    cands = {}
+    for r in roots:
+        for c in glob.glob(winpath_to_wsl(r + '\\Engine') + '/*.pak'):
+            try:
+                cands[r + '\\Engine\\' + os.path.basename(c)] = zip_dir(c)
+            except Exception:
+                pass
+    votes = {i: collections.Counter() for i in mem}
+    total = collections.Counter()
+    for r in rows:
+        i = int(r['pak'])
+        if i not in mem or r['part'] != '0' or int(r['crc'], 16) == 0:
+            continue
+        total[i] += 1
+        want = (int(r['crc'], 16), int(r['csize']), int(r['usize']))
+        for c, d in cands.items():
+            e = d.get(int(r['data_off']))
+            if e and e[:3] == want:
+                votes[i][c] += 1
+    out = {}
+    for i in mem:
+        if votes[i]:
+            c, n = votes[i].most_common(1)[0]
+            if n >= 0.95 * total[i]:
+                out[i] = c
+            print(f'{paks[i]}: {n} of {total[i]} reads match {c}' + ('' if i in out else ' - too few, left out'))
+    return out
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__)
@@ -73,6 +114,9 @@ def main():
             break
         rd = csv.DictReader(f, fieldnames=line.strip().split(','))
         rows = list(rd)
+    memfile = resolve_mem(paks, rows)
+    for i, c in memfile.items():
+        paks[i] = 'mem|' + c
     seen = set()
     dirs = {}
     kept = []
@@ -90,6 +134,7 @@ def main():
         seen.add(key)
         if r['decompress'] == '2':
             why['was served'] += 1
+        disk = pak[4:] if pak.startswith('mem|') else pak
         if pak.startswith('mem:') or pak == '?':
             why['pak in memory / unnamed'] += 1
             continue
@@ -105,7 +150,7 @@ def main():
             continue
         if pak not in dirs:
             try:
-                dirs[pak] = zip_dir(winpath_to_wsl(pak))
+                dirs[pak] = zip_dir(winpath_to_wsl(disk))
             except Exception as ex:
                 print(f'cannot read {pak}: {ex}')
                 dirs[pak] = {}
