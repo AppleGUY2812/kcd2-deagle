@@ -10,8 +10,10 @@
 // Release. (XmlParser::ParseFile, FUN_18247cecc, the path with a caller-owned parser, is only counted.)
 // Mode, fastload_xmlahead.txt next to the plugin: 0 off, 1 record (default): fastload_xmlahead_trace.csv (time, thread,
 // file, result, microseconds), first 10 minutes; 2 record + parse ahead: the files of fastload_xmlahead_list.txt
-// (tools/xmlahead_list.py, from a recording) are parsed ahead: files outside levels/ by 4 workers once the main menu
-// is idle (1,500+ XML loads done, then none for 3 s: every mod pak is mounted by then), levels/ files by 3 workers
+// (tools/xmlahead_list.py, from a recording) are parsed ahead: files outside levels/ by 4 workers from the game's
+// start-up (2026-10-24: once every mod data pak on disk has mounted, counted at CCryPak::OpenPack; first only the files
+// listed before the first localization/ one, the rest from the game's first localization/ load), or else once the main
+// menu is idle (1,500+ XML loads done, then none for 3 s: every mod pak is mounted by then), levels/ files by 3 workers
 // from the first request for one (the level paks mount with the load). Workers stay at most 3,000 list files ahead of
 // the furthest file the game has asked for, so what they hold ahead is bounded; they pause below 1 GB free RAM.
 // Served once per file, on the first request, by exact path (lower case, '/'); anything else goes the normal way. A

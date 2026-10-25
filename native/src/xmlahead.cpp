@@ -19,6 +19,20 @@
 namespace {
 
 constexpr uintptr_t kRvaLoad = 0x979360, kRvaParse = 0x247cecc;
+// CCryPak::OpenPack (CryPak vtable 0x183a97568, FUN_1804d5320: "Cannot open Pak file %s"): counted, for the start-up start
+constexpr uintptr_t kRvaOpenPack = 0x4d5320;
+const unsigned char kOpenPackBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57 };
+// Start-up (2026-10-24, boot 82): the game's init loads the list's first 3,562 files on Main (2.6 s) before the menu.
+// The base, engine and mod data paks mount in one run (~1.1 s after the hitch window opens), the localization and
+// facial paks ~7.5 s later, the level paks with the load. The workers start at the first XML load once >= kStartPaks
+// paks are mounted and none for kStartQuietMs, and parse only list files before the first localization/ one (list
+// order = the recorded load order, so the game read each of those before the localization paks mounted); the rest
+// from the game's first localization/ load on (or the menu / level triggers). The engine paks and the first XML loads
+// (engine config, the profile) come seconds before the data paks: the start waits until every mod data pak on disk
+// (Mods/*/Data/*.pak, the Workshop's */Data/*.pak) has mounted, or with no mods, a Data pak. A disabled mod never
+// mounts: then the start is the menu's, as before.
+constexpr long kStartPaks = 10;
+constexpr ULONGLONG kStartQuietMs = 300, kLocQuietMs = 50;
 const unsigned char kLoadBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x60,0x0f,0x57,0xc0 };
 const unsigned char kParseBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20 };
 constexpr ULONGLONG kRecordMs = 10 * 60 * 1000, kKeepMs = 15 * 60 * 1000;
@@ -40,6 +54,11 @@ using LoadFn = void**(__fastcall*)(void* self, void** ret, const char* file, uin
 using ParseFn = void**(__fastcall*)(void* parser, void** ret, const char* file, char cleanPools, char reportErrors);
 LoadFn g_origLoad = nullptr;
 ParseFn g_origParse = nullptr;
+using OpenPackFn = void*(__fastcall*)(void* pak, const char* path, unsigned flags, void* a4);
+OpenPackFn g_origOpenPack = nullptr;
+std::atomic<long> g_pakOpens{0}, g_modPaks{0}, g_dataPaks{0};
+long g_modPaksOnDisk = 0;
+std::atomic<ULONGLONG> g_lastPak{0};
 int g_mode = 1;
 std::string g_dir;
 ULONGLONG g_start = 0;
@@ -87,7 +106,10 @@ std::atomic<size_t> g_next[2];
 std::vector<Item*> g_quests;          // the quests/ files of queue 0, in list order: the boost workers' own queue
 size_t g_firstLevel = SIZE_MAX;       // list index of the first levels/ file: the level load starts there
 std::atomic<size_t> g_nextQuest{0};
-std::atomic<bool> g_started[2], g_stop{false}, g_lowRam{false};
+std::atomic<bool> g_started[2], g_stop{false}, g_lowRam{false}, g_boosted{false};
+std::atomic<size_t> g_cap{SIZE_MAX};   // start-up: list positions from here wait for the localization paks
+size_t g_firstLoc = SIZE_MAX;          // list position of the first localization/ file
+std::atomic<long long> s_capWaits{0};
 std::atomic<long long> g_loads{0};
 std::atomic<size_t> g_gamePos{0};     // furthest list position the game has asked for
 std::atomic<long long> s_leadWaits{0}, s_ramWaits{0};
@@ -125,6 +147,7 @@ DWORD WINAPI Worker(LPVOID arg) {
 		if (i >= n) break;
 		Item& it = boost ? *g_quests[i] : *g_queue[q][i];
 		while (!g_stop && it.idx > g_gamePos.load() + kLead && it.state.load() == 0) { s_leadWaits++; Sleep(2); }
+		while (!g_stop && it.idx >= g_cap.load() && it.state.load() == 0) { s_capWaits++; Sleep(5); }
 		int w = 0;
 		if (!it.state.compare_exchange_strong(w, 1)) continue;   // the game asked first
 		void* node = nullptr;
@@ -140,12 +163,41 @@ DWORD WINAPI Worker(LPVOID arg) {
 	return 0;
 }
 
+void LiftCap(const char* why) {
+	if (g_cap.exchange(SIZE_MAX) != SIZE_MAX)
+		Log("xmlahead: %s - the whole list from now (%lld served so far, game first %lld, %lld cap waits)", why,
+		    s_served.load(), s_skipped.load(), s_capWaits.load());
+}
+
+// queue 0 at the start-up: no quest boost (that is for the quest job at the menu), the cap on
+void StartEarly() {
+	bool f = false;
+	if (g_queue[0].empty() || g_started[1] || !g_started[0].compare_exchange_strong(f, true)) return;
+	g_privAtStart = PrivateMb();
+	g_cap = g_firstLoc;
+	for (int i = 0; i < kMenuWorkers; i++) CloseHandle(CreateThread(nullptr, 0, Worker, (LPVOID)(intptr_t)0, 0, nullptr));
+	Log("xmlahead: start-up (%ld paks mounted, %ld mod data paks of %ld on disk) - %d workers parsing ahead the %zu files listed before the first "
+	    "localization/ one, the rest from the localization paks on (%llu MB RAM free, game private %zu MB)",
+	    g_pakOpens.load(), g_modPaks.load(), g_modPaksOnDisk, kMenuWorkers, g_firstLoc == SIZE_MAX ? g_items.size() : g_firstLoc,
+	    (unsigned long long)FreeMb(), PrivateMb());
+}
+
 void StartQueue(int q, const char* why) {
+	if (q == 0) LiftCap(why);
+	if (q == 0 && g_origOpenPack && !g_started[0])
+		Log("xmlahead: start-up start not reached (%ld pak mounts, %ld mod data paks of %ld on disk)", g_pakOpens.load(),
+		    g_modPaks.load(), g_modPaksOnDisk);
+	bool b = false;
+	if (q == 0 && !g_quests.empty() && g_nextQuest.load() < g_quests.size() && g_started[0] && g_boosted.compare_exchange_strong(b, true)) {
+		for (int i = 0; i < kQuestBoost; i++) CloseHandle(CreateThread(nullptr, 0, Worker, (LPVOID)(intptr_t)0x100, 0, nullptr));
+		Log("xmlahead: %s - %d more workers for the quests/ part", why, kQuestBoost);
+	}
 	bool f = false;
 	if (g_queue[q].empty() || !g_started[q].compare_exchange_strong(f, true)) return;
 	if (!g_privAtStart) g_privAtStart = PrivateMb();
 	const int n = q == 0 ? kMenuWorkers : kLevelWorkers;
-	const int boost = q == 0 && !g_quests.empty() ? kQuestBoost : 0;
+	b = false;
+	const int boost = q == 0 && !g_quests.empty() && g_boosted.compare_exchange_strong(b, true) ? kQuestBoost : 0;
 	for (int i = 0; i < n + boost; i++)
 		CloseHandle(CreateThread(nullptr, 0, Worker, (LPVOID)(intptr_t)(q | (i >= n ? 0x100 : 0)), 0, nullptr));
 	Log("xmlahead: %s - %d workers parsing %zu %s files ahead%s (%llu MB RAM free, game private %zu MB)", why, n,
@@ -165,6 +217,13 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 	if (g_mode == 2 && !g_items.empty() && !g_stop) {
 		if (!g_self) g_self = self;
 		if (!g_started[1] && IsLevel(path)) { StartQueue(0, "level loading"); StartQueue(1, "level loading"); }
+		if (g_origOpenPack) {
+			const ULONGLONG quiet = GetTickCount64() - g_lastPak.load();
+			if (!g_started[0] && g_pakOpens >= kStartPaks && quiet >= kStartQuietMs && g_dataPaks > 0 &&
+			    g_modPaks >= g_modPaksOnDisk) StartEarly();
+			if (g_cap.load() != SIZE_MAX && path.compare(0, 13, "localization/") == 0 && quiet >= kLocQuietMs)
+				LiftCap("the game's first localization/ load");
+		}
 		auto f = g_byPath.find(path);
 		if (f != g_byPath.end()) {
 			Item& it = *f->second;
@@ -214,6 +273,19 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 	std::lock_guard<std::mutex> lk(g_mu);
 	g_recs.push_back(std::move(rc));
 	return out;
+}
+
+void* __fastcall HkOpenPack(void* pak, const char* path, unsigned flags, void* a4) {
+	void* r = g_origOpenPack(pak, path, flags, a4);
+	std::string p = path ? path : "";
+	for (char& ch : p) ch = ch == '/' ? '\\' : (char)tolower((unsigned char)ch);
+	if (p.find("\\data\\") != std::string::npos || p.compare(0, 5, "data\\") == 0) {
+		g_dataPaks++;
+		if (p.find("mods\\") != std::string::npos || p.find("workshop\\content\\") != std::string::npos) g_modPaks++;
+	}
+	g_pakOpens++;
+	g_lastPak = GetTickCount64();
+	return r;
 }
 
 void** __fastcall HkParse(void* parser, void** ret, const char* file, char cleanPools, char reportErrors) {
@@ -270,7 +342,8 @@ DWORD WINAPI Writer(LPVOID) {
 	long long lastServed = -1, lastReady = -1;
 	for (unsigned tick = 1;; tick++) {
 		Sleep(500);
-		if (!g_items.empty() && !g_started[0] && g_loads >= kMenuLoads && GetTickCount64() - g_lastLoad >= kMenuQuietMs)
+		if (!g_items.empty() && (!g_started[0] || g_cap.load() != SIZE_MAX) && g_loads >= kMenuLoads &&
+		    GetTickCount64() - g_lastLoad >= kMenuQuietMs)
 			StartQueue(0, "main menu idle");
 		if (g_mode == 2 && !g_listWritten && g_loadedAt && GetTickCount64() - g_loadedAt > 20000) {
 			g_listWritten = true;
@@ -282,11 +355,11 @@ DWORD WINAPI Writer(LPVOID) {
 		if ((g_started[0] || g_started[1]) && (s_served != lastServed || s_ready != lastReady)) {
 			lastServed = s_served; lastReady = s_ready;
 			Log("xmlahead: ready %lld of %zu (failed %lld, parse %lld ms), served %lld (%lld after waiting %lld ms, %lld "
-			    "waits timed out), game first %lld, dropped %lld; game at %zu, workers at %zu/%zu, lead waits %lld, RAM "
+			    "waits timed out), game first %lld, dropped %lld; game at %zu, workers at %zu/%zu, lead waits %lld, cap waits %lld, RAM "
 			    "waits %lld; game private %zu MB (+%lld since start)",
 			    s_ready.load(), g_items.size(), s_failed.load(), s_parseMs.load(), s_served.load(), s_waited.load(),
 			    s_waitUs.load() / 1000, s_waitTimeout.load(), s_skipped.load(), s_late.load(), g_gamePos.load(),
-			    g_next[0].load(), g_next[1].load(), s_leadWaits.load(), s_ramWaits.load(), PrivateMb(),
+			    g_next[0].load(), g_next[1].load(), s_leadWaits.load(), s_capWaits.load(), s_ramWaits.load(), PrivateMb(),
 			    (long long)PrivateMb() - (long long)g_privAtStart);
 		}
 		const ULONGLONG t = GetTickCount64() - g_start;
@@ -325,11 +398,29 @@ bool LoadList() {
 		g_queue[IsLevel(p) ? 1 : 0].push_back(&it);
 		if (g_firstLevel == SIZE_MAX && IsLevel(p)) g_firstLevel = it.idx;
 		if (p.compare(0, 7, "quests/") == 0) g_quests.push_back(&it);
+		if (g_firstLoc == SIZE_MAX && p.compare(0, 13, "localization/") == 0) g_firstLoc = it.idx;
 	}
 	fclose(f);
 	Log("xmlahead: list %zu files (%zu outside levels/, %zu level, %zu quests/)", g_items.size(), g_queue[0].size(), g_queue[1].size(),
 	    g_quests.size());
 	return !g_items.empty();
+}
+
+long CountPaks(const std::string& root) {   // root\*\Data\*.pak, without the -partN files
+	long n = 0;
+	WIN32_FIND_DATAA d;
+	HANDLE h = FindFirstFileA((root + "*").c_str(), &d);
+	if (h == INVALID_HANDLE_VALUE) return 0;
+	do {
+		if (!(d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || d.cFileName[0] == '.') continue;
+		WIN32_FIND_DATAA e;
+		HANDLE g = FindFirstFileA((root + d.cFileName + "\\Data\\*.pak").c_str(), &e);
+		if (g == INVALID_HANDLE_VALUE) continue;
+		do if (!strstr(e.cFileName, "-part")) n++; while (FindNextFileA(g, &e));   // X-part1.pak goes with X.pak
+		FindClose(g);
+	} while (FindNextFileA(h, &d));
+	FindClose(h);
+	return n;
 }
 
 }  // namespace
@@ -371,6 +462,8 @@ void Xmlahead_Install(uintptr_t base, void* self) {
 		int m = 1; if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m; fclose(fp);
 	}
 	if (g_mode == 0) { Log("xmlahead: off"); return; }
+	const std::string root = g_dir + "..\\..\\";   // Bin\Win64MasterMasterSteamPGO\ -> the game folder
+	g_modPaksOnDisk = CountPaks(root + "Mods\\") + CountPaks(root + "..\\..\\workshop\\content\\1771300\\");
 	void* ld = (void*)(base + kRvaLoad);
 	void* ps = (void*)(base + kRvaParse);
 	if (memcmp(ld, kLoadBytes, sizeof kLoadBytes)) { Log("xmlahead: code check failed - not installed (other game version?)"); return; }
@@ -379,8 +472,13 @@ void Xmlahead_Install(uintptr_t base, void* self) {
 	const bool a = MH_CreateHook(ld, (void*)&HkLoad, (void**)&g_origLoad) == MH_OK && MH_EnableHook(ld) == MH_OK;
 	const bool b = !memcmp(ps, kParseBytes, sizeof kParseBytes) &&
 	               MH_CreateHook(ps, (void*)&HkParse, (void**)&g_origParse) == MH_OK && MH_EnableHook(ps) == MH_OK;
-	Log("xmlahead: mode %d (%s), LoadXmlFromFile hook %s, ParseFile counter %s", g_mode,
-	    g_mode == 2 ? "record + parse ahead" : "record", a ? "on" : "FAILED", b ? "on" : "FAILED");
+	void* op = (void*)(base + kRvaOpenPack);
+	const bool c = g_mode == 2 && a && !memcmp(op, kOpenPackBytes, sizeof kOpenPackBytes) &&
+	               MH_CreateHook(op, (void*)&HkOpenPack, (void**)&g_origOpenPack) == MH_OK && MH_EnableHook(op) == MH_OK;
+	if (!c) g_origOpenPack = nullptr;
+	Log("xmlahead: mode %d (%s), LoadXmlFromFile hook %s, ParseFile counter %s, start-up start %s", g_mode,
+	    g_mode == 2 ? "record + parse ahead" : "record", a ? "on" : "FAILED", b ? "on" : "FAILED",
+	    c ? ("on (after " + std::to_string(g_modPaksOnDisk) + " mod data paks)").c_str() : g_mode == 2 ? "FAILED (from the menu)" : "off");
 	if (a) CloseHandle(CreateThread(nullptr, 0, Writer, nullptr, 0, nullptr));
 }
 
