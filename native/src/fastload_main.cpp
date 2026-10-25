@@ -169,6 +169,11 @@ extern "C" void WINAPI MH_FreezeStats(ULONGLONG* us, ULONGLONG* count, ULONGLONG
 // While deferred, MH_EnableHook only queues; MH_ApplyQueued turns the queue on in one freeze (minhook_shared/hook.c).
 // Boot 94: 94 single enables kept the game's threads suspended 5.9 s of its start-up.
 extern "C" void WINAPI MH_DeferEnables(BOOL defer);
+// The freeze stops main last and resumes it first (boots 96-97: main held 1.25 s while the freeze waited for another
+// thread to stop); the longest freeze's parts for the log (minhook_shared/hook.c).
+extern "C" void WINAPI MH_SetFreezeLast(DWORD tid);
+extern "C" void WINAPI MH_FreezeSlowest(ULONGLONG* totalUs, ULONGLONG* mainHeldUs, ULONGLONG* mainWaitUs, ULONGLONG* patchUs,
+                                        ULONGLONG* slowUs, DWORD* slowTid, ULONGLONG* slowRip, ULONGLONG* slowStart);
 bool ApplyHooks(const char* which) {
 	const MH_STATUS st = MH_ApplyQueued();
 	if (st != MH_OK) Log("fastload: turning on the %s hooks failed (MinHook %d)", which, (int)st);
@@ -205,6 +210,7 @@ DWORD WINAPI Init(LPVOID) {
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	Early_Report(g_game.base, g_game.size);   // what ran before this thread could start (early.cpp)
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
+	MH_SetFreezeLast(Early_MainThread());
 	MH_DeferEnables(TRUE);   // the hooks below go on in two freezes, not one each
 	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
 	STEP(Hitch_Install(g_game.base, g_game.size, g_self));   // samples the main thread in frames over 250 ms (hitch.cpp)
@@ -248,6 +254,15 @@ DWORD WINAPI Init(LPVOID) {
 		MH_FreezeStats(&us, &n, &longest, &threads);
 		Log("fastload: start-up installs done in %.0f ms; MinHook suspended the game's threads %llu times, %.0f ms in all "
 		    "(longest %.1f ms, up to %lu threads)", MsSince(g_initStart), n, us / 1000.0, longest / 1000.0, threads);
+		ULONGLONG tot = 0, held = 0, mwait = 0, patch = 0, slow = 0, rip = 0, start = 0;
+		DWORD tid = 0;
+		MH_FreezeSlowest(&tot, &held, &mwait, &patch, &slow, &tid, &rip, &start);
+		char at[96] = "-", from[96] = "-";
+		if (rip) Early_Where(rip, g_game.base, g_game.size, at, sizeof at);
+		if (start) Early_Where(start, g_game.base, g_game.size, from, sizeof from);
+		Log("fastload: the longest freeze %.1f ms: main (thread %lu) held %.1f ms of it (%.1f ms to stop), patching %.1f ms; "
+		    "the slowest other thread to stop was %lu, %.1f ms (at %s, started at %s)", tot / 1000.0, Early_MainThread(),
+		    held / 1000.0, mwait / 1000.0, patch / 1000.0, tid, slow / 1000.0, at, from);
 	}
 	uintptr_t env = 0;
 	for (int i = 0; i < 240 && !env; i++) { env = FindEnv(); if (!env) Sleep(500); }

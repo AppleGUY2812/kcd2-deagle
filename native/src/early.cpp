@@ -118,6 +118,14 @@ void Early_Start(HMODULE self) {
 		CloseHandle(t);
 }
 
+DWORD Early_MainThread() { return g_mainTid; }
+
+void Early_Where(uint64_t a, uintptr_t game, size_t gameSize, char* out, size_t n) {
+	uint64_t rva = 0;
+	const std::string m = ModName(a, game, gameSize, &rva);
+	snprintf(out, n, "%s+%llx", m.c_str(), (unsigned long long)rva);
+}
+
 void Early_Report(uintptr_t game, size_t gameSize) {
 	const long long initAt = Now();
 	g_stop = 1;
@@ -130,9 +138,8 @@ void Early_Report(uintptr_t game, size_t gameSize) {
 	const double toSampler = g_samplerStart ? (g_samplerStart - g_dllMain) * 1000.0 / g_freq : -1;
 	const int n = (int)g_n;
 	Log("early: DllMain %.0f ms after the process started (WHGame.dll %s then; thread %lu); the Init thread %.0f ms after DllMain; "
-	    "the early sampler %s (%d samples)", procToDllMain, g_whgameAtDllMain ? "loaded" : "not loaded", g_mainTid, toInit,
-	    g_samplerStart ? (toSampler < toInit - 50 ? "ran under the loader lock" : "only started with the Init thread") : "never started",
-	    n);
+	    "the early sampler started %.0f ms after DllMain (%d samples)", procToDllMain, g_whgameAtDllMain ? "loaded" : "not loaded",
+	    g_mainTid, toInit, toSampler, n);
 	if (!n) return;
 	// the leaf and every frame, counted once per sample (inclusive), by module+rva
 	std::map<std::string, int> leaf, incl;

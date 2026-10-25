@@ -1584,6 +1584,11 @@ static uintptr_t FindEnv() {
 	return 0;
 }
 
+// MinHook's freeze stops this thread last and resumes it first (minhook_shared/hook.c, 2026-10-25): the game's main thread,
+// the one that ran DllMain.
+extern "C" void WINAPI MH_SetFreezeLast(DWORD tid);
+static DWORD g_dllMainTid = 0;
+
 static DWORD WINAPI Init(LPVOID) {
 	Log("deagle_native v1.1 loaded");
 	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); i++) Sleep(100);
@@ -1591,6 +1596,7 @@ static DWORD WINAPI Init(LPVOID) {
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
+	MH_SetFreezeLast(g_dllMainTid);
 	uintptr_t fr = FindFrustum();
 	Log("UpdateFrustumPlanes %p", (void*)fr);
 	if (fr && MH_CreateHook((void*)fr, (void*)&HkFrustum, (void**)&g_origFrustum) == MH_OK && MH_EnableHook((void*)fr) == MH_OK)
@@ -1641,6 +1647,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 		DisableThreadLibraryCalls(h);
 		LogInit(h);
 		SettingsInit(h);
+		g_dllMainTid = GetCurrentThreadId();
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
 	}
 	return TRUE;

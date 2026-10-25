@@ -81,6 +81,7 @@ typedef struct _FROZEN_THREADS
     LPDWORD pItems;         // Data heap
     UINT    capacity;       // Size of allocated data heap, items
     UINT    size;           // Actual number of data items
+    HANDLE *pHandles;       // the suspended threads' handles, as pItems (NULL: not suspended); the last one first resumed
 } FROZEN_THREADS, *PFROZEN_THREADS;
 
 //-------------------------------------------------------------------------
@@ -197,7 +198,7 @@ static DWORD_PTR FindNewIP(PHOOK_ENTRY pHook, DWORD_PTR ip)
 }
 
 //-------------------------------------------------------------------------
-static void ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
+static DWORD64 ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
 {
     // If the thread suspended in the overwritten area,
     // move IP to the proper address.
@@ -212,7 +213,7 @@ static void ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
 
     c.ContextFlags = CONTEXT_CONTROL;
     if (!GetThreadContext(hThread, &c))
-        return;
+        return 0;
 
     if (pos == ALL_HOOKS_POS)
     {
@@ -258,6 +259,7 @@ static void ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
             SetThreadContext(hThread, &c);
         }
     }
+    return (DWORD64)*pIP;
 }
 
 //-------------------------------------------------------------------------
@@ -335,59 +337,198 @@ void WINAPI MH_FreezeStats(ULONGLONG* us, ULONGLONG* count, ULONGLONG* longestUs
     if (maxThreads) *maxThreads = (ULONG)g_freezeMaxThreads;
 }
 
+// Freeze order (fastload.asi, 2026-10-25): boots 96 and 97 kept the game's main thread suspended 1.25-1.36 s in the
+// start-up freeze, with no thread of the process using CPU: the freeze was waiting for some thread to stop (a thread
+// in the kernel stops only when it leaves there), and every thread already stopped, main among them, waited with it.
+// Now every other thread is asked to stop first (SuspendThread only queues the stop), then each is waited for, and the
+// thread named by MH_SetFreezeLast (main) is stopped last and resumed first: main is held only for the patching.
+// Safe as before: no thread runs user code between its SuspendThread and its ResumeThread, and every one is stopped
+// and its instruction pointer checked before any byte is written.
+static volatile DWORD g_freezeLast = 0;
+VOID WINAPI MH_SetFreezeLast(DWORD tid) { g_freezeLast = tid; }
+
+// The freeze being made and the longest one so far (MH_FreezeSlowest).
+typedef struct _FREEZE_INFO
+{
+    ULONGLONG totalUs, slowUs, mainWaitUs, mainHeldUs, patchUs;
+    DWORD     slowTid;
+    ULONGLONG slowRip, slowStart;
+} FREEZE_INFO;
+static FREEZE_INFO   g_cur, g_longest;
+static LARGE_INTEGER g_frozenAt, g_mainStopAt;
+
+static ULONGLONG UsSince(const LARGE_INTEGER* t0)
+{
+    LARGE_INTEGER f, n;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&n);
+    return (ULONGLONG)((n.QuadPart - t0->QuadPart) * 1000000 / f.QuadPart);
+}
+
+static ULONGLONG ThreadStart(HANDLE h)
+{
+    typedef LONG (NTAPI *QueryFn)(HANDLE, int, PVOID, ULONG, PULONG);
+    static QueryFn q = NULL;
+    ULONG_PTR start = 0;
+    if (q == NULL)
+        q = (QueryFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationThread");
+    if (q != NULL && q(h, 9 /* ThreadQuerySetWin32StartAddress */, &start, sizeof(start), NULL) < 0)
+        start = 0;
+    return (ULONGLONG)start;
+}
+
+void WINAPI MH_FreezeSlowest(ULONGLONG* totalUs, ULONGLONG* mainHeldUs, ULONGLONG* mainWaitUs, ULONGLONG* patchUs,
+                             ULONGLONG* slowUs, DWORD* slowTid, ULONGLONG* slowRip, ULONGLONG* slowStart)
+{
+    if (totalUs) *totalUs = g_longest.totalUs;
+    if (mainHeldUs) *mainHeldUs = g_longest.mainHeldUs;
+    if (mainWaitUs) *mainWaitUs = g_longest.mainWaitUs;
+    if (patchUs) *patchUs = g_longest.patchUs;
+    if (slowUs) *slowUs = g_longest.slowUs;
+    if (slowTid) *slowTid = g_longest.slowTid;
+    if (slowRip) *slowRip = g_longest.slowRip;
+    if (slowStart) *slowStart = g_longest.slowStart;
+}
+
 static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 {
     if (FreezeMutex() != NULL)
         WaitForSingleObject(FreezeMutex(), INFINITE);   // WAIT_ABANDONED: the other plugin's thread died holding it; ours now
     QueryPerformanceCounter(&g_freezeStart);   // under the mutex: one freeze at a time
+    ZeroMemory(&g_cur, sizeof(g_cur));
     pThreads->pItems   = NULL;
     pThreads->capacity = 0;
     pThreads->size     = 0;
+    pThreads->pHandles = NULL;
     EnumerateThreads(pThreads);
 
     if (pThreads->pItems != NULL)
     {
-        UINT i;
-        for (i = 0; i < pThreads->size; ++i)
+        UINT i, n = pThreads->size, others = n;
+        const DWORD last = g_freezeLast;
+        for (i = 0; last != 0 && i < n; ++i)
         {
-            HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
-            if (hThread != NULL)
+            if (pThreads->pItems[i] == last)
             {
-                SuspendThread(hThread);
-                ProcessThreadIPs(hThread, pos, action);
-                CloseHandle(hThread);
+                pThreads->pItems[i] = pThreads->pItems[n - 1];
+                pThreads->pItems[n - 1] = last;
+                others = n - 1;
+                break;
             }
         }
+        pThreads->pHandles = (HANDLE*)HeapAlloc(g_hHeap, HEAP_ZERO_MEMORY, n * sizeof(HANDLE));
+        if (pThreads->pHandles == NULL)
+        {
+            // as MinHook did: one thread at a time
+            for (i = 0; i < n; ++i)
+            {
+                HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
+                if (hThread != NULL)
+                {
+                    SuspendThread(hThread);
+                    ProcessThreadIPs(hThread, pos, action);
+                    CloseHandle(hThread);
+                }
+            }
+            QueryPerformanceCounter(&g_frozenAt);
+            return;
+        }
+        // 1: every other thread asked to stop (queued, no wait)
+        for (i = 0; i < others; ++i)
+        {
+            HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
+            if (hThread == NULL)
+                continue;
+            if (SuspendThread(hThread) == (DWORD)-1)
+            {
+                CloseHandle(hThread);
+                continue;
+            }
+            pThreads->pHandles[i] = hThread;
+        }
+        // 2: each waited for (GetThreadContext returns once it has stopped) and its instruction pointer checked
+        for (i = 0; i < others; ++i)
+        {
+            LARGE_INTEGER t0;
+            DWORD64 rip;
+            ULONGLONG us;
+            if (pThreads->pHandles[i] == NULL)
+                continue;
+            QueryPerformanceCounter(&t0);
+            rip = ProcessThreadIPs(pThreads->pHandles[i], pos, action);
+            us = UsSince(&t0);
+            if (us > g_cur.slowUs)
+            {
+                g_cur.slowUs = us;
+                g_cur.slowTid = pThreads->pItems[i];
+                g_cur.slowRip = rip;
+                g_cur.slowStart = ThreadStart(pThreads->pHandles[i]);
+            }
+        }
+        // 3: main last
+        if (others < n)
+        {
+            HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[others]);
+            QueryPerformanceCounter(&g_mainStopAt);
+            if (hThread != NULL && SuspendThread(hThread) != (DWORD)-1)
+            {
+                pThreads->pHandles[others] = hThread;
+                ProcessThreadIPs(hThread, pos, action);
+            }
+            else if (hThread != NULL)
+                CloseHandle(hThread);
+            g_cur.mainWaitUs = UsSince(&g_mainStopAt);
+        }
     }
+    QueryPerformanceCounter(&g_frozenAt);
 }
 
 //-------------------------------------------------------------------------
 static VOID Unfreeze(PFROZEN_THREADS pThreads)
 {
+    g_cur.patchUs = UsSince(&g_frozenAt);
     if (pThreads->pItems != NULL)
     {
         UINT i;
-        for (i = 0; i < pThreads->size; ++i)
+        if (pThreads->pHandles != NULL)
         {
-            HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
-            if (hThread != NULL)
+            // the last one (main) first
+            for (i = pThreads->size; i-- > 0;)
             {
-                ResumeThread(hThread);
-                CloseHandle(hThread);
+                if (pThreads->pHandles[i] == NULL)
+                    continue;
+                ResumeThread(pThreads->pHandles[i]);
+                CloseHandle(pThreads->pHandles[i]);
+                if (i == pThreads->size - 1 && pThreads->pItems[i] == g_freezeLast)
+                    g_cur.mainHeldUs = UsSince(&g_mainStopAt);
+            }
+            HeapFree(g_hHeap, 0, pThreads->pHandles);
+        }
+        else
+        {
+            for (i = 0; i < pThreads->size; ++i)
+            {
+                HANDLE hThread = OpenThread(THREAD_ACCESS, FALSE, pThreads->pItems[i]);
+                if (hThread != NULL)
+                {
+                    ResumeThread(hThread);
+                    CloseHandle(hThread);
+                }
             }
         }
 
         HeapFree(g_hHeap, 0, pThreads->pItems);
     }
     {
-        LARGE_INTEGER f, e;
-        LONG64 us;
-        QueryPerformanceFrequency(&f);
-        QueryPerformanceCounter(&e);
-        us = (LONG64)((e.QuadPart - g_freezeStart.QuadPart) * 1000000 / f.QuadPart);
+        LONG64 us = (LONG64)UsSince(&g_freezeStart);
         g_freezeUs += us;
         g_freezeCount++;
-        if (us > g_freezeLongestUs) g_freezeLongestUs = us;
+        if (us > g_freezeLongestUs)
+        {
+            g_freezeLongestUs = us;
+            g_cur.totalUs = (ULONGLONG)us;
+            g_longest = g_cur;
+        }
         if ((LONG)pThreads->size > g_freezeMaxThreads) g_freezeMaxThreads = (LONG)pThreads->size;
     }
     if (FreezeMutex() != NULL)

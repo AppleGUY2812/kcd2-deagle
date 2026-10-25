@@ -8,3 +8,5 @@
 // every 10 ms (instruction pointer + return addresses) into fixed buffers until Early_Report. Log only.
 void Early_Start(HMODULE self);    // DllMain, DLL_PROCESS_ATTACH
 void Early_Report(uintptr_t gameBase, size_t gameSize);   // Init's first lines: the times, the top places, fastload_early.csv
+DWORD Early_MainThread();   // the thread that ran DllMain: the game's main thread
+void Early_Where(unsigned long long addr, uintptr_t gameBase, size_t gameSize, char* out, size_t n);   // "module+rva"
