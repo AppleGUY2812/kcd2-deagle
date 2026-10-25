@@ -40,6 +40,7 @@
 #include "paklock.h"
 #include "dbahead.h"
 #include "samelevel.h"
+#include "crashlog.h"
 
 namespace {
 
@@ -151,6 +152,7 @@ DWORD WINAPI StateWatch(LPVOID) {   // the level state's changes every 10 ms, fr
 
 DWORD WINAPI Init(LPVOID) {
 	Log("fastload v1 loaded");
+	Crashlog_Install(g_self);   // crash-type exceptions to fastload_crash.txt (crashlog.cpp)
 	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); i++) Sleep(100);
 	g_game = GetModule("WHGame.dll");
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
