@@ -219,6 +219,10 @@ void Terrainfast_Frame() {   // main thread, every frame (fastload_main.cpp Tick
 	if (g_next == g_list.size()) { g_aState = Ahead::Done; g_aEnd = Now(); AheadSummary("all asked"); }
 }
 
+bool Terrainfast_MenuPreloadDone() {
+	return !g_base || !g_ahead.load(std::memory_order_relaxed) || g_loadSeen || g_aState == Ahead::Done;
+}
+
 void Terrainfast_OnLoaded() {
 	if (!g_base) return;
 	if (g_rec.size() >= 100 && !g_recLevel.empty()) {

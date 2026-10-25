@@ -41,6 +41,7 @@
 #include "paklock.h"
 #include "dbahead.h"
 #include "samelevel.h"
+#include "readymenu.h"
 #include "crashlog.h"
 
 namespace {
@@ -87,6 +88,7 @@ void Tick() {
 	if (s >= 1) { if (!g_loading) { g_loading = true; g_firedThisLoad = false; } }
 	else if (s == 0 && g_loading) { g_loading = false; GameplayStarted("level state 0"); }
 	Terrainfast_Frame();   // the terrain meshes asked for at the menu (terrainfast.cpp)
+	Readymenu_Frame(s);    // the newest save loaded at the menu, then the pause menu (readymenu.cpp)
 	Applyprof_SetMainThread(GetCurrentThreadId());   // applyprof counts the main thread apart
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
@@ -179,6 +181,7 @@ DWORD WINAPI Init(LPVOID) {
 	Paklock_Install(g_game.base, g_self);   // CryPak reads outside the open-files lock, mode file (paklock.cpp)
 	Dbahead_Install(g_game.base, g_self);   // SmartObjectAnimations in the level-start database job (dbahead.cpp)
 	Samelevel_Install(g_game.base);   // save loads onto the loaded level: logged, `samelevel load` replays (samelevel.cpp)
+	Readymenu_Install(g_game.base, g_self);   // the newest save loaded by itself at the menu, off by default (readymenu.cpp)
 	Pakahead_Install(g_game.base, g_self);   // records which pak entries the load reads, in order (pakahead.cpp)
 	Fastzip_Install(g_game.base, g_self);   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	Streamio_Install(g_game.base, g_self);  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
@@ -219,6 +222,7 @@ extern "C" __declspec(dllexport) int Fastload_Command(const char* line) {
 	else if (!strcmp(cmd, "streamahead")) Streamahead_Command(rest);
 	else if (!strcmp(cmd, "terrainfast")) Terrainfast_Command(rest);
 	else if (!strcmp(cmd, "samelevel")) Samelevel_Command(rest);
+	else if (!strcmp(cmd, "readymenu")) Readymenu_Command(rest);
 	else return 0;
 	return 1;
 }

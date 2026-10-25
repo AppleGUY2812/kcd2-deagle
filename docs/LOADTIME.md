@@ -128,20 +128,17 @@ Measured 2026-10-24 (boots 59-61):
   work ends: the load starts before the menu work, so every menu preload is lost (load 29.3 s, gate 8.4). Dropped as is.
 - wh_sys_ForceMainMenu ("main menu over a +map level"): no reader found in the release build; the main menu over a loaded
   level is not a game feature to rely on. The pause menu is.
-Route to 10 s ("ready at the menu", needs the user's OK: the game starts the load by itself): once the menu work is done and
-the user hasn't started anything, the plugin starts the newest save's normal load and ends it in the pause menu; Resume =
-control at once; another save on the same level = the same-level path (~6 s); Exit to main menu = the level unloaded, as
-now. Launch -> ready stays ~48 s, so shaving the steps still counts.
-The game's pieces for it (static RE, 2026-10-24, not built):
-- "Loading last saved game..." FUN_182ba7c10(C_UISaveLoad): the newest save of user saveMgr+0x188 (FUN_180f685a4 ->
-  FUN_1819c0b1c), then FUN_182ba7ca8 queues FUN_1825bd9ac. The Continue lambda FUN_181f90aa0 (busy flag obj+0x122) and the
-  start-up check FUN_180da1d54 (wh_sys_AutoLoadLastSave = C_UISaveLoad+0x8c) both call it: no save id needed.
-- FUN_180da1d54(C_UISaveLoad) runs once at start-up: a hook there gives the pointer. Without the auto-load it shows the
-  main menu with (*(ui+0x120)+0x58)->vt[1](1).
-- The pause menu: action "open_pause_menu" (FUN_180612a18, bound to C_UIMenu by its init FUN_18061377c) -> FUN_181f90330:
-  (C_UIMenu+0x58)->vt[1](3); ui+0x120 is the same C_UIMenu (same +0x58 controller).
-Open: the trigger (menu work done, RAM >= 1.5 GB, the user not in a submenu: game not foreground or idle >= 10 s), and
-whether vt[1](3) at gameplay start pauses before the first frame of play.
+Route to 10 s, "ready at the menu" (readymenu.cpp, built 2026-10-24, OFF by default until the user says yes; the game starts
+the load by itself): once the menu work is done (save scan, quest build, animations, terrain meshes asked) and no keyboard or
+mouse input for 5 s, the plugin calls the game's "Loading last saved game..." FUN_182ba7c10(C_UISaveLoad) (what Continue and
+wh_sys_AutoLoadLastSave call; the pointer from a hook on its start-up method FUN_180da1d54, which runs ~20 s after the
+plugin), skipped if a load was started any other way or the menu's busy byte C_UISaveLoad+0x72 is set; at gameplay start
+the pause menu opens ((*(C_UISaveLoad+0x120)+0x58)->vt[1](3), the "open_pause_menu" call; C_UIMenu = C_UISaveLoad-0xb0).
+Boot 76: menu work done 30.7 s after the plugin, load 31.7 -> 50.5 s, pause menu at gameplay start, Resume (Esc) = control
+with no frame over 250 ms. Plugin start -> control 54.3 s vs 74.8-76.0 s in the Continue boots 74-75 (their click comes
+~15 s after the menu work). The load itself took 18.4 s (boot 75: 16.3 s): it starts 1 s after the menu work, with 1.8 GB
+RAM free (boot 75: 2.8 GB). Another save on the same level from the pause menu = the same-level path (~6 s). Open: the
+5 s idle rule is system-wide (GetLastInputInfo), so a user idle inside a menu page (Settings) for 5 s gets the load too.
 Split: kcd2-deagle-5a the level step / route A-B; kcd2-deagle-66 apply (4.7: souls 1.2 incl. Storm 0.78, XGenAI 0.8,
 profiles + concepts 0.6, database XML 0.5, CryEngine data 0.35), gate 3.4, state 4.
 

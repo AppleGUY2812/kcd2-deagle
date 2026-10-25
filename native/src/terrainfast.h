@@ -27,6 +27,7 @@
 // level loads it itself. Only global meshes: 75 % of Trosecko's 14,153 live in level paks mounted after Continue.
 // "terrainfast: menu preload ..." lines say how many were asked and finished at the menu, and when the load came.
 void Terrainfast_Frame();   // main thread, every frame (fastload_main.cpp)
+bool Terrainfast_MenuPreloadDone();   // the menu preload has asked for all its meshes (or has nothing to do): readymenu
 void Terrainfast_Install(uintptr_t gameBase, void* self);   // after MH_Initialize
 void Terrainfast_OnLoaded();                // gameplay started (fastload_main.cpp): the load's summary line
 void Terrainfast_Command(const char* args);   // "terrainfast [0|1|2] [ms] [ahead 0|1]"
