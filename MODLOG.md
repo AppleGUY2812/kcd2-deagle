@@ -955,3 +955,15 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   1.9-2.0 s normally. Boot 110, with the start-up GPU adapter query answered from its first run (gpumemo, ebd0bf6): 28.4 s
   and a 54.7 s load; boot 111, same build with gpumemo off: 1.95 s. Why is open (the NVIDIA DXCache files are rewritten by
   every run, no new cache key). Check that line first when a load is suddenly ~30 s slower.
+- The PSO precache, read for applyfast 3c (WHGame 1.5.6): FUN_181dfbac0 is the job lambda (if !FUN_180babe74():
+  FUN_180babff8(&mgr DAT_1852ba440, mode), then FUN_180bab8e0(mgr) for compute). FUN_180babff8's mode 2 = NonBlocking
+  (15,989 PSOs at LoadLevel's end), the load's start runs a Blocking one too (91 PSOs, 0.02 s). Its waits on the render
+  thread object (*(gRenDev+0xf8)): FUN_181e12810 Sleep(1), FUN_181e12860 / FUN_181e127a0 JobManager waits that drop and
+  re-take the RT lock (rt+0x20, re-taken via FUN_180860c58(rt+0x18)) when a loading screen is up (rt+0x140 != 0);
+  rt+0xf4 = the loading thread id, rt+0xf0 the render thread's. FUN_1807e9088(sm, out, name, flags, a5, a6) is the
+  shader lookup: out = {CShader*, mask, u8 new@0x10}; FUN_181390424 parses (sh+0x94 & 0x100 = parsed). gRenDev+0x2ec0 is
+  set while a precache runs. The whole precache runs fine on a plugin thread (boot 118: 15,852 PSOs, 2.06 s).
+- Main's start-up text step (text_ui_*.xml into the string table, FUN_18071aec0 / FUN_180a5a084, Huffman FUN_180f0d414,
+  ~1.3-1.55 s right after the facials) waits on the Windows heap lock (RtlEnterCriticalSection under RtlAllocateHeap /
+  RtlFreeHeap) when other threads allocate a lot: xmlahead's parse workers made Main's text step 0.27 s longer (boot 114).
+  The game's allocator (CryMalloc FUN_1804f7610) takes big blocks from the NT heap; small blocks under SRW DAT_185570230.

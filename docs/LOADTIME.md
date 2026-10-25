@@ -12,8 +12,8 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
   so ~19.5-20.9 s from the click. Boot 42: terrain 3.0, level done 10.3, state 4 0.2, apply 4.8 (one 4.75 s main frame,
   kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
   One boot: +-1 s noise.
-- **Auto-load boots now (boot 108, 2026-10-25): launch -> in control 38.1 s** = 2.5 s before the plugin + 14.1 s start-up
-  to the menu + 0.5 s + 20.6 s load (level step 14.3 s). Boot 102: 45.3 s.
+- **Auto-load boots now (boot 118, 2026-10-25): launch -> in control 35.7 s** = menu ready 15.9 s after the process
+  start + 0.5 s + 19.3 s load (level step 12.9 s). Boot 108: 38.1 s; boot 102: 45.3 s.
 - Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
   (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
   (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
@@ -73,18 +73,18 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
 - applyfast facial DBA sort (2195bf8): lists arrive nearly sorted (10 breaks in 40k), 80-95 ms; gain not measurable.
 - applyfast quests first (02c973b, on): quest job starts 3.1-3.3 s earlier; Main's wait 3.3 -> 1.4-1.9 s; state 4
   ~1 s earlier. Quests not yet checked in game.
-- applyfast 3b, PSO precache during the load (e21c93b, default, fastload_psoahead.txt 2): handed to the RLT before
-  Main's quest wait; state 4 2.4 -> 0.4-0.5 s (boots 29-30). Main now waits 1.7-2.2 s for the RLT's texture precache.
-  Mode 1 (at the menu, on Main) froze the menu ~6.2 s: rejected. Since boot 31 it never fires in time: the quest job
-  ends earlier (quests first), the RLT is still on its texture precache then, and later points come after the game's
-  own sync. Next: PSO creation on worker threads (re_pso_parallel.md).
+- applyfast 3c, PSO precache on our thread (4fa48a7, default, fastload_psoahead.txt 3): the game's NonBlocking precache
+  (FUN_181dfbac0) runs on a plugin thread from the quest-wait point, ~4 s before LoadLevel's end; a gate on
+  FUN_180babff8 makes the game's own call wait for it (boot 118: it found it done and added 137 PSOs in 0.15 s).
+  Boot 118: 15,852 PSOs in 2.06 s, 0 parse-lock waits; Main's sync wait at LoadLevel's end 3.0 -> 1.5 s, level step
+  14.2 -> 12.9 s, control 37.5 -> 35.7 s. The rest of that wait: the RLT reading + inflating textures (real work).
+  Mode 2 (3b, hand-over to the RLT) never fired in time since boot 31; mode 1 (menu, on Main) froze the menu ~6.2 s.
 - applyfast 5, shaders parsed at the main menu (6a313dd, fastload_menushaders.txt 1): boots 34-36 parsed 457 at the menu,
   20 in the load: state 4 2.7 -> 0.2 s, but no gain on the total: state 4 + gate is 11.0-12.3 s in boots 32-37 and
   state-4 start -> control 17.3-18.7 s in every boot; textures are the long pole and take the time back. U2 (user clicked ~7 s after the menu) parsed only 110.
   re_pso_parallel.md: PSO creation is already on 9 job workers + 4 driver threads; the serial part is the RLT's shader
-  parse (~17.6 ms each) and, under low RAM, its texture precache backlog (U2: 2.28 GB unpacked in state 4). Next if
-  needed: parse on our own thread from launch, not paced by menu frames (R1), and the PSO job graph started from a
-  plugin thread before the quest wait (R2, 2.1-2.7 s per boot of PSO jobs).
+  parse (~17.6 ms each) and, under low RAM, its texture precache backlog (U2: 2.28 GB unpacked in state 4). R2 (the PSO
+  job graph from a plugin thread) is 3c above; R1 (parse from launch on our thread) not built.
 - questmenu (a918236, e6a864a; fastload_questmenu.txt 1 since boot 35): after event 0x24 the game's own job body builds
   the graph on a plugin thread (11.5 s, free RAM 2710 -> 2030 MB) and the load keeps it (mgr+0x378 = 0, body skipped).
   Concept messages at the menu during the build: 0x1, 0xc, 0x24; before the load: 0x38, 0x3a (none touch projects).
@@ -197,14 +197,14 @@ SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
    game-profile source is empty (0 vs 879), all 29,007 ProfileIds unknown. Table readers run only after the load.
 6. LoadEntities' 0.47 s spin: DestroyPhysicalEntity FUN_180846e10 write-locks m_lockStep (world+0x5fdc) through
    FUN_18050b638; waits come in 15-50 ms runs. The physics thread was not in TimeStep then (outside sampler); holder unknown.
-7. LoadLevel's end -> state 5 (3.0-3.85 s, boots 88-94) = Main in SyncMainWithRender's timed wait (FUN_1809a6308, rip
+7. LoadLevel's end -> state 5 (3.0-3.85 s, boots 88-94; 1.5 s since 3c, boot 118) = Main in SyncMainWithRender's timed wait (FUN_1809a6308, rip
    WHGame+1c1edc0): CCryAction::MapCmd FUN_180b8f748 sends system event 0x100d, the renderer's handler FUN_1807a26ac
    FlushAndWaits (FUN_1807a2138) for the render loading thread, which runs PostLoadLevel's PSO precache then: 56 shader
    parses + 15,989 graphics PSOs in 2.39 s (kcd.log "Precached ... NonBlocking"; already JobManager jobs,
    "PrecachePSOsJob_ShadersActivationPhase", r_PipelineStatePrecacheMode 2 = jobbed; the NVIDIA DXCache is warm). The
-   early hand-over (applyfast 3b) failed in every boot 88-94: the loading thread is busy at the quest wait and at
-   PostLoadLevel even when only 20 shaders are left to it (boot 93). What else keeps it busy: unmeasured, needs its
-   samples (hitch start-up window since 040a78d).
+   early hand-over (applyfast 3b) failed in every boot 88-94: the loading thread is busy with its texture precache at
+   the quest wait. 3c runs the precache on our thread instead; what is left (boot 118, 1.5 s) is that texture batch:
+   ReadFile + fastzip's libdeflate on the RLT, then a CV wait.
 8. The menu's first frame (menu ready -> load start, 4.2-4.8 s) is NVIDIA NGX start-up on the render thread. Boot 96
    (render-thread samples): t 17.10-21.38 s after the plugin all in the DLSS plugin's FUN_181e0b7c0 -> FUN_181dffa40
    (NVSDK_NGX_D3D12_Init + GetCapabilityParameters: signature checks, driver-profile re-reads), Main in
