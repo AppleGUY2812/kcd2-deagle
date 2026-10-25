@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <string_view>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -67,12 +68,22 @@ SRWLOCK g_lock = SRWLOCK_INIT;
 std::atomic<bool> g_memoOn{ true };
 std::atomic<long long> g_calls{ 0 }, g_visited{ 0 }, g_skipped{ 0 }, g_derived{ 0 }, g_checks{ 0 }, g_ticks{ 0 };
 std::atomic<long long> g_mismatch{ 0 };
-// Template instances' names (the second loop): remembered with the names' generation, which goes up whenever an update
-// in here really changes a name, and the type list's size; same generation and size = no name the template's name is
-// made from has changed through here, and no type came in.
-struct TmplMemo { long long gen; size_t listSize; std::string result; };
-std::unordered_map<void*, TmplMemo> g_tmemo;
-long long g_gen = 0;   // under the game's own registration (one thread at a time; the registry isn't locked either)
+// Template instances' names (the second loop). A template's name is made from its arguments' names, so it can only
+// change in a naming call that renames a type whose old name is inside it. Each call collects the old names of what
+// it renames (the custom-named type, the derived names that change, the templates changed earlier in the loop); a
+// template whose name is still the one we last computed and holds none of them is skipped. Boot 128's first try (a
+// global "a name changed" generation) skipped only 9 %: some name changes in nearly every call.
+std::unordered_map<void*, std::string> g_tmemo;   // under the game's own registration (one thread at a time)
+std::vector<std::string> g_old;   // this call's renamed types' old names
+// A template renamed in the loop may sit inside one earlier in the list, which this call has passed: the game fixes
+// that one in its next call, so its old name is looked for in the next call too.
+std::vector<std::string> g_carry;
+inline void NoteOld(const GStr& s) { if (s.size) g_old.emplace_back(s.data(), s.size); }
+bool HoldsOld(const GStr& name) {
+	const std::string_view v(name.data(), name.size);
+	for (const std::string& o : g_old) if (v.find(o) != std::string_view::npos) return true;
+	return false;
+}
 std::atomic<long long> g_tvisited{ 0 }, g_tskipped{ 0 }, g_tchecks{ 0 }, g_t1{ 0 }, g_t2{ 0 };
 inline bool Check(long long n) { return g_mode == 2 || n < 1000 || (n & 255) == 0; }
 inline bool Equal(const GStr& a, const GStr& b) { return a.size == b.size && !memcmp(a.data(), b.data(), a.size); }
@@ -112,7 +123,9 @@ void __fastcall HkCustom(void* reg, void** t, void* sv) {
 		const char* const* v = (const char* const*)sv;
 		GStr s; Empty(s);
 		g_make(&s, v[0], v[0] + (size_t)v[1]);
-		if (!Equal(s, NameOf(*t))) g_gen++;
+		g_old.swap(g_carry);
+		g_carry.clear();
+		if (!Equal(s, NameOf(*t))) NoteOld(NameOf(*t));
 		g_update(reg, &s, t);   // frees s
 	}
 	void** b = *(void***)((char*)reg + 0x28);
@@ -156,7 +169,7 @@ void __fastcall HkCustom(void* reg, void** t, void* sv) {
 			g_derive(&d, &list[i]);
 			GStr c; Empty(c);
 			g_assign(&c, d.data(), d.size);
-			if (!Equal(c, NameOf(tt))) g_gen++;
+			if (!Equal(c, NameOf(tt))) NoteOld(NameOf(tt));
 			g_update(reg, &c, &list[i]);   // frees c
 			if (plain && g_memoOn.load(std::memory_order_relaxed)) Store(tt, d);
 			g_free(&d);
@@ -170,27 +183,21 @@ void __fastcall HkCustom(void* reg, void** t, void* sv) {
 		if (tt == *t || !(*(uint32_t*)((char*)tt + kFlags) & 0x400)) continue;
 		tvisited++;
 		auto it = memoOn ? g_tmemo.find(tt) : g_tmemo.end();
-		const bool hit = it != g_tmemo.end() && it->second.gen == g_gen && it->second.listSize == list.size() &&
-		                 Same(NameOf(tt), it->second.result);
+		const bool hit = it != g_tmemo.end() && Same(NameOf(tt), it->second) && !HoldsOld(NameOf(tt));
 		const long long n = g_tskipped.load(std::memory_order_relaxed) + tskipped;
 		if (hit && !Check(n)) { tskipped++; continue; }
 		GStr s; Empty(s);
 		g_tmpl(&s, tt);
 		if (hit) {   // checked: the game's answer must be the remembered one
 			g_tchecks++;
-			if (!Same(s, it->second.result) && !g_mismatch++) {
-				snprintf(g_bad, sizeof g_bad, "template %p: remembered '%.50s', the game's '%.50s'", tt, it->second.result.c_str(), s.data());
+			if (!Same(s, it->second) && !g_mismatch++) {
+				snprintf(g_bad, sizeof g_bad, "template %p: remembered '%.50s', the game's '%.50s'", tt, it->second.c_str(), s.data());
 				g_memoOn = false;
 			}
 		}
 		const bool changed = !Equal(s, NameOf(tt));
-		if (changed) g_gen++;
-		if (g_memoOn.load(std::memory_order_relaxed)) {
-			TmplMemo& tm = g_tmemo[tt];
-			tm.gen = g_gen;   // after this one's own change: its name now is s
-			tm.listSize = list.size();
-			tm.result.assign(s.data(), s.size);
-		}
+		if (changed && NameOf(tt).size) { NoteOld(NameOf(tt)); g_carry.push_back(g_old.back()); }   // later in the list, or the next call
+		if (g_memoOn.load(std::memory_order_relaxed)) g_tmemo[tt].assign(s.data(), s.size);
 		if (hit && !changed) tskipped++;   // a checked skip that matched counts as one
 		g_update(reg, &s, &list[i]);   // the game's inline compare + update, then frees s
 	}
