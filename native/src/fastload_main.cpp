@@ -43,6 +43,7 @@
 #include "samelevel.h"
 #include "readymenu.h"
 #include "startfast.h"
+#include "gpumemo.h"
 #include "dbprof.h"
 #include "tblcache.h"
 #include "early.h"
@@ -219,6 +220,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Memsite_Install(g_self));   // who holds the memory, a diagnostic, off by default (memsite.cpp)
 	STEP(Cvars_Install(g_game.base, g_self));      // load-time game settings at registration (cvars.cpp)
 	STEP(Startfast_Install(g_game.base, g_self));   // the controller list asked for without waiting (startfast.cpp)
+	STEP(Gpumemo_Install(g_game.base, g_game.size, g_self));   // the GPU adapter query asked once, not 3 times (gpumemo.cpp)
 	STEP(Ngxearly_Install(g_game.base, g_self));   // NVIDIA NGX (DLSS) started once the device exists, off the render thread (ngxearly.cpp)
 	STEP(ApplyHooks("early"));   // the settings registered early and the input init come soon: on now
 	STEP(Loadwatch_Install(g_game.base));   // exact terrain-step timing (loadwatch.cpp)
