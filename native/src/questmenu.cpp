@@ -81,7 +81,9 @@ bool ReadStrVec(uintptr_t vec, const char** out, int maxN, int* n) {
 }
 bool ReadState(int* cv20, int* cv24, int dg[4]) {
 	__try {
+		if (!Module()) return false;   // not made yet at start-up (a caught fault the crash log recorded every launch)
 		const uintptr_t c = *(uintptr_t*)(Module() + 0x28);
+		if (!c) return false;
 		*cv20 = *(int*)(c + 0x20);
 		*cv24 = *(int*)(c + 0x24);
 		const uintptr_t root = *(uintptr_t*)(g_base + kRvaRoot);

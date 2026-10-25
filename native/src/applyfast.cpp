@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 
 namespace {
 
@@ -171,8 +172,9 @@ const unsigned char kSyncBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x2
 using SyncFn = uint64_t(__fastcall*)(void* rt, uint64_t a2, uint64_t a3, uint64_t a4);
 SyncFn g_sync = nullptr;
 constexpr unsigned kPsoQuietMs = 1500;   // the menu: no XML load for this long
-// fastload_psoahead.txt: 2 during the load (default), 1 at the main menu (the menu freezes ~6 s), 0 off
-int g_psoMode = 2;
+// fastload_psoahead.txt: 3 on a plugin thread from the quest-wait point (default, 3c), 2 handed to the render loading
+// thread during the load (3b), 1 at the main menu (the menu freezes ~6 s), 0 off
+int g_psoMode = 3;
 std::atomic<int> g_psoState{0};          // 0 not yet, 1 queued, -1 not possible
 std::atomic<long long> s_psoFrames{0};
 std::atomic<long long> s_psoQueuedAt{0};
@@ -295,9 +297,155 @@ uint64_t __fastcall HkPostLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t
 		    "the game (%.2f s pending)", (Now() - g_psoPendingAt) * 1.0 / g_freq);
 	return r;
 }
+
+// ---- 3c. PSO precache on a plugin thread (fastload_psoahead.txt 3, the default; re_pso_parallel.md R2, 2026-10-25)
+// 3b's hand-over found the render loading thread still busy (its texture precache) in every boot since 88, so the game ran
+// the precache itself at LoadLevel's end: boot 113, Main's FlushAndWait there 3.0 s = that thread's shader parses ~1.0 s
+// + its wait for the creation jobs ~1.7 s ("Precached 15989 Graphics PSOs" 1.9-2.0 s). Now a plugin thread runs the
+// game's own precache, FUN_181dfbac0 (graphics FUN_180babff8(mgr, 2), then compute FUN_180bab8e0), from the quest-wait
+// point; the PSO creation stays on the game's job workers. What makes it safe off the loading thread:
+// - the code's three render-thread helpers (FUN_181e12810 Sleep(1); FUN_181e12860 / FUN_181e127a0 job waits) release and
+//   retake the loading thread's lock (m_pRT+0x20) while a loading screen is up (m_pRT+0x140 != 0): on our thread they get
+//   a zeroed stand-in render-thread object, so they only wait (the Sleep(1) between shaders is skipped);
+// - the loading thread's own call (PostLoadLevel's command, FUN_180babff8) waits for ours at its start, releasing its lock
+//   the way the game's helper there does, then finds every PSO made ("Precached 0 ...", 0.12-0.15 s in boots 22-31). If
+//   the game's own call comes first, ours never starts;
+// - shader parses (FUN_181390424) test their "parsed" flag (+0x94 & 0x100) without a lock: one lock now covers every
+//   parse on every thread, so a second parse of a shader waits, then returns on the flag;
+// - our precache makes its new shader instances first and parses them after (FUN_180bac67c). Meanwhile the game's
+//   lookup (FUN_1807e9088, 3 callers) would answer "exists" for one of them and queue no parse; for those it answers
+//   "new", so the caller queues a parse (mfForName FUN_1807e8fe4 only adds a reference and queues it).
+constexpr uintptr_t kRvaPsoLambda = 0x1dfbac0, kRvaPsoGate = 0xbabff8, kRvaRtSleep = 0x1e12810, kRvaRtWaitAux = 0x1e12860,
+                    kRvaRtWaitJobs = 0x1e127a0, kRvaShaderCore = 0x7e9088, kRvaRtLock = 0x860c58;
+const unsigned char kPsoLambdaBytes[] = { 0x48,0x83,0xec,0x28,0xe8,0xab,0x03,0xdb,0xfe,0x84,0xc0,0x75,0x21,0xba,0x02,0x00 };
+const unsigned char kPsoGateBytes[] = { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x10,0x49,0x89,0x6b,0x18,0x56,0x57,0x41,0x56,0x48 };
+const unsigned char kRtSleepBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x8b,0x81,0x40,0x01,0x00,0x00,0x48,0x8b,0xd9,0x90 };
+const unsigned char kRtWaitBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x57,0x48,0x83,0xec,0x20,0x8b };
+const unsigned char kShaderCoreBytes[] = { 0x48,0x89,0x5c,0x24,0x20,0x55,0x56,0x57,0x41,0x54,0x41,0x55,0x41,0x56,0x41,0x57 };
+const unsigned char kRtLockBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xff,0x15,0xa9,0x28,0x1a,0x03,0x48 };
+constexpr DWORD kGateCapMs = 30000;          // safety only: our precache took ~2 s
+thread_local bool t_psoOurs = false;
+alignas(16) unsigned char g_rtStandIn[0x200] = {};   // +0x140 == 0: no loading screen, no lock juggling
+std::atomic<int> g_coord{0};                 // 0 not started, 1 running, 2 done, -1 the game's own came first / off
+HANDLE g_coordDone = nullptr;
+long long g_coordStart = 0;
+SRWLOCK g_parseLock = SRWLOCK_INIT;
+bool g_parseLockOn = false;
+std::mutex g_unparsedMu;
+std::unordered_set<uintptr_t> g_unparsed;    // shaders our precache made and has not parsed yet
+std::atomic<long long> s_barrier{0}, s_parseLockWaits{0}, s_parseLockWaitTicks{0}, s_ourParses{0}, s_gateWaits{0};
+using RtFn1 = void(__fastcall*)(uintptr_t);
+using RtFn2 = void(__fastcall*)(uintptr_t, uintptr_t);
+RtFn1 g_rtSleep = nullptr;
+RtFn2 g_rtWaitAux = nullptr, g_rtWaitJobs = nullptr;
+void __fastcall HkRtSleep(uintptr_t rt) { if (!t_psoOurs) g_rtSleep(rt); }
+void __fastcall HkRtWaitAux(uintptr_t rt, uintptr_t p) { g_rtWaitAux(t_psoOurs ? (uintptr_t)g_rtStandIn : rt, p); }
+void __fastcall HkRtWaitJobs(uintptr_t rt, uintptr_t p) { g_rtWaitJobs(t_psoOurs ? (uintptr_t)g_rtStandIn : rt, p); }
+
+using GateFn = void(__fastcall*)(uintptr_t, uint32_t);
+GateFn g_psoGate = nullptr;
+void __fastcall HkPsoGate(uintptr_t mgr, uint32_t mode) {
+	// mode 2 = the NonBlocking precache (ours, and the loading thread's at LoadLevel's end). The load's start also runs a
+	// Blocking one here (91 PSOs, 0.02 s; boot 117: it switched ours off): only a mode-2 call before ours keeps ours off.
+	int z = 0;
+	const bool first = mode == 2 && !t_psoOurs && g_coord.compare_exchange_strong(z, -1);
+	if (!first && !t_psoOurs && (z = g_coord.load()) == 1) {   // ours is running: wait for it
+		uintptr_t rt = 0;
+		bool release = false;
+		__try {
+			const uintptr_t rd = *(uintptr_t*)(g_base + kRvaRenDev);
+			rt = rd ? *(uintptr_t*)(rd + 0xf8) : 0;
+			const DWORD me = GetCurrentThreadId();   // the loading or render thread holds that lock while a loading
+			release = rt && *(volatile int*)(rt + 0x140) != 0 &&   // screen is up (as FUN_181e12860 assumes here)
+			          (me == *(DWORD*)(rt + 0xf4) || me == *(DWORD*)(rt + 0xf0));
+		} __except (EXCEPTION_EXECUTE_HANDLER) { release = false; }
+		const long long t0 = Now();
+		if (release) ReleaseSRWLockExclusive((PSRWLOCK)(rt + 0x20));
+		const DWORD w = WaitForSingleObject(g_coordDone, kGateCapMs);
+		if (release) reinterpret_cast<void(__fastcall*)(uintptr_t)>(g_base + kRvaRtLock)(rt + 0x18);
+		s_gateWaits++;
+		Log("applyfast: PSO precache on our thread: the game's own (thread %lu) waited %.0f ms for it%s", GetCurrentThreadId(),
+		    (Now() - t0) * 1000.0 / g_freq, w == WAIT_OBJECT_0 ? "" : " - GAVE UP after 30 s, both run");
+	}
+	g_psoGate(mgr, mode);
+}
+
+void UnparsedAdd(uintptr_t sh) { std::lock_guard<std::mutex> lk(g_unparsedMu); g_unparsed.insert(sh); }
+bool UnparsedHas(uintptr_t sh) { std::lock_guard<std::mutex> lk(g_unparsedMu); return g_unparsed.count(sh) != 0; }
+size_t UnparsedClear() { std::lock_guard<std::mutex> lk(g_unparsedMu); const size_t n = g_unparsed.size(); g_unparsed.clear(); return n; }
+bool RunPsoLambda() {
+	__try { reinterpret_cast<void(__fastcall*)()>(g_base + kRvaPsoLambda)(); return true; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+using CoreFn = uint64_t(__fastcall*)(uint64_t, uint64_t*, const char*, uint32_t, uint64_t, uint64_t*);
+CoreFn g_shaderCore = nullptr;
+uint64_t __fastcall HkShaderCore(uint64_t sm, uint64_t* out, const char* name, uint32_t flags, uint64_t a5, uint64_t* a6) {
+	const uint64_t r = g_shaderCore(sm, out, name, flags, a5, a6);
+	if (g_coord.load(std::memory_order_relaxed) != 1 || !out) return r;
+	__try {
+		const uintptr_t sh = (uintptr_t)out[0];
+		uint8_t* isNew = (uint8_t*)out + 0x10;
+		if (!sh) return r;
+		if (t_psoOurs) {
+			if (*isNew) UnparsedAdd(sh);
+		} else if (!*isNew && !(*(volatile uint32_t*)(sh + 0x94) & 0x100) && UnparsedHas(sh)) {
+			*isNew = 1;
+			s_barrier++;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	return r;
+}
+
+DWORD WINAPI PsoCoordinator(LPVOID) {
+	{   // hitch's sampler takes threads named "JobWorker_*"
+		using SetDescFn = HRESULT(WINAPI*)(HANDLE, PCWSTR);
+		static const SetDescFn f = (SetDescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadDescription");
+		if (f) f(GetCurrentThread(), L"JobWorker_fastload psoahead");
+	}
+	t_psoOurs = true;
+	const bool ok = RunPsoLambda();
+	t_psoOurs = false;
+	const size_t left = UnparsedClear();
+	g_coord = 2;
+	SetEvent(g_coordDone);
+	Log("applyfast: PSO precache on our thread: %s in %.2f s (%lld shader parses here, %lld parse-lock waits %.0f ms on all "
+	    "threads, %lld lookups answered \"new\", %zu made but not parsed); kcd.log has its \"Precached N Graphics PSOs\" line",
+	    ok ? "done" : "EXCEPTION", (Now() - g_coordStart) * 1.0 / g_freq, s_ourParses.load(), s_parseLockWaits.load(),
+	    s_parseLockWaitTicks.load() * 1000.0 / g_freq, s_barrier.load(), left);
+	return 0;
+}
+
+void PsoCoordinatorStart() {   // main thread, the quest-wait point (every load; ours runs once per game start)
+	static bool told = false;
+	if (const int c = g_coord.load()) {
+		if (!told && c < 0) Log("applyfast: PSO precache on our thread: not started (the game's own NonBlocking precache came first)");
+		told = true;
+		return;
+	}
+	__try {
+		const uintptr_t rd = *(uintptr_t*)(g_base + kRvaRenDev);
+		if (!rd || *(volatile uint8_t*)(rd + 0x2ec0)) {   // a precache is running (the game's)
+			int z = 0;
+			g_coord.compare_exchange_strong(z, -1);
+			Log("applyfast: PSO precache on our thread: not started (a precache is already running), left to the game");
+			return;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+	g_coordStart = Now();
+	int z = 0;
+	if (!g_coord.compare_exchange_strong(z, 1)) {
+		Log("applyfast: PSO precache on our thread: not started (the game's own came first), left to the game");
+		return;
+	}
+	HANDLE h = CreateThread(nullptr, 0, PsoCoordinator, nullptr, 0, nullptr);
+	if (!h) { g_coord = -1; SetEvent(g_coordDone); Log("applyfast: PSO precache on our thread: thread not created"); return; }
+	CloseHandle(h);
+	Log("applyfast: PSO precache on our thread: started at the quest-wait point (thread named \"JobWorker_fastload psoahead\")");
+}
 }  // namespace
 
 void Applyfast_BeforeQuestWait() {   // main thread, from loadwatch's hook of FUN_1811414d8 (msg 0x18)
+	if (g_psoMode == 3 && g_base && g_coordDone) { PsoCoordinatorStart(); return; }
 	if (g_psoMode != 2 || g_psoState.load() != 0 || !g_base) return;
 	g_psoState = -1;   // once per game start: the PSOs stay made
 	__try {
@@ -481,10 +629,22 @@ uint64_t* __fastcall HkKeyOne(uint64_t sm, uint64_t* out, const char* name, uint
 }
 Fn4 g_parse = nullptr;
 std::atomic<long long> s_parseN[2], s_parseTicks[2], s_parseMax[2];   // [0] before the level load, [1] after
-uint64_t __fastcall HkParse(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {   // RT_ParseShader, any thread: timing only
+// RT_ParseShader (sm, shader, mask, flags), any thread: timing; with 3c also one lock for every parse (see 3c)
+uint64_t __fastcall HkParse(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
+	if (g_parseLockOn && !TryAcquireSRWLockExclusive(&g_parseLock)) {
+		const long long w = Now();
+		AcquireSRWLockExclusive(&g_parseLock);
+		s_parseLockWaits++;
+		s_parseLockWaitTicks += Now() - w;
+	}
 	const long long t0 = Now();
 	const uint64_t r = g_parse(a, b, c, d);
 	const long long dt = Now() - t0;
+	if (g_parseLockOn) {
+		ReleaseSRWLockExclusive(&g_parseLock);
+		if (t_psoOurs) s_ourParses++;
+		if (g_coord.load(std::memory_order_relaxed) == 1) { std::lock_guard<std::mutex> lk(g_unparsedMu); g_unparsed.erase((uintptr_t)b); }
+	}
 	const int i = Xmlahead_LevelSeen() ? 1 : 0;
 	s_parseN[i]++;
 	s_parseTicks[i] += dt;
@@ -610,8 +770,8 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	const bool c = !memcmp((void*)(base + kRvaFindChrparams), kFindCallBytes, sizeof kFindCallBytes) &&
 	               Hook(base, kRvaFind, kFindBytes, sizeof kFindBytes, (void*)&HkFind, (void**)&g_find, "facial DBA list");
 	if (FILE* fp = fopen((dir + "fastload_psoahead.txt").c_str(), "r")) {
-		int m = 2;
-		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_psoMode = m;
+		int m = 3;
+		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 3) g_psoMode = m;
 		fclose(fp);
 	}
 	if (FILE* fp = fopen((dir + "fastload_questearly.txt").c_str(), "r")) {
@@ -636,9 +796,34 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	Questmenu_SetConceptHook(e);
 	const bool psoCode = !memcmp((void*)(base + kRvaPsoQueue), kPsoQueueBytes, sizeof kPsoQueueBytes) &&
 	                     !memcmp((void*)(base + kRvaSync), kSyncBytes, sizeof kSyncBytes);
+	bool coord = false;   // 3c: every hook or none
+	if (g_psoMode == 3 && psoCode && !memcmp((void*)(base + kRvaPsoLambda), kPsoLambdaBytes, sizeof kPsoLambdaBytes) &&
+	    !memcmp((void*)(base + kRvaRtLock), kRtLockBytes, sizeof kRtLockBytes) &&
+	    !memcmp((void*)(base + kRvaRtWaitAux), kRtWaitBytes, sizeof kRtWaitBytes) &&
+	    !memcmp((void*)(base + kRvaRtWaitJobs), kRtWaitBytes, sizeof kRtWaitBytes)) {
+		g_coordDone = CreateEventA(nullptr, TRUE, FALSE, nullptr);
+		struct H { uintptr_t rva; const unsigned char* b; size_t n; void* hk; void** orig; const char* name; } hs[] = {
+			{ kRvaParse, kParseBytes, sizeof kParseBytes, (void*)&HkParse, (void**)&g_parse, "shader parse (lock + timing)" },
+			{ kRvaRtSleep, kRtSleepBytes, sizeof kRtSleepBytes, (void*)&HkRtSleep, (void**)&g_rtSleep, "render-thread Sleep(1)" },
+			{ kRvaRtWaitAux, kRtWaitBytes, sizeof kRtWaitBytes, (void*)&HkRtWaitAux, (void**)&g_rtWaitAux, "render-thread aux wait" },
+			{ kRvaRtWaitJobs, kRtWaitBytes, sizeof kRtWaitBytes, (void*)&HkRtWaitJobs, (void**)&g_rtWaitJobs, "render-thread job wait" },
+			{ kRvaShaderCore, kShaderCoreBytes, sizeof kShaderCoreBytes, (void*)&HkShaderCore, (void**)&g_shaderCore, "shader lookup" },
+			{ kRvaPsoGate, kPsoGateBytes, sizeof kPsoGateBytes, (void*)&HkPsoGate, (void**)&g_psoGate, "PSO precache gate" },
+		};
+		int made = 0;
+		for (const H& h : hs) { if (!g_coordDone || !Hook(base, h.rva, h.b, h.n, h.hk, h.orig, h.name)) break; made++; }
+		coord = made == (int)(sizeof hs / sizeof hs[0]);
+		if (!coord) {
+			for (int i = 0; i < made; i++) MH_DisableHook((void*)(base + hs[i].rva));
+			g_parse = nullptr;   // piece 5 may hook it again below
+		}
+		g_parseLockOn = coord;
+	}
+	if (g_psoMode == 3 && !coord) g_coord = -1;
 	const bool d = g_psoMode && psoCode &&
-	               (g_psoMode == 2 || Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync"));
-	if (!d) g_psoState = -1;
+	               (g_psoMode == 2 || coord ||
+	                (g_psoMode == 1 && Hook(base, kRvaSync, kSyncBytes, sizeof kSyncBytes, (void*)&HkSync, (void**)&g_sync, "render sync")));
+	if (!d || g_psoMode == 3) g_psoState = -1;
 	const bool retry = d && g_psoMode == 2 &&   // the later hand-over point (3b); without it, only before the quest wait
 	                   Hook(base, kRvaPostLoadLevel, kPostLoadLevelBytes, sizeof kPostLoadLevelBytes, (void*)&HkPostLoadLevel,
 	                        (void**)&g_postLoadLevel, "PostLoadLevel");
@@ -656,11 +841,11 @@ void Applyfast_Install(uintptr_t base, void* self) {
 		MH_DisableHook((void*)(base + kRvaKeyOne));
 		sh = false;
 	}
-	if (sh) Hook(base, kRvaParse, kParseBytes, sizeof kParseBytes, (void*)&HkParse, (void**)&g_parse, "shader parse (timing)");
-	else g_shState = -1;
+	if (sh && !g_parse) Hook(base, kRvaParse, kParseBytes, sizeof kParseBytes, (void*)&HkParse, (void**)&g_parse, "shader parse (timing)");
+	else if (!sh) g_shState = -1;
 	Log("applyfast: mode %d (%s); map clouds vs fog of war culled by the cloud's box: %s; facial DBA list sorted: %s; "
 	    "PSO precache: %s; quests first in the level data message: %s", g_mode, g_mode == 2 ? "on + spot check" : "on", a && b ? "on" : "OFF",
-	    c ? "on" : "OFF", d ? (g_psoMode == 2 ? (retry ? "during the load (+ PostLoadLevel)" : "during the load (PostLoadLevel point OFF)") : "at the main menu") : g_psoMode ? "OFF (code differs)" : "the game's own (fastload_psoahead.txt 0)",
+	    c ? "on" : "OFF", d ? (g_psoMode == 3 ? "on a plugin thread from the quest-wait point (3c)" : g_psoMode == 2 ? (retry ? "during the load (+ PostLoadLevel)" : "during the load (PostLoadLevel point OFF)") : "at the main menu") : g_psoMode ? "OFF (code differs or a hook failed: the game's own)" : "the game's own (fastload_psoahead.txt 0)",
 	    e ? "on" : g_questsFirst ? "OFF (code differs)" : "off (fastload_questearly.txt)");
 	Log("applyfast: shaders parsed at the main menu: %s", sh ? "on (one per menu frame)" :
 	    g_menuShaders ? "OFF (code differs or hook failed)" : "off (fastload_menushaders.txt)");

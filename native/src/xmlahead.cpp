@@ -64,7 +64,11 @@ std::atomic<ULONGLONG> g_lastPak{0};
 // *\Localization\), counted on disk per language at install. Boot 95: the cap lifted only at the game's first
 // localization/ load, which is the start-up's biggest file (response_depot_wave_file.xml, 0.43 s; text_ui_dialog.xml
 // 0.51 s right after), so Main parsed both. Now it lifts once the language's paks have all mounted (the language = the
-// first such pak's name) and pak opens are quiet; a disabled mod's pak never mounts and the old trigger stays.
+// first such pak's name); a disabled mod's pak never mounts and the old triggers stay. Until boot 114 it also waited for
+// pak opens to go quiet: the audio and facial paks mount next, one every ~80 ms, so the lift came 535 ms later and Main
+// waited 328 ms for text_ui_dialog.xml (boot 113). Those paks hold .ogg / .dba files and one XML,
+// localization/dialog/response_depot_wave_file.xml (english-part3.pak; dbasync loads it on a worker): the files in
+// localization/ subfolders stay with the game (LiftCapAtLocPaks).
 std::unordered_map<std::string, long> g_locOnDisk;
 std::mutex g_locMu;
 std::string g_locLang;                    // under g_locMu
@@ -184,6 +188,20 @@ void LiftCap(const char* why) {
 	if (g_cap.exchange(SIZE_MAX) != SIZE_MAX)
 		Log("xmlahead: %s - the whole list from now (%lld served so far, game first %lld, %lld cap waits)", why,
 		    s_served.load(), s_skipped.load(), s_capWaits.load());
+}
+
+// the language's localization XML paks have all mounted (HkOpenPack): the files in localization/ subfolders come from
+// the audio paks that mount after them, so the game reads those itself
+void LiftCapAtLocPaks() {
+	if (g_cap.load() == SIZE_MAX) return;
+	long left = 0;
+	for (Item& it : g_items) {
+		if (it.path.compare(0, 13, "localization/") != 0 || it.path.find('/', 13) == std::string::npos) continue;
+		int z = 0;
+		if (it.state.compare_exchange_strong(z, 3)) left++;
+	}
+	if (left) Log("xmlahead: %ld files in localization/ subfolders left to the game (the audio paks mount after the XML paks)", left);
+	LiftCap("the localization XML paks mounted");
 }
 
 // queue 0 at the start-up: no quest boost (that is for the quest job at the menu), the cap on
@@ -308,17 +326,22 @@ void* __fastcall HkOpenPack(void* pak, const char* path, unsigned flags, void* a
 	if (r && loc != std::string::npos && xml != std::string::npos && xml + 8 == p.size()) {
 		const size_t slash = p.find_last_of('\\');
 		const std::string lang = p.substr(slash + 1, xml - slash - 1);
-		std::lock_guard<std::mutex> lk(g_locMu);
-		if (g_locLang.empty()) g_locLang = lang;
-		if (lang == g_locLang) {
-			auto f = g_locOnDisk.find(lang);
-			const long want = f == g_locOnDisk.end() ? 1 : f->second;
-			if (++g_locPaks == want) {
-				g_locMountedAt = GetTickCount64();
-				Log("xmlahead: the %ld %s localization XML paks are mounted (%.1f s after the plugin)", want, lang.c_str(),
-				    (GetTickCount64() - g_start) / 1000.0);
+		bool all = false;
+		{
+			std::lock_guard<std::mutex> lk(g_locMu);
+			if (g_locLang.empty()) g_locLang = lang;
+			if (lang == g_locLang) {
+				auto f = g_locOnDisk.find(lang);
+				const long want = f == g_locOnDisk.end() ? 1 : f->second;
+				if (++g_locPaks == want) {
+					all = true;
+					g_locMountedAt = GetTickCount64();
+					Log("xmlahead: the %ld %s localization XML paks are mounted (%.1f s after the plugin)", want, lang.c_str(),
+					    (GetTickCount64() - g_start) / 1000.0);
+				}
 			}
 		}
+		if (all && g_mode == 2) LiftCapAtLocPaks();
 	} else if (g_locMountedAt.load() && g_pakOpensAfterLoc.fetch_add(1) < 20) {
 		Log("xmlahead: pak mounted after the localization paks: %s", p.c_str());   // checks the early lift
 	}
