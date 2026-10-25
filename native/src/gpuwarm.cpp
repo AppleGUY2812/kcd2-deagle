@@ -75,6 +75,27 @@ DWORD WINAPI Warm(LPVOID) {
 		IDXGIFactory6* f6 = nullptr;
 		f1->QueryInterface(iidF6, (void**)&f6);
 		if (f6 && (d3d11 || d3d12)) {
+			// devahead: the device the renderer will ask for (FUN_180c19664: the first adapter by high-performance
+			// preference with a display output and a D3D12 device, levels 12_1 .. 11_0). D3D12 devices are one per
+			// adapter in a process: the renderer's D3D12CreateDevice then gets this one back. First: with a device alive the
+			// driver stays loaded, so the support checks below and the game's own GPU queries don't load it again (boot 120:
+			// main's query at 3.4 s re-checked the driver's signatures, imagehlp, after the worker's checks had let it go).
+			g_dt0 = Now();
+			for (UINT i = 0; g_devahead && d3d12 && !g_dev; i++) {
+				IDXGIAdapter1* a = nullptr;
+				if (f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, iidA, (void**)&a) != S_OK) break;
+				if (!a) continue;
+				IDXGIOutput* o = nullptr;
+				const bool out = SUCCEEDED(a->EnumOutputs(0, &o)) && o;
+				if (o) o->Release();
+				if (out)
+					for (UINT lv : kLevels)
+						if (SUCCEEDED(g_devHr = d3d12(a, lv, iidD, (void**)&g_dev)) && g_dev) { g_devLevel = lv; break; }
+				if (g_dev) { DXGI_ADAPTER_DESC1 d; a->GetDesc1(&d); g_devLuid = d.AdapterLuid; }
+				a->Release();
+			}
+			g_dt1 = Now();
+			SetEvent(g_devDone);
 			for (UINT i = 0;; i++) {
 				IDXGIAdapter1* a = nullptr;
 				if (f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, iidA, (void**)&a) != S_OK) break;
@@ -95,25 +116,7 @@ DWORD WINAPI Warm(LPVOID) {
 				g_ok += ok;
 				a->Release();
 			}
-			SetEvent(g_done);   // the GPU queries can go on: the device comes next
-			// devahead: the device the renderer will ask for (FUN_180c19664: the first adapter by high-performance
-			// preference with a display output and a D3D12 device, levels 12_1 .. 11_0). D3D12 devices are one per
-			// adapter in a process: the renderer's D3D12CreateDevice then gets this one back.
-			g_dt0 = Now();
-			for (UINT i = 0; g_devahead && d3d12 && !g_dev; i++) {
-				IDXGIAdapter1* a = nullptr;
-				if (f6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, iidA, (void**)&a) != S_OK) break;
-				if (!a) continue;
-				IDXGIOutput* o = nullptr;
-				const bool out = SUCCEEDED(a->EnumOutputs(0, &o)) && o;
-				if (o) o->Release();
-				if (out)
-					for (UINT lv : kLevels)
-						if (SUCCEEDED(g_devHr = d3d12(a, lv, iidD, (void**)&g_dev)) && g_dev) { g_devLevel = lv; break; }
-				if (g_dev) { DXGI_ADAPTER_DESC1 d; a->GetDesc1(&d); g_devLuid = d.AdapterLuid; }
-				a->Release();
-			}
-			g_dt1 = Now();
+			SetEvent(g_done);
 		} else snprintf(g_note, sizeof g_note, "no IDXGIFactory6 / D3D");
 		if (f6) f6->Release();
 		f1->Release();
