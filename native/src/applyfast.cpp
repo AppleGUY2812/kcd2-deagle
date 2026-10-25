@@ -363,7 +363,7 @@ void __fastcall HkProcessMsg(void* mgr, void* msg) {
 // Log only (2026-10-24, boot 71): when the concept module's messages come, with the level state and the place-graph
 // streaming's state (concept manager +0xb0, its +0xb8: 0 no worker yet, 1 reset, 2 idle / pop, 3 load, 4 unload).
 // 0x34 starts the streaming (creates the worker the first time), 0x4d resets it: a load ahead of the save's apply
-// needs both times. The first 120 messages of the session, consecutive repeats of one id folded.
+// needs both times. The first 120 messages of the session from level state 1 on, consecutive repeats of one id folded.
 std::mutex s_cmMu;   // messages come from more than one thread (0x1e from the level-load job)
 int s_cmLines = 0, s_cmLastId = -1, s_cmRepeat = 0;
 int StreamState(void* mod) {
@@ -373,6 +373,7 @@ int StreamState(void* mod) {
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return -2; }
 }
 void LogConceptMsg(void* mod, int id, const char* when) {
+	if (Readiness_LevelState() < 1) return;   // the menu sends 120+ (0xc / 0x24 pairs, boot 72): loads only
 	std::lock_guard<std::mutex> lk(s_cmMu);
 	if (id == s_cmLastId) { s_cmRepeat++; return; }
 	if (s_cmLines >= 120) return;
