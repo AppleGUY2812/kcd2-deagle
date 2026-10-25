@@ -161,6 +161,14 @@ DWORD WINAPI StateWatch(LPVOID) {   // the level state's changes every 10 ms, fr
 // Start-up cost of our own installs (2026-10-24, launch -> menu): each one's time and how long MinHook kept the game's
 // threads suspended for it (Freeze suspends every other thread while it patches), logged when >= 20 ms.
 extern "C" void WINAPI MH_FreezeStats(ULONGLONG* us, ULONGLONG* count, ULONGLONG* longestUs, ULONG* maxThreads);
+// While deferred, MH_EnableHook only queues; MH_ApplyQueued turns the queue on in one freeze (minhook_shared/hook.c).
+// Boot 94: 94 single enables kept the game's threads suspended 5.9 s of its start-up.
+extern "C" void WINAPI MH_DeferEnables(BOOL defer);
+bool ApplyHooks(const char* which) {
+	const MH_STATUS st = MH_ApplyQueued();
+	if (st != MH_OK) Log("fastload: turning on the %s hooks failed (MinHook %d)", which, (int)st);
+	return st == MH_OK;
+}
 long long g_initStart = 0;
 double MsSince(long long t) {
 	LARGE_INTEGER n, f;
@@ -191,11 +199,13 @@ DWORD WINAPI Init(LPVOID) {
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
+	MH_DeferEnables(TRUE);   // the hooks below go on in two freezes, not one each
 	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
 	STEP(Hitch_Install(g_game.base, g_game.size, g_self));   // samples the main thread in frames over 250 ms (hitch.cpp)
 	STEP(Memsite_Install(g_self));   // who holds the memory, a diagnostic, off by default (memsite.cpp)
 	STEP(Cvars_Install(g_game.base, g_self));      // load-time game settings at registration (cvars.cpp)
 	STEP(Startfast_Install(g_game.base, g_self));   // the controller list asked for without waiting (startfast.cpp)
+	STEP(ApplyHooks("early"));   // the settings registered early and the input init come soon: on now
 	STEP(Loadwatch_Install(g_game.base));   // exact terrain-step timing (loadwatch.cpp)
 	STEP(Terrainfast_Install(g_game.base, g_self));   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)
 	STEP(Applyfast_Install(g_game.base, g_self));   // faster pieces of the save load's apply step (applyfast.cpp)
@@ -219,6 +229,8 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Streamio_Install(g_game.base, g_self));  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
 	STEP(Ftplaces_Install(g_game.base, g_self));   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
 	STEP(Readiness_Install(g_game.base));   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
+	STEP(ApplyHooks("start-up"));
+	MH_DeferEnables(FALSE);   // hooks made later (commands, ftpre) go on at once again
 	STEP(Startfast_TickReady(PatchUpdate()));   // startfast hands controller callbacks over at the frame tick
 	CreateThread(nullptr, 0, StateWatch, nullptr, 0, nullptr);
 	{

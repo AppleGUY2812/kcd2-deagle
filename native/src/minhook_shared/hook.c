@@ -720,11 +720,40 @@ MH_STATUS WINAPI MH_RemoveHook(LPVOID pTarget)
 }
 
 //-------------------------------------------------------------------------
+// Deferred enables (fastload.asi's start-up, 2026-10-24): each MH_EnableHook froze every thread of the game, 94 times
+// at start-up, 5.9 s in all (boot 94). While deferred, MH_EnableHook(target) only queues the hook and MH_DisableHook
+// on a hook not yet on takes it off the queue; MH_ApplyQueued turns the queue on in one freeze. Off by default.
+static volatile BOOL g_defer = FALSE;
+VOID WINAPI MH_DeferEnables(BOOL defer)
+{
+    g_defer = defer;
+}
+
 static MH_STATUS EnableHook(LPVOID pTarget, BOOL enable)
 {
     MH_STATUS status = MH_OK;
 
     EnterSpinLock();
+
+    if (g_hHeap != NULL && g_defer && pTarget != MH_ALL_HOOKS)
+    {
+        UINT pos = FindHookEntry(pTarget);
+        if (pos == INVALID_HOOK_POS)
+        {
+            LeaveSpinLock();
+            return MH_ERROR_NOT_CREATED;
+        }
+        if (enable || !g_hooks.pItems[pos].isEnabled)
+        {
+            if (enable && g_hooks.pItems[pos].isEnabled)
+                status = MH_ERROR_ENABLED;
+            else
+                g_hooks.pItems[pos].queueEnable = enable;
+            LeaveSpinLock();
+            return status;
+        }
+        // a hook already on is turned off now, as without deferring
+    }
 
     if (g_hHeap != NULL)
     {
