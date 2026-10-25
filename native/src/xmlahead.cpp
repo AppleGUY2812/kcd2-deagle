@@ -2,6 +2,7 @@
 #include "xmlahead.h"
 #include "log.h"
 #include "mainreads.h"
+#include "tblcache.h"
 #include <windows.h>
 #include <atomic>
 #include <cstdio>
@@ -59,6 +60,17 @@ OpenPackFn g_origOpenPack = nullptr;
 std::atomic<long> g_pakOpens{0}, g_modPaks{0}, g_dataPaks{0};
 long g_modPaksOnDisk = 0;
 std::atomic<ULONGLONG> g_lastPak{0};
+// The localization XML paks (<language>_xml.pak in Localization\, Mods\*\Localization\, the Workshop's
+// *\Localization\), counted on disk per language at install. Boot 95: the cap lifted only at the game's first
+// localization/ load, which is the start-up's biggest file (response_depot_wave_file.xml, 0.43 s; text_ui_dialog.xml
+// 0.51 s right after), so Main parsed both. Now it lifts once the language's paks have all mounted (the language = the
+// first such pak's name) and pak opens are quiet; a disabled mod's pak never mounts and the old trigger stays.
+std::unordered_map<std::string, long> g_locOnDisk;
+std::mutex g_locMu;
+std::string g_locLang;                    // under g_locMu
+long g_locPaks = 0;                       // under g_locMu
+std::atomic<ULONGLONG> g_locMountedAt{0};
+std::atomic<int> g_pakOpensAfterLoc{0};
 int g_mode = 1;
 std::string g_dir;
 ULONGLONG g_start = 0;
@@ -117,7 +129,7 @@ std::atomic<ULONGLONG> g_lastLoad{0};
 std::atomic<bool> g_levelSeen{false};  // the game asked for a levels/ file: a level load has begun
 void* g_self = nullptr;
 std::atomic<long long> s_ready{0}, s_failed{0}, s_served{0}, s_late{0}, s_parseMs{0}, s_skipped{0}, s_waited{0},
-	s_waitTimeout{0}, s_waitUs{0};
+	s_waitTimeout{0}, s_waitUs{0}, s_replayed{0};
 
 bool IsLevel(const std::string& p) { return p.compare(0, 7, "levels/") == 0 || p.compare(0, 12, "data/levels/") == 0; }
 
@@ -148,6 +160,11 @@ DWORD WINAPI Worker(LPVOID arg) {
 		Item& it = boost ? *g_quests[i] : *g_queue[q][i];
 		while (!g_stop && it.idx > g_gamePos.load() + kLead && it.state.load() == 0) { s_leadWaits++; Sleep(2); }
 		while (!g_stop && it.idx >= g_cap.load() && it.state.load() == 0) { s_capWaits++; Sleep(5); }
+		if (it.path.compare(0, 12, "libs/tables/") == 0 && Tblcache_Replays(it.path.c_str())) {   // tblcache hands the
+			int z = 0;                                                                                 // game the rows
+			if (it.state.compare_exchange_strong(z, 3)) s_replayed++;
+			continue;
+		}
 		int w = 0;
 		if (!it.state.compare_exchange_strong(w, 1)) continue;   // the game asked first
 		void* node = nullptr;
@@ -221,8 +238,10 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 			const ULONGLONG quiet = GetTickCount64() - g_lastPak.load();
 			if (!g_started[0] && g_pakOpens >= kStartPaks && quiet >= kStartQuietMs && g_dataPaks > 0 &&
 			    g_modPaks >= g_modPaksOnDisk) StartEarly();
-			if (g_cap.load() != SIZE_MAX && path.compare(0, 13, "localization/") == 0 && quiet >= kLocQuietMs)
-				LiftCap("the game's first localization/ load");
+			if (g_cap.load() != SIZE_MAX && quiet >= kLocQuietMs) {
+				if (g_locMountedAt.load()) LiftCap("the localization paks mounted");
+				else if (path.compare(0, 13, "localization/") == 0) LiftCap("the game's first localization/ load");
+			}
 		}
 		auto f = g_byPath.find(path);
 		if (f != g_byPath.end()) {
@@ -242,9 +261,10 @@ void** __fastcall HkLoad(void* self, void** ret, const char* file, uint64_t a4, 
 			}
 			if (r == 0 && it.state.compare_exchange_strong(r, 3)) s_skipped++;   // not started: the game parses it
 			else if (r == 1) {
-				// a worker is parsing it right now (~1 ms): wait for that tree instead of parsing the file twice;
-				// after 100 ms (a lock the worker needs?) the game parses it itself and the worker drops its tree
-				const long long a = Now(), lim = a + g_freq / 10;
+				// a worker is parsing it right now: wait for that tree instead of parsing the file twice; after 1 s
+				// (a lock the worker needs?) the game parses it itself and the worker drops its tree. Was 100 ms
+				// until boot 96: the start-up's two big localization files take 0.43 and 0.51 s to parse.
+				const long long a = Now(), lim = a + g_freq;
 				while (it.state.load() == 1 && Now() < lim) YieldProcessor();
 				s_waitUs += (Now() - a) * 1000000 / g_freq;
 				int ready = 2;
@@ -282,6 +302,25 @@ void* __fastcall HkOpenPack(void* pak, const char* path, unsigned flags, void* a
 	if (p.find("\\data\\") != std::string::npos || p.compare(0, 5, "data\\") == 0) {
 		g_dataPaks++;
 		if (p.find("mods\\") != std::string::npos || p.find("workshop\\content\\") != std::string::npos) g_modPaks++;
+	}
+	const size_t loc = p.find("localization\\");
+	const size_t xml = p.rfind("_xml.pak");
+	if (r && loc != std::string::npos && xml != std::string::npos && xml + 8 == p.size()) {
+		const size_t slash = p.find_last_of('\\');
+		const std::string lang = p.substr(slash + 1, xml - slash - 1);
+		std::lock_guard<std::mutex> lk(g_locMu);
+		if (g_locLang.empty()) g_locLang = lang;
+		if (lang == g_locLang) {
+			auto f = g_locOnDisk.find(lang);
+			const long want = f == g_locOnDisk.end() ? 1 : f->second;
+			if (++g_locPaks == want) {
+				g_locMountedAt = GetTickCount64();
+				Log("xmlahead: the %ld %s localization XML paks are mounted (%.1f s after the plugin)", want, lang.c_str(),
+				    (GetTickCount64() - g_start) / 1000.0);
+			}
+		}
+	} else if (g_locMountedAt.load() && g_pakOpensAfterLoc.fetch_add(1) < 20) {
+		Log("xmlahead: pak mounted after the localization paks: %s", p.c_str());   // checks the early lift
 	}
 	g_pakOpens++;
 	g_lastPak = GetTickCount64();
@@ -342,6 +381,8 @@ DWORD WINAPI Writer(LPVOID) {
 	long long lastServed = -1, lastReady = -1;
 	for (unsigned tick = 1;; tick++) {
 		Sleep(500);
+		if (g_cap.load() != SIZE_MAX && g_locMountedAt.load() && GetTickCount64() - g_lastPak.load() >= kLocQuietMs)
+			LiftCap("the localization paks mounted");
 		if (!g_items.empty() && (!g_started[0] || g_cap.load() != SIZE_MAX) && g_loads >= kMenuLoads &&
 		    GetTickCount64() - g_lastLoad >= kMenuQuietMs)
 			StartQueue(0, "main menu idle");
@@ -355,10 +396,10 @@ DWORD WINAPI Writer(LPVOID) {
 		if ((g_started[0] || g_started[1]) && (s_served != lastServed || s_ready != lastReady)) {
 			lastServed = s_served; lastReady = s_ready;
 			Log("xmlahead: ready %lld of %zu (failed %lld, parse %lld ms), served %lld (%lld after waiting %lld ms, %lld "
-			    "waits timed out), game first %lld, dropped %lld; game at %zu, workers at %zu/%zu, lead waits %lld, cap waits %lld, RAM "
+			    "waits timed out), game first %lld, dropped %lld, left to tblcache %lld; game at %zu, workers at %zu/%zu, lead waits %lld, cap waits %lld, RAM "
 			    "waits %lld; game private %zu MB (+%lld since start)",
 			    s_ready.load(), g_items.size(), s_failed.load(), s_parseMs.load(), s_served.load(), s_waited.load(),
-			    s_waitUs.load() / 1000, s_waitTimeout.load(), s_skipped.load(), s_late.load(), g_gamePos.load(),
+			    s_waitUs.load() / 1000, s_waitTimeout.load(), s_skipped.load(), s_late.load(), s_replayed.load(), g_gamePos.load(),
 			    g_next[0].load(), g_next[1].load(), s_leadWaits.load(), s_capWaits.load(), s_ramWaits.load(), PrivateMb(),
 			    (long long)PrivateMb() - (long long)g_privAtStart);
 		}
@@ -423,6 +464,28 @@ long CountPaks(const std::string& root) {   // root\*\Data\*.pak, without the -p
 	return n;
 }
 
+// <language>_xml.pak in dir (or in dir\*\Localization\ with perMod), counted per lower-case language name
+void CountLocPaks(const std::string& dir, bool perMod = false) {
+	WIN32_FIND_DATAA d;
+	if (perMod) {
+		HANDLE h = FindFirstFileA((dir + "*").c_str(), &d);
+		if (h == INVALID_HANDLE_VALUE) return;
+		do if ((d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && d.cFileName[0] != '.')
+			CountLocPaks(dir + d.cFileName + "\\Localization\\");
+		while (FindNextFileA(h, &d));
+		FindClose(h);
+		return;
+	}
+	HANDLE g = FindFirstFileA((dir + "*_xml.pak").c_str(), &d);
+	if (g == INVALID_HANDLE_VALUE) return;
+	do {
+		std::string n = d.cFileName;
+		for (char& ch : n) ch = (char)tolower((unsigned char)ch);
+		if (n.size() > 8 && n.compare(n.size() - 8, 8, "_xml.pak") == 0) g_locOnDisk[n.substr(0, n.size() - 8)]++;
+	} while (FindNextFileA(g, &d));
+	FindClose(g);
+}
+
 }  // namespace
 
 bool Xmlahead_LevelSeen() { return g_levelSeen.load(); }
@@ -464,6 +527,9 @@ void Xmlahead_Install(uintptr_t base, void* self) {
 	if (g_mode == 0) { Log("xmlahead: off"); return; }
 	const std::string root = g_dir + "..\\..\\";   // Bin\Win64MasterMasterSteamPGO\ -> the game folder
 	g_modPaksOnDisk = CountPaks(root + "Mods\\") + CountPaks(root + "..\\..\\workshop\\content\\1771300\\");
+	CountLocPaks(root + "Localization\\");
+	CountLocPaks(root + "Mods\\", true);
+	CountLocPaks(root + "..\\..\\workshop\\content\\1771300\\", true);
 	void* ld = (void*)(base + kRvaLoad);
 	void* ps = (void*)(base + kRvaParse);
 	if (memcmp(ld, kLoadBytes, sizeof kLoadBytes)) { Log("xmlahead: code check failed - not installed (other game version?)"); return; }
