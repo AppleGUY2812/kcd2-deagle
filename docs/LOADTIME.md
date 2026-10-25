@@ -145,6 +145,13 @@ Since then readymenu goes once the preload has been RAM-blocked for 1 s (the loa
 done 3.9 s after start-up; 6.5 s more waiting on the user's input), but only 1.4 GB was free at the load's start (Discord,
 browser, WSL's 6 GB VM; 16 GB PC): load 24.0 s (terrain 5.7, level 13.1), in game 57.5 s after the plugin (boot 77: 58.2).
 Free RAM now sets the load time more than any step.
+Boot 79: typing in another window held readymenu 24.8 s (input counted system-wide). Since then input counts only while
+the game is the foreground window, and the load starts once the save list is read (it waits for questmenu's build and
+animahead by itself, and cuts the terrain preload short). Boot 80: load started 23.9 s after the plugin (menu up at 20.0;
+the 4 s between is the menu's first frame, DLSS start-up), in game at 51.7 s; the load took 27.7 s with 1.3 GB free:
+animahead skipped its menu preload (RAM rule), the terrain preload asked nothing, streamahead freed all 885 MB, pakahead
+held 876 MB. Boots 76-80, free RAM at load start vs load: 1.8 GB 18.8 s, 1.8 GB 18.1 s, 1.4 GB 24.0 s, 1.5 GB 21.4 s,
+1.3 GB 27.7 s. The PC (16 GB) had WSL 5.1 GB, Discord 1.8 GB, Brave ~2 GB, Steam's web helper 1.2 GB committed.
 Split: kcd2-deagle-5a the level step / route A-B; kcd2-deagle-66 apply (4.7: souls 1.2 incl. Storm 0.78, XGenAI 0.8,
 profiles + concepts 0.6, database XML 0.5, CryEngine data 0.35), gate 3.4, state 4.
 

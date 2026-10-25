@@ -48,6 +48,12 @@ ULONGLONG IdleMs() {
 	return GetLastInputInfo(&li) ? GetTickCount() - li.dwTime : 0;
 }
 
+bool GameInFront() {
+	DWORD pid = 0;
+	const HWND w = GetForegroundWindow();
+	return w && GetWindowThreadProcessId(w, &pid) && pid == GetCurrentProcessId();
+}
+
 bool Busy(uintptr_t ui) {
 	__try { return *(volatile uint8_t*)(ui + kBusy) != 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return true; }
 }
@@ -114,29 +120,33 @@ void Readymenu_Frame(int s) {
 	}
 	g_lastState = s;
 	if (!g_mode || g_fired || g_other || s != 0 || Xmlahead_LevelSeen()) return;
-	if (!Questmenu_SaveLevel() || !Animahead_MenuSettled()) return;
-	// The terrain preload waits for RAM (the 1.5 GB rule); blocked for 1 s, the load reads the rest of its meshes itself
-	// (boot 77: 1,267 frames of RAM waits, 14.4 s instead of 6.3 s, and the load started 8 s later for it).
-	const int ramMs = Terrainfast_MenuRamBlockedMs();
-	if (!Terrainfast_MenuPreloadDone() && ramMs < 1000) return;
+	// Only the save scan: a load started meanwhile waits for questmenu's build and animahead's preload by itself (in
+	// parallel with its own first steps; boot 79: they end 3.4 / 6.4 s after the menu appears), and stops the terrain
+	// preload (6.3-14.4 s with the RAM rule, worth ~0.8 s in the load; boots 76-77) and reads the rest itself.
+	if (!Questmenu_SaveLevel()) return;
 	const ULONGLONG now = GetTickCount64();
 	if (!g_readyAt) {
 		g_readyAt = now;
-		Log("readymenu: menu work done %.1f s after the plugin (%.1f s after the menu's start-up)%s", (now - g_start) / 1000.0,
-		    (now - g_startupAt) / 1000.0, Terrainfast_MenuPreloadDone() ? "" : "; the terrain preload is waiting for RAM, the load does the rest");
+		Log("readymenu: menu ready %.1f s after the plugin (%.1f s after its start-up); quest build / animations %s, terrain preload %s",
+		    (now - g_start) / 1000.0, (now - g_startupAt) / 1000.0, Animahead_MenuSettled() ? "done" : "still running (the load waits for them)",
+		    Terrainfast_MenuPreloadDone() ? "done" : "cut short (the load reads the rest)");
 	}
-	if (now - g_readyAt < 1000) return;   // the last preloads' requests come back
+	if (now - g_readyAt < 500) return;
+	// Input counts only while the game is the foreground window: someone in another program is not in the game's menus
+	// (boot 79: typing in another window held the load 24.8 s).
 	const ULONGLONG idle = IdleMs();
-	if (idle < (ULONGLONG)g_idleS * 1000 || Busy(ui)) {
-		if (!g_waitLogged) { g_waitLogged = true; Log("readymenu: waiting (input %.1f s ago, menu busy %d)", idle / 1000.0, Busy(ui) ? 1 : 0); }
+	const bool front = GameInFront();
+	if ((front && idle < (ULONGLONG)g_idleS * 1000) || Busy(ui)) {
+		if (!g_waitLogged) { g_waitLogged = true; Log("readymenu: waiting (input in the game %.1f s ago, menu busy %d)", idle / 1000.0, Busy(ui) ? 1 : 0); }
 		return;
 	}
 	g_fired = true;
 	g_firedAt = now;
 	const bool ok = ((LoadLastFn)(g_base + kRvaLoadLast))(ui);
 	g_ours = ok;
-	Log("readymenu: the newest save's load %s %.1f s after the plugin (menu work done %.1f s before, no input for %.1f s)",
-	    ok ? "started" : "NOT started (the game said no)", (now - g_start) / 1000.0, (now - g_readyAt) / 1000.0, idle / 1000.0);
+	Log("readymenu: the newest save's load %s %.1f s after the plugin (menu ready %.1f s before; game %s, last input %.1f s ago)",
+	    ok ? "started" : "NOT started (the game said no)", (now - g_start) / 1000.0, (now - g_readyAt) / 1000.0,
+	    front ? "in front" : "in the background", idle / 1000.0);
 }
 
 void Readymenu_Command(const char* args) {
