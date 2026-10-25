@@ -38,6 +38,10 @@ AHook g_h[] = {
 	{ "concept graph sync load (FUN_182735b34)", 0x2735b34, { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74,0x24,0x10,0x55,0x57 }, nullptr },
 	{ "concept streaming job (FUN_18051a52c)", 0x51a52c, { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x48,0x89 }, nullptr },
 	{ "concept streaming finish (FUN_18051a794)", 0x51a794, { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x6c,0x24,0x18,0x48,0x89 }, nullptr },
+	// inside the job: the walk over the place's nodes (C_Node lambda, vt+0xd0), then two concept-module calls
+	{ "job: node walk (FUN_1819b5408)", 0x19b5408, { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x7c,0x24,0x18,0x55,0x48 }, nullptr },
+	{ "job: FUN_180bc26d4", 0xbc26d4, { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x10,0x48,0x89,0x70,0x18,0x48 }, nullptr },
+	{ "job: FUN_180d2a92c", 0xd2a92c, { 0x48,0x89,0x5c,0x24,0x08,0x55,0x56,0x57,0x48,0x8d,0x6c,0x24 }, nullptr },
 };
 constexpr int kN = sizeof g_h / sizeof g_h[0];
 constexpr int kBroadcast = 6;
@@ -101,7 +105,8 @@ template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, ui
 }
 void* const g_wrap[] = { (void*)&Wrap<0>, (void*)&Wrap<1>, (void*)&Wrap<2>, (void*)&Wrap<3>, (void*)&Wrap<4>,
                          (void*)&Wrap<5>, (void*)&Wrap<6>, (void*)&Wrap<7>, (void*)&Wrap<8>, (void*)&Wrap<9>,
-                         (void*)&Wrap<10>, (void*)&Wrap<11>, (void*)&Wrap<12>, (void*)&Wrap<13>, (void*)&Wrap<14> };
+                         (void*)&Wrap<10>, (void*)&Wrap<11>, (void*)&Wrap<12>, (void*)&Wrap<13>, (void*)&Wrap<14>,
+                         (void*)&Wrap<15>, (void*)&Wrap<16>, (void*)&Wrap<17> };
 static_assert(sizeof g_wrap / sizeof g_wrap[0] == kN, "one wrapper per hook");
 
 const char* SlotName(int i) {
