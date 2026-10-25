@@ -51,9 +51,11 @@ void* Find(void* root, const char* want, O& o, std::vector<void*>& q, size_t* vi
 // children, and for every node up to the answer (all of them for a name that isn't there) the same type (vtable),
 // the same Named() answer, the same name (pointer, length and first 8 bytes) and, for a container, the same children
 // in the same order. Then the game's walk would visit the same nodes in the same order and stop at the same one.
-// Any difference: walk again (Build). O adds: const void* Vt(n); int NameLen(n).
+// Any difference: walk again (Build). O adds: const void* Vt(n). Only what the game's walk reads is read: the name
+// (+0x10) only of a node whose Named() is true (on others that field is something else: boot 66 crashed reading
+// 8 bytes before it), and of a name only its bytes up to the first 8 or the end of the string.
 struct Snap {
-	struct Ent { void* n; const void* vt; const char* name; int len; char first[8]; bool named, cont; uint32_t kid0, nkids; };
+	struct Ent { void* n; const void* vt; const char* name; char first[8]; bool named, cont; uint32_t kid0, nkids; };
 	void* root = nullptr;
 	std::vector<void*> rootKids, kids;    // kids: every container's children, in walk order
 	std::vector<Ent> ents;                // the walk, in order
@@ -62,20 +64,25 @@ struct Snap {
 	size_t builds = 0, checks = 0, stale = 0;
 };
 
+inline void First8(const char* s, char* f) {   // up to 8 bytes, stopping at the end of the string
+	memset(f, 0, 8);
+	for (int i = 0; i < 8 && s[i]; i++) f[i] = s[i];
+}
 template <class O>
 void Record(Snap::Ent& e, void* n, O& o) {
 	e.n = n; e.vt = o.Vt(n); e.named = o.Named(n);
-	e.name = o.Name(n); e.len = e.name ? o.NameLen(n) : 0;
-	memset(e.first, 0, sizeof e.first);
-	if (e.name) memcpy(e.first, e.name, e.len < 8 ? (size_t)e.len : 8);
+	e.name = e.named ? o.Name(n) : nullptr;
+	if (e.name) First8(e.name, e.first); else memset(e.first, 0, sizeof e.first);
 }
 template <class O>
 bool Same(const Snap::Ent& e, O& o) {
-	if (o.Vt(e.n) != e.vt || o.Name(e.n) != e.name || o.Named(e.n) != e.named) return false;
-	if (!e.name) return true;
-	if (o.NameLen(e.n) != e.len) return false;
-	char f[8] = {};
-	memcpy(f, e.name, e.len < 8 ? (size_t)e.len : 8);
+	if (o.Vt(e.n) != e.vt || o.Named(e.n) != e.named) return false;
+	if (!e.named) return true;
+	const char* nm = o.Name(e.n);
+	if (nm != e.name) return false;
+	if (!nm) return true;
+	char f[8];
+	First8(nm, f);
 	return !memcmp(f, e.first, 8);
 }
 

@@ -23,9 +23,9 @@ struct Ops {
 	bool Container(void** slot) { return ((Node*)*slot)->container; }
 	void AddRef(void* n) { ((Node*)n)->refs++; addRefs++; }
 	void Release(void* n) { ((Node*)n)->refs--; releases++; }
-	const char* Name(void* n) { return ((Node*)n)->name.c_str(); }
+	long badNameReads = 0;   // the game reads a name only where Named() is true (boot 66)
+	const char* Name(void* n) { if (!((Node*)n)->named) badNameReads++; return ((Node*)n)->name.c_str(); }
 	const void* Vt(void* n) { return (const void*)(uintptr_t)(((Node*)n)->type + 1); }
-	int NameLen(void* n) { return (int)((Node*)n)->name.size(); }
 	void** Kids(void* n, void*** end) {
 		auto& k = ((Node*)n)->kids;
 		*end = k.data() + k.size();
@@ -146,6 +146,10 @@ int main() {
 			void* game = GameFind(&root, want.c_str(), b);
 			if (game) ((Node*)game)->refs--;
 			idxFinds++;
+			if (a.badNameReads) {
+				if (fails < 5) printf("FAIL indexed graph %d: %ld names read on nodes without a name\n", t, a.badNameReads);
+				fails++;
+			}
 			if (fast != game || !refsOk) {
 				if (fails < 5) printf("FAIL indexed graph %d ask %d %s: fast %p game %p refs %s\n", t, ask, want.c_str(), fast, game, refsOk ? "ok" : "off");
 				fails++;

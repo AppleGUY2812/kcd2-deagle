@@ -32,7 +32,8 @@ FindFn g_orig = nullptr;
 RefFn g_addRef = nullptr, g_release = nullptr;
 ContainerFn g_container = nullptr;
 
-std::atomic<int> g_mode{2};               // 0 off, 1 the walk without the deque, 2 + the walk remembered per root
+std::atomic<int> g_mode{1};               // 0 off, 1 the walk without the deque (default), 2 + the walk remembered
+                                          // per root (opt-in: boot 66 crashed in it, fixed; boot 66: slower in the first 200)
                                           // (the first kCheck calls, then every 64th, also run the game's and compare)
 constexpr long long kCheck = 200;
 std::atomic<long long> g_checkLeft{kCheck};
@@ -47,7 +48,6 @@ struct Ops {
 	void Release(void* n) { g_release(n); }
 	const char* Name(void* n) { return *(const char**)((uint8_t*)n + 0x10); }
 	const void* Vt(void* n) { return *(const void* const*)n; }
-	int NameLen(void* n) { return *(const int*)(Name(n) - 8); }   // CryString length header
 	void** Kids(void* n, void*** end) {
 		*end = *(void***)((uint8_t*)n + 0x48);
 		return *(void***)((uint8_t*)n + 0x40);
@@ -85,7 +85,14 @@ void** __fastcall HkFind(uint8_t* root, void** out, const char*** name) {
 		mine = cbfs::FindIndexed(root, **name, o, sl->s);
 		n_builds += (long long)(sl->s.builds - b0);
 		n_stale += (long long)(sl->s.stale - st0);
-		n_idx++;
+		const long long k = ++n_idx;
+		// a walk is a full one: if the graph changes between most finds it costs more than the game's walk
+		if (k == 200 && n_builds.load() * 2 > k) {
+			int two = 2;
+			if (g_mode.compare_exchange_strong(two, 1))
+				Log("conceptbfs: remembered walk off for this session: %lld walks built in %lld finds (the graph changes "
+				    "between finds), the walk without the deque only", n_builds.load(), k);
+		}
 	} else {
 		mine = cbfs::Find(root, **name, o, q, &visited);
 	}
