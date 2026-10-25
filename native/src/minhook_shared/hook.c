@@ -263,6 +263,32 @@ static DWORD64 ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
 }
 
 //-------------------------------------------------------------------------
+// Threads that never run game code (the plugin's own readers): not suspended. Boots 122-127: the slowest thread to
+// stop in every long freeze was pakahead's worker, in background mode (lowest CPU and I/O priority), 94-736 ms before
+// it got a CPU to stop on, with the game's other threads (main too) stopped all that time.
+static volatile LONG g_exemptN = 0;
+static DWORD g_exempt[64];
+
+void WINAPI MH_ExemptThread(DWORD tid)
+{
+    LONG i = InterlockedIncrement(&g_exemptN) - 1;
+    if (i < 64)
+        InterlockedExchange((volatile LONG*)&g_exempt[i], (LONG)tid);
+    else
+        InterlockedDecrement(&g_exemptN);
+}
+
+static BOOL IsExempt(DWORD tid)
+{
+    LONG n = g_exemptN, i;
+    if (n > 64)
+        n = 64;
+    for (i = 0; i < n; i++)
+        if (g_exempt[i] == tid)
+            return TRUE;
+    return FALSE;
+}
+
 // This process's threads by NtGetNextThread (boot 123: the system-wide Toolhelp snapshot took 66 ms of the start-up
 // freeze, 55 ms in boot 122); the snapshot if ntdll lacks it.
 static BOOL AddThread(PFROZEN_THREADS pThreads, DWORD tid)
@@ -306,7 +332,7 @@ static VOID EnumerateThreads(PFROZEN_THREADS pThreads)
             if (h != NULL)
                 CloseHandle(h);
             h = n;
-            if (tid != 0 && tid != self && !AddThread(pThreads, tid))
+            if (tid != 0 && tid != self && !IsExempt(tid) && !AddThread(pThreads, tid))
                 break;
         }
         if (h != NULL)
@@ -325,7 +351,8 @@ static VOID EnumerateThreads(PFROZEN_THREADS pThreads)
             {
                 if (te.dwSize >= (FIELD_OFFSET(THREADENTRY32, th32OwnerProcessID) + sizeof(DWORD))
                     && te.th32OwnerProcessID == GetCurrentProcessId()
-                    && te.th32ThreadID != GetCurrentThreadId())
+                    && te.th32ThreadID != GetCurrentThreadId()
+                    && !IsExempt(te.th32ThreadID))
                 {
                     if (pThreads->pItems == NULL)
                     {

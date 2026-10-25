@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+extern "C" void WINAPI MH_ExemptThread(DWORD tid);   // minhook_shared/hook.c
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -444,6 +445,7 @@ void Shed(long long want) {
 }
 
 DWORD WINAPI Worker(LPVOID) {
+	MH_ExemptThread(GetCurrentThreadId());   // own code only (files, libdeflate): MinHook's freezes don't wait for it (hook.c)
 	SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN);   // low CPU and I/O priority: the menu stays smooth
 	libdeflate_decompressor* d = libdeflate_alloc_decompressor();
 	std::vector<HANDLE> handles(g_listPaks.size(), INVALID_HANDLE_VALUE);
