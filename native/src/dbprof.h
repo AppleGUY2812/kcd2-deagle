@@ -7,5 +7,5 @@
 // its link (vt+0x50), both with the table only. This hooks FUN_180ef4048 and, before it runs, points the vt+0x48 /
 // vt+0x50 slots of every table class in the list at timing wrappers (a vtable write, no thread freeze). One line per
 // call: "dbprof: type 0xT on thread N: K tables, X ms (load A, link B); slowest: <name> ms (load / link), ...".
-// Log only; no setting.
-void Dbprof_Install(uintptr_t gameBase);
+// Log only; no setting. Its list-load hook is also dbasync's gate there (true when it is on).
+bool Dbprof_Install(uintptr_t gameBase);

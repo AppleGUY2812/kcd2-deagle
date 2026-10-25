@@ -1,5 +1,6 @@
 // The object database's tables timed one by one: see dbprof.h.
 #include "dbprof.h"
+#include "dbasync.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -97,6 +98,7 @@ void Patch(uintptr_t vt) {
 }
 
 uint8_t __fastcall HkLoadList(void* mgr, uintptr_t* list, char a, char b) {
+	Dbasync_Gate("a database list load");   // the dubbing load on its worker done first (dbasync.cpp)
 	std::vector<Rec> recs;
 	int type = -1;
 	if (list) {
@@ -135,7 +137,7 @@ uint8_t __fastcall HkLoadList(void* mgr, uintptr_t* list, char a, char b) {
 
 }  // namespace
 
-void Dbprof_Install(uintptr_t base) {
+bool Dbprof_Install(uintptr_t base) {
 	LARGE_INTEGER f;
 	QueryPerformanceFrequency(&f);
 	g_freq = f.QuadPart;
@@ -143,10 +145,11 @@ void Dbprof_Install(uintptr_t base) {
 	const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(base + ((const IMAGE_DOS_HEADER*)base)->e_lfanew);
 	g_end = base + nt->OptionalHeader.SizeOfImage;
 	void* t = (void*)(base + kRvaLoadList);
-	if (memcmp(t, kLoadListBytes, sizeof kLoadListBytes)) { Log("dbprof: the database list loader differs - off"); return; }
+	if (memcmp(t, kLoadListBytes, sizeof kLoadListBytes)) { Log("dbprof: the database list loader differs - off"); return false; }
 	if (MH_CreateHook(t, (void*)&HkLoadList, (void**)&g_origList) != MH_OK || MH_EnableHook(t) != MH_OK) {
 		Log("dbprof: hook failed - off");
-		return;
+		return false;
 	}
 	Log("dbprof: on (each object database table's load and link timed; log only)");
+	return true;
 }

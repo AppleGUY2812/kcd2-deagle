@@ -46,6 +46,7 @@
 #include "dbprof.h"
 #include "tblcache.h"
 #include "early.h"
+#include "dbasync.h"
 #include "ngxearly.h"
 #include "memsite.h"
 #include "crashlog.h"
@@ -98,6 +99,7 @@ void Tick() {
 	Readymenu_Frame(s);    // the newest save loaded at the menu, then the pause menu (readymenu.cpp)
 	Applyprof_SetMainThread(GetCurrentThreadId());   // applyprof counts the main thread apart
 	Tblcache_Frame(s);   // new table records written when loading is quiet (tblcache.cpp)
+	Dbasync_Frame();     // the first frame waits for the dubbing database's worker (dbasync.cpp)
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)
@@ -241,7 +243,9 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Fastzip_Install(g_game.base, g_self));   // libdeflate for the pak unpack + crc32 (fastzip.cpp): before the level load
 	STEP(Streamio_Install(g_game.base, g_self));  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
 	STEP(Ftplaces_Install(g_game.base, g_self));   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
-	STEP(Dbprof_Install(g_game.base));   // the object database tables timed one by one, log only (dbprof.cpp)
+	bool dbprofOn = false;
+	STEP(dbprofOn = Dbprof_Install(g_game.base));   // the object database tables timed one by one, log only (dbprof.cpp)
+	STEP(Dbasync_Install(g_game.base, g_self, Early_MainThread(), dbprofOn));   // the dubbing database on a worker (dbasync.cpp)
 	STEP(Tblcache_Install(g_game.base, g_self));   // the XML tables recorded once and replayed (tblcache.cpp)
 	STEP(Readiness_Install(g_game.base));   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	STEP(ApplyHooks("start-up"));
