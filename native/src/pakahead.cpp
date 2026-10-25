@@ -3,6 +3,7 @@
 #include "log.h"
 #include "mainreads.h"
 #include "ramgov.h"
+#include "readiness.h"
 #include <windows.h>
 #include <atomic>
 #include <cstdio>
@@ -44,10 +45,13 @@ std::unordered_map<uintptr_t, uint32_t> g_pakIds;      // FILE* or in-memory pak
 std::vector<std::string> g_paks;
 std::atomic<long long> g_calls{0};
 
-// ---- step 2: unpack ahead (mode 2). fastload_pakahead_list.txt next to the plugin, made by tools/pakahead_list.py from a
-// recording: one line per entry in the order the load needs them: "<pak path>\t<data offset>\t<packed>\t<size>\t<crc32>"
-// (entries checked against the pak's own directory). Workers read + unpack them into RAM from game start, at background
-// priority; the ReadFile hook copies a finished entry into the game's buffer instead of reading and unpacking it.
+// ---- step 2: unpack ahead (mode 2). fastload_pakahead_list.txt next to the plugin: one line per entry in the order the
+// load needs them: "<pak path>\t<data offset>\t<packed>\t<size>\t<crc32>[\t<reads>]". The plugin writes it itself at the
+// end of each load from that load's reads (WriteNextList; tools/pakahead_list.py makes one from a recording). Workers
+// read + unpack them into RAM from game start, at background priority; the ReadFile hook copies a finished entry into
+// the game's buffer instead of reading and unpacking it. <reads> > 1: the load reads that entry again (boot 121: the
+// blood mod's 16.8 MB textures 4 times each, 0.9 GB unpacked again on the render loading thread while Main waited), so
+// it stays after a serve until its last read or kKeptIdleMs without one.
 constexpr int kWorkers = 6;
 size_t kCapBytes = 2048ull << 20;                  // unpacked bytes held at once: set from free RAM at start
 bool g_pin = true;                                 // VirtualLock the big ones (only with RAM to spare)
@@ -61,6 +65,11 @@ struct Item {
 	uint8_t* data = nullptr;
 	bool freedOnce = false;                       // freed for RAM once: the next time it is dropped for good (no re-read loop)
 	bool mem = false;                             // from a pak the game holds in memory (see g_listMem): kept after a serve
+	uint8_t left = 0;                             // reads still to come after the next (the list's <reads> - 1); changed
+	                                              // only by the thread that holds it in state 3
+	bool kept = false;                            // served and kept for those reads (in g_kept)
+	std::atomic<bool> keptDone{false};            // its last read took it (the sweep drops it from g_kept)
+	std::atomic<ULONGLONG> lastServe{0};
 };
 std::vector<uint64_t> g_prefix;                    // unpacked bytes before item i (list order)
 std::atomic<size_t> g_servedHi{0};                 // 1 + the highest list index the game asked for so far (served or not)
@@ -101,6 +110,19 @@ size_t g_cursor = 0;                               // no waiting entry below thi
 std::atomic<long long> s_shedBytes{0}, s_shedTimes{0}, s_ramWaits{0}, s_shedDropped{0};
 std::atomic<long long> s_served{0}, s_servedBytes{0}, s_missNotReady{0}, s_prefetched{0}, s_bad{0}, s_readMs{0}, s_unpackMs{0};
 std::atomic<bool> g_stop{false};
+// entries read more than once (the list's <reads>): kept after a serve, freed at their last read or after kKeptIdleMs
+// without one (the sweep in Writer)
+constexpr ULONGLONG kKeptIdleMs = 4000;            // boot 121: the blood textures' repeats came 10 ms - 3.3 s apart
+bool g_anyKeep = false;                            // set by LoadList before the hook goes on
+std::mutex g_keptMu;
+std::vector<uint32_t> g_kept;                      // list indices of kept entries (under g_keptMu)
+std::atomic<long long> s_repServed{0}, s_repBytes{0}, s_keptIdle{0}, s_keptIdleBytes{0}, s_keptPeak{0}, s_keptNow{0};
+// the list for the next start (WriteNextList): off with 0 in fastload_pakahead_autolist.txt
+bool g_autoList = true;
+std::vector<std::pair<uint32_t, std::string>> g_oldMemLines;   // this start's "mem|" lines (list pak, line), carried over
+                                                   // for an in-memory pak this run didn't match (its reads are recorded as
+                                                   // mem:<address> only, so this run alone can't name its file)
+size_t g_oldListCount = 0;
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 
@@ -199,7 +221,13 @@ void CountOut(const void* p, size_t n, std::atomic<long long>& checked, std::ato
 	checked += (long long)k; out += o;
 }
 
-inline bool Beyond(const Item& it) { return g_prefix[it.idx] - g_prefix[g_servedHi.load() < g_items.size() ? g_servedHi.load() : g_items.size()] >= kWindow; }
+// Behind the load's place it is due now and stays. Before 2026-10-25 the unsigned difference wrapped for those and lent
+// them all to Windows: boot 121, one thread read a face mod's entries listed near the end at 9.7 s (the list was a day
+// old), the place jumped to 3.1 of 3.7 GB, and Windows dropped 723 MB the game then unpacked itself.
+inline bool Beyond(const Item& it) {
+	const size_t hi = g_servedHi.load() < g_items.size() ? g_servedHi.load() : g_items.size();
+	return it.idx > hi && g_prefix[it.idx] - g_prefix[hi] >= kWindow;
+}
 inline size_t PageUp(uint32_t n) { return ((size_t)n + 4095) & ~(size_t)4095; }
 
 // state 2 -> 6 when it lies beyond the window (the caller holds it in state 4)
@@ -254,7 +282,7 @@ bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, 
 	if (!r.decompress && r.method != 0) return false;           // the caller wants the packed bytes
 	uintptr_t file = 0, inMem = 0;
 	ReadZipFile(cache, file, inMem);
-	if (!inMem && r.crc == 0) return false;                      // entry already read and checked once: not first use
+	if (!inMem && r.crc == 0 && !g_anyKeep) return false;        // entry already read and checked once: not first use
 	int lp = -1;
 	if (inMem) lp = g_memFreed.load() ? -1 : MemListPak(inMem, r);
 	else if (file) lp = ListPakOf(file);
@@ -263,7 +291,9 @@ bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, 
 	if (f == g_byKey.end()) return false;
 	Item& it = *f->second;
 	if (it.usize != r.usize || it.csize != r.csize) return false;   // same pak, place, sizes
-	if (r.crc != 0 ? it.crc != r.crc : !it.mem) return false;       // and crc32 (an in-memory repeat has it cleared)
+	// and crc32; a repeat has it cleared by the game's first read (served for in-memory paks and kept entries: same pak,
+	// place and sizes are the same bytes)
+	if (r.crc != 0 ? it.crc != r.crc : !(it.mem || it.kept)) return false;
 	for (size_t hi = g_servedHi.load(); hi < it.idx + 1 && !g_servedHi.compare_exchange_weak(hi, it.idx + 1);) {}   // the window moves on
 	if (it.mem) {   // kept for the repeats: copied under state 8
 		const long long lim = Now() + g_freq / 20;
@@ -293,7 +323,23 @@ bool TryServe(void* cache, const Rec& r, void* comp, void* uncomp, int64_t off, 
 	const long long c0 = Now();
 	memcpy(uncomp, it.data, it.usize);
 	if (it.usize >= kBig) { s_copyTicks += Now() - c0; s_copyBytes += it.usize; }
-	Release(it);
+	if (r.crc == 0) { s_repServed++; s_repBytes += it.usize; }
+	if (it.left > 0) {   // read again later: kept (state 2) until then
+		it.left--;
+		it.lastServe = GetTickCount64();
+		const bool first = !it.kept;
+		it.kept = true;
+		it.state.store(2);
+		if (first) {
+			std::lock_guard<std::mutex> lk(g_keptMu);
+			g_kept.push_back(it.idx);
+			const long long now = s_keptNow += it.usize;
+			if (now > s_keptPeak) s_keptPeak = now;
+		}
+	} else {
+		Release(it);
+		if (it.kept) { s_keptNow -= it.usize; it.keptDone = true; }
+	}
 	s_served++;
 	s_servedBytes += r.usize;
 	return true;
@@ -505,8 +551,8 @@ bool LoadList() {
 	char line[1200];
 	size_t bytes = 0;
 	while (fgets(line, sizeof line, f)) {
-		char path[1024]; unsigned off, cs, us, crc;
-		if (line[0] == '#' || sscanf(line, "%1023[^\t]\t%u\t%u\t%u\t%x", path, &off, &cs, &us, &crc) != 5) continue;
+		char path[1024]; unsigned off, cs, us, crc, reads = 1;
+		if (line[0] == '#' || sscanf(line, "%1023[^\t]\t%u\t%u\t%u\t%x\t%u", path, &off, &cs, &us, &crc, &reads) < 5) continue;
 		const bool mem = !strncmp(path, "mem|", 4);
 		const std::string p = Lower(path + (mem ? 4 : 0));
 		uint32_t idx = 0;
@@ -516,14 +562,19 @@ bool LoadList() {
 		Item& it = g_items.back();
 		it.pak = idx; it.dataOff = off; it.csize = cs; it.usize = us; it.crc = crc; it.idx = (uint32_t)(g_items.size() - 1);
 		it.mem = g_listMem[idx];
-		if (it.mem) g_anyMem = true;
+		if (it.mem) { g_anyMem = true; g_oldMemLines.emplace_back(idx, line); }
+		if (!it.mem && reads > 1) { it.left = (uint8_t)(reads > 255 ? 254 : reads - 1); g_anyKeep = true; }
 		g_byKey.emplace(((uint64_t)idx << 32) | off, &it);
 		bytes += us;
 	}
 	fclose(f);
 	g_prefix.assign(g_items.size() + 1, 0);
 	for (size_t i = 0; i < g_items.size(); i++) g_prefix[i + 1] = g_prefix[i] + g_items[i].usize;
-	Log("pakahead: list %zu entries from %zu paks, %.0f MB unpacked", g_items.size(), g_listPaks.size(), bytes / 1e6);
+	g_oldListCount = g_items.size();
+	size_t rep = 0; uint64_t repBytes = 0;
+	for (const Item& it : g_items) if (it.left) { rep++; repBytes += (uint64_t)it.left * it.usize; }
+	Log("pakahead: list %zu entries from %zu paks, %.0f MB unpacked; %zu read more than once (kept for %.0f MB of repeats)",
+	    g_items.size(), g_listPaks.size(), bytes / 1e6, rep, repBytes / 1e6);
 	return !g_items.empty();
 }
 
@@ -584,11 +635,114 @@ void FreeMem(const char* why) {
 	    s_memFirst.load(), s_memFirstBytes.load() / 1e6, s_memRepeat.load(), s_memRepeatBytes.load() / 1e6, freed / 1e6);
 }
 
+// kept entries: dropped from g_kept once their last read took them; freed after kKeptIdleMs without a read
+void SweepKept() {
+	std::lock_guard<std::mutex> lk(g_keptMu);
+	const ULONGLONG now = GetTickCount64();
+	for (size_t k = 0; k < g_kept.size();) {
+		Item& it = g_items[g_kept[k]];
+		bool gone = it.keptDone.load() || g_stop.load();
+		if (!gone && now - it.lastServe.load() > kKeptIdleMs) {
+			int s2 = 2;
+			if (it.state.compare_exchange_strong(s2, 3)) {
+				s_keptIdle++;
+				s_keptIdleBytes += it.usize;
+				s_keptNow -= it.usize;
+				Release(it);
+				gone = true;
+			}
+		}
+		if (gone) { g_kept[k] = g_kept.back(); g_kept.pop_back(); } else k++;
+	}
+}
+
+// The list for the next start, from this run's reads up to gameplay start. The user's newest save changes as they play,
+// and a mod update moves entries: the list made by hand on 23 Oct still had 2.1 GB of a face mod the game no longer read
+// in boot 121 (its pak changed on the 24th). First whole reads in time order; <reads> counts every whole read of the
+// entry until then (the next start keeps those entries for the repeats).
+void WriteNextList(uint32_t untilMs) {
+	std::vector<Rec> recs; std::vector<std::string> paks; std::vector<std::pair<uintptr_t, uint32_t>> ids;
+	{
+		std::lock_guard<std::mutex> lk(g_mu);
+		recs = g_recs;
+		paks = g_paks;
+		ids.assign(g_pakIds.begin(), g_pakIds.end());
+	}
+	// recorded pak -> its path in the list ("" = left out); an in-memory pak by the list pak its image matched this run
+	std::vector<std::string> path(paks.size());
+	std::vector<bool> memSeen(g_listPaks.size(), false);
+	{
+		std::lock_guard<std::mutex> lk(g_mapMu);
+		for (const auto& [key, i] : ids) {
+			if (i >= paks.size()) continue;
+			if (!paks[i].compare(0, 4, "mem:")) {
+				auto m = g_memToListPak.find(key);
+				if (m != g_memToListPak.end() && m->second >= 0) { path[i] = "mem|" + g_listPaks[m->second]; memSeen[m->second] = true; }
+			} else if (paks[i] != "?") path[i] = paks[i];
+		}
+	}
+	std::stable_sort(recs.begin(), recs.end(), [](const Rec& a, const Rec& b) { return a.tMs < b.tMs; });
+	struct E { uint32_t path, off, cs, us, crc, reads; };
+	std::unordered_map<std::string, uint32_t> pathId;
+	std::vector<std::string> paths;
+	std::unordered_map<uint64_t, size_t> at;
+	std::vector<E> out;
+	for (const Rec& r : recs) {
+		if (r.tMs > untilMs) break;
+		if (r.part || r.pak >= path.size() || path[r.pak].empty()) continue;
+		if (r.decompress == 0 && r.method != 0) continue;   // the packed bytes wanted
+		auto p = pathId.emplace(Lower(path[r.pak]), (uint32_t)paths.size());
+		if (p.second) paths.push_back(path[r.pak]);
+		const uint64_t k = ((uint64_t)p.first->second << 32) | r.dataOff;
+		auto f = at.find(k);
+		if (f != at.end()) { if (out[f->second].reads < 255) out[f->second].reads++; continue; }
+		if (r.crc == 0) continue;   // its first whole read came before the recording
+		at.emplace(k, out.size());
+		out.push_back({p.first->second, r.dataOff, r.csize, r.usize, r.crc, 1});
+	}
+	const std::string list = g_dir + "fastload_pakahead_list.txt", tmp = list + ".tmp", prev = g_dir + "fastload_pakahead_list.prev.txt";
+	FILE* f = fopen(tmp.c_str(), "w");
+	if (!f) { Log("pakahead: the list for the next start NOT written (can't open %s)", tmp.c_str()); return; }
+	SYSTEMTIME st; GetLocalTime(&st);
+	fprintf(f, "# written by fastload (pakahead.cpp) at gameplay start, %04d-%02d-%02d %02d:%02d:%02d, %.1f s after the plugin: "
+	        "the load's whole reads in time order, <reads> = whole reads until then\n",
+	        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, untilMs / 1000.0);
+	size_t carried = 0;
+	for (const auto& [lp, line] : g_oldMemLines)   // an in-memory pak this run didn't match: its old lines, first
+		if (lp < memSeen.size() && !memSeen[lp]) { fputs(line.c_str(), f); carried++; }
+	uint64_t bytes = 0, repBytes = 0;
+	size_t rep = 0;
+	for (const E& e : out) {
+		fprintf(f, "%s\t%u\t%u\t%u\t%08x\t%u\n", paths[e.path].c_str(), e.off, e.cs, e.us, e.crc, e.reads);
+		bytes += e.us;
+		if (e.reads > 1) { rep++; repBytes += (uint64_t)(e.reads - 1) * e.us; }
+	}
+	if (fclose(f) != 0) { Log("pakahead: the list for the next start NOT written (write failed)"); return; }
+	MoveFileExA(list.c_str(), prev.c_str(), MOVEFILE_REPLACE_EXISTING);
+	const bool ok = MoveFileExA(tmp.c_str(), list.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+	Log("pakahead: list for the next start %s: %zu entries (%.0f MB) from %zu paks, %zu read more than once (%.0f MB of repeats), "
+	    "%zu in-memory lines carried over; this start's list had %zu (kept as fastload_pakahead_list.prev.txt)",
+	    ok ? "written" : "NOT moved into place", out.size(), bytes / 1e6, paths.size(), rep, repBytes / 1e6, carried, g_oldListCount);
+}
+
 DWORD WINAPI Writer(LPVOID) {
 	size_t written = 0;
+	bool sawLoad = false, listDone = false;
 	for (;;) {
 		for (int k = 0; k < 10; k++) {   // 5 s, checking the in-memory paks' quiet every 0.5 s
 			Sleep(500);
+			if (g_anyKeep) SweepKept();
+			if (!listDone) {   // the first load's end: the list for the next start
+				const int ls = Readiness_LevelState();
+				if (ls >= 1) sawLoad = true;
+				else if (ls == 0 && sawLoad) {
+					listDone = true;
+					const uint32_t ms = (uint32_t)((Now() - g_t0) * 1000 / g_freq);
+					if (g_mode != 2 || !g_autoList) Log("pakahead: no list for the next start (%s)", g_mode != 2 ? "mode 1" : "fastload_pakahead_autolist.txt 0");
+					else if (ms > kRecordMs) Log("pakahead: no list for the next start (the load ended after the recording's 10 min)");
+					else WriteNextList(ms);
+				}
+			}
 			const ULONGLONG last = g_memLastServe.load();
 			if (g_memFreed.load() || !g_anyMem) continue;
 			if (last && GetTickCount64() - last > 3000) FreeMem("no read of them for 3 s");
@@ -612,6 +766,10 @@ DWORD WINAPI Writer(LPVOID) {
 			    "game's buffer %lld; toucher %.0f MB in %.2f s, %lld of %lld sampled pages were out, game waited on it %lld x",
 			    s_copyBytes.load() / 1e6, ct, ct > 0 ? s_copyBytes.load() / 1e9 / ct : 0.0, s_srcOut.load(), s_resChecked.load(),
 			    s_dstOut.load(), s_touchBytes.load() / 1e6, tt, s_touchOut.load(), s_touchChecked.load(), s_touchWaits.load());
+			if (g_anyKeep)
+				Log("pakahead: repeat reads served %lld (%.0f MB); kept for repeats now %.0f MB, at most %.0f MB; freed after %.0f s "
+				    "with no read %lld (%.0f MB)", s_repServed.load(), s_repBytes.load() / 1e6, s_keptNow.load() / 1e6,
+				    s_keptPeak.load() / 1e6, kKeptIdleMs / 1000.0, s_keptIdle.load(), s_keptIdleBytes.load() / 1e6);
 		}
 		if (!g_items.empty() && !g_stop && GetTickCount64() - g_start > kKeepMs) {
 			FreeMem("the store closes");
@@ -647,6 +805,9 @@ void Pakahead_Install(uintptr_t base, void* self) {
 	g_dir = path; g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((g_dir + "fastload_pakahead.txt").c_str(), "r")) {
 		int m = 1; if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m; fclose(fp);
+	}
+	if (FILE* fp = fopen((g_dir + "fastload_pakahead_autolist.txt").c_str(), "r")) {
+		int a = 1; if (fscanf(fp, "%d", &a) == 1) g_autoList = a != 0; fclose(fp);
 	}
 	if (g_mode == 0) { Log("pakahead: off"); return; }
 	if (HMODULE crt = GetModuleHandleA("ucrtbase.dll")) {

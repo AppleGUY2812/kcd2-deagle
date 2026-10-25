@@ -4,7 +4,9 @@
 usage: tools/pakahead_list.py <fastload_pakahead_trace.csv> <out list> [--from-ms N] [--until-ms N]
 (t_ms counts from the plugin's start; the level load is the window to keep, boot reads come before the menu anyway)
 
-Keeps each entry the game read whole and unpacked (or stored), first read only, in time order. Every entry is checked
+Keeps each entry the game read whole and unpacked (or stored), first read only, in time order, with how many times
+it was read until --until-ms as a 6th column (the plugin keeps an entry read more than once for its repeats). The
+plugin writes this list itself at the end of each load (pakahead.cpp WriteNextList); this tool is for a recording. Every entry is checked
 against its pak's own zip directory: an entry whose data offset, sizes and crc32 don't match one directory entry is
 left out and counted, so a wrong recording can't put wrong bytes in the list.
 Paks the game holds in memory (recorded as mem:<address>; Engine/Engine.pak, Engine/ShaderCache.pak) are matched to
@@ -118,6 +120,7 @@ def main():
     for i, c in memfile.items():
         paks[i] = 'mem|' + c
     seen = set()
+    reads = {}   # whole reads of each kept entry until --until-ms (the plugin keeps entries read more than once)
     dirs = {}
     kept = []
     why = collections.Counter()
@@ -130,6 +133,8 @@ def main():
         key = (pak.lower(), int(r['data_off']))
         if key in seen:
             why['read again'] += 1
+            if key in reads:
+                reads[key] += 1
             continue
         seen.add(key)
         if r['decompress'] == '2':
@@ -163,10 +168,11 @@ def main():
             why['method mismatch'] += 1
             continue
         kept.append((pak, int(r['data_off']), want[1], want[2], want[0]))
+        reads[key] = 1
     with open(sys.argv[2], 'w', newline='\n') as f:
         f.write('# made by tools/pakahead_list.py from %s\n' % os.path.basename(sys.argv[1]))
         for k in kept:
-            f.write('%s\t%u\t%u\t%u\t%08x\n' % k)
+            f.write('%s\t%u\t%u\t%u\t%08x\t%u\n' % (k + (reads[(k[0].lower(), k[1])],)))
     mb = sum(k[3] for k in kept) / 1e6
     print(f'{len(rows)} reads -> {len(kept)} entries, {mb:.0f} MB unpacked, from {len(set(k[0] for k in kept))} paks')
     for w, n in why.most_common():

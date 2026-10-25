@@ -967,3 +967,13 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   ~1.3-1.55 s right after the facials) waits on the Windows heap lock (RtlEnterCriticalSection under RtlAllocateHeap /
   RtlFreeHeap) when other threads allocate a lot: xmlahead's parse workers made Main's text step 0.27 s longer (boot 114).
   The game's allocator (CryMalloc FUN_1804f7610) takes big blocks from the NT heap; small blocks under SRW DAT_185570230.
+- ZipDir::Cache::ReadFile (FUN_1804617fc) clears the entry's crc32 (FileEntry+0) after its first checked read; repeats
+  come with crc 0. A read pakahead serves skips that function, so the crc stays and every later read still carries it
+  (boot 126: 0 of 80 blood-texture reads had crc 0; boot 125: 48 of 80).
+- Rivers of Blood HD (workshop 3630633973): Textures/particles/blood_splat*_ddna.dds / _diff.dds are 2048x2048
+  uncompressed (16.8 MB), deflated in the pak (1.0-5.6 MB). The render loading thread reads each whole entry 4 times in
+  the load (two reads ~15 ms apart, two more 1-3 s later): 1.4 GB inflated in ~1.2-1.4 s while Main waits in the render
+  sync. pakahead keeps such entries until their last read (since 2026-10-25).
+- pakahead's load position is the highest list index any thread asked for. A list in another start's order lets one
+  thread jump it: boot 121, the Checkers face mod's entries (listed at 3.1 of 3.7 GB) were read at 9.7 s, before the
+  menu. Since 2026-10-25 the plugin writes the list from each load's own reads.

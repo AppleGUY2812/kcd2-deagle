@@ -10,8 +10,11 @@
 // +0x18 u16 method. cache+8 is the pak's CZipFile: [0] FILE* (the game's ucrtbase), [7] non-zero = pak held in memory.
 // Mode, read at start from fastload_pakahead.txt next to the plugin: 0 off, 1 record (default) to
 // fastload_pakahead_trace.csv next to the plugin, the first 10 minutes after start only; 2 record + unpack ahead: 6
-// background workers read + unpack the entries of fastload_pakahead_list.txt (tools/pakahead_list.py makes it from a
-// recording) from game start, at most 2 GB held, and the hook copies a finished entry into the game's buffer. Served
+// background workers read + unpack the entries of fastload_pakahead_list.txt from game start, at most 2 GB held, and the
+// hook copies a finished entry into the game's buffer. The plugin writes that list itself when the first load ends (that
+// load's reads; the old one kept as fastload_pakahead_list.prev.txt; off: 0 in fastload_pakahead_autolist.txt;
+// tools/pakahead_list.py makes one from a recording). An entry the load read more than once stays after a serve until
+// its last read (or 4 s without one): repeats are served too. Served
 // only on an exact match: same pak file, data offset, packed and unpacked size and crc32 (the list's crc is checked
 // again after the unpack). Anything else, or not finished yet, goes the game's normal way. Freed after 15 minutes.
 void Pakahead_Install(uintptr_t gameBase, void* selfModule);   // right after MH_Initialize

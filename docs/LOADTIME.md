@@ -12,9 +12,9 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
   so ~19.5-20.9 s from the click. Boot 42: terrain 3.0, level done 10.3, state 4 0.2, apply 4.8 (one 4.75 s main frame,
   kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
   One boot: +-1 s noise.
-- **Auto-load boots now (boot 118, 2026-10-25): launch -> in control 35.7 s** = menu ready 15.9 s after the process
-  start + 0.5 s + 19.3 s load (level step 12.9 s). Boot 120 (+ pipelib, gpuwarm fix, text cap): menu 14.96 s, 35.8 s.
-  Boot 108: 38.1 s; boot 102: 45.3 s.
+- **Auto-load boots now (boots 126 / 127, 2026-10-25): launch -> in control 33.2 / 33.0 s** = menu ready 12.3 / 11.7 s
+  after the process start + 0.5 s + 18.5 / 19.5 s load (level step 12.2 / 12.9 s). Boots 124 / 125 just before
+  (pakahead's old list): 36.3 / 36.5 s; boot 123 (devahead): 34.3 s; boot 118: 35.7 s; boot 102: 45.3 s.
 - Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
   (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
   (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
@@ -46,9 +46,10 @@ The unseen private memory (3 GB committed) is write-combined GPU memory, only ~0
 2.3 of 7.2 GB budget at gameplay (no overflow), system RAM for GPU data 0.57 GB.
 Windows reuses offered pages (OfferVirtualMemory, any priority) before any file cache, whenever the game needs a fresh
 page: boots 89-91 took back 0-1 of ~495 pakahead entries, boot 90 0 of 10,660 streamahead copies. Offering = freeing.
-- pakahead (kept): big entries more than 256 MB ahead of the load are offered; Windows drops them and the game reads them
-  from the file cache (pakahead reads buffered) and unpacks them itself: plugin RAM at load start 1591 -> 985 MB (85 -> 91),
-  no time lost (ctl 25.5 / 25.0 / 23.5 / 24.4 in boots 85 / 87 / 88 / 91).
+- pakahead (kept): big entries more than 256 MB ahead of the load are offered; Windows drops many (boot 127: 462, 771 MB)
+  and the toucher takes them back 256 MB ahead of the load, a worker unpacking a dropped one again: 0 found missing at
+  the game's read since the list is the load's own order (boots 121-125, old list: 221-429, unpacked by the game).
+  Plugin RAM at load start 1591 -> 985 MB (85 -> 91).
 - streamahead offering (boot 90): 27.1 s; mapped paks + file-cache prefetch, no copies (boot 89): 28.4 s (hard faults on
   the game's IO thread for dropped pages; the game reads these requests unbuffered, so the file cache can't serve it).
   Both rejected; the copies stay (512 MB cap, freed below 1.2 GB free by ramgov).
@@ -68,6 +69,14 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
   the files by entry, unpacked from disk at start and kept for the game's repeat reads, freed 3 s after the last read:
   1,832 reads (754 MB, 325 MB held) served at start-up instead of unpacked on one game thread (boot 93: 1.7 s); main
   menu 20.0 -> 19.2 s after process start. Lists keep their lines as "mem|<path>" (tools/pakahead_list.py).
+- pakahead writes its own list when the first load ends (2026-10-25, boots 125 -> 126 / 127): the load's whole reads in
+  time order + how often each was read. The hand-made list (boot 94) still had 2.1 GB of the Checkers face mod from
+  before its stored repack (389 bad, never read), and its order let one thread's menu-time reads move the load position
+  near the end (Windows then dropped 691 MB the game unpacked itself). Entries read more than once are kept until their
+  last read (134 MB at most): Rivers of Blood's 2048x2048 uncompressed blood textures (16.8 MB, deflated) are read 4
+  times each by the render loading thread. Its inflating 1,397 -> 49-51 ms, Main's render sync wait 1.73 -> 0.40-0.63 s,
+  served 1.1 -> 3.1 GB, game came first 569 -> 27-44; control 36.5 -> 33.2 / 33.0 s; menu 13.6 -> 12.3 / 11.7 s from
+  process start (2 GB less unpacked at start-up; one boot each, +-1 s). The list follows a new save one start late.
 - Start-up installs (kcd2-deagle-66's timing, boot 94): 94 MinHook enables froze every game thread 5.9 s in all during
   the plugin's 6.5 s of installs (Applyprof 0.9 s, Streamio 0.5, Applyfast 0.46, Xmlahead 0.44, Questfast 0.44).
 - applyfast fog cull (d587a0e): map clouds vs fog of war 0.86 s -> 60 ms, 0 mismatches in 71k checks.
@@ -78,7 +87,8 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
   (FUN_181dfbac0) runs on a plugin thread from the quest-wait point, ~4 s before LoadLevel's end; a gate on
   FUN_180babff8 makes the game's own call wait for it (boot 118: it found it done and added 137 PSOs in 0.15 s).
   Boot 118: 15,852 PSOs in 2.06 s, 0 parse-lock waits; Main's sync wait at LoadLevel's end 3.0 -> 1.5 s, level step
-  14.2 -> 12.9 s, control 37.5 -> 35.7 s. The rest of that wait: the RLT reading + inflating textures (real work).
+  14.2 -> 12.9 s, control 37.5 -> 35.7 s. The rest of that wait was the RLT inflating the blood mod's textures 4x
+  each: served by pakahead since boot 126 (wait 0.4-0.6 s).
   Mode 2 (3b, hand-over to the RLT) never fired in time since boot 31; mode 1 (menu, on Main) froze the menu ~6.2 s.
 - applyfast 5, shaders parsed at the main menu (6a313dd, fastload_menushaders.txt 1): boots 34-36 parsed 457 at the menu,
   20 in the load: state 4 2.7 -> 0.2 s, but no gain on the total: state 4 + gate is 11.0-12.3 s in boots 32-37 and
@@ -204,8 +214,8 @@ SmartObjectAnimations 1.2, XGenAI 0.5, material dedupe 0.25.
    parses + 15,989 graphics PSOs in 2.39 s (kcd.log "Precached ... NonBlocking"; already JobManager jobs,
    "PrecachePSOsJob_ShadersActivationPhase", r_PipelineStatePrecacheMode 2 = jobbed; the NVIDIA DXCache is warm). The
    early hand-over (applyfast 3b) failed in every boot 88-94: the loading thread is busy with its texture precache at
-   the quest wait. 3c runs the precache on our thread instead; what is left (boot 118, 1.5 s) is that texture batch:
-   ReadFile + fastzip's libdeflate on the RLT, then a CV wait.
+   the quest wait. 3c runs the precache on our thread instead; the texture batch after it (boot 118, 1.5 s: the RLT
+   inflating Rivers of Blood's 16.8 MB textures, each read 4 times) is served by pakahead since boot 126: 0.4-0.6 s left.
 8. The menu's first frame (menu ready -> load start, 4.2-4.8 s) is NVIDIA NGX start-up on the render thread. Boot 96
    (render-thread samples): t 17.10-21.38 s after the plugin all in the DLSS plugin's FUN_181e0b7c0 -> FUN_181dffa40
    (NVSDK_NGX_D3D12_Init + GetCapabilityParameters: signature checks, driver-profile re-reads), Main in
