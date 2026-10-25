@@ -12,10 +12,14 @@ Plugin: fastload.asi (its own mod since 2026-10-24: fastload.log, fastload_*.txt
   so ~19.5-20.9 s from the click. Boot 42: terrain 3.0, level done 10.3, state 4 0.2, apply 4.8 (one 4.75 s main frame,
   kcd2-deagle-66's), gate 3.2. Quest graph replayed at the menu in 4.48 s and kept. Boot 40 before the replay: 22.7 s.
   One boot: +-1 s noise.
-- **Auto-load boots now (boots 135/136, 2026-10-25): launch -> in control 31.0 / 31.8 s** = menu ready 12.2 / 12.7 s
-  after the process start + 0.5 s + 18.2 / 18.5 s load. Boot 135's load: to LoadLevel 0.34 (animahead gate 1: the load no
-  longer waits for the preload) + LoadLevel 10.65 + to state 5 0.88 + apply 3.93 + screen 2.40. Boots 131-134 (gate 0):
-  32.5-33.7 s, to LoadLevel 1.4. One boot: +-0.6 s noise; gains under ~1 s need repeat boots.
+- **Auto-load boots now (boots 137/139, 2026-10-25): launch -> in control 31.7 / 31.0 s** = menu ready 13.3 / 12.6 s
+  after the process start + 0.5 s + 17.9 / 17.9 s load. Boot 139's load: to LoadLevel 0.30 + LoadLevel 10.32 (LoadEntities
+  3.05) + to state 5 0.82 + apply 3.92 + screen 2.54. Boots 135/136 (no PSO hand-off): 31.0 / 31.8 s, load 18.2 / 18.5;
+  boots 131-134 (animahead gate 0): 32.5-33.7 s. One boot: +-0.6 s noise; gains under ~1 s need repeat boots.
+- **LoadLevel by name (boot 138, exact profile, 10.76 s with the profiler):** level data 5.73 (PSO pause 0.31, level
+  CGFs 1.19 of which a drain Sleep 0.9 (0.06 s in boot 139: noise), terrain/objects 3.99), materials preload 0.23,
+  LoadEntities 3.26 (CryPhysics lock spin 0.57), AI/navmesh 0.93, SmartObjectAnimations wait 0.24. Main's stream finalize
+  (FinalizeIOJobs: whole CGF loads on Main: parse, materials + their shaders, physics, billboards) 2.5 s across it.
 - Auto-load boots (bootrun.sh) are not the user's path: the load starts at once, so the menu parses 58 of 457 shaders
   (boot 41: 419 in the load = state 4 5.1 s; 30.1 s total) and NVIDIA NGX/DLSS starts in the first gameplay frame
   (~4 s). Compare test boots with test boots; bootfull.sh N is the user's path.
@@ -97,6 +101,12 @@ Next knobs, one boot each: pakahead window 256 -> 128 MB, streamahead cap 512 ->
   4.5 s on the RLT); LoadLevel's end -> state 5 3.0 -> 0.9 s; animahead's preload ran 0.5 s longer beside it. Mode 4
   (after the load's Blocking precache, boot 132): 7.7 s, and the level's shader lookups of shaders it had made but not
   parsed (7,952 answered "new") queued 8,357 parses in the load: LoadLevel +1.1 s. Load 19.1 (5) / 19.2 (4) / 19.5 s (3).
+  Its last ~2.5 s are 3 shaders DXC compiles on the job workers in every boot (never saved to the user shader cache;
+  the test boots end by PID). LoadLevel's start waits for them twice: the render thread's Blocking precache waited for ours
+  (0.9 s, Main 0.93 s in its render sync; boots 135/136), and LoadLevel's PSO pause (FUN_181de4290 -> FUN_180babcf8:
+  flag +0x138, spin until the async PSO queue count +0x13c is 0) waits 0.3-0.5 s. Hand-off (second number, `5 1`, default
+  since 2026-10-25): the Blocking call returns at once and our thread runs it after ours. Boots 137/139: load 17.9 / 17.9 s,
+  LoadLevel 10.43 / 10.32 s (135/136: 18.2 / 18.5, 10.65 / 10.79). The PSO pause wait is left.
 - applyfast 5, shaders parsed at the main menu (6a313dd, fastload_menushaders.txt 1): boots 34-36 parsed 457 at the menu,
   20 in the load: state 4 2.7 -> 0.2 s, but no gain on the total: state 4 + gate is 11.0-12.3 s in boots 32-37 and
   state-4 start -> control 17.3-18.7 s in every boot; textures are the long pole and take the time back. U2 (user clicked ~7 s after the menu) parsed only 110.

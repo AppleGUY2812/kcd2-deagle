@@ -47,8 +47,8 @@ std::atomic<bool> g_window{false};
 const char* const kWindowNames[] = { "Streaming File IO HDD", "Streaming AsyncCallback" };
 // The start-up window (#0, plugin load -> the first frame tick) also samples the job workers ("JobWorker_00 (Regular)"
 // ... "JobWorker_08 (Helper)"): a name ending in '*' matches by prefix. Until #0 is reported.
-// Up to 24 threads (was 16: from boot 123 the plugin's own named workers, "JobWorker_fastload ...", filled the last
-// slots and RenderLoadingThread wasn't sampled).
+// Up to 32 threads (16 until boot 123, when the plugin's own named workers, "JobWorker_fastload ...", filled the last
+// slots and RenderLoadingThread wasn't sampled; 24 until boot 139, which added the stream engine's 4 threads).
 std::atomic<bool> g_inStartup{false};
 bool NameMatches(const std::vector<std::string>& names, const std::string& nm) {
 	for (const std::string& n : names)
@@ -268,7 +268,7 @@ void FindTargets(bool window, bool appendOnly = false) {
 		g_namesChanged = false;
 	}
 	if (window) for (const char* n : kWindowNames) if (std::find(names.begin(), names.end(), n) == names.end()) names.push_back(n);
-	if (g_inStartup.load()) { names.push_back("JobWorker_*"); names.push_back("AudioThread*"); names.push_back("FMOD *"); }   // Main waits ~0.5 s for audio start-up
+	if (g_inStartup.load()) { names.push_back("JobWorker_*"); names.push_back("AudioThread*"); names.push_back("FMOD *"); names.push_back("Streaming*"); }   // audio: Main waits ~0.5 s for its start-up; Streaming*: the stream engine (boot 139)
 	{   // the same threads as now: nothing to do
 		std::vector<std::string> have;
 		for (size_t i = 1; i < g_targets.size(); i++) have.push_back(g_targets[i].name);
@@ -312,7 +312,7 @@ void FindTargets(bool window, bool appendOnly = false) {
 		const bool want = NameMatches(names, nm) &&
 		                  std::none_of(g_targets.begin(), g_targets.end(), [&](const Target& t) { return t.name == nm; });
 		const uintptr_t sb = want ? StackBaseOf(h) : 0;
-		if (want && sb && g_targets.size() < 24) g_targets.push_back({ h, sb, nm, tid });
+		if (want && sb && g_targets.size() < 32) g_targets.push_back({ h, sb, nm, tid });
 		else CloseHandle(h);
 	}
 	if (cur) CloseHandle(cur);

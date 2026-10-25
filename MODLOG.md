@@ -999,3 +999,20 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   samples (0.55-0.8 s) are FUN_180846e10 (DestroyPhysicalEntity) at 1808473c0 taking m_lockStep (+0x5fdc) through
   FUN_18050b638 (spin, FUN_18084c3fc backoff): its queue check saw the lock free, then AddGeometry on the streaming
   callback thread took it first (FUN_18084bf68: +0x5ff4 then +0x5fdc by try, else it queues).
+- PSO precache wait chain at LoadLevel's start (WHGame 1.5.6): the load's Blocking precache (mode 1, FUN_181dfd500 on
+  the render thread, 91 PSOs, ~20 ms) waited for ours through our gate (0.9 s; Main sat 0.93 s in its render sync).
+  psoahead's second number 1 (default) hands it to our thread: it runs right after ours (boot 137: 26 ms, 973 ms after the
+  hand-over). Still left: LoadLevel's PSO pause FUN_181de4290 (lock DAT_18492d988) -> FUN_180babcf8(DAT_1852ba588) sets
+  the async PSO queue's pause flag +0x138 and spins (FUN_180babd24, SwitchToThread) until its count +0x13c is 0; that
+  count is LOCK INC'd per queued job in FUN_1807b9f20. It waits 0.3-0.5 s for the tail of ours: 3 shaders DXC compiles
+  in every boot (the user shader cache has no new cg* files since 2026-10-23: test boots end by PID before it's saved).
+- Main's stream finalize in LoadLevel (UpdateLoadingScreen FUN_1806a0708 -> FinStats FUN_18048ae28 -> FinalizeIOJobs
+  FUN_180489670, boot 138 exact profile ~2.5 s): whole CGF loads run on Main in CGF StreamOnComplete FUN_18048b5a0 ->
+  FUN_18097aa3c: materials FUN_1806ba644/FUN_1806ba7a0 -> FUN_18076d7dc 0.84 s (shader loads FUN_1807e8b40; the material
+  dedupe FUN_18045b230 0.42 s incl., 0.2 s self: a linear scan of DAT_184929350[1..DAT_184929358) under SRW lock
+  DAT_1855760e8 with _stricmp per entry, 13,997 calls), billboard textures FUN_180979bf4 0.3 s, CLoaderCGF::LoadCGF
+  FUN_18097a1dc + morphs FUN_1806a2b50 0.25 s, CGF physicalization FUN_18097bc44 0.24 s.
+- LoadEntities (boot 138 exact, 3.45 s): CEntityLoadManager::ParseEntities FUN_1803cf848 -> FUN_1803d02f0; FUN_1805cb0f8 ->
+  FUN_1805ca5a8 1.9 s (strings AreaBox / AreaShape / ClipVolume; FUN_1805c9660 -> FUN_180713914 1.1 s); game-object extensions FUN_18070f938 0.48 s; SpawnEntity
+  FUN_1803d1e94 0.4 s; the DestroyPhysicalEntity spin 0.57 s (all of the unnamed leaf at 7ff875aec3fe), under
+  FUN_18041f170 -> FUN_180421698.

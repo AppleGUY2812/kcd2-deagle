@@ -182,6 +182,13 @@ constexpr unsigned kPsoQuietMs = 1500;   // the menu: no XML load for this long
 int g_psoMode = 3;
 bool g_psoEarly = false;   // fastload_psoahead.txt 4: g_psoMode 3, started after the Blocking precache
 bool g_psoMenu = true;     // fastload_psoahead.txt 5 (default): g_psoMode 3, started when the pipeline cache is built
+// The load's Blocking precache (mode 1, FUN_181dfd500 on the render thread at LoadLevel's start, 91 PSOs, ~0.02 s) while
+// ours still runs: 1 (the second number, default since 2026-10-25) = it returns at once and our thread runs it right after
+// ours (boots 137/139: load 17.9 / 17.9 s, LoadLevel 10.43 / 10.32 s); 0 = it waits for ours (boots 135/136: the render
+// thread 0.9 s and Main 0.93 s in its render sync; load 18.2 / 18.5 s, LoadLevel 10.65 / 10.79 s). Left either way:
+// LoadLevel's PSO pause (FUN_181de4290 -> FUN_180babcf8: flag +0x138, spin until the async PSO queue's count +0x13c is 0)
+// waits 0.3-0.5 s for our precache's last jobs, the same 3 shaders DXC compiles in every boot.
+bool g_psoDefer = true;
 std::atomic<int> g_psoState{0};          // 0 not yet, 1 queued, -1 not possible
 std::atomic<long long> s_psoFrames{0};
 std::atomic<long long> s_psoQueuedAt{0};
@@ -332,6 +339,11 @@ const unsigned char kShaderCoreBytes[] = { 0x48,0x89,0x5c,0x24,0x20,0x55,0x56,0x
 const unsigned char kRtLockBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xff,0x15,0xa9,0x28,0x1a,0x03,0x48 };
 constexpr DWORD kGateCapMs = 30000;          // safety only: our precache took ~2 s
 thread_local bool t_psoOurs = false;
+std::atomic<int> g_deferState{0};   // the load's Blocking precache handed to our thread: 0 none, 1 owed, 2 taken
+std::atomic<uintptr_t> g_deferMgr{0};
+std::atomic<uint32_t> g_deferMode{0};
+std::atomic<bool> g_deferRunning{false};   // our thread runs the handed-over one: another game call waits for it
+long long g_deferAt = 0;
 alignas(16) unsigned char g_rtStandIn[0x200] = {};   // +0x140 == 0: no loading screen, no lock juggling
 std::atomic<int> g_coord{0};                 // 0 not started, 1 running, 2 done, -1 the game's own came first / off
 HANDLE g_coordDone = nullptr;
@@ -357,7 +369,24 @@ void __fastcall HkPsoGate(uintptr_t mgr, uint32_t mode) {
 	// Blocking one here (91 PSOs, 0.02 s; boot 117: it switched ours off): only a mode-2 call before ours keeps ours off.
 	int z = 0;
 	const bool first = mode == 2 && !t_psoOurs && g_coord.compare_exchange_strong(z, -1);
-	if (!first && !t_psoOurs && (z = g_coord.load()) == 1) {   // ours is running: wait for it
+	if (!first && !t_psoOurs && mode == 1 && g_psoDefer && g_coord.load() == 1 && g_deferState.load() == 0) {
+		// ours is running: hand this Blocking one to our thread (Dekker with PsoCoordinator's end, seq_cst)
+		g_deferMgr = mgr;
+		g_deferMode = mode;
+		g_deferAt = Now();
+		g_deferState = 1;
+		if (g_coord.load() == 1) {
+			Log("applyfast: PSO precache on our thread: the load's Blocking precache (thread %lu, mode %u) handed to our thread, "
+			    "it runs right after ours", GetCurrentThreadId(), mode);
+			return;
+		}
+		int one = 1;   // ours ended meanwhile: run it here if our thread didn't take it
+		if (!g_deferState.compare_exchange_strong(one, 2)) {
+			Log("applyfast: PSO precache on our thread: the load's Blocking precache (mode %u) taken by our thread as ours ended", mode);
+			return;
+		}
+	}
+	if (!first && !t_psoOurs && ((z = g_coord.load()) == 1 || g_deferRunning.load())) {   // ours is running: wait for it
 		uintptr_t rt = 0;
 		bool release = false;
 		__try {
@@ -389,6 +418,10 @@ void __fastcall HkPsoGate(uintptr_t mgr, uint32_t mode) {
 void UnparsedAdd(uintptr_t sh) { std::lock_guard<std::mutex> lk(g_unparsedMu); g_unparsed.insert(sh); }
 bool UnparsedHas(uintptr_t sh) { std::lock_guard<std::mutex> lk(g_unparsedMu); return g_unparsed.count(sh) != 0; }
 size_t UnparsedClear() { std::lock_guard<std::mutex> lk(g_unparsedMu); const size_t n = g_unparsed.size(); g_unparsed.clear(); return n; }
+bool RunPsoGate(uintptr_t mgr, uint32_t mode) {
+	__try { g_psoGate(mgr, mode); return true; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 bool RunPsoLambda() {
 	__try { reinterpret_cast<void(__fastcall*)()>(g_base + kRvaPsoLambda)(); return true; }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -420,9 +453,20 @@ DWORD WINAPI PsoCoordinator(LPVOID) {
 	}
 	t_psoOurs = true;
 	const bool ok = RunPsoLambda();
-	t_psoOurs = false;
 	const size_t left = UnparsedClear();
 	g_coord = 2;
+	int one = 1;
+	if (g_deferState.load() == 1 && g_deferState.compare_exchange_strong(one, 2)) {   // the load's Blocking one, owed
+		const long long a = Now();
+		bool dok = true;
+		g_deferRunning = true;
+		dok = RunPsoGate(g_deferMgr.load(), g_deferMode.load());
+		g_deferRunning = false;
+		Log("applyfast: PSO precache on our thread: the load's Blocking precache (mode %u) %s here in %.0f ms, %.0f ms after "
+		    "it was handed over", g_deferMode.load(), dok ? "ran" : "EXCEPTION", (Now() - a) * 1000.0 / g_freq,
+		    (Now() - g_deferAt) * 1000.0 / g_freq);
+	}
+	t_psoOurs = false;
 	SetEvent(g_coordDone);
 	Log("applyfast: PSO precache on our thread: %s in %.2f s (%lld shader parses here, %lld parse-lock waits %.0f ms on all "
 	    "threads, %lld lookups answered \"new\", %zu made but not parsed); kcd.log has its \"Precached N Graphics PSOs\" line",
@@ -808,8 +852,9 @@ void Applyfast_Install(uintptr_t base, void* self) {
 	const bool c = !memcmp((void*)(base + kRvaFindChrparams), kFindCallBytes, sizeof kFindCallBytes) &&
 	               Hook(base, kRvaFind, kFindBytes, sizeof kFindBytes, (void*)&HkFind, (void**)&g_find, "facial DBA list");
 	if (FILE* fp = fopen((dir + "fastload_psoahead.txt").c_str(), "r")) {
-		int m = 3;
+		int m = 3, d = 1;
 		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 5) { g_psoEarly = m == 4; g_psoMenu = m == 5; g_psoMode = m >= 4 ? 3 : m; }
+		if (fscanf(fp, "%d", &d) == 1) g_psoDefer = d != 0;
 		fclose(fp);
 	}
 	if (FILE* fp = fopen((dir + "fastload_questearly.txt").c_str(), "r")) {
