@@ -22,6 +22,11 @@ std::atomic<bool> g_on{true};
 std::atomic<int> g_thresholdMs{250};
 HANDLE g_main = nullptr;
 uintptr_t g_mainStack = 0;
+// Start-up window: plugin start -> the first frame tick sampled as long frame #0 (launch-to-menu, 2026-10-24). The main
+// thread is guessed at install as the process's first thread; the first frame tick checks the guess.
+bool g_startup = false;
+std::atomic<HANDLE> g_fixMain{nullptr};   // the frame tick's thread when the guess was wrong; the watcher swaps it in
+uintptr_t g_fixStack = 0;
 uintptr_t g_game = 0, g_gameEnd = 0;
 long long g_freq = 1;
 std::string g_csvPath;
@@ -444,15 +449,46 @@ void Report(int no, double frameMs, const std::vector<Sample>& ss, uint32_t faul
 	fclose(f);
 }
 
+// The process's first-created thread (the game's main thread) and its stack base (TEB +8), or nullptr.
+HANDLE FirstThread(uintptr_t* stackBase) {
+	using NtQitFn = LONG(NTAPI*)(HANDLE, int, PVOID, ULONG, PULONG);
+	struct Tbi { LONG exitStatus; PVOID teb; CLIENT_ID cid; ULONG_PTR affinity; LONG prio, basePrio; };
+	const auto qit = (NtQitFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationThread");
+	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+	if (!qit || snap == INVALID_HANDLE_VALUE) return nullptr;
+	const DWORD pid = GetCurrentProcessId();
+	HANDLE best = nullptr;
+	unsigned long long bestT = ~0ull;
+	THREADENTRY32 te{ sizeof te };
+	for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+		if (te.th32OwnerProcessID != pid) continue;
+		HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+		if (!h) continue;
+		FILETIME cr, ex, k, u;
+		const unsigned long long t = GetThreadTimes(h, &cr, &ex, &k, &u) ? ((unsigned long long)cr.dwHighDateTime << 32) | cr.dwLowDateTime : ~0ull;
+		if (t < bestT) { if (best) CloseHandle(best); best = h; bestT = t; } else CloseHandle(h);
+	}
+	CloseHandle(snap);
+	Tbi tbi{};
+	if (!best || qit(best, 0, &tbi, sizeof tbi, nullptr) < 0 || !tbi.teb) { if (best) CloseHandle(best); return nullptr; }
+	*stackBase = *(uintptr_t*)((uint8_t*)tbi.teb + 8);   // NT_TIB StackBase
+	return best;
+}
+
 DWORD WINAPI Watch(LPVOID) {
 	std::vector<Sample> ss;
 	ss.reserve(kMaxSamples);
-	int no = 0;
+	int no = g_startup ? -1 : 0;   // the start-up window is #0
 	long long start = 0;
 	uint32_t faults0 = 0;
 	SysPf sys0;
 	for (;;) {
 		Sleep(kIntervalMs);
+		if (HANDLE fix = g_fixMain.exchange(nullptr)) {   // the start-up guess was not the main thread
+			ss.clear();
+			g_main = fix; g_mainStack = g_fixStack;
+			g_targets.clear();
+		}
 		const long long last = g_lastFrame.load(std::memory_order_acquire);
 		if (!g_main || !last) continue;
 		if (g_targets.empty()) g_targets.push_back({ g_main, g_mainStack, "Main", GetThreadId(g_main) });
@@ -460,6 +496,7 @@ DWORD WINAPI Watch(LPVOID) {
 		const double gapMs = (now - last) * 1000.0 / (double)g_freq;
 		if (!ss.empty() && (last != start || !g_on)) {   // the long frame ended (or sampling was turned off)
 			const double frameMs = (last != start ? last - start : now - start) * 1000.0 / (double)g_freq;
+			if (no == 0 && g_startup) Log("hitch: #0 below is the start-up: plugin start -> the first frame tick (the main menu)");
 			Report(no, frameMs, ss, faults0, sys0);
 			ReportFiles(no, start, last != start ? last : now);
 			ss.clear();
@@ -513,6 +550,13 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self) {
 	}
 	g_watchOk = InstallFileWatch();
 	g_evOn = g_watchOk;
+	uintptr_t sb = 0;
+	if (HANDLE m = FirstThread(&sb)) {   // start-up window: sampled from now until the first frame tick
+		g_main = m; g_mainStack = sb; g_startup = true;
+		g_lastFrame.store(Now(), std::memory_order_release);
+		Log("hitch: start-up window on: main thread guessed as %lu (the process's first), sampled until the first frame tick",
+		    GetThreadId(m));
+	}
 	CloseHandle(CreateThread(nullptr, 0, Watch, nullptr, 0, nullptr));
 	Log("hitch: on (main frames over %d ms sampled every %d ms from inside the game, with RenderThread and "
 	    "RenderLoadingThread; files opened and DLLs loaded %s; samples in %s)", g_thresholdMs.load(), kIntervalMs,
@@ -520,9 +564,19 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self) {
 }
 
 void Hitch_Frame() {
+	static bool checked = false;
 	if (!g_main) {
 		g_main = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
 		g_mainStack = (uintptr_t)__readgsqword(0x08);   // TEB StackBase of this (the main) thread
+		checked = true;
+	} else if (!checked) {
+		checked = true;
+		if (GetThreadId(g_main) != GetCurrentThreadId()) {
+			Log("hitch: the start-up window sampled thread %lu, but frames tick on %lu: its #0 is not the main thread",
+			    GetThreadId(g_main), GetCurrentThreadId());
+			g_fixStack = (uintptr_t)__readgsqword(0x08);
+			g_fixMain = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
+		}
 	}
 	g_lastFrame.store(Now(), std::memory_order_release);
 }

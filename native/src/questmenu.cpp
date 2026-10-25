@@ -301,6 +301,30 @@ const char* WhyNot(Inputs& now) {
 	return nullptr;
 }
 
+// ---- how early the build's inputs are there (log only, launch-to-menu 2026-10-24): polled every 50 ms from install to
+// boot event 0x24, the first time each check passes is logged, to see whether the build could start before 0x24
+std::atomic<bool> g_evt24Seen{false};
+DWORD WINAPI WatchReady(LPVOID) {
+	bool mgr = false, empty = false, subs = false;
+	const long long t0 = Now();
+	for (int i = 0; i < 1200 && !g_evt24Seen.load(); i++, Sleep(50)) {
+		uintptr_t m = 0;
+		const char* e = ManagerNotEmpty(&m);
+		if (!mgr && m) { mgr = true; Log("questmenu: ready check: concept manager there (%.1f s after install)", (Now() - t0) * 1.0 / g_freq); }
+		if (!empty && m && !e) { empty = true; Log("questmenu: ready check: manager empty and idle (%.1f s after install)", (Now() - t0) * 1.0 / g_freq); }
+		Inputs now;
+		if (!subs && g_cacheOk && ReadState(&now.cv20, &now.cv24, now.dg) && now.cv20 == g_cache.cv20 && now.cv24 == g_cache.cv24) {
+			bool same = true;
+			for (int k = 0; k < 4; k++) same = same && now.dg[k] == g_cache.dg[k];
+			if (same) { subs = true; Log("questmenu: ready check: concept cvars and quest manager subscribers as in the cached load "
+			                             "(%.1f s after install)", (Now() - t0) * 1.0 / g_freq); }
+		}
+	}
+	Log("questmenu: ready check stopped (%.1f s after install, boot event 0x24 %s; manager %s, empty %s, subscribers %s)",
+	    (Now() - t0) * 1.0 / g_freq, g_evt24Seen.load() ? "seen" : "not seen", mgr ? "yes" : "no", empty ? "yes" : "no", subs ? "yes" : "no");
+	return 0;
+}
+
 using Evt24Fn = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
 Evt24Fn g_evt24 = nullptr;
 uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
@@ -308,6 +332,7 @@ uint64_t __fastcall HkEvt24(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
 	static bool once = false;
 	if (once) return r;
 	once = true;
+	g_evt24Seen = true;
 	Inputs now;
 	const char* why = WhyNot(now);
 	Log("questmenu: boot event 0x24 (save list read): newest save %s (level %s, SaveTime %lld); cache level %s, %zu projects; "
@@ -554,6 +579,7 @@ void Questmenu_Install(uintptr_t base, void* self) {
 		hooked = MH_CreateHook(t, (void*)&HkEvt24, (void**)&g_evt24) == MH_OK && MH_EnableHook(t) == MH_OK;
 	}
 	if (hooked) { HANDLE h = CreateThread(nullptr, 0, ScanSaves, nullptr, 0, nullptr); if (h) CloseHandle(h); }
+	if (hooked) { HANDLE h = CreateThread(nullptr, 0, WatchReady, nullptr, 0, nullptr); if (h) CloseHandle(h); }
 	else SetEvent(g_scanDone);
 	Log("questmenu: %s; cache %s", hooked ? "on (quest graph built at the main menu when the inputs are known)" :
 	    "OFF (code differs or hook failed)", g_cacheOk ? ("level " + g_cache.level + ", " + std::to_string(g_cache.P.size()) +

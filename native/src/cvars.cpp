@@ -20,6 +20,13 @@ using RegIntFn = void(__fastcall*)(const char* name, int* var, int def, int flag
 using RegFloatFn = void*(__fastcall*)(const char* name, float* var, float def, int flags, const char* help, void* cb);
 RegIntFn g_origInt = nullptr;
 RegFloatFn g_origFloat = nullptr;
+// CXConsole::RegisterInt (console vtable +0x18, FUN_180b95054): settings the console owns (no variable pointer), e.g.
+// wh_sys_SkipStartupVideoWhenPossible. Returns the CXConsoleVariableInt, whose value sits at +0x48.
+constexpr uintptr_t kRvaConInt = 0xb95054, kRvaConIntVt = 0x3a7f0b8;   // CXConsoleVariableInt::vftable
+const unsigned char kConIntBytes[] = { 0x48,0x89,0x5c,0x24,0x18,0x48,0x89,0x54,0x24,0x10,0x55,0x56,0x57,0x41,0x56,0x41 };
+using ConIntFn = void*(__fastcall*)(void* con, const char* name, int value, int flags, const char* help, void* cb);
+ConIntFn g_origConInt = nullptr;
+uintptr_t g_base = 0;
 
 struct Want {
 	std::string name;
@@ -37,8 +44,13 @@ std::mutex g_mu;
 // the save step 20.4 s (15.3 before: more texture data loaded before gameplay starts); r_ShadersAsyncMaxThreads 4
 // did nothing (the ShaderCompile threads sat idle; the shader parsing runs on RenderLoadingThread);
 // r_PSOCompilationWorkerThreads 6: pre-save step 10.0 s vs 6.9 (not separated from the low-RAM boot).
+// The start-up intro (logo videos) off, user 2026-10-24: sys_intromoviesduringinit 0 starts no intro movie (SystemInit,
+// "Destroying the splash"); wh_sys_SkipStartupVideoWhenPossible 1 stops one at the end of the game's init instead of
+// waiting for it (FUN_1819b6bb0, CIntroMovieRenderer::WaitForCompletion: 5.6-5.9 s on Main in boots 46-77).
 const char* kDefaults =
-	"sys_SleepIfInactiveWH 0 load\n";
+	"sys_SleepIfInactiveWH 0 load\n"
+	"sys_intromoviesduringinit 0\n"
+	"wh_sys_SkipStartupVideoWhenPossible 1\n";
 
 void Parse(const char* text) {
 	const char* p = text;
@@ -88,6 +100,32 @@ void* __fastcall HkFloat(const char* name, float* var, float def, int flags, con
 	return r;
 }
 
+// the returned variable, checked: a CXConsoleVariableInt (its vtable), else nullptr
+__declspec(noinline) int* ConIntValue(void* v) {
+	__try { return v && *(uintptr_t*)v == g_base + kRvaConIntVt ? (int*)((uint8_t*)v + 0x48) : nullptr; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+
+void* __fastcall HkConInt(void* con, const char* name, int value, int flags, const char* help, void* cb) {
+	int use = value;
+	bool want = false;
+	{
+		std::lock_guard<std::mutex> lk(g_mu);
+		if (Want* w = Find(name)) { use = (int)w->value; want = true; }
+	}
+	void* r = g_origConInt(con, name, use, flags, help, cb);
+	if (!want) return r;
+	std::lock_guard<std::mutex> lk(g_mu);
+	if (Want* w = Find(name)) {
+		if (int* var = ConIntValue(r)) {
+			w->var = var; w->isFloat = false; w->def = value;
+			*var = use;
+			Log("cvars: %s %d -> %d%s (console-owned)", name, value, *var, w->loadOnly ? " (until gameplay starts)" : "");
+		} else Log("cvars: %s registered by the console but not as a plain int: left at its value", name);
+	}
+	return r;
+}
+
 }  // namespace
 
 void Cvars_Install(uintptr_t base, void* self) {
@@ -116,10 +154,14 @@ void Cvars_Install(uintptr_t base, void* self) {
 		Log("cvars: code check failed - not installed (other game version?)");
 		return;
 	}
+	g_base = base;
 	const bool a = MH_CreateHook(fi, (void*)&HkInt, (void**)&g_origInt) == MH_OK && MH_EnableHook(fi) == MH_OK;
 	const bool b = MH_CreateHook(ff, (void*)&HkFloat, (void**)&g_origFloat) == MH_OK && MH_EnableHook(ff) == MH_OK;
-	Log("cvars: %zu settings from %s, hooks int %s float %s", g_want.size(), file.c_str(), a ? "on" : "FAILED",
-	    b ? "on" : "FAILED");
+	void* fc = (void*)(base + kRvaConInt);
+	const bool c = !memcmp(fc, kConIntBytes, sizeof kConIntBytes) &&
+	               MH_CreateHook(fc, (void*)&HkConInt, (void**)&g_origConInt) == MH_OK && MH_EnableHook(fc) == MH_OK;
+	Log("cvars: %zu settings from %s, hooks int %s float %s console int %s", g_want.size(), file.c_str(), a ? "on" : "FAILED",
+	    b ? "on" : "FAILED", c ? "on" : "FAILED");
 }
 
 void Cvars_OnLoaded() {

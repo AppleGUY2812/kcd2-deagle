@@ -9,6 +9,8 @@
 //     workers sat ~25 % busy.
 // The plugin hooks the game's setting registration (FUN_1823d8168 int, FUN_1823d8b0c float: name, variable pointer,
 // default, flags, help) and writes its own value into the variable right after. user.cfg, read later, still wins.
+// Settings the console owns (registered by value through CXConsole::RegisterInt, console vtable +0x18) are set by a hook
+// there: the value passed in is replaced (e.g. wh_sys_SkipStartupVideoWhenPossible, "cvars: ... (console-owned)").
 // Values from fastload_cvars.txt next to the plugin, one per line: "<name> <value> [load]"; "load" = only until gameplay
 // starts (Lua sends "loaded" from OnGameplayStarted), then the game's default comes back. Missing file: the defaults in cvars.cpp.
 void Cvars_Install(uintptr_t gameBase, void* selfModule);   // right after MH_Initialize, before the game registers

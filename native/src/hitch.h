@@ -12,7 +12,8 @@
 // Per long frame, in fastload.log:
 //   "hitch: #N main frame X ms, K samples, page faults +F; in: <module+offset or WHGame RVA> P %, ...; called from: ..."
 // and every sample in fastload_hitch.csv next to the plugin (hitch,frame_ms,t_ms,faults,rip,stack), for
-// symbolizing offline (WHGame.dll+offset). On by default; `hitch off`, `hitch on`, `hitch <ms>` (threshold, 50-5000).
+// symbolizing offline (WHGame.dll+offset). Start-up: from install to the first frame tick (the main menu) the main thread
+// (guessed as the process's first thread, checked at the first tick) is sampled as long frame #0. On by default; `hitch off`, `hitch on`, `hitch <ms>` (threshold, 50-5000).
 void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self);   // starts the watcher
 void Hitch_Frame();                       // main thread, once a drawn frame (fastload_main.cpp)
 void Hitch_Command(const char* args);     // "hitch [on|off|<ms>]"
