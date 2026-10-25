@@ -284,14 +284,23 @@ void FindTargets(bool window, bool appendOnly = false) {
 	using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
 	static DescFn desc = (DescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
 	if (!desc) return;
-	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
-	if (snap == INVALID_HANDLE_VALUE) return;
-	THREADENTRY32 te{ sizeof te };
-	const DWORD pid = GetCurrentProcessId(), self = GetCurrentThreadId();
-	for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
-		if (te.th32OwnerProcessID != pid || te.th32ThreadID == self || te.th32ThreadID == g_targets[0].tid) continue;
-		HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
-		if (!h) continue;
+	// this process's threads by NtGetNextThread (the system-wide Toolhelp snapshot took 50-90 ms; now this runs every 100 ms)
+	using NextFn = LONG(NTAPI*)(HANDLE, HANDLE, ACCESS_MASK, ULONG, ULONG, PHANDLE);
+	static NextFn next = (NextFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtGetNextThread");
+	if (!next) return;
+	const DWORD self = GetCurrentThreadId();
+	HANDLE cur = nullptr;
+	for (;;) {
+		HANDLE h = nullptr;
+		if (next(GetCurrentProcess(), cur, THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, 0, 0, &h) < 0) break;
+		if (cur) CloseHandle(cur);
+		cur = h;
+		const DWORD tid = GetThreadId(h);
+		if (tid == self || tid == g_targets[0].tid) continue;
+		if (std::any_of(g_targets.begin(), g_targets.end(), [&](const Target& t) { return t.tid == tid; })) continue;
+		HANDLE dup = nullptr;   // our own handle: `cur` is closed at the next step
+		if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &dup, 0, FALSE, DUPLICATE_SAME_ACCESS)) continue;
+		h = dup;
 		PWSTR w = nullptr;
 		std::string nm;
 		if (SUCCEEDED(desc(h, &w)) && w) {
@@ -303,10 +312,10 @@ void FindTargets(bool window, bool appendOnly = false) {
 		const bool want = NameMatches(names, nm) &&
 		                  std::none_of(g_targets.begin(), g_targets.end(), [&](const Target& t) { return t.name == nm; });
 		const uintptr_t sb = want ? StackBaseOf(h) : 0;
-		if (want && sb && g_targets.size() < 24) g_targets.push_back({ h, sb, nm, te.th32ThreadID });
+		if (want && sb && g_targets.size() < 24) g_targets.push_back({ h, sb, nm, tid });
 		else CloseHandle(h);
 	}
-	CloseHandle(snap);
+	if (cur) CloseHandle(cur);
 }
 
 // Guarded helpers, no C++ objects in them (MSVC forbids __try next to unwinding). The copy goes through a pointer the
@@ -590,9 +599,10 @@ DWORD WINAPI Watch(LPVOID) {
 			FindTargets(false);
 		}
 		const uint32_t tMs = (uint32_t)((now - start) * 1000 / g_freq);
-		// the start-up window begins before the render threads exist: look for them again every second
+		// the start-up window begins before the render threads exist: look for them again every 100 ms (boot 135: once a
+		// second missed the audio thread's first 0.9 s, the part Main waits for)
 		static unsigned ticks = 0;
-		if (no == 0 && g_startup && ++ticks % 50 == 0) FindTargets(false, true);
+		if (no == 0 && g_startup && ++ticks % 5 == 0) FindTargets(false, true);
 		for (size_t who = 0; who < g_targets.size() && ss.size() < (size_t)kMaxSamples; who++) {
 			Sample s;
 			if (Grab(g_targets[who], (uint8_t)who, &s, tMs)) ss.push_back(s);
