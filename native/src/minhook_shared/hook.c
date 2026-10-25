@@ -263,8 +263,57 @@ static DWORD64 ProcessThreadIPs(HANDLE hThread, UINT pos, UINT action)
 }
 
 //-------------------------------------------------------------------------
+// This process's threads by NtGetNextThread (boot 123: the system-wide Toolhelp snapshot took 66 ms of the start-up
+// freeze, 55 ms in boot 122); the snapshot if ntdll lacks it.
+static BOOL AddThread(PFROZEN_THREADS pThreads, DWORD tid)
+{
+    if (pThreads->pItems == NULL)
+    {
+        pThreads->capacity = INITIAL_THREAD_CAPACITY;
+        pThreads->pItems = (LPDWORD)HeapAlloc(g_hHeap, 0, pThreads->capacity * sizeof(DWORD));
+        if (pThreads->pItems == NULL)
+            return FALSE;
+    }
+    else if (pThreads->size >= pThreads->capacity)
+    {
+        LPDWORD p = (LPDWORD)HeapReAlloc(g_hHeap, 0, pThreads->pItems, (pThreads->capacity * 2) * sizeof(DWORD));
+        if (p == NULL)
+            return FALSE;
+        pThreads->capacity *= 2;
+        pThreads->pItems = p;
+    }
+    pThreads->pItems[pThreads->size++] = tid;
+    return TRUE;
+}
+
 static VOID EnumerateThreads(PFROZEN_THREADS pThreads)
 {
+    typedef LONG (NTAPI *NextFn)(HANDLE, HANDLE, ACCESS_MASK, ULONG, ULONG, PHANDLE);
+    static NextFn next = NULL;
+    static BOOL looked = FALSE;
+    if (!looked)
+    {
+        next = (NextFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtGetNextThread");
+        looked = TRUE;
+    }
+    if (next != NULL)
+    {
+        HANDLE h = NULL, n = NULL;
+        const DWORD self = GetCurrentThreadId();
+        while (next(GetCurrentProcess(), h, THREAD_QUERY_LIMITED_INFORMATION, 0, 0, &n) >= 0)
+        {
+            const DWORD tid = GetThreadId(n);
+            if (h != NULL)
+                CloseHandle(h);
+            h = n;
+            if (tid != 0 && tid != self && !AddThread(pThreads, tid))
+                break;
+        }
+        if (h != NULL)
+            CloseHandle(h);
+        if (pThreads->size != 0)
+            return;
+    }
     HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (hSnapshot != INVALID_HANDLE_VALUE)
     {
@@ -404,10 +453,17 @@ void WINAPI MH_FreezeParts(ULONGLONG* enumUs, ULONGLONG* askUs, ULONGLONG* askSl
     if (waitUs) *waitUs = g_longest.waitUs;
 }
 
+// The freezing thread runs at time-critical priority from the first stop request to the last resume (boots 119-123: the
+// waits for the threads to stop took 194-1231 ms while each one took at most 0.1 ms: this thread waited for a CPU
+// between them, behind the read-ahead workers, with the game's other threads stopped all that time).
+static int g_freezePrio = THREAD_PRIORITY_NORMAL;
+
 static VOID Freeze(PFROZEN_THREADS pThreads, UINT pos, UINT action)
 {
     if (FreezeMutex() != NULL)
         WaitForSingleObject(FreezeMutex(), INFINITE);   // WAIT_ABANDONED: the other plugin's thread died holding it; ours now
+    g_freezePrio = GetThreadPriority(GetCurrentThread());
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     QueryPerformanceCounter(&g_freezeStart);   // under the mutex: one freeze at a time
     ZeroMemory(&g_cur, sizeof(g_cur));
     pThreads->pItems   = NULL;
@@ -562,6 +618,7 @@ static VOID Unfreeze(PFROZEN_THREADS pThreads)
         }
         if ((LONG)pThreads->size > g_freezeMaxThreads) g_freezeMaxThreads = (LONG)pThreads->size;
     }
+    SetThreadPriority(GetCurrentThread(), g_freezePrio == THREAD_PRIORITY_ERROR_RETURN ? THREAD_PRIORITY_NORMAL : g_freezePrio);
     if (FreezeMutex() != NULL)
         ReleaseMutex(FreezeMutex());
 }
