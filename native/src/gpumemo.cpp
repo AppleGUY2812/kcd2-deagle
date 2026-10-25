@@ -85,12 +85,12 @@ void Gpumemo_Install(uintptr_t base, size_t size, void* self) {
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string dir(path);
 	dir = dir.substr(0, dir.find_last_of("\\/") + 1);
-	int mode = 1;
+	int mode = 0;   // off by default since boot 110 (see gpumemo.h)
 	if (FILE* fp = fopen((dir + "fastload_gpumemo.txt").c_str(), "r")) {
-		if (fscanf(fp, "%d", &mode) != 1) mode = 1;
+		if (fscanf(fp, "%d", &mode) != 1) mode = 0;
 		fclose(fp);
 	}
-	if (!mode) { Log("gpumemo: off (fastload_gpumemo.txt 0)"); return; }
+	if (mode != 1) { Log("gpumemo: off (fastload_gpumemo.txt 1 turns it on; off by default since boot 110)"); return; }
 	void* t = (void*)(base + kRvaQuery);
 	if (memcmp(t, kQueryBytes, sizeof kQueryBytes)) { Log("gpumemo: the GPU adapter query differs (another game version?) - off"); return; }
 	MH_STATUS st = MH_CreateHook(t, (void*)&HkQuery, (void**)&g_orig);
