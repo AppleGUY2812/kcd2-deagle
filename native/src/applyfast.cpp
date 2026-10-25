@@ -354,7 +354,36 @@ void __fastcall HkPreModules(void* game, void* msg) {
 	}
 }
 
+// Log only (2026-10-24, boot 75): the apply step (level state 5) is a series of module messages; the hitch sampler's
+// stacks are cut at 64 frames, so 74 of its 190 apply samples had no known piece. Every message dispatch in state 5
+// that takes 10 ms or more is logged with its id, the save chunk's type for id 9 (msg +0x18 -> +8), the nesting depth
+// and the thread. Lines end when the call ends; start = line time - ms.
+int ChunkType(void* msg) {
+	__try {
+		const uintptr_t ch = *(uintptr_t*)((char*)msg + 0x18);
+		return ch ? *(unsigned short*)(ch + 8) : -1;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return -2; }
+}
+
 void __fastcall HkProcessMsg(void* mgr, void* msg) {
+	thread_local int depth = 0;
+	if (msg && Readiness_LevelState() == 5) {
+		const int id = *(const int*)((const char*)msg + 8);
+		const int chunk = id == 9 ? ChunkType(msg) : 0;
+		depth++;
+		const long long t0 = Now();
+		g_processMsg(mgr, msg);
+		const double ms = (Now() - t0) * 1000.0 / g_freq;
+		depth--;
+		if (ms >= 10) {
+			char what[32] = "";
+			if (id == 9) snprintf(what, sizeof what, " chunk 0x%x", chunk);
+			Log("applyfast: apply message 0x%x%s took %.0f ms (depth %d, thread %lu)", id, what, ms, depth,
+			    GetCurrentThreadId());
+		}
+		if (t_earlyMsg == msg) t_earlyMsg = nullptr;
+		return;
+	}
 	g_processMsg(mgr, msg);
 	if (t_earlyMsg == msg) t_earlyMsg = nullptr;   // this call's message is done: never match a later one at the same
 	                                               // address (a nested message's call leaves the outer one's mark)
