@@ -47,6 +47,8 @@ std::atomic<bool> g_window{false};
 const char* const kWindowNames[] = { "Streaming File IO HDD", "Streaming AsyncCallback" };
 // The start-up window (#0, plugin load -> the first frame tick) also samples the job workers ("JobWorker_00 (Regular)"
 // ... "JobWorker_08 (Helper)"): a name ending in '*' matches by prefix. Until #0 is reported.
+// Up to 24 threads (was 16: from boot 123 the plugin's own named workers, "JobWorker_fastload ...", filled the last
+// slots and RenderLoadingThread wasn't sampled).
 std::atomic<bool> g_inStartup{false};
 bool NameMatches(const std::vector<std::string>& names, const std::string& nm) {
 	for (const std::string& n : names)
@@ -301,7 +303,7 @@ void FindTargets(bool window, bool appendOnly = false) {
 		const bool want = NameMatches(names, nm) &&
 		                  std::none_of(g_targets.begin(), g_targets.end(), [&](const Target& t) { return t.name == nm; });
 		const uintptr_t sb = want ? StackBaseOf(h) : 0;
-		if (want && sb && g_targets.size() < 16) g_targets.push_back({ h, sb, nm, te.th32ThreadID });
+		if (want && sb && g_targets.size() < 24) g_targets.push_back({ h, sb, nm, te.th32ThreadID });
 		else CloseHandle(h);
 	}
 	CloseHandle(snap);
