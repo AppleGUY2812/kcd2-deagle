@@ -207,15 +207,19 @@ int LevelState() {
 // service at its +8 (FUN_180fc3ec0 reads the time through it: service vtable +0x30 = "movss xmm0,[rcx+0xc]").
 // Checked in the running game 2026-10-23: levelmgr +0x30. Both layouts are tried, and a candidate counts only when
 // its vtable is the service's.
+// A field that can't be a heap or image pointer is skipped before it's read through: +0x10 is the level state (an int),
+// and reading through "6" was a handled fault in fastload_crash.txt every boot (boots 69-75).
+inline bool LooksPtr(uintptr_t p) { return p >= 0x10000 && p < 0x800000000000ull && (p & 7) == 0; }
+
 uint8_t* FindService(int* where) {
 	const uintptr_t lm = LevelMgr();
 	if (!lm) return nullptr;
 	const uintptr_t want = g_base + kRvaServiceVt;
 	for (int off = 0x10; off <= 0x100; off += 8) {
 		uintptr_t p = 0, vt = 0, q = 0;
-		if (!Rd(lm + off, &p, 8) || !p) continue;
+		if (!Rd(lm + off, &p, 8) || !LooksPtr(p)) continue;
 		if (Rd(p, &vt, 8) && vt == want) { *where = off; return (uint8_t*)p; }
-		if (Rd(p + 8, &q, 8) && q && Rd(q, &vt, 8) && vt == want) { *where = 0x1000 + off; return (uint8_t*)q; }
+		if (Rd(p + 8, &q, 8) && LooksPtr(q) && Rd(q, &vt, 8) && vt == want) { *where = 0x1000 + off; return (uint8_t*)q; }
 	}
 	return nullptr;
 }
