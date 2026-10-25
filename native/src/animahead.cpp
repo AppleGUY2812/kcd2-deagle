@@ -22,6 +22,12 @@ constexpr uintptr_t kRvaLoadLevel = 0xb8f748;   // "============ Loading level %
 const unsigned char kLoadLevelBytes[] = { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x10,0x49,0x89,0x73,0x18,0x57,0x41,0x54,0x41,0x55 };
 constexpr uintptr_t kRvaModelSkel = 0xaa8278;   // LoadModelSKEL(cm, path, flags): bit 2 skips the cache lookup
 const unsigned char kModelSkelBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x57 };
+// The global animation header array's add (FUN_180b14d68(db + 0x1c8, &name): find, else grow the array at +0xb8 and
+// index the name; callers 180766210, 18083f874 = AnimationSet add, 180b14364). The only writer of that array: while our
+// preload runs, a call from any other thread waits for it to finish (boot 39's crash: the array moved under a reader).
+constexpr uintptr_t kRvaHeaderAdd = 0xb14d68;
+const unsigned char kHeaderAddBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18,0x48 };
+constexpr DWORD kHeaderWaitMs = 10000;
 
 const char* const kCdf[] = { "objects/characters/humans/female/skeleton/female.cdf",
                              "objects/characters/humans/male/skeleton/male.cdf" };
@@ -40,6 +46,9 @@ using Fn3 = uint64_t(__fastcall*)(void*, const char*, uint64_t);
 using Fn4 = uint64_t(__fastcall*)(uint64_t, uint64_t, uint64_t, uint64_t);
 Fn3 g_chr = nullptr, g_skel = nullptr;
 Fn4 g_loadLevel = nullptr;
+using HeaderAddFn = int(__fastcall*)(void* db, void* name);
+HeaderAddFn g_headerAdd = nullptr;
+std::atomic<long> g_heldAdds{0};
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g_freq; }
@@ -84,6 +93,17 @@ uint64_t __fastcall HkSkel(void* cm, const char* path, uint64_t flags) {
 	return r;
 }
 
+int __fastcall HkHeaderAdd(void* db, void* name) {
+	if (g_busy.load() && GetCurrentThreadId() != g_preloadTid.load()) {
+		const long long a = Now();
+		const DWORD w = WaitForSingleObject(g_done, kHeaderWaitMs);
+		if (g_heldAdds++ < 20)
+			Log("animahead: header add from thread %lu held %.0f ms until our preload was done%s", GetCurrentThreadId(), Ms(a, Now()),
+			    w == WAIT_OBJECT_0 ? "" : " (GAVE UP after 10 s)");
+	}
+	return g_headerAdd(db, name);
+}
+
 bool Hook(uintptr_t rva, const unsigned char* bytes, size_t n, void* hk, void** orig, const char* name) {
 	void* t = (void*)(g_base + rva);
 	if (memcmp(t, bytes, n)) { Log("animahead: %s code differs - not hooked", name); return false; }
@@ -107,7 +127,7 @@ void Finish() {
 DWORD WINAPI Preload(LPVOID arg) {
 	const Job job = *(Job*)arg;
 	delete (Job*)arg;
-	if (job.waitFirst) {   // the quest graph's menu build first: nothing else may load animations next to ours
+	if (job.waitFirst && g_mode == 2) {   // mode 2: the quest graph's menu build first (the rule before 2026-10-24)
 		const long long t = Now();
 		const DWORD w = WaitForSingleObject(job.waitFirst, 120000);
 		Log("animahead: waited %.0f ms for the quest graph's menu build%s", Ms(t, Now()), w == WAIT_OBJECT_0 ? "" : " (gave up)");
@@ -152,7 +172,8 @@ uint64_t __fastcall HkLoadLevel(uint64_t a, uint64_t b, uint64_t c, uint64_t d) 
 void Animahead_AtMenu(void* waitFirst) {
 	g_waitFirst = (HANDLE)waitFirst;
 	g_menuState = 2;   // set back to 1 below when a preload thread starts
-	if (g_mode != 1 || !g_loadLevel) return;
+	if ((g_mode != 1 && g_mode != 2) || !g_loadLevel) return;
+	if (g_mode == 1 && !g_headerAdd) { Log("animahead: header add not guarded - after the quest build (mode 2's rule)"); g_mode = 2; }
 	const char* why = nullptr;
 	void* cm = ReadPtr(g_base + kRvaCharMgr);
 	void** vt = cm ? (void**)ReadPtr((uintptr_t)cm) : nullptr;
@@ -177,16 +198,20 @@ void Animahead_Install(uintptr_t base, void* self) {
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((dir + "fastload_animahead.txt").c_str(), "r")) {
 		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 1 ? 1 : 0;
+		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 1 || m == 2 ? m : 0;
 		fclose(fp);
 	}
 	g_done = CreateEventA(nullptr, TRUE, TRUE, nullptr);
-	const bool lvl = g_mode == 1 && Hook(kRvaLoadLevel, kLoadLevelBytes, sizeof kLoadLevelBytes, (void*)&HkLoadLevel, (void**)&g_loadLevel,
+	const bool lvl = g_mode != 0 && Hook(kRvaLoadLevel, kLoadLevelBytes, sizeof kLoadLevelBytes, (void*)&HkLoadLevel, (void**)&g_loadLevel,
 	                                     "Loading level");
 	const bool chr = Hook(kRvaChrparams, kChrparamsBytes, sizeof kChrparamsBytes, (void*)&HkChr, (void**)&g_chr, "LoadCHRPARAMS");
 	const bool skel = Hook(kRvaModelSkel, kModelSkelBytes, sizeof kModelSkelBytes, (void*)&HkSkel, (void**)&g_skel, "LoadModelSKEL");
-	Log("animahead: mode %d (%s; fastload_animahead.txt), level-load gate %s, chrparams log %s, skeleton log %s", g_mode,
-	    g_mode ? "human animation sets at the main menu" : "off", lvl ? "on" : "OFF", chr ? "on" : "OFF", skel ? "on" : "OFF");
+	const bool hdr = g_mode == 1 && Hook(kRvaHeaderAdd, kHeaderAddBytes, sizeof kHeaderAddBytes, (void*)&HkHeaderAdd,
+	                                     (void**)&g_headerAdd, "animation header add");
+	Log("animahead: mode %d (%s; fastload_animahead.txt), level-load gate %s, chrparams log %s, skeleton log %s, header-add "
+	    "guard %s", g_mode, g_mode == 1 ? "human animation sets at the main menu, beside the quest build" :
+	    g_mode == 2 ? "human animation sets at the main menu, after the quest build" : "off", lvl ? "on" : "OFF",
+	    chr ? "on" : "OFF", skel ? "on" : "OFF", hdr ? "on" : g_mode == 1 ? "OFF" : "off");
 }
 
 bool Animahead_MenuSettled() {   // terrainfast's menu preload: nothing loads animations at the menu now (any thread)

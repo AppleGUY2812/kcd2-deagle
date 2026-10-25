@@ -6,6 +6,11 @@
 // boot event 0x24 (save list read, the main menu is up; questmenu's start point), after questmenu's quest build if one
 // runs, a plugin thread calls the game's own preload, ICharacterManager::LoadAndLockResources (vtable +0x70), for female.cdf and male.cdf; nothing purges them
 // before the first load, whose spawns then find both in the character manager's cache. 0 = off.
+// Mode 1 (since 2026-10-24) starts the preload at 0x24 beside questmenu's build, not after it: with the auto-load
+// (readymenu) the load began before the build ended and the preload never ran (boot 86: the load built both sets on
+// Main, ~1.9 s). The global header array's only add (FUN_180b14d68) is hooked: while the preload runs, an add from any
+// other thread waits for it (10 s cap, "animahead: header add ... held" lines). Boots 76-86: no animation loads during
+// the quest build. Mode 2 = the old rule (after the quest build).
 // The animation header list takes no lock: boot 39 called the preload on Main during the terrain wait and crashed 1.1 s
 // in (dump: FUN_18083f874, an entry of the global header array CM+0x280 read after the array moved), while the
 // terrain's own loaders (JobWorker_05) added hen/book/tongs animations to it. So the preload runs only before any level
