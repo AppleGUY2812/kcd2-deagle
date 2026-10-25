@@ -346,9 +346,12 @@ bool Grab(const Target& t, uint8_t who, Sample* s, uint32_t tMs) {
 	s->who = who;
 	s->faults = Faults();
 	s->n = 0;
+	// the first 16 return addresses of any module, then the game's only (boot 103: start-up stacks through the D3D and
+	// driver DLLs used up the 64 before the engine's init phases, 435 of 611 main samples without them)
 	for (size_t i = 0; i + 8 <= n && s->n < kKeep; i += 8) {
 		uint64_t v;
 		memcpy(&v, g_stack + i, 8);
+		if (s->n >= 16 && (v < g_game || v >= g_gameEnd)) continue;
 		if (AfterCall((uintptr_t)v)) s->ret[s->n++] = v;
 	}
 	return true;
