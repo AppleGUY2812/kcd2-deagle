@@ -203,6 +203,11 @@ void StepLog(const char* what, long long t0, ULONGLONG us0, ULONGLONG n0) {
 #define STEP(call) do { LARGE_INTEGER t0_; QueryPerformanceCounter(&t0_); ULONGLONG us0_ = 0, n0_ = 0; \
 	MH_FreezeStats(&us0_, &n0_, nullptr, nullptr); call; StepLog(#call, t0_.QuadPart, us0_, n0_); } while (0)
 
+// fastload.asi's DllMain before WHGame.dll's static initializers (DllMain): MinHook up, questfast's sort hooks on
+constexpr uintptr_t kRvaAllocInit = 0x549d370;   // WHGame 1.5.6: the allocator's "set up" flag, 0 until its first use
+bool g_mhEarly = false;
+int g_earlyHooks = -1;   // -1: DllMain ran after the game's start-up code, -2: before WHGame.dll was loaded
+
 DWORD WINAPI Init(LPVOID) {
 	{ LARGE_INTEGER t; QueryPerformanceCounter(&t); g_initStart = t.QuadPart; }
 	Log("fastload v1 loaded");
@@ -212,7 +217,13 @@ DWORD WINAPI Init(LPVOID) {
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
 	Log("WHGame.dll at %p size %zu", (void*)g_game.base, g_game.size);
 	Early_Report(g_game.base, g_game.size);   // what ran before this thread could start (early.cpp)
-	if (MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
+	if (!g_mhEarly && MH_Initialize() != MH_OK) { Log("MinHook init failed"); return 0; }
+	if (g_earlyHooks >= 0)
+		Log("fastload: DllMain ran before WHGame.dll's start-up code (ASI loader DontLoadFromDllMain=0): %d of 2 rttr sort hooks "
+		    "on from there%s", g_earlyHooks, g_mhEarly ? "" : " (MinHook init failed there)");
+	else if (g_earlyHooks == -2) Log("fastload: DllMain ran before WHGame.dll was loaded: no early sort hooks");
+	else Log("fastload: DllMain ran after WHGame.dll's start-up code (the ASI loader's default); global.ini DontLoadFromDllMain=0 "
+	         "next to dinput8.dll loads it before");
 	MH_SetFreezeLast(Early_MainThread());
 	MH_DeferEnables(TRUE);   // the hooks below go on in two freezes, not one each
 	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
@@ -314,6 +325,18 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 		DisableThreadLibraryCalls(h);
 		LogInit(h);
 		Early_Start(h);   // the time, and a sampler of this thread until Init runs (early.cpp)
+		// Loaded inside the ASI loader's DllMain (global.ini DontLoadFromDllMain=0)? Then WHGame.dll is mapped but its
+		// static initializers haven't run: its allocator's first-use flag (DAT_18549d370, set by the first allocation) is 0.
+		HMODULE wh = GetModuleHandleA("WHGame.dll");
+		if (!wh) g_earlyHooks = -2;
+		else {
+			const uintptr_t b = (uintptr_t)wh;
+			const auto* nt = (const IMAGE_NT_HEADERS*)(b + ((const IMAGE_DOS_HEADER*)b)->e_lfanew);
+			if (nt->OptionalHeader.SizeOfImage > kRvaAllocInit && !*(volatile unsigned char*)(b + kRvaAllocInit)) {
+				g_mhEarly = MH_Initialize() == MH_OK;
+				g_earlyHooks = g_mhEarly ? Questfast_EarlyInstall(b, h) : 0;
+			}
+		}
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
 	}
 	return TRUE;

@@ -181,8 +181,8 @@ bool Questfast_SetOn(bool on) {
 	return any;
 }
 
-void Questfast_Install(uintptr_t base, void* self) {
-	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
+namespace {
+int ReadMode(void* self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string dir = path;
@@ -193,12 +193,38 @@ void Questfast_Install(uintptr_t base, void* self) {
 		if (fscanf(fp, "%d", &m) == 1) mode = m != 0;
 		fclose(fp);
 	}
-	if (!mode) { Log("questfast: off (fastload_questfast.txt)"); return; }
+	return mode;
+}
+}  // namespace
+
+int Questfast_EarlyInstall(uintptr_t base, void* self) {
+	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
+	if (!ReadMode(self)) return 0;
+	void* const wraps[2] = { (void*)&HkSort<0>, (void*)&HkSort<1> };
+	int n = 0;
+	for (int i = 0; i < 2; i++) {
+		List& l = g_lists[i];
+		void* t = (void*)(base + l.rva);
+		if (memcmp(t, kSortBytes, sizeof kSortBytes) || MH_CreateHook(t, wraps[i], (void**)&l.orig) != MH_OK) { l.orig = nullptr; continue; }
+		if (MH_EnableHook(t) != MH_OK) { MH_RemoveHook(t); l.orig = nullptr; continue; }
+		n++;
+	}
+	return n;
+}
+
+void Questfast_Install(uintptr_t base, void* self) {
+	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
+	if (!ReadMode(self)) { Log("questfast: off (fastload_questfast.txt)"); return; }
 	void* const wraps[2] = { (void*)&HkSort<0>, (void*)&HkSort<1> };
 	std::string state;
 	for (int i = 0; i < 2; i++) {
 		List& l = g_lists[i];
 		void* t = (void*)(base + l.rva);
+		if (l.orig) {   // hooked in DllMain, before the game's static initializers (Questfast_EarlyInstall)
+			state += state.empty() ? "" : ", ";
+			state += std::string(l.name) + " on since DllMain (" + std::to_string(l.calls.load()) + " calls in the game's start-up code)";
+			continue;
+		}
 		const bool ok = !memcmp(t, kSortBytes, sizeof kSortBytes) &&
 		                MH_CreateHook(t, wraps[i], (void**)&l.orig) == MH_OK && MH_EnableHook(t) == MH_OK;
 		state += state.empty() ? "" : ", ";

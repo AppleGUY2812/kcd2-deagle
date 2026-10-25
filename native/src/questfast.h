@@ -10,5 +10,10 @@
 // Step 3, exact with a self-check: the port-definition walks cached (questports.h).
 // fastload_questfast.txt: 1 on (default), 0 off.
 void Questfast_Install(uintptr_t gameBase, void* selfModule);
+// From fastload.asi's DllMain when it runs before WHGame.dll's static initializers (the ASI loader's global.ini
+// DontLoadFromDllMain=0, 2026-10-25): step 1's two sort hooks on at once, so the ~20k type registrations of the game's
+// start-up code (2.5 s before the plugin's Init, boot 97: the two stable_sorts' moves among the hottest places) get the
+// sorted insert too. Returns how many of the 2 are on; Questfast_Install keeps them. No logging here (DllMain).
+int Questfast_EarlyInstall(uintptr_t gameBase, void* selfModule);
 void Questfast_Report(const char* when);   // one log line with the counts and times so far
 bool Questfast_SetOn(bool on);             // questbench's A/B: the sorted insert on or off (false = not installed)
