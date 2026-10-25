@@ -44,17 +44,22 @@ std::atomic<bool> g_failShown{ false };
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g_freq; }
 
+char g_reload = 0;
 DWORD WINAPI Worker(LPVOID) {
 	g_workerTid = GetCurrentThreadId();
-	g_result = g_origType(g_mgr, kTypeDubbing, 0);
+	g_result = g_origType(g_mgr, kTypeDubbing, g_reload);
 	g_t1 = Now();
 	SetEvent(g_done);
 	return 0;
 }
 
 char __fastcall HkTypeLoad(void* mgr, int type, char reload) {
-	if (type == kTypeDubbing && !reload && g_on && GetCurrentThreadId() == g_mainTid && !g_started.exchange(true)) {
+	// the process's first load of the type, whichever path: at start-up FUN_180ef3afc skips it while g_languageAudio is
+	// empty, and the language-audio event (0x100e in FUN_180ef37d8) loads it with reload 1 (boot 106)
+	if (type == kTypeDubbing && g_on && GetCurrentThreadId() == g_mainTid && !g_started.exchange(true)) {
 		g_mgr = mgr;
+		g_reload = reload;
+		Log("dbasync: the dubbing database load (reload %d) handed to a worker", (int)reload);
 		g_t0 = Now();
 		HANDLE t = CreateThread(nullptr, 0, Worker, nullptr, 0, nullptr);
 		if (t) {

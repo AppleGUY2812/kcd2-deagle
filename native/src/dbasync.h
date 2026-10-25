@@ -12,6 +12,9 @@
 // any other database load (FUN_180ef3afc, FUN_180ef3e9c, FUN_180ef5668, and FUN_180ef4048 through dbprof's hook) and at
 // its first frame tick, so nothing after the menu can see a half-built table. A failed load shows the game's own
 // "Database system error" box at that wait, as Main would have.
+// Boot 106: at start-up FUN_180ef3afc skips type 0xf (g_languageAudio still empty), and the load comes from the
+// language-audio event 0x100e (FUN_180ef37d8 -> FUN_180ef3e9c(mgr, 0xf, 1)), whose return value is unused: the
+// first type-0xf load of the process goes to the worker whichever path it takes.
 // fastload_dbasync.txt: 1 = on (default), 0 = off (the load on Main as before).
 void Dbasync_Install(uintptr_t gameBase, void* self, unsigned long mainTid, bool listGateOk);
 void Dbasync_Gate(const char* where);   // Main: waits for the worker's load if it is still running (no-op otherwise)
