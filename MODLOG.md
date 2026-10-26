@@ -1091,3 +1091,29 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   the GPU query ~0.59 s after the plugin's DllMain (175E1) and the load ends 1.1-1.5 s after it, so Main waits
   whatever the start. Left on this wait: NvCamera off for KingdomCome.exe only (NvCameraEnable.exe
   allowlisting-disallow), est. -0.3..-0.45 s to the menu; the user decides (photo mode, filters, RTX HDR off in KCD2).
+- Queue 176 (build 176, 4 boots each, install = 174's settings): readiness hold 0.1 let in after 2.2-2.4 s against
+  2.5-2.6 s (-0.3 s; control 25.77 against 26.25 s mean, noisy); wh_cc_RequiredPostLoadReadyTime 0 changed nothing
+  (Animation and ObjStreaming are as late as clothing). "1 128 0.1" installed 04:06 with build 176.
+- Settle's AI wait (176w / a1): Main waited 918 / 1013 ms for XGenUpdateJob (31-35 % of the gate), ~4.4 ms a frame.
+  The job runs the module's phase list (FUN_1807e2c68, module+0xf8, 0x48-byte entries, per-phase QPC start / ms in
+  *DAT_185493918); phase 14 (FUN_1820c3920 -> FUN_1820c20b0 -> FUN_1807fa57c(dt ms) -> FUN_1807fae5c on the global
+  AI object DAT_185494490: the AI world update) is 841 / 948 ms of the 1148 / 1220 ms. The runner's play window is
+  paused (0 ms waited), so there is no in-play comparison yet.
+- ReadinessTask "ObjStreaming" = CObjManager (ctor FUN_180b6cec4) +0xbb8 == 0: in-flight object mesh streams.
+- rtsync probe (176w / a1): after the setup's release Main makes 4 renderer calls, its next real flush (+7a1ee8)
+  15 ms later, then texture loads (+9b8e7c) from ~196 ms. Letting Main past the gate saves at most 15-200 ms.
+- Stream reader (streamio mode-0 counters, 176a1): ~8.5 s of ReadFile per load, unbuffered (sys_UncachedStreamReads
+  1), ~0.23 ms a request: 3.5 s in the level load's first 5 s (71-78 % busy), 1.4 s in Settle's 2 s window (71 %);
+  hitch.cpp: 80 of 139 Settle samples in ZwReadFile at 23 % CPU. The pak cvars register through FUN_180e40078
+  (console GetCVar +0xb8, unregister +0x50, re-register, Set +0x38), not the registrars cvars.cpp hooked, so queue
+  177's "sys_UncachedStreamReads 0" line was dropped (U void); fastload_178 sets such names through the console.
+  WHGame ICVar slots: +0x10 GetIVal, +0x28 GetString, +0x38 Set(int), +0x40 Set(float), +0x48 Set(const char*).
+- Frame limiter FUN_180860560 (object from FUN_1818a95c0: sys_MaxFPS, sys_MaxFPSThrotteled, r_Vsync): sys_MaxFPS 0
+  (default) caps menus / loading / unfocused at sys_MaxFPSThrotteled = 60 fps (Sleep(1) / SwitchToThread on the
+  render thread); returns early when the game state (+0x628) is 0xd. Settle ran ~73-85 fps, so it is not capped.
+- Main's start-up waits, 176a1 hitch 0 (exact stacks, times after the plugin's start): the GPU query 0.76-1.26 s
+  (~0.55 s); the per-frame main/render sync FUN_1809a6190 (SyncMainWithRender: FUN_1809a6308 waits on the render
+  thread's cond in 200 ms steps, then swaps the fill buffers) ~0.38 s at ~2 s from inside the renderer PostInit
+  (+7a18fc), while the render thread was in FUN_180b1b114 (the first root signature / the driver's DXCache set-up),
+  and ~0.51 s at ~7 s (the menu, readymenu's 0.5 s hold); the rtsync gate 3.10-3.45 s (~0.38 s). During LoadLevel
+  Main waited in ~10 of ~370 samples: that step is Main's CPU.
