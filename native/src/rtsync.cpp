@@ -127,6 +127,20 @@ std::atomic<void*> g_owedRt{ nullptr };    // the flush Main owes (set and taken
 long long g_owedT = 0, g_owedPaidAt = -1, g_owedPaidTicks = 0;
 char g_owedWhere[64] = "";
 constexpr size_t kThunkSize = 0x90;
+// The probe (fastload_rtsync.txt's second number: 1 on, the default; log only): when the setup's hand-over ends, the
+// gate's thunks stay in the renderer's vtable and Main's renderer calls, texture loads and real flushes are listed for
+// as long as Main waited for the setup (at least 100 ms, at most 1 s; 256 runs of the same call or the first frame
+// end it sooner), then the slots go back. That list is what Main would need answered if it ran on past the setup
+// instead of waiting at its first renderer call (queue 171: 0.42-0.51 s there).
+bool g_probeOn = true, g_probeDone = false;
+std::atomic<bool> g_probeOpen{ false };
+long long g_probeT0 = 0, g_probeLen = 0, g_probeCalls = 0;
+// one run of the same call: slot 0xffff = a texture load (ForName), 0xfffe = a real flush (Main waits for the render thread)
+struct ProbeCall { uint16_t slot; uintptr_t from; uint32_t us, n; };
+constexpr int kProbeMax = 256;
+ProbeCall g_probe[kProbeMax];
+int g_probeN = 0;
+constexpr uint16_t kProbeTex = 0xffff, kProbeFlush = 0xfffe;
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline uintptr_t RipTarget(uintptr_t ins, size_t dispAt, size_t len) { return ins + len + (intptr_t)*(const int32_t*)(ins + dispAt); }
@@ -167,25 +181,84 @@ void Submit(void* rt) {
 	g_submits++;
 }
 
-// Both lambdas have run (or the setup ended without them): the renderer's slots back, Main let go. Any thread.
+// Under g_vtLock: the renderer's slots that still hold our thunk back to the game's
+void RestoreSlots() {
+	if (!g_vtPatched) return;
+	DWORD old = 0;
+	if (VirtualProtect(g_rendVt, kRendererSlots * sizeof(void*), PAGE_READWRITE, &old)) {
+		for (int i = 0; i < kRendererSlots; i++)   // only the slots still holding our thunk
+			if (g_rendVt[i] == g_thunks + 0x40 + i * kThunkSize) InterlockedExchangePointer(&g_rendVt[i], g_rendOrig[i]);
+		VirtualProtect(g_rendVt, kRendererSlots * sizeof(void*), old, &old);
+	}
+	g_vtPatched = false;
+}
+
+// Both lambdas have run (or the setup ended without them): the renderer's slots back (or the probe on), Main let go.
+// Any thread.
 void Release() {
 	AcquireSRWLockExclusive(&g_vtLock);
 	if (g_gateOn.load(std::memory_order_acquire) && g_owedRt.load()) {
 		SetEvent(g_setupDone);   // mode 4: the lambdas ran; the gate stays until Main has paid its owed flush (PayOwed)
 	} else if (g_gateOn.load(std::memory_order_acquire)) {
-		if (g_vtPatched) {
-			DWORD old = 0;
-			if (VirtualProtect(g_rendVt, kRendererSlots * sizeof(void*), PAGE_READWRITE, &old)) {
-				for (int i = 0; i < kRendererSlots; i++)   // only the slots still holding our thunk
-					if (g_rendVt[i] == g_thunks + 0x40 + i * kThunkSize) InterlockedExchangePointer(&g_rendVt[i], g_rendOrig[i]);
-				VirtualProtect(g_rendVt, kRendererSlots * sizeof(void*), old, &old);
-			}
-			g_vtPatched = false;
+		if (g_vtPatched && g_probeOn && !g_probeDone) {   // the thunks stay: Main's calls listed until ProbeEnd
+			g_probeT0 = Now();
+			g_probeOpen.store(true, std::memory_order_release);
+		} else {
+			RestoreSlots();
 		}
 		g_gateOn.store(false, std::memory_order_release);
 		SetEvent(g_setupDone);
 	}
 	ReleaseSRWLockExclusive(&g_vtLock);
+}
+
+// Main: the probe's end: the slots back, its list in one line
+void ProbeEnd(const char* why) {
+	if (!g_probeOpen.exchange(false)) return;
+	g_probeDone = true;
+	const long long t1 = Now();
+	AcquireSRWLockExclusive(&g_vtLock);
+	if (!g_gateOn.load(std::memory_order_acquire)) RestoreSlots();
+	ReleaseSRWLockExclusive(&g_vtLock);
+	const auto* dos = (const IMAGE_DOS_HEADER*)g_base;
+	const uintptr_t end = g_base + ((const IMAGE_NT_HEADERS64*)(g_base + dos->e_lfanew))->OptionalHeader.SizeOfImage;
+	int distinct = 0, tex = 0, flushes = 0;
+	std::string list;
+	for (int i = 0; i < g_probeN; i++) {
+		const ProbeCall& c = g_probe[i];
+		bool seen = false;
+		for (int j = 0; j < i && !seen; j++) seen = g_probe[j].slot == c.slot && g_probe[j].from == c.from;
+		distinct += !seen;
+		if (c.slot == kProbeTex) tex += c.n;
+		if (c.slot == kProbeFlush) flushes += c.n;
+		char where[40], b[128];
+		if (c.from > g_base && c.from < end) snprintf(where, sizeof where, "+%llx", (unsigned long long)(c.from - g_base));
+		else snprintf(where, sizeof where, "outside WHGame %llx", (unsigned long long)c.from);
+		const char* sep = i ? ", " : "";
+		if (c.slot == kProbeTex) snprintf(b, sizeof b, "%stexture load from %s at %.1f", sep, where, c.us / 1000.0);
+		else if (c.slot == kProbeFlush) snprintf(b, sizeof b, "%sFLUSH from %s at %.1f", sep, where, c.us / 1000.0);
+		else snprintf(b, sizeof b, "%s%u from %s at %.1f", sep, c.slot, where, c.us / 1000.0);
+		list += b;
+		if (c.n > 1) { snprintf(b, sizeof b, " x%u", c.n); list += b; }
+	}
+	Log("rtsync: probe: Main's renderer calls after the setup's end, for %.0f ms (until %s): %lld calls in %d runs (%d "
+	    "distinct, %d texture loads, %d real flushes); in order (renderer slot from where, at ms after Main was let go): %s",
+	    (double)(t1 - g_probeT0) * 1000.0 / g_freq, why, g_probeCalls, g_probeN, distinct, tex, flushes,
+	    g_probeN ? list.c_str() : "none");
+}
+
+// Main, while the probe is on: one renderer call, texture load or real flush (same as the last one: its run grows)
+void ProbeNote(int slot, uintptr_t from) {
+	const long long now = Now();
+	if (!g_probeLen) {   // Main's wait for the setup (WaitSetup has counted it by Main's first call after it)
+		const long long w = g_gateTicks;
+		g_probeLen = w < g_freq / 10 ? g_freq / 10 : w > g_freq ? g_freq : w;
+	}
+	if (now - g_probeT0 > g_probeLen) { ProbeEnd("its time"); return; }
+	g_probeCalls++;
+	if (g_probeN && g_probe[g_probeN - 1].slot == slot && g_probe[g_probeN - 1].from == from) { g_probe[g_probeN - 1].n++; return; }
+	g_probe[g_probeN++] = { (uint16_t)slot, from, (uint32_t)((now - g_probeT0) * 1000000 / g_freq), 1 };
+	if (g_probeN >= kProbeMax) ProbeEnd("256 runs");
 }
 
 // The render thread: the setup's lambda, then the flag back (and Main let go when no second lambda follows)
@@ -246,6 +319,7 @@ void PayOwed(const char* what, uintptr_t a, uintptr_t b) {
 // The generated thunks' call: Main waits while the gate is on, every other thread goes straight on
 void __fastcall GateSlot(int slot, uintptr_t from) {
 	if (GetCurrentThreadId() != g_mainTid) return;
+	if (g_probeOpen.load(std::memory_order_acquire)) { ProbeNote(slot, from); return; }
 	// slot 59's own renderer call before its flush (slot 199 from +7a1ece: this thread's aux geometry, submitted next):
 	// part of slot 59, through without waiting while its flush is about to be owed
 	if (g_owedArmed && from >= g_base + kRvaSlot59 && from < g_base + kRvaSlot59FlushCall) return;
@@ -319,6 +393,7 @@ void PatchVtable() {
 }
 
 uintptr_t __fastcall HkForName(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+	if (g_probeOpen.load(std::memory_order_acquire) && GetCurrentThreadId() == g_mainTid) ProbeNote(kProbeTex, (uintptr_t)_ReturnAddress());
 	if (g_gateOn.load(std::memory_order_acquire) && GetCurrentThreadId() == g_mainTid && !g_isrGaveUp)
 		WaitSetup("a texture load from +%llx", (uintptr_t)_ReturnAddress() - g_base, 0);
 	if (g_owedRt.load(std::memory_order_relaxed) && GetCurrentThreadId() == g_mainTid)
@@ -404,6 +479,7 @@ void __fastcall HkFlush(void* rt) {
 		}
 	}
 	const bool timed = g_on.load(std::memory_order_relaxed) && GetCurrentThreadId() == g_mainTid;
+	if (timed && g_probeOpen.load(std::memory_order_acquire)) ProbeNote(kProbeFlush, (uintptr_t)_ReturnAddress());
 	bool paid = false;   // a real flush on Main pays an owed one (it sends everything queued)
 	if (timed && g_owedRt.load(std::memory_order_relaxed)) {
 		AcquireSRWLockExclusive(&g_vtLock);
@@ -500,10 +576,13 @@ void Rtsync_Install(uintptr_t base, void* self) {
 	std::string dir(path);
 	dir = dir.substr(0, dir.find_last_of("\\/") + 1);
 	int mode = 2;   // the shader manager's hand-over (1) and the setup's (3) are off until a boot pair tests them
+	int probe = 1;
 	if (FILE* fp = fopen((dir + "fastload_rtsync.txt").c_str(), "r")) {
 		if (fscanf(fp, "%d", &mode) != 1) mode = 2;
+		else if (fscanf(fp, "%d", &probe) != 1) probe = 1;
 		fclose(fp);
 	}
+	g_probeOn = probe == 1;
 	g_reported = true;   // until installed
 	if (mode < 1 || mode > 4) { Log("rtsync: off (fastload_rtsync.txt)"); return; }
 	if (memcmp((void*)(base + kRvaFlush), kFlushBytes, sizeof kFlushBytes) || memcmp((void*)(base + kRvaQualityRet), kRetBytes, sizeof kRetBytes) ||
@@ -550,7 +629,9 @@ void Rtsync_Frame() {
 		g_orig(g_shaderRt);
 		RunHeldCloses("at the first frame");
 	}
+	g_probeOn = false;   // a release from here on puts the slots back at once
 	PayOwed("the first frame", 0, 0);
+	ProbeEnd("the first frame");
 	if (g_isrOn && (g_flagHeld.load(std::memory_order_acquire) || g_gateOn.load(std::memory_order_acquire)) && g_isrRt) {
 		if (!g_isrSubmitted) { Submit(g_isrRt); g_isrSubmitted = true; }   // the setup's lambdas not run yet: run them now
 		g_orig(g_isrRt);

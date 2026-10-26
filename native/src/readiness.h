@@ -26,7 +26,13 @@ void Readiness_Install(uintptr_t gameBase);   // after MH_Initialize
 // or fast-travel gate waits, the stream engine's temp memory budget (sys_streaming_memory_budget, 20 MB in Warhorse's
 // system.cfg) is raised to that, then put back. The "waiting" lines show the reader: asleep with work queued (temp
 // memory or a pause holds it), asleep with nothing queued, temp memory full.
-void Readiness_Command(const char* args);     // "readiness [early 0|1] [temp 0|32-512]"
+// "readiness hold <s>" (0.05-1, the default 0.3; kept as the file's third number): how long the must-have tasks stay
+// ready before "let me in early" opens the gate.
+// The AI module's frame job (one "XGenUpdateJob" a frame, which Main waits for at the end of C_XGenAIModule's Update) is
+// timed on the main thread: each gate's "open" line ends with "N AI frame jobs, Main waited W ms (X % of the gate)...",
+// and 10 s after a save-load gate opens "readiness: AI update in the first 10 s of play after the gate: ..." gives the
+// same numbers in play. Plain C_ReadinessTask tasks are named by their name string and their function's class.
+void Readiness_Command(const char* args);     // "readiness [early 0|1] [hold 0.05-1] [temp 0|32-512]"
 void Readiness_Frame();   // main thread, once a drawn frame (fastload_main.cpp)
 int Readiness_LevelState();   // the level manager's state (0 in game, 1-9 while a level loads), -1 = none yet; any thread
 void Readiness_WatchState();   // logs "readiness: level state A -> B"; fastload's watcher thread, every 10 ms

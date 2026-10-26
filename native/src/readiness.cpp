@@ -6,6 +6,7 @@
 #include "hitch.h"
 #include "mainreads.h"
 #include "streamahead.h"
+#include "early.h"
 #include <windows.h>
 #include <intrin.h>
 #include <algorithm>
@@ -57,7 +58,7 @@ std::atomic<int> g_tempMB{ 0 };
 int g_tempOrig = -1;   // KB, the value we raised from (-1: not raised)
 int g_tempSet = -1;    // KB, the value we wrote (restore only while it is still there)
 std::string g_modeFile;
-const early::Cfg g_earlyCfg;
+early::Cfg g_earlyCfg;   // its hold: fastload_readiness.txt's third number (s, 0.05-1; 0.3 by default)
 long long g_freq = 1, g_lastTick = 0;
 
 struct Task {
@@ -81,6 +82,9 @@ struct ReaderAcc {
 	uint32_t mask = 0;      // the last pause mask seen (not 0)
 };
 
+// the AI frame job's phase times at one moment (see AiPhases below)
+struct PhaseSnap { std::vector<double> sum; std::vector<long long> n; };
+
 struct Gate {
 	uint32_t mask;
 	uintptr_t from;           // the call site's RVA
@@ -93,6 +97,8 @@ struct Gate {
 	void* obs = nullptr;           // the observer (C_ReadinessObserver)
 	bool eligible = false;         // a gate "let me in early" may open (save load 0x3f93, fast travel 0x3f91)
 	early::State early;
+	AiAcc ai0;                     // the AI frame jobs' counters when the gate was first seen
+	PhaseSnap ph0;                 // and its phases' times
 	double letAt = -1;             // s: let in early at this age (-1: not)
 	int frames = 0;                // frames seen while it waited
 	double longest = 0;            // s: its longest frame
@@ -106,6 +112,142 @@ std::vector<Gate> g_gates;  // being watched (main thread)
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Secs(long long t) { return (double)t / (double)g_freq; }
+
+// The AI module's frame job (C_XGenAIModule, decoded 2026-10-26, log only): its method FUN_180ec4660 (secondary vtable
+// slot 6, this = module+0x10) starts ONE job, "XGenUpdateJob" (the whole XGen AI update; its state at module+0x148),
+// and its Update (slot 1, FUN_180fa08c0) ends in FUN_180fa0950, which waits for that job. Boot 171A3's settle: Main
+// was in that wait in 54 of 139 samples (39 %, ~1.1 s of 2.9 s). Counted on the main thread only; per gate and for the
+// first 10 s of play after a save-load gate, in the "open" line and a "readiness: AI update in play" line.
+constexpr uintptr_t kRvaAiLaunch = 0xec4660, kRvaAiWait = 0xfa0950;
+const unsigned char kAiLaunchBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x60,0x48,0x8d,0x79,0xf0,0x48,0x8b };
+const unsigned char kAiWaitBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x4c,0x8b,0x0d,0xcb,0xcf,0x98,0x03,0x48,0x8d,0x99 };
+using AiLaunchFn = void(__fastcall*)(void*);
+using AiWaitFn = uint32_t(__fastcall*)(void*);
+AiLaunchFn g_aiLaunchOrig = nullptr;
+AiWaitFn g_aiWaitOrig = nullptr;
+struct AiAcc {
+	long long launches = 0, waits = 0, waited = 0, waitTicks = 0, maxWait = 0, spanTicks = 0;
+};
+AiAcc g_ai;                  // Main only
+long long g_aiLaunchT = 0;   // Main: the last job start
+DWORD g_mainTid = 0;
+std::atomic<long long> g_aiOther{ 0 };   // calls from other threads (not counted)
+AiAcc g_playAi;              // at the last save-load gate's opening
+long long g_playT0 = 0;      // when it opened (0: no play window open)
+
+// The job's phases: FUN_1807e2c68 runs the module's phase list (vector at module+0xf8, 0x48-byte entries: +0x38 the
+// phase's std::function, +0x40 its flag byte, run when it has a bit of module+0x130) one after another, and notes each
+// phase's start (QPC) and length (ms, float) in the timing object *DAT_185493918 (FUN_180fc7020): array *obj, phase i at
+// +8 + i*0x18 (start) and +0x10 + i*0x18 (ms). Read on Main after the job is done; a phase counts when its start moved.
+constexpr uintptr_t kRvaAiStats = 0x5493918;
+constexpr int kMaxPhases = 48;
+struct AiPhase { long long lastStart = 0, n = 0; double sumMs = 0, maxMs = 0; uintptr_t fn = 0; int flags = -1; std::string name; };
+AiPhase g_phase[kMaxPhases];
+int g_nPhase = 0;
+uintptr_t g_phaseVecB = 0, g_phaseVecE = 0;
+PhaseSnap Snap() {
+	PhaseSnap p;
+	for (int i = 0; i < g_nPhase; i++) { p.sum.push_back(g_phase[i].sumMs); p.n.push_back(g_phase[i].n); }
+	return p;
+}
+PhaseSnap g_playPh;          // the phases at the last save-load gate's opening
+bool Rd(uintptr_t a, void* out, size_t n);   // below
+std::string Text(uintptr_t p);
+void AiPhases(uintptr_t module) {
+	uintptr_t b = 0, e = 0;
+	if (!Rd(module + 0xf8, &b, 8) || !Rd(module + 0x100, &e, 8) || e < b || (e - b) % 0x48) return;
+	if (b != g_phaseVecB || e != g_phaseVecE) {   // the phase list (once, or again when it changed)
+		g_phaseVecB = b;
+		g_phaseVecE = e;
+		g_nPhase = (int)(std::min)((e - b) / 0x48, (uintptr_t)kMaxPhases);
+		for (int i = 0; i < g_nPhase; i++) {
+			AiPhase& ph = g_phase[i];
+			const uintptr_t en = b + (uintptr_t)i * 0x48;
+			uintptr_t impl = 0, vt = 0, fn = 0;
+			uint8_t fl = 0;
+			ph.fn = Rd(en + 0x38, &impl, 8) && impl && Rd(impl, &vt, 8) && vt && Rd(vt + 0x10, &fn, 8) && fn > g_base ? fn - g_base : 0;
+			ph.flags = Rd(en + 0x40, &fl, 1) ? fl : -1;
+			ph.name.clear();
+			for (int q = 0; q < 7 && ph.name.empty(); q++) {   // a name string among its first fields, if any
+				uintptr_t v = 0;
+				if (Rd(en + q * 8, &v, 8) && v > 0x10000) { std::string t = Text(v); if (t.size() >= 3) ph.name = t; }
+			}
+		}
+	}
+	uintptr_t obj = 0, arr = 0;
+	if (!Rd(g_base + kRvaAiStats, &obj, 8) || !obj || !Rd(obj, &arr, 8) || !arr) return;
+	for (int i = 0; i < g_nPhase; i++) {
+		long long st = 0;
+		float ms = 0;
+		if (!Rd(arr + 8 + (uintptr_t)i * 0x18, &st, 8) || !Rd(arr + 0x10 + (uintptr_t)i * 0x18, &ms, 4)) return;
+		AiPhase& ph = g_phase[i];
+		if (!st || st == ph.lastStart) continue;
+		ph.lastStart = st;
+		if (ms < 0 || ms > 60000) continue;
+		ph.n++;
+		ph.sumMs += ms;
+		if (ms > ph.maxMs) ph.maxMs = ms;
+	}
+}
+
+// the phases since a snapshot, the costliest first: "phase 3 (+RVA "name" flags 0x..) 812 ms in 220 runs, avg 3.7, max 12"
+std::string PhaseLine(const PhaseSnap& a) {
+	std::vector<int> ix;
+	for (int i = 0; i < g_nPhase; i++) ix.push_back(i);
+	auto d = [&](int i) { return g_phase[i].sumMs - (i < (int)a.sum.size() ? a.sum[i] : 0); };
+	auto dn = [&](int i) { return g_phase[i].n - (i < (int)a.n.size() ? a.n[i] : 0); };
+	std::sort(ix.begin(), ix.end(), [&](int x, int y) { return d(x) > d(y); });
+	std::string out;
+	double total = 0;
+	for (int i : ix) total += d(i);
+	char s[200];
+	snprintf(s, sizeof s, "; its %d phases %.0f ms in all, the costliest: ", g_nPhase, total);
+	out = s;
+	int shown = 0;
+	for (int i : ix) {
+		if (shown == 10 || d(i) <= 0) break;
+		const long long n = dn(i);
+		snprintf(s, sizeof s, "%sphase %d (+%llx%s%s%s, flags 0x%x) %.0f ms in %lld runs, avg %.2f, max %.1f", shown ? ", " : "", i,
+		         (unsigned long long)g_phase[i].fn, g_phase[i].name.empty() ? "" : " \"", g_phase[i].name.c_str(),
+		         g_phase[i].name.empty() ? "" : "\"", g_phase[i].flags, d(i), n, n ? d(i) / n : 0.0, g_phase[i].maxMs);
+		out += s;
+		shown++;
+	}
+	return out;
+}
+
+void __fastcall HkAiLaunch(void* self) {
+	if (GetCurrentThreadId() == g_mainTid) { g_aiLaunchT = Now(); g_ai.launches++; }
+	else g_aiOther++;
+	g_aiLaunchOrig(self);
+}
+
+uint32_t __fastcall HkAiWait(void* module) {
+	const long long t0 = Now();
+	const uint32_t r = g_aiWaitOrig(module);
+	if (GetCurrentThreadId() != g_mainTid) { g_aiOther++; return r; }
+	const long long t1 = Now(), d = t1 - t0;
+	AiPhases((uintptr_t)module);   // the job is done here
+	g_ai.waits++;
+	g_ai.waitTicks += d;
+	if (d > g_ai.maxWait) g_ai.maxWait = d;
+	if (d * 5000 > g_freq && g_aiLaunchT && g_aiLaunchT < t0) {   // waited over 0.2 ms: the job ran from its start to now
+		g_ai.waited++;
+		g_ai.spanTicks += t1 - g_aiLaunchT;
+	}
+	return r;
+}
+
+// "N AI frame jobs, Main waited W ms (X % of T s), longest M ms; in K frames over 0.2 ms each job ran >= J ms"
+std::string AiLine(const AiAcc& a, const AiAcc& b, double wallS) {
+	const long long w = b.waitTicks - a.waitTicks, k = b.waited - a.waited;
+	char s[260];
+	snprintf(s, sizeof s, "%lld AI frame jobs (XGenUpdateJob), Main waited for them %.0f ms (%.0f %% of %.1f s), longest "
+	         "%.1f ms (the session's), in %lld frames over 0.2 ms, where each job ran >= %.1f ms from its start",
+	         b.waits - a.waits, Secs(w) * 1000, wallS > 0 ? Secs(w) * 100 / wallS : 0.0, wallS, Secs(b.maxWait) * 1000, k,
+	         k ? Secs(b.spanTicks - a.spanTicks) * 1000 / k : 0.0);
+	return s;
+}
 
 uint64_t __fastcall HkStart(void* observer, uint32_t mask, void* callback) {
 	Gate g;
@@ -148,19 +290,36 @@ int LetIn(void* o, uint32_t mask) {
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return 3; }
 }
 
+// a printable C string of 1-47 characters at p, or ""
+std::string Text(uintptr_t p) {
+	char s[48] = {};
+	int n = 0;
+	for (; p && n < 47; n++) {
+		char c;
+		if (!Rd(p + n, &c, 1)) return "";
+		if (!c) break;
+		if (c < 32 || c > 126) return "";
+		s[n] = c;
+	}
+	return std::string(s, (size_t)n);
+}
+
+// the class name in an object's type info (vtable[-1] -> complete object locator -> type descriptor), up to 160 chars
+std::string ClassOf(uintptr_t vt) {
+	uintptr_t col = 0;
+	uint32_t td = 0;
+	char raw[161] = {};
+	if (!Rd(vt - 8, &col, 8) || !col || !Rd(col + 12, &td, 4) || !td || !Rd(g_base + td + 0x10, raw, sizeof raw - 1)) return "";
+	for (char& c : raw) if (c && (c < 32 || c > 126)) c = '?';
+	return raw;
+}
+
 std::string NameOf(void* t, uintptr_t vt) {
 	uintptr_t p = 0;
 	char s[48] = {};
 	if (vt == g_base + kRvaProgressVt && Rd((uintptr_t)t + 0x10, &p, 8) && p) {
-		int n = 0;
-		for (; n < 47; n++) {
-			char c;
-			if (!Rd(p + n, &c, 1)) { n = -1; break; }
-			if (!c) break;
-			if (c < 32 || c > 126) { n = -1; break; }
-			s[n] = c;
-		}
-		if (n > 0) return std::string(s, (size_t)n);
+		const std::string n = Text(p);
+		if (!n.empty()) return n;
 	}
 	// Other task classes: the class name from the game's type info (vtable[-1] -> complete object locator ->
 	// type descriptor ".?AVC_ClothingSystem@entitymodule@wh@@" -> "ClothingSystem"). The plain C_ReadinessTask class
@@ -176,8 +335,16 @@ std::string NameOf(void* t, uintptr_t vt) {
 		while (n[len] && n[len] != '@' && len < 40) len++;
 		if (len > 0 && strncmp(n, "ReadinessTask", len)) return std::string(n, len);
 		if (len > 0) {
+			// the plain class (FUN_18162c058 = its IsReady: ready while its std::function at +0x58 is empty, else that
+			// function's answer): its name string at +0x10 (a CryString, freed by its destructor FUN_1834dac1c) and the
+			// function's class (a lambda's type names the code that made it), logged once with the task list
+			uintptr_t nm = 0, fn = 0, fvt = 0;
+			std::string name = Rd((uintptr_t)t + 0x10, &nm, 8) ? Text(nm) : "";
+			std::string what = Rd((uintptr_t)t + 0x58, &fn, 8) && fn && Rd(fn, &fvt, 8) && fvt ? ClassOf(fvt) : "";
 			snprintf(s, sizeof s, "ReadinessTask(vt %llx)", (unsigned long long)(vt - g_base));
-			return s;
+			std::string out = name.empty() ? s : "ReadinessTask \"" + name + "\"";
+			if (!what.empty()) out += " [" + what + "]";
+			return out;
 		}
 	}
 	snprintf(s, sizeof s, "task(vt %llx)", (unsigned long long)(vt - g_base));
@@ -401,7 +568,8 @@ void Opened(const Gate& g, long long now, const char* how, std::vector<std::stri
 		tail = e;
 	}
 	out->push_back(head + (s.empty() ? std::string("nothing (every task ready)") : s) + "; ready last: " + last + tail +
-	               Reader(g.rd));
+	               Reader(g.rd) + " | " + AiLine(g.ai0, g_ai, took) + PhaseLine(g.ph0));
+	if (early::Eligible(g.mask)) { g_playAi = g_ai; g_playPh = Snap(); g_playT0 = now; }
 }
 
 }  // namespace
@@ -431,9 +599,11 @@ void Readiness_Install(uintptr_t base) {
 	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "fastload_readiness.txt";
 	if (FILE* fp = fopen(g_modeFile.c_str(), "r")) {
 		int m = 0, t = 0;
-		const int n = fscanf(fp, "%d %d", &m, &t);
+		double hold = 0;
+		const int n = fscanf(fp, "%d %d %lf", &m, &t, &hold);
 		if (n >= 1 && (m == 0 || m == 1)) g_earlyMode = m;
-		if (n == 2 && t >= 0 && t <= 512) g_tempMB = t;
+		if (n >= 2 && t >= 0 && t <= 512) g_tempMB = t;
+		if (n == 3 && hold >= 0.05 && hold <= 1.0) g_earlyCfg.hold = hold;
 		fclose(fp);
 	}
 	void* start = (void*)(base + kRvaStart);
@@ -445,15 +615,29 @@ void Readiness_Install(uintptr_t base) {
 	g_unlock = (LockFn)(base + kRvaUnlock);
 	const bool h = MH_CreateHook(start, (void*)&HkStart, (void**)&g_origStart) == MH_OK && MH_EnableHook(start) == MH_OK;
 	g_off = !h;
+	g_mainTid = Early_MainThread();
+	void* aiL = (void*)(base + kRvaAiLaunch);
+	void* aiW = (void*)(base + kRvaAiWait);
+	const bool ai = h && g_mainTid && !memcmp(aiL, kAiLaunchBytes, sizeof kAiLaunchBytes) &&
+	                !memcmp(aiW, kAiWaitBytes, sizeof kAiWaitBytes) &&
+	                MH_CreateHook(aiL, (void*)&HkAiLaunch, (void**)&g_aiLaunchOrig) == MH_OK &&
+	                MH_CreateHook(aiW, (void*)&HkAiWait, (void**)&g_aiWaitOrig) == MH_OK &&
+	                MH_EnableHook(aiL) == MH_OK && MH_EnableHook(aiW) == MH_OK;
 	Log("readiness: %s (logs every readiness gate that holds the screen 0.25 s or more, and which task holds it); "
-	    "let me in early %s; stream temp budget while it waits: %s", h ? "on" : "FAILED to hook the observer start",
-	    g_earlyMode ? "ON" : "off", g_tempMB ? (std::to_string(g_tempMB.load()) + " MB").c_str() : "the game's own");
+	    "let me in early %s (once the must-have tasks are ready %.2f s); stream temp budget while it waits: %s; the AI "
+	    "frame job timed %s", h ? "on" : "FAILED to hook the observer start", g_earlyMode ? "ON" : "off", g_earlyCfg.hold,
+	    g_tempMB ? (std::to_string(g_tempMB.load()) + " MB").c_str() : "the game's own",
+	    ai ? "(the AI module's job start and Main's wait for it)" : "NOT (its code differs or the hooks failed)");
 }
 
 void Readiness_Command(const char* args) {
 	while (args && *args == ' ') args++;
 	const auto save = [] {
-		if (FILE* f = fopen(g_modeFile.c_str(), "w")) { fprintf(f, "%d %d\n", g_earlyMode.load(), g_tempMB.load()); fclose(f); }
+		if (FILE* f = fopen(g_modeFile.c_str(), "w")) {
+			if (g_earlyCfg.hold != early::Cfg{}.hold) fprintf(f, "%d %d %.2f\n", g_earlyMode.load(), g_tempMB.load(), g_earlyCfg.hold);
+			else fprintf(f, "%d %d\n", g_earlyMode.load(), g_tempMB.load());
+			fclose(f);
+		}
 	};
 	if (args && !strncmp(args, "early", 5)) {
 		const char* v = args + 5;
@@ -465,6 +649,17 @@ void Readiness_Command(const char* args) {
 			    g_modeFile.c_str());
 			return;
 		}
+	}
+	if (args && !strncmp(args, "hold", 4)) {
+		double h = -1;
+		if (sscanf(args + 4, "%lf", &h) == 1 && h >= 0.05 && h <= 1.0) {
+			g_earlyCfg.hold = h;   // main thread (commands run there, as Readiness_Frame)
+			save();
+			Log("readiness: let in early once the must-have tasks are ready %.2f s (kept for the next start)", h);
+			return;
+		}
+		Log("readiness: hold takes 0.05-1 (s; 0.3 is the default)");
+		return;
 	}
 	if (args && !strncmp(args, "temp", 4)) {
 		int mb = -1;
@@ -478,8 +673,9 @@ void Readiness_Command(const char* args) {
 		Log("readiness: temp takes 0 (the game's own) or 32-512 MB");
 		return;
 	}
-	Log("readiness: %s, let me in early %s, temp budget %d MB (0 = the game's)  (readiness early 0|1, readiness temp 0|32-512)",
-	    g_off ? "off" : "on", g_earlyMode ? "ON" : "off", g_tempMB.load());
+	Log("readiness: %s, let me in early %s (hold %.2f s), temp budget %d MB (0 = the game's)  (readiness early 0|1, "
+	    "readiness hold 0.05-1, readiness temp 0|32-512)", g_off ? "off" : "on", g_earlyMode ? "ON" : "off", g_earlyCfg.hold,
+	    g_tempMB.load());
 }
 
 void Readiness_Frame() {
@@ -489,8 +685,14 @@ void Readiness_Frame() {
 	g_lastTick = now;
 	{
 		std::lock_guard<std::mutex> l(g_newMu);
-		for (auto& g : g_new) g_gates.push_back(g);
+		for (auto& g : g_new) { g.ai0 = g_ai; g.ph0 = Snap(); g_gates.push_back(g); }
 		g_new.clear();
+	}
+	if (g_playT0 && now - g_playT0 >= 10 * g_freq) {   // the same numbers in play, for comparison
+		Log("readiness: AI update in the first 10 s of play after the gate: %s%s%s", AiLine(g_playAi, g_ai, Secs(now - g_playT0)).c_str(),
+		    PhaseLine(g_playPh).c_str(),
+		    g_aiOther.load() ? (" (" + std::to_string(g_aiOther.load()) + " calls from other threads not counted)").c_str() : "");
+		g_playT0 = 0;
 	}
 	if (g_gates.empty()) return;
 	if (!g_service) {

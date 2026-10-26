@@ -36,6 +36,10 @@
 // stays on until then. (A mode 5 that also let the renderer's 58 one-instruction getters through, c745716, was removed:
 // in boot 163b1 the wait only moved 3 ms on, to slot 333 (352 ms), and the render thread crashed at the first frames;
 // past the getter the q_Renderer callback writes renderer fields (+0x2e18..+0x2e20) while the setup runs.)
+// The probe (fastload_rtsync.txt's second number, "4 1"; 1 = on, the default, 0 off; log only, no change to the game's
+// order): the gate's thunks stay after the setup's part is done and list Main's renderer calls and texture loads in
+// order until Main's first real flush (at most 256, 2 s or the first frame), one "rtsync: probe:" line: what Main would
+// have to get answered if it ran on past the setup's 0.4-0.5 s instead of waiting at its first renderer call.
 // The log lines at the first frame give Main's real-flush waits, the first one after each hand-over (to see whether a
 // wait only moved), and when the render thread ran the setup's part.
 // "rtsync:" lines. fastload_rtsync.txt: 2 the shader-quality settings only (default), 1 and the shader manager, 3 and
