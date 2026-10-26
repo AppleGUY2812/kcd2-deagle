@@ -1140,3 +1140,22 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   (FUN_1807acebc -> 7ad47c -> 7ad9e8 -> 7ada80 -> D3D12Core).
 - Post-init XGenAI module message (FUN_1807e30c4) at ~6 s: 0.43-0.46 s on Main (183S1-4): FUN_18093faa0 (via f8a9a8 ->
   1352aa8) 0.15 s, smart objects (FUN_181096ca4 -> 3e5c50 -> 3e6c7c, 1096fdc) ~0.2 s, f8b184 -> f8b288 0.05 s.
+
+## 2026-10-26: Henry's own arms on the gun: engine arm IK, Ready or Not's three meshes (kcd2-deagle-7d)
+- User ask: real sleeves / gauntlets on the gun arms, chest and legs visible, clothes changes show. Option 1 (testing):
+  Henry's real arms bent onto the gun by the engine's arm IK; option 2 (fallback): Ready or Not's way, below.
+- WHGame 1.5.6: `ISkeletonPose` vt+0x170 = CSkeletonPose::SetHumanLimbIK(const Vec3& world, const char* handle)
+  (FUN_1837cb47c, CSkeletonPose vtable 0x183a71028 slot 0x2e): world -> model space by the character's location
+  (instance +0xA08), lowercase CRC32 of the handle, CLimbIk::AddSetup (FUN_1837a4544, 16 setups, same handle replaces).
+  CLimbIk's prepare (FUN_181ab08b0) swaps the setup buffers and clears the count, and CSkeletonAnim pushes it on layer
+  15 "LimbIK" (FUN_18083ec18, when the pose's full-update flag is set and it isn't ragdolled): one goal = one animation
+  update, so send it every frame. No Lua binding (only SetLookIK).
+- male.chrparams: LimbIK 2BIK handles RgtArm01 / LftArm01 / LftArm02 (Root RightArm / LeftArm, EndEffector Right/LeftHand,
+  DisableRotationIK = position only), ADIK targets RightHand_IKTarget / LeftHand_IKTarget / LeftWeapon_IKTarget.
+  Pose modifiers present: OperatorQueue, LimbIk, Ik2Segments, IkCcd, ConstraintAim/Point, PoseBlenderAim, KCD2's
+  C_AttachmentSlotPoseModifier, wh_am_DebugHandIK.
+- Gun arm wrists: j_wrist_ri / j_wrist_le (MW arms), hand_RI / hand_LE (Ready or Not arms). `deagle_armik` (9c560a4).
+- Ready or Not (decompile on the ProLiant, character constructor ~line 14380200 of the .c): Mesh (third person, owner
+  doesn't see it, casts the shadow), CharacterMesh1P (arms; FirstPersonCamera on its fp_camera_socket), MeshBody1P
+  (SK_ron_fbi_fp_body: body without arms, SetLeaderPoseComponent(Mesh) so it copies the third-person pose). Clothes:
+  a first-person copy per shirt (SK_SWAT_Shirt_*_FP, sleeves only), gloves = ArmsMaterial swap. 15 FP skeletal meshes.
