@@ -1,10 +1,12 @@
 // The object database's tables timed one by one: see dbprof.h.
 #include "dbprof.h"
 #include "dbasync.h"
+#include "early.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -27,6 +29,53 @@ struct Orig { MethodFn load, link; };
 std::mutex g_mu;
 std::unordered_map<uintptr_t, Orig> g_vts;   // table vtable -> its own load / link
 
+// ---- dbpool (fastload_dbpool.txt, see dbprof.h) ----
+// The three tables, their load (vt+0x48), "is loaded" (vt+0x30: movzx eax, byte [rcx+0x60]) and post-load (vt+0x88).
+struct Known { const char* name; uintptr_t vt, load, post; };
+const Known kKnown[] = {
+	{ "CharacterComponent", 0x3e8b648, 0x1364f20, 0x3b6e80 },
+	{ "Item", 0x3bb0df8, 0x16a366c, 0x3b6e80 },
+	{ "InventoryPreset", 0x3eb6490, 0x1364f20, 0x1364f50 },
+};
+constexpr uintptr_t kRvaIsLoaded = 0x1a72e80;
+const unsigned char kIsLoadedBytes[] = { 0x0f,0xb6,0x41,0x60,0xc3 };
+// first bytes of the two load functions (both: the reader (FUN_1816a369c / FUN_1806e3bf0), then on success vt+0x88,
+// byte +0x60 = 1 and eax 0; on failure the rows cleared and eax 1)
+const unsigned char kLoadItemBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xe8,0x22,0x00,0x00,0x00,0x84,0xc0 };
+const unsigned char kLoadCompBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xe8,0xc2,0xec,0x37,0xff,0x84,0xc0 };
+// FUN_18096d914 (every one of these loads lists the table's extra files through it) sets up a magic static on its first
+// call (FUN_1819bca74: registers the cvar wh_sys_ExcludedTableParts, fills a global set). That must happen on Main, as
+// in the game, not on a pool thread beside Main's own cvar work: the pool starts only once its guard is set (> 0).
+constexpr uintptr_t kRvaPartsGuard = 0x55d48e0;
+int g_poolMode = 0;   // 0 timed only (rows checked), 1 the three tables loaded ahead on threads
+std::atomic<bool> g_poolWant{false};
+uintptr_t g_poolMgr = 0;
+DWORD g_poolTid = 0;
+bool g_poolCodeOk = false;
+std::atomic<bool> g_poolStarted{false};
+MethodFn g_origIsLoaded = nullptr;
+struct Pre {
+	uintptr_t table = 0;
+	MethodFn load = nullptr;
+	const char* name = "";
+	HANDLE done = nullptr;
+	std::atomic<int> state{0};   // 0 none, 1 loading on its thread, 2 loaded (rc kept), 3 handed to the game
+	uint64_t rc = 0;
+	long long t0 = 0, t1 = 0;
+	DWORD tid = 0;
+};
+Pre g_pre[3];
+std::atomic<int> g_preCount{0};
+Pre* PreOf(uintptr_t table) {
+	const int n = g_preCount.load(std::memory_order_acquire);
+	for (int i = 0; i < n; i++) if (g_pre[i].table == table) return &g_pre[i];
+	return nullptr;
+}
+const Known* KnownOf(uintptr_t vt) {
+	for (const Known& k : kKnown) if (vt == g_base + k.vt) return &k;
+	return nullptr;
+}
+
 struct Rec { uintptr_t table; char name[64]; double load, link; };
 thread_local std::vector<Rec>* t_recs = nullptr;   // the list being loaded on this thread
 
@@ -34,6 +83,12 @@ inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.
 inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g_freq; }
 
 bool InImage(uintptr_t p) { return p >= g_base && p < g_end; }
+bool Rd8(uintptr_t a, uintptr_t* v) {
+	__try { *v = *(const uintptr_t*)a; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool RdB(uintptr_t a, uint8_t* v) {
+	__try { *v = *(const uint8_t*)a; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 
 // guarded reads (no C++ objects here: MSVC forbids __try next to unwinding)
 bool ReadVt(uintptr_t obj, uintptr_t* vt) {
@@ -66,13 +121,147 @@ Rec* RecOf(void* table) {
 	return nullptr;
 }
 
+// The rows of a table of the template the three share: a vector of 16-byte entries at +0x30 / +0x38, the row first,
+// its name at row+0x20 (a C string: InventoryPreset's index FUN_181364f50 keys its map by it, hashed by FUN_1803f6ca8).
+// Row count + a hash of the names in row order, so the game-order load (dbpool 0) and the pooled one (1) can be compared
+// across boots.
+bool RowsCheck(uintptr_t table, size_t* n, uint64_t* h) {
+	__try {
+		const uintptr_t* b = *(const uintptr_t**)(table + 0x30);
+		const uintptr_t* e = *(const uintptr_t**)(table + 0x38);
+		uint64_t x = 1469598103934665603ull;
+		size_t c = 0;
+		for (const uintptr_t* it = b; it && it < e && c < 1000000; it += 2, c++) {
+			const char* key = *(const char* const*)(it[0] + 0x20);
+			for (int i = 0; key && i < 256 && key[i]; i++) x = (x ^ (uint8_t)key[i]) * 1099511628211ull;
+			x = (x ^ 0xff) * 1099511628211ull;
+		}
+		*n = c; *h = x;
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void LogRows(const char* name, uintptr_t table, const char* how) {
+	size_t n = 0; uint64_t h = 0;
+	if (RowsCheck(table, &n, &h)) Log("dbpool: %s %s: %zu rows, key hash %016llx", name, how, n, (unsigned long long)h);
+	else Log("dbpool: %s %s: rows not readable", name, how);
+}
+
+void TryStartPool(const char* when);
 uint64_t __fastcall HkLoad(void* table) {
 	const Orig o = Find(table);
 	if (!o.load) return 0;   // not reached: the slot only points here for a vtable in the map
 	const long long a = Now();
+	if (Pre* p = PreOf((uintptr_t)table)) {
+		int s = p->state.load();
+		if (s == 1 || s == 2) {   // loaded ahead (or still loading): hand its result to the game here, in the game's order
+			if (WaitForSingleObject(p->done, 5000) != WAIT_OBJECT_0) {
+				Log("dbpool: %s still loading on its thread after 5 s - waiting on", p->name);
+				WaitForSingleObject(p->done, INFINITE);
+			}
+			p->state = 3;
+			if (p->rc == 0) *(volatile uint8_t*)((uintptr_t)table + 0x60) = 1;   // as its load does on success
+			const long long b = Now();
+			if (Rec* rec = RecOf(table)) rec->load += Ms(a, b);
+			Log("dbpool: %s handed over on thread %lu: loaded on thread %lu in %.0f ms (started %.0f ms before the game asked); "
+			    "the game waited %.0f ms%s", p->name, GetCurrentThreadId(), p->tid, Ms(p->t0, p->t1), Ms(p->t0, a), Ms(a, b),
+			    p->rc ? " - its load FAILED (the game's error path follows)" : "");
+			LogRows(p->name, (uintptr_t)table, "pooled");
+			return p->rc;
+		}
+	}
 	const uint64_t r = o.load(table);
 	if (Rec* rec = RecOf(table)) rec->load += Ms(a, Now());
+	if (g_poolWant.load()) TryStartPool("after a table load");
+	uintptr_t vt = 0;
+	if (ReadVt((uintptr_t)table, &vt))
+		if (const Known* k = KnownOf(vt)) LogRows(k->name, (uintptr_t)table, "game's order");
 	return r;
+}
+uint64_t __fastcall HkIsLoaded(void* table) {   // vt+0x30 of the three: "not loaded" until its pooled load is handed over
+	if (Pre* p = PreOf((uintptr_t)table)) {
+		const int s = p->state.load();
+		if (s == 1 || s == 2) return 0;
+	}
+	return g_origIsLoaded(table);
+}
+
+DWORD WINAPI PreRun(void* arg) {
+	Pre* p = (Pre*)arg;
+	p->tid = GetCurrentThreadId();
+	Early_NameThread(L"JobWorker_fastload dbpool");
+	p->t0 = Now();
+	const uint64_t rc = p->load((void*)p->table);
+	if (rc == 0) *(volatile uint8_t*)(p->table + 0x60) = 0;   // the game marks it loaded when it reaches it (HkLoad)
+	p->rc = rc;
+	p->t1 = Now();
+	p->state = 2;
+	SetEvent(p->done);
+	return 0;
+}
+
+void Patch(uintptr_t vt);
+// Main, the first table list load (type 1, the start of the game init's database step): the three tables are still
+// pending (not yet activated: FUN_180ef3afc(4) does that ~0.25 s later), so each gets its own thread now.
+void StartPool(uintptr_t mgr) {
+	if (g_poolMode != 1 || !g_poolCodeOk || g_poolStarted.exchange(true)) return;
+	const uintptr_t* b = nullptr; const uintptr_t* e = nullptr;
+	if (!Rd8(mgr + 0x48, (uintptr_t*)&b) || !Rd8(mgr + 0x50, (uintptr_t*)&e) || !b || e < b || e - b > 100000) {
+		Log("dbpool: the database manager's pending list not readable - the game's order");
+		return;
+	}
+	int n = 0;
+	std::string names;
+	for (const uintptr_t* it = b; it < e && n < 3; ++it) {
+		uintptr_t t = 0, vt = 0;
+		if (!Rd8((uintptr_t)it, &t) || !t || !ReadVt(t, &vt)) continue;
+		const Known* k = KnownOf(vt);
+		if (!k) continue;
+		uintptr_t s30 = 0, s48 = 0, s88 = 0;
+		uint8_t loaded = 1;
+		Rd8(vt + 0x30, &s30); Rd8(vt + 0x48, &s48); Rd8(vt + 0x88, &s88);
+		if (!RdB(t + 0x60, &loaded) || s30 != g_base + kRvaIsLoaded || s48 != g_base + k->load || s88 != g_base + k->post || loaded) {
+			Log("dbpool: %s not as expected (slots %llx %llx %llx, loaded %d) - left to the game", k->name, (unsigned long long)(s30 - g_base),
+			    (unsigned long long)(s48 - g_base), (unsigned long long)(s88 - g_base), loaded);
+			continue;
+		}
+		Pre& p = g_pre[n];
+		p.table = t; p.name = k->name;
+		p.load = (MethodFn)s48;
+		p.done = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+		if (!p.done) continue;
+		n++;
+		names += names.empty() ? "" : ", ";
+		names += k->name;
+	}
+	if (!n) { Log("dbpool: none of the three tables pending - the game's order"); return; }
+	g_preCount.store(n, std::memory_order_release);
+	// the slots: +0x48 / +0x50 through dbprof's wrappers (Patch), +0x30 through HkIsLoaded
+	for (int i = 0; i < n; i++) {
+		uintptr_t vt = 0;
+		ReadVt(g_pre[i].table, &vt);
+		Patch(vt);
+		DWORD old = 0;
+		if (VirtualProtect((void*)(vt + 0x30), 8, PAGE_READWRITE, &old)) {
+			*(volatile uintptr_t*)(vt + 0x30) = (uintptr_t)&HkIsLoaded;
+			VirtualProtect((void*)(vt + 0x30), 8, old, &old);
+		}
+	}
+	for (int i = 0; i < n; i++) {
+		g_pre[i].state = 1;
+		HANDLE th = CreateThread(nullptr, 0, &PreRun, &g_pre[i], 0, nullptr);
+		if (th) CloseHandle(th);
+		else { g_pre[i].rc = 0; g_pre[i].state = 0; Log("dbpool: no thread for %s - the game's order", g_pre[i].name); }
+	}
+	Log("dbpool: %d tables loading ahead on their own threads (%s)", n, names.c_str());
+}
+// Main only: start once the extra-files static is set up (by one of Main's own table loads).
+void TryStartPool(const char* when) {
+	if (!g_poolWant.load() || GetCurrentThreadId() != g_poolTid) return;
+	const int guard = *(volatile const int*)(g_base + kRvaPartsGuard);
+	if (guard <= 0) return;
+	g_poolWant = false;
+	Log("dbpool: the table-parts setup done on Main (%s) - starting", when);
+	StartPool(g_poolMgr);
 }
 uint64_t __fastcall HkLink(void* table) {
 	const Orig o = Find(table);
@@ -114,6 +303,18 @@ uint8_t __fastcall HkLoadList(void* mgr, uintptr_t* list, char a, char b) {
 			recs.push_back(r);
 		}
 	}
+	// dbpool: armed at the game init's first database list load (type 1), started once the parts setup is done on Main;
+	// given up when type 4 itself starts without it
+	if (type == 1 && g_poolMode == 1 && g_poolCodeOk && !g_poolStarted.load() && !g_poolWant.load()) {
+		g_poolMgr = (uintptr_t)mgr;
+		g_poolTid = GetCurrentThreadId();
+		g_poolWant = true;
+		Log("dbpool: armed at the type 0x1 load (table-parts setup %s)", *(volatile const int*)(g_base + kRvaPartsGuard) > 0 ? "done" : "not done yet");
+	}
+	if (g_poolWant.load()) {
+		TryStartPool("at a list load");
+		if (type == 4 && g_poolWant.exchange(false)) Log("dbpool: type 0x4 reached before the table-parts setup ran on Main - the game's order");
+	}
 	std::vector<Rec>* prev = t_recs;
 	t_recs = &recs;
 	const long long t0 = Now();
@@ -137,7 +338,7 @@ uint8_t __fastcall HkLoadList(void* mgr, uintptr_t* list, char a, char b) {
 
 }  // namespace
 
-bool Dbprof_Install(uintptr_t base) {
+bool Dbprof_Install(uintptr_t base, void* self) {
 	LARGE_INTEGER f;
 	QueryPerformanceFrequency(&f);
 	g_freq = f.QuadPart;
@@ -151,5 +352,24 @@ bool Dbprof_Install(uintptr_t base) {
 		return false;
 	}
 	Log("dbprof: on (each object database table's load and link timed; log only)");
+	// dbpool
+	char path[MAX_PATH] = {};
+	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
+	std::string dir(path);
+	dir = dir.substr(0, dir.find_last_of("\\/") + 1);
+	if (FILE* fp = fopen((dir + "fastload_dbpool.txt").c_str(), "r")) {
+		if (fscanf(fp, "%d", &g_poolMode) < 1) g_poolMode = 0;
+		fclose(fp);
+	}
+	if (g_poolMode < 0 || g_poolMode > 1) g_poolMode = 0;
+	g_poolCodeOk = !memcmp((void*)(base + kRvaIsLoaded), kIsLoadedBytes, sizeof kIsLoadedBytes) &&
+	               !memcmp((void*)(base + kKnown[1].load), kLoadItemBytes, sizeof kLoadItemBytes) &&
+	               !memcmp((void*)(base + kKnown[0].load), kLoadCompBytes, sizeof kLoadCompBytes);
+	g_origIsLoaded = (MethodFn)(base + kRvaIsLoaded);
+	Log("dbpool: mode %d (%s)%s", g_poolMode,
+	    g_poolMode == 1 ? "CharacterComponent, Item and InventoryPreset loaded on their own threads from the game init's first "
+	                      "database load, handed to the game in its order"
+	                    : "the game's order; their rows logged for comparison",
+	    g_poolCodeOk ? "" : " - the tables' code differs: the game's order");
 	return true;
 }

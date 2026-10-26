@@ -290,7 +290,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Streamio_Install(g_game.base, g_self));  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
 	STEP(Ftplaces_Install(g_game.base, g_self));   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
 	bool dbprofOn = false;
-	STEP(dbprofOn = Dbprof_Install(g_game.base));   // the object database tables timed one by one, log only (dbprof.cpp)
+	STEP(dbprofOn = Dbprof_Install(g_game.base, g_self));   // the object database tables timed one by one; dbpool (dbprof.cpp)
 	STEP(Dbasync_Install(g_game.base, g_self, Early_MainThread(), dbprofOn));   // the dubbing database on a worker (dbasync.cpp)
 	STEP(Tblcache_Install(g_game.base, g_self));   // the XML tables recorded once and replayed (tblcache.cpp)
 	STEP(Morphpool_Install(g_game.base, g_self));   // the heads' facial morph data parsed on a pool, mode file (morphpool.cpp)
