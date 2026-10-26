@@ -649,7 +649,8 @@ local ARMIK_MASK = { right = 1, left = 2, both = 3, on = 3, off = 0 }
 local ARMIK_HANDS = { { "RightHand", { "j_wrist_ri", "hand_RI" } }, { "LeftHand", { "j_wrist_le", "hand_LE" } } }
 
 function Deagle:ArmIk(arg)
-	local mask = ARMIK_MASK[string.lower(arg or "")]
+	arg = Deagle.Arg(arg)   -- the console passes "both" with its quotes
+	local mask = ARMIK_MASK[string.lower(arg)]
 	if not mask then log("usage: deagle_armik right|left|both|off") return end
 	local p = self:Player()
 	if not p then log("armik: no player") return end
@@ -690,4 +691,4 @@ function Deagle:ArmIk(arg)
 	end
 end
 
-System.AddCCommand("deagle_armik", "Deagle:ArmIk([[%1]])", "deagle_armik right|left|both|off: test - Henry's body shows and his own arms reach for the gun's hands (arm IK); logs how far each hand is from the gun once a second")
+System.AddCCommand("deagle_armik", "Deagle:ArmIk(Deagle.Arg([[%1]]))", "deagle_armik right|left|both|off: test - Henry's body shows and his own arms reach for the gun's hands (arm IK); logs how far each hand is from the gun once a second")
