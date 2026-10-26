@@ -23,6 +23,14 @@ AddFn g_add = nullptr;
 
 int g_mode = 1;
 long long g_freq = 1;
+// mode 2: a quiet window for Main. A non-Main AddGeometry in LoadLevel does not start while Main is inside
+// DestroyPhysicalEntity or left it less than g_winMs ago (Main's destroys come in runs; each one that met a running
+// insertion waited it out, ~3-4 ms, 165-193 of them per load). Each such call waits at most g_capMs, so the streamer
+// is delayed, never stopped.
+double g_winMs = 2.0, g_capMs = 20.0;
+std::atomic<int> g_dIn{0};               // Main inside DestroyPhysicalEntity now
+std::atomic<long long> g_dEnd{0};        // when Main's latest DestroyPhysicalEntity returned
+std::atomic<long long> g_hN{0}, g_hT{0}, g_hCap{0};   // AddGeometry calls held, time held, held to the cap
 
 std::atomic<int> g_addIn{0};             // other threads inside AddGeometry now
 std::atomic<long long> g_addStart{0};    // when the latest of those calls started
@@ -51,10 +59,12 @@ uint64_t __fastcall HkDestroy(uint64_t world, uint64_t ent, uint64_t mode, uint6
 	const int fl = ReadFlags(world);
 	const int fk = fl == 0 ? 0 : (fl & 1) ? 1 : 2;
 	if (fk == 2) g_flOther = fl;
+	if (g_mode == 2) g_dIn.store(1);
 	const bool busy = g_addIn.load() > 0;
 	const long long t = Now();
 	const uint64_t r = g_destroy(world, ent, mode, ts);
 	const long long dt = Now() - t;
+	if (g_mode == 2) { g_dEnd.store(Now()); g_dIn.store(0); }
 	depth--;
 	g_dN++; g_dT += dt; Max(g_dMax, dt);
 	if (busy) { g_dBusyN++; g_dBusyT += dt; }
@@ -69,6 +79,18 @@ uint64_t __fastcall HkAdd(uint64_t ent, uint64_t geom, uint64_t params, uint64_t
 	thread_local int depth = 0;
 	if (depth || !Levelprof_InLoadLevel() || GetCurrentThreadId() == Levelprof_MainTid()) return g_add(ent, geom, params, id, ts);
 	depth++;
+	if (g_mode == 2) {   // Main's quiet window (see g_winMs)
+		const long long a = Now(), win = (long long)(g_winMs * g_freq / 1000.0), cap = a + (long long)(g_capMs * g_freq / 1000.0);
+		bool held = false;
+		for (;;) {
+			const long long n = Now();
+			if (!(g_dIn.load() || n - g_dEnd.load() < win)) break;
+			if (n >= cap) { g_hCap++; break; }
+			held = true;
+			SwitchToThread();
+		}
+		if (held) { g_hN++; g_hT += Now() - a; }
+	}
 	g_addIn++;
 	const long long t = Now();
 	g_addStart = t;
@@ -89,6 +111,9 @@ void Report() {   // Main, as LoadLevel ends
 	Log("physlock: LoadLevel: other threads' AddGeometry %lld calls, %.0f ms (longest %.1f ms; under 0.1 / 1 / 10 / 100 ms / more: "
 	    "%lld / %lld / %lld / %lld / %lld)", g_aN.load(), Ms(g_aT.load()), Ms(g_aMax.load()), g_aB[0].load(), g_aB[1].load(),
 	    g_aB[2].load(), g_aB[3].load(), g_aB[4].load());
+	if (g_mode == 2)
+		Log("physlock: LoadLevel: Main's quiet window (%.1f ms, at most %.0f ms a call): %lld AddGeometry calls held, %.0f ms in all, "
+		    "%lld to the cap", g_winMs, g_capMs, g_hN.load(), Ms(g_hT.load()), g_hCap.load());
 	Log("physlock: LoadLevel: the physics world's flags (world+0x1a0) at Main's calls (all / slow): 0 %lld / %lld, bit 0 set %lld / %lld, "
 	    "other %lld / %lld (0x%x)", g_fl[0][0].load(), g_fl[0][1].load(), g_fl[1][0].load(), g_fl[1][1].load(), g_fl[2][0].load(),
 	    g_fl[2][1].load(), g_flOther.load());
@@ -104,10 +129,14 @@ void Physlock_Install(uintptr_t base, void* self) {
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
 	if (FILE* fp = fopen((dir + "fastload_physlock.txt").c_str(), "r")) {
 		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1) g_mode = m == 1 ? 1 : 0;
+		double w = 0, c = 0;
+		const int got = fscanf(fp, "%d %lf %lf", &m, &w, &c);
+		if (got >= 1) g_mode = (m == 1 || m == 2) ? m : 0;
+		if (got >= 2 && w > 0 && w <= 50) g_winMs = w;
+		if (got >= 3 && c > 0 && c <= 200) g_capMs = c;
 		fclose(fp);
 	}
-	if (!g_mode) { Log("physlock: off (fastload_physlock.txt: 1 = timing, the default)"); return; }
+	if (!g_mode) { Log("physlock: off (fastload_physlock.txt: 1 = timing, the default; 2 [window ms] [cap ms] = Main's quiet window)"); return; }
 	if (!Levelprof_SetEndCall(&Report)) { Log("physlock: off: needs levelprof's LoadLevel hook (fastload_levelprof.txt 0 or its hook failed)"); return; }
 	void* d = (void*)(base + kDestroyRva);
 	void* a = (void*)(base + kAddRva);
@@ -121,5 +150,6 @@ void Physlock_Install(uintptr_t base, void* self) {
 		Log("physlock: off: the AddGeometry hook failed");
 		return;
 	}
-	Log("physlock: timing DestroyPhysicalEntity (Main) and AddGeometry (other threads) in the level load");
+	if (g_mode == 2) Log("physlock: mode 2: other threads' AddGeometry waits for Main's quiet window (%.1f ms after its DestroyPhysicalEntity, at most %.0f ms a call) in the level load", g_winMs, g_capMs);
+	else Log("physlock: timing DestroyPhysicalEntity (Main) and AddGeometry (other threads) in the level load");
 }

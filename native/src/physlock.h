@@ -12,4 +12,7 @@
 // FUN_181500dac -> FUN_180845740, unpacking a physics file into ~58,600 AddGeometry calls (2.1 s, 5.0-7.0 s into LoadLevel).
 // fastload_physlock.txt next to the plugin: 0 off (no hooks), 1 (default) the timing, only while CLevelSystem::LoadLevel
 // runs (levelprof's hook; with levelprof off this does nothing). The totals go to the log as LoadLevel ends.
+// 2 [window ms, default 2] [cap ms, default 20]: Main's quiet window. A non-Main AddGeometry does not start while Main is
+// in DestroyPhysicalEntity or left it under <window> ms ago, waiting at most <cap> ms a call (game locks untouched; the
+// worker's physq.md: the alternatives change CryPhysics' queue/slot rules mid-load).
 void Physlock_Install(uintptr_t gameBase, void* selfModule);
