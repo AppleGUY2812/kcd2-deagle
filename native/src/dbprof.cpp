@@ -45,8 +45,11 @@ const unsigned char kLoadItemBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b
 const unsigned char kLoadCompBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xe8,0xc2,0xec,0x37,0xff,0x84,0xc0 };
 // FUN_18096d914 (every one of these loads lists the table's extra files through it) sets up a magic static on its first
 // call (FUN_1819bca74: registers the cvar wh_sys_ExcludedTableParts, fills a global set). That must happen on Main, as
-// in the game, not on a pool thread beside Main's own cvar work: the pool starts only once its guard is set (> 0).
+// in the game, not on a pool thread beside Main's own cvar work: the pool starts only once its guard says done. MSVC's
+// guard: 0 never run, -1 running, else the (negative, from INT_MIN up) epoch it finished in. Queue 183 (fastload_184)
+// tested "> 0", which is never true: nothing was pooled.
 constexpr uintptr_t kRvaPartsGuard = 0x55d48e0;
+inline bool PartsSetUp() { const int g = *(volatile const int*)(g_base + kRvaPartsGuard); return g != 0 && g != -1; }
 int g_poolMode = 0;   // 0 timed only (rows checked), 1 the three tables loaded ahead on threads
 std::atomic<bool> g_poolWant{false};
 uintptr_t g_poolMgr = 0;
@@ -140,10 +143,32 @@ bool RowsCheck(uintptr_t table, size_t* n, uint64_t* h) {
 		return true;
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+// Item: +0x20 is not its name (queue 183: the hash changed between game-order boots, the row count 5606 did not), so
+// the raw 8 bytes at a few row offsets and the entry's second word are hashed too; the ones that stay the same across
+// game-order boots are the check.
+bool RowsRaw(uintptr_t table, uint64_t* h /* [7] */) {
+	static const int kOff[6] = { 0x08, 0x10, 0x18, 0x20, 0x28, 0x30 };
+	__try {
+		const uintptr_t* b = *(const uintptr_t**)(table + 0x30);
+		const uintptr_t* e = *(const uintptr_t**)(table + 0x38);
+		for (int k = 0; k < 7; k++) h[k] = 1469598103934665603ull;
+		size_t c = 0;
+		for (const uintptr_t* it = b; it && it < e && c < 1000000; it += 2, c++) {
+			for (int k = 0; k < 6; k++) h[k] = (h[k] ^ *(const uint64_t*)(it[0] + kOff[k])) * 1099511628211ull;
+			h[6] = (h[6] ^ it[1]) * 1099511628211ull;
+		}
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 void LogRows(const char* name, uintptr_t table, const char* how) {
 	size_t n = 0; uint64_t h = 0;
 	if (RowsCheck(table, &n, &h)) Log("dbpool: %s %s: %zu rows, key hash %016llx", name, how, n, (unsigned long long)h);
 	else Log("dbpool: %s %s: rows not readable", name, how);
+	uint64_t r[7];
+	if (RowsRaw(table, r))
+		Log("dbpool: %s %s: raw row words +08 %016llx +10 %016llx +18 %016llx +20 %016llx +28 %016llx +30 %016llx, entry+8 %016llx",
+		    name, how, (unsigned long long)r[0], (unsigned long long)r[1], (unsigned long long)r[2], (unsigned long long)r[3],
+		    (unsigned long long)r[4], (unsigned long long)r[5], (unsigned long long)r[6]);
 }
 
 void TryStartPool(const char* when);
@@ -257,8 +282,7 @@ void StartPool(uintptr_t mgr) {
 // Main only: start once the extra-files static is set up (by one of Main's own table loads).
 void TryStartPool(const char* when) {
 	if (!g_poolWant.load() || GetCurrentThreadId() != g_poolTid) return;
-	const int guard = *(volatile const int*)(g_base + kRvaPartsGuard);
-	if (guard <= 0) return;
+	if (!PartsSetUp()) return;
 	g_poolWant = false;
 	Log("dbpool: the table-parts setup done on Main (%s) - starting", when);
 	StartPool(g_poolMgr);
@@ -309,11 +333,14 @@ uint8_t __fastcall HkLoadList(void* mgr, uintptr_t* list, char a, char b) {
 		g_poolMgr = (uintptr_t)mgr;
 		g_poolTid = GetCurrentThreadId();
 		g_poolWant = true;
-		Log("dbpool: armed at the type 0x1 load (table-parts setup %s)", *(volatile const int*)(g_base + kRvaPartsGuard) > 0 ? "done" : "not done yet");
+		Log("dbpool: armed at the type 0x1 load (table-parts setup %s)", PartsSetUp() ? "done" : "not done yet");
 	}
 	if (g_poolWant.load()) {
 		TryStartPool("at a list load");
-		if (type == 4 && g_poolWant.exchange(false)) Log("dbpool: type 0x4 reached before the table-parts setup ran on Main - the game's order");
+		if (type == 4 && g_poolWant.exchange(false)) {
+			g_poolStarted = true;   // given up for this run: not armed again by a later type 0x1 load
+			Log("dbpool: type 0x4 reached before the table-parts setup ran on Main - the game's order");
+		}
 	}
 	std::vector<Rec>* prev = t_recs;
 	t_recs = &recs;
