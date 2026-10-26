@@ -264,14 +264,15 @@ void Fastalloc_Install(uintptr_t base, void* self) {
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
 	std::string dir = path;
 	dir = dir.substr(0, dir.find_last_of('\\') + 1);
-	int mode = 0;
+	int mode = 0, purgeMs = -1;   // second number: ms before freed pages go back to Windows; -1 = never (2026-10-25: with 2000
+	                              // (x10 for arenas) the user saw 0.3-0.7 s gameplay hitches, 10-45k fresh page faults each; suspected)
 	if (FILE* fp = fopen((dir + "fastload_fastalloc.txt").c_str(), "r")) {
-		if (fscanf(fp, "%d", &mode) != 1) mode = 0;
+		if (fscanf(fp, "%d %d", &mode, &purgeMs) < 1) mode = 0;
 		fclose(fp);
 	}
 	if (mode != 1 && mode != 2) { Log("fastalloc: off (fastload_fastalloc.txt: 1 = the game's small blocks from mimalloc, 2 = also the C runtime heap)"); return; }
 	const bool started = *(volatile unsigned char*)(base + 0x549d370) != 0;   // CryMalloc's first-use flag
-	mi_option_set(mi_option_purge_delay, 2000);   // freed pages go back to Windows after 2 s, not 10 ms: fewer commits
+	mi_option_set(mi_option_purge_delay, purgeMs);   // -1: freed pages stay committed and are reused (no re-fault bursts)
 	// Commit per page as used. mimalloc's default commits each thread's second and later 32 MB segment whole: with ~77
 	// game threads that held ~1.4 GB more private memory at the level load's start (boot 146: 7788 MB, boot 145: 6347).
 	mi_option_set(mi_option_eager_commit, 0);

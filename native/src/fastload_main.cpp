@@ -42,6 +42,7 @@
 #include "audiofast.h"
 #include "questfast.h"
 #include "levelprof.h"
+#include "savewatch.h"
 #include "physlock.h"
 #include "applyprof.h"
 #include "paklock.h"
@@ -273,6 +274,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Questdump_Install(g_game.base));   // the quest graph dump for questbench N dump (questdump.cpp)
 	STEP(Animahead_Install(g_game.base, g_self));   // human animation sets during the terrain wait (animahead.cpp)
 	STEP(Levelprof_Install(g_game.base, g_self));   // the level load's main-thread work timed / sampled, mode file (levelprof.cpp)
+	STEP(Savewatch_Install(g_game.base, g_self));   // the save writers the load's settle waits for, logged (savewatch.cpp)
 	STEP(Physlock_Install(g_game.base, g_self));   // Main's CryPhysics lock spin in LoadEntities, after levelprof (physlock.cpp)
 	STEP(Applyprof_Install(g_game.base, g_self));   // the apply step's pieces timed, log only (applyprof.cpp)
 	STEP(Paklock_Install(g_game.base, g_self));   // CryPak reads outside the open-files lock, mode file (paklock.cpp)

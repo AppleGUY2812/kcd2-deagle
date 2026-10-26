@@ -657,6 +657,43 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self) {
 	    g_evOn ? "listed per long frame" : "NOT watched", g_csvPath.empty() ? "- (csv not writable)" : g_csvPath.c_str());
 }
 
+// The 3D engine rebuilds every object's octree entry (WHGame 1.5.6 FUN_180a3bf48 -> FUN_18349e058 + FUN_18076a7fc; the
+// 650 ms gameplay freezes of 2026-10-25 23:46 / 23:49) when the sum of these 23 e_ settings changes. Which one changed,
+// logged once a frame (the engine's CVars block at DAT_185496fd0; int slots, names from its registration).
+namespace {
+const struct { int slot; const char* name; } kOct[] = {
+	{0x19, "e_ShadowsCastViewDistRatioMulInvis"}, {0x18, "e_ShadowsCastViewDistRatio"}, {0x182, "e_ObjShadowCastSpec"},
+	{0x4d, "e_VegetationUseTerrainColor"}, {0xdd, "e_TerrainDetailMaterials"}, {0xff, "e_ObjectsTreeNodeMinSize"},
+	{0x100, "e_ObjectsTreeNodeSizeRatio"}, {0x1c1, "e_ViewDistRatio"}, {0x166, "e_ViewDistMin"}, {0x1a6, "e_ViewDistRatioDetail"},
+	{0x1c2, "e_ViewDistRatioVegetation"}, {0x39, "e_ViewDistRatioLights"}, {0x3a, "e_ViewDistRatioInteriorReflexLights"},
+	{0x3b, "e_ViewDistRatioSmallEnvCubemap"}, {0x3c, "e_ViewDistRatioLargeEnvCubemap"}, {0x167, "e_ slot 0x167"}, {0x215, "e_ slot 0x215"},
+	{0xd7, "e_DefaultMaterial"}, {0x97, "e_Portals"}, {0x3e, "e_DebugDraw"}, {0x156, "e_ViewDistCompMaxSize"},
+	{0xdf, "e_TerrainBlendingDebug"}, {0xde, "e_TerrainDetailMaterialsWeightedBlending"},
+};
+constexpr size_t kNOct = sizeof kOct / sizeof kOct[0];
+int g_octLast[kNOct];
+bool g_octHave = false;
+void OctWatch() {
+	if (!g_game) return;
+	__try {
+		const int* cv = *(const int* const*)(g_game + 0x5496fd0);
+		if (!cv) return;
+		for (size_t i = 0; i < kNOct; i++) {
+			const int v = cv[kOct[i].slot];
+			if (g_octHave && v != g_octLast[i]) {
+				float a, b;
+				memcpy(&a, &g_octLast[i], 4);
+				memcpy(&b, &v, 4);
+				Log("hitch: %s changed (as int %d -> %d, as float %g -> %g): the engine rebuilds every object's octree entry",
+				    kOct[i].name, g_octLast[i], v, a, b);
+			}
+			g_octLast[i] = v;
+		}
+		g_octHave = true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+}
+
 void Hitch_Frame() {
 	static bool checked = false;
 	if (!g_main) {
@@ -672,6 +709,7 @@ void Hitch_Frame() {
 			g_fixMain = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, GetCurrentThreadId());
 		}
 	}
+	OctWatch();
 	g_lastFrame.store(Now(), std::memory_order_release);
 }
 
