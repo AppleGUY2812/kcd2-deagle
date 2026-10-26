@@ -36,6 +36,8 @@ struct Want {
 	bool isFloat = false;
 	double def = 0;          // the game's default, put back at gameplay start for loadOnly
 	bool restored = false;
+	void* con = nullptr;     // set through the console instead (Cvars_Frame): its ICVar
+	std::string conOld;      // its value before, as text (put back at gameplay start for loadOnly)
 };
 std::vector<Want> g_want;
 std::mutex g_mu;
@@ -126,7 +128,79 @@ void* __fastcall HkConInt(void* con, const char* name, int value, int flags, con
 	return r;
 }
 
+// The console fallback (2026-10-26, queue 177: sys_UncachedStreamReads is registered through CryPak's own registrar
+// FUN_180e40078, which goes through the console, so the hooks above never saw it and the line was dropped silently).
+// From the first frame, on Main: every wanted name the hooks did not see is looked up in the console (gEnv's console
+// at WHGame+492d8a8, GetCVar = vtable +0xb8) and set through the ICVar (WHGame's layout: +0x10 GetIVal, +0x28
+// GetString, +0x38 Set(int), +0x40 Set(float), +0x48 Set(const char*); FUN_180e40078 and the CXConsoleVariableIntRef
+// vtable +3dd0020). A name still missing after 600 frames is logged as not found. user.cfg runs before the first
+// frame, so a value set here wins over user.cfg.
+constexpr uintptr_t kRvaConsole = 0x492d8a8;
+using GetCVarFn = void*(__fastcall*)(void* con, const char* name);
+using GetIFn = int(__fastcall*)(void* v);
+using GetSFn = const char*(__fastcall*)(void* v);
+using SetIFn = void(__fastcall*)(void* v, int i);
+using SetFFn = void(__fastcall*)(void* v, float f);
+using SetSFn = void(__fastcall*)(void* v, const char* s);
+inline void* Slot(void* obj, int off) { return *(void**)(*(uintptr_t*)obj + off); }
+
+__declspec(noinline) void* ConFind(const char* name) {
+	__try {
+		void* con = *(void**)(g_base + kRvaConsole);
+		return con ? ((GetCVarFn)Slot(con, 0xb8))(con, name) : nullptr;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+__declspec(noinline) bool ConText(void* v, char* out, size_t n) {
+	__try {
+		const char* t = ((GetSFn)Slot(v, 0x28))(v);
+		if (!t) return false;
+		strncpy(out, t, n - 1);
+		out[n - 1] = 0;
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+__declspec(noinline) bool ConSet(void* v, double value) {
+	__try {
+		if (value == (double)(int)value) ((SetIFn)Slot(v, 0x38))(v, (int)value);
+		else ((SetFFn)Slot(v, 0x40))(v, (float)value);
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+__declspec(noinline) bool ConSetText(void* v, const char* t) {
+	__try { ((SetSFn)Slot(v, 0x48))(v, t); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+int g_frames = 0;
+bool g_conDone = false;
+
 }  // namespace
+
+void Cvars_Frame() {
+	if (g_conDone || !g_base) return;
+	const int f = ++g_frames;
+	if (f != 1 && f % 60) return;
+	std::lock_guard<std::mutex> lk(g_mu);
+	bool missing = false;
+	for (Want& w : g_want) {
+		if (w.var || w.con) continue;
+		void* v = ConFind(w.name.c_str());
+		if (!v) { missing = true; continue; }
+		char before[64] = "?", after[64] = "?";
+		ConText(v, before, sizeof before);
+		if (!ConSet(v, w.value)) { Log("cvars: %s found in the console but setting it failed", w.name.c_str()); w.con = v; continue; }
+		ConText(v, after, sizeof after);
+		w.con = v;
+		w.conOld = before;
+		Log("cvars: %s %s -> %s through the console (frame %d; the registration hooks never saw it)%s%s", w.name.c_str(),
+		    before, after, f, w.loadOnly ? " (until gameplay starts)" : "",
+		    strtod(after, nullptr) != w.value ? " - the console kept another value (refused?)" : "");
+	}
+	if (!missing) { g_conDone = true; return; }
+	if (f >= 600) {
+		for (const Want& w : g_want)
+			if (!w.var && !w.con) Log("cvars: %s %g - not found (no such setting registered by frame 600): not set", w.name.c_str(), w.value);
+		g_conDone = true;
+	}
+}
 
 void Cvars_Install(uintptr_t base, void* self) {
 	static bool done = false;   // DllMain's early call, then Init's: once
@@ -151,13 +225,13 @@ void Cvars_Install(uintptr_t base, void* self) {
 	}
 	Parse(text.c_str());
 	if (g_want.empty()) { Log("cvars: nothing to set"); return; }
+	g_base = base;   // the console fallback works even when the hooks can't go in
 	void* fi = (void*)(base + kRvaInt);
 	void* ff = (void*)(base + kRvaFloat);
 	if (memcmp(fi, kIntBytes, sizeof kIntBytes) || memcmp(ff, kFloatBytes, sizeof kFloatBytes)) {
 		Log("cvars: code check failed - not installed (other game version?)");
 		return;
 	}
-	g_base = base;
 	const bool a = MH_CreateHook(fi, (void*)&HkInt, (void**)&g_origInt) == MH_OK && MH_EnableHook(fi) == MH_OK;
 	const bool b = MH_CreateHook(ff, (void*)&HkFloat, (void**)&g_origFloat) == MH_OK && MH_EnableHook(ff) == MH_OK;
 	void* fc = (void*)(base + kRvaConInt);
@@ -170,10 +244,16 @@ void Cvars_Install(uintptr_t base, void* self) {
 void Cvars_OnLoaded() {
 	std::lock_guard<std::mutex> lk(g_mu);
 	for (Want& w : g_want) {
-		if (!w.loadOnly || w.restored || !w.var) continue;
-		if (w.isFloat) *(float*)w.var = (float)w.def; else *(int*)w.var = (int)w.def;
-		w.restored = true;
-		Log("cvars: gameplay started, %s back to %g", w.name.c_str(), w.def);
+		if (!w.loadOnly || w.restored) continue;
+		if (w.var) {
+			if (w.isFloat) *(float*)w.var = (float)w.def; else *(int*)w.var = (int)w.def;
+			w.restored = true;
+			Log("cvars: gameplay started, %s back to %g", w.name.c_str(), w.def);
+		} else if (w.con) {
+			w.restored = ConSetText(w.con, w.conOld.c_str());
+			Log("cvars: gameplay started, %s back to %s through the console%s", w.name.c_str(), w.conOld.c_str(),
+			    w.restored ? "" : " - FAILED");
+		}
 	}
 }
 
@@ -181,6 +261,13 @@ void Cvars_Command(const char* args) {
 	(void)args;
 	std::lock_guard<std::mutex> lk(g_mu);
 	for (const Want& w : g_want) {
+		if (!w.var && w.con) {
+			char now[64] = "?";
+			ConText(w.con, now, sizeof now);
+			Log("cvars: %s now %s (set through the console; before %s, ours %g%s)", w.name.c_str(), now, w.conOld.c_str(),
+			    w.value, w.loadOnly ? ", until gameplay starts" : "");
+			continue;
+		}
 		if (!w.var) { Log("cvars: %s %g - never registered", w.name.c_str(), w.value); continue; }
 		const double now = w.isFloat ? *(float*)w.var : *(int*)w.var;
 		Log("cvars: %s now %g (game default %g, ours %g%s)", w.name.c_str(), now, w.def, w.value,

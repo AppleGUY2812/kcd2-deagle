@@ -107,6 +107,7 @@ void Tick() {
 	const int s = Readiness_LevelState();
 	if (s >= 4) g_world = true;
 	Startfast_Frame();   // controller callbacks queued off the main thread (startfast.cpp)
+	Cvars_Frame();       // settings the registration hooks never saw, set through the console (cvars.cpp)
 	if (s >= 1) { if (!g_loading) { g_loading = true; g_firedThisLoad = false; } }
 	else if (s == 0 && g_loading) { g_loading = false; GameplayStarted("level state 0"); }
 	Terrainfast_Frame();   // the terrain meshes asked for at the menu (terrainfast.cpp)
