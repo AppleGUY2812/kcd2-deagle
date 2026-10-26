@@ -1016,3 +1016,14 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   FUN_1805ca5a8 1.9 s (strings AreaBox / AreaShape / ClipVolume; FUN_1805c9660 -> FUN_180713914 1.1 s); game-object extensions FUN_18070f938 0.48 s; SpawnEntity
   FUN_1803d1e94 0.4 s; the DestroyPhysicalEntity spin 0.57 s (all of the unnamed leaf at 7ff875aec3fe), under
   FUN_18041f170 -> FUN_180421698.
+
+## 2026-10-25: start-up between the renderer setup's hand-over and Main's next renderer call (kcd2-deagle-66)
+- CSystem::Init after Renderer.PostInit (slot 5, which ends with InitSystemResources 0x1a0 and the 0x1a8 lambda):
+  the machine-spec auto detect (FUN_181dd8ae0) makes its own DXGI factory and D3D12 device to read the GPU (~30 ms,
+  no renderer state), then the spec's cvar groups are applied (FUN_181dd95d0, sys_spec / r_SuperResolution_*). Their
+  callbacks reach the renderer: the q_Renderer callback (FUN_18193f34c) reads the feature flags (slot 16) and then
+  WRITES renderer fields (+0x2e18..+0x2e20) directly, no vtable call.
+- Dead end: letting one-instruction renderer getters past rtsync's gate (mode 5, c745716). Boot 163b1: the wait only
+  moved 3 ms on (slot 333 from +52f390, 352 ms) and the render thread crashed at the first frames (WHGame+39ae34 in
+  the command processing, FUN_1805be8b0, garbage pointer). Removed. The gate must stop Main at its first renderer
+  call, getters included.
