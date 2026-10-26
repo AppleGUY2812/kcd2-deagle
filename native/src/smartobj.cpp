@@ -65,7 +65,7 @@ const char* LockLoad() {
 }
 int g_mode = 0, g_threads = 0;
 long long g_freq = 1;
-std::atomic<int> g_calls{ 0 };
+std::atomic<int> g_calls{ 0 }, g_work{ 0 };   // all calls; calls that do the work (the first has the flag at +0x48 off)
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g_freq; }
@@ -73,13 +73,15 @@ inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g
 void __fastcall HkAll(char* mgr) {
 	const int call = g_calls++;
 	if (!mgr[0x48]) { g_origAll(mgr); return; }
+	const int work = g_work++;
 	std::vector<void*> types;
 	void** head = *(void***)(mgr + 0x10);
 	for (void** n = (void**)*head; n != (void**)head; n = (void**)*n) types.push_back(n[3]);
 	const long long t0 = Now();
 	std::vector<double> ms(types.size(), 0.0);
 	int used = 1;
-	if (g_mode == 1 && call == 0 && types.size() > 2) {
+	const bool spread = g_mode == 1 && work == 0 && types.size() > 2;   // the start-up one only
+	if (spread) {
 		const long long a = Now();
 		g_one(types[0]);   // alone first: what is built on first use gets built here
 		ms[0] = Ms(a, Now());
@@ -123,7 +125,7 @@ done:
 		for (double v : ms) { sum += v; top = std::max(top, v); }
 		Log("smartobj: call %d: %zu smart-object types in %.0f ms on %d thread(s)%s (one after another: %.0f ms; the first %.0f ms, "
 		    "the slowest %.0f ms; %ld database loads under the lock)", call + 1, types.size(), wall, used,
-		    g_mode == 1 && call == 0 ? "" : " (the game's way)", sum, ms.empty() ? 0.0 : ms[0], top, g_loadsSpread.load());
+		    spread ? "" : " (the game's way)", sum, ms.empty() ? 0.0 : ms[0], top, g_loadsSpread.load());
 	}
 }
 

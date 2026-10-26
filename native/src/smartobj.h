@@ -9,8 +9,8 @@
 // Each type writes only its own list; the rest is lookups (and the game's rand() for random options; its seed comes
 // from the clock). Mode 1: the first type runs on Main alone (so anything built on first use is built), then the rest
 // on worker threads and Main, Main waiting for all, with the Mannequin database manager's Load (the one shared write:
-// it loads and caches a database the first time) under a lock. Only the first call (start-up); later calls run as the
-// game's.
+// it loads and caches a database the first time) under a lock. Only the first call that does the work (the game
+// calls it once before with the flag at +0x48 off: boot 170chk4); later calls run as the game's.
 // fastload_smartobj.txt next to the plugin: 1 spread, 2 the game's way timed per type (the base for a pair), 0 off
 // (default); a second number = threads (default: cores - 1, at most 8). "smartobj:" lines in the log.
 void Smartobj_Install(uintptr_t gameBase, void* selfModule);

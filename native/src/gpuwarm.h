@@ -21,17 +21,19 @@
 // layer or DRED is on (enabling those with a device alive removes it / misses it), and drops the worker's reference
 // after. NVIDIA Aftermath (on in this install) makes GPU crash dumps only for devices made after its set-up: this one
 // is made before, so the game's GPU crash dumps are lost. "devahead:" lines. fastload_devahead.txt: 1 on (default), 0 off.
-// nvcamera (2026-10-25): inside that device creation the NVIDIA driver loads NvCamera64.dll (photo mode, game filters,
-// RTX HDR; they need the NVIDIA overlay, off on this PC). It loads nvapi and nvcuda, makes its own D3D11 device and checks
-// signatures: 432 of the worker's 969 ms in boot 165e3's exact stacks, and Main waits for the worker (580-680 ms with
-// zipidx 1). fastload_nvcamera.txt 1: ntdll's LdrLoadDll refuses NvCamera64.dll in this process (as if the driver had no
-// NvCamera folder), so those NVIDIA features are off in this game; 0 (default) the driver's own. "nvcamera:" lines.
+// nvcamera (2026-10-25, dead end 2026-10-26): inside that device creation the NVIDIA driver loads NvCamera64.dll
+// (photo mode, game filters, RTX HDR) and calls into it: 432 of the worker's 969 ms in boot 165e3 (signature checks,
+// nvapi / nvcuda / d3dcompiler loads, its own D3D11 device). Refusing the load in LdrLoadDll made the driver fail the
+// D3D12 device: boot 170N1 saw the RTX 3070 Ti as D3D 10_1, "no suitable rendering device", and hung before the menu.
+// Removed; fastload_nvcamera.txt 1 is only logged as ignored. "nvcamera:" line.
 // nvcachewarm (2026-10-25): the render thread's first root signature (ResourceLayoutBinCache.txt, FUN_180b1afd0, at
 // 3.0 s) spent 287 ms inside NvMemMapStoragex.dll (boot 165e3): the NVIDIA driver setting up its shader disk cache
 // (DXCache, 3.9 GB here), once per process, on the chain Main's slot-5 flush and spec gate wait for. With
-// fastload_nvcachewarm.txt 1 the worker makes one empty root signature on its device (the renderer's, see devahead)
+// fastload_nvcachewarm.txt 1 the worker makes one root signature on its device (the renderer's, see devahead)
 // after the support checks, so that set-up runs ~1.3 s earlier beside Main. Skipped when the debug layer or DRED is on
-// (the worker holds a device reference meanwhile). "nvcachewarm:" lines. 0 (default) off.
+// (the worker holds a device reference meanwhile). "nvcachewarm:" lines. 0 (default) off. Boot 170C1: an empty
+// root signature took 0 ms and the render thread still paid the set-up, so it now has constants, a CBV, a
+// descriptor table and a static sampler (the game's go through CreateRootSignature, WHGame+b1c145).
 // fastload_gpuwarm.txt next to the plugin: 1 on (default), 0 off. Needs the plugin loaded before WHGame's static
 // initializers (global.ini DontLoadFromDllMain=0). "gpuwarm:" lines in the log.
 bool Gpuwarm_EarlyInstall(uintptr_t gameBase, void* selfModule);   // DllMain, MinHook initialized

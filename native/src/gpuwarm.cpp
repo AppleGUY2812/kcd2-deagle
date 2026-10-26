@@ -54,35 +54,11 @@ char g_note[160] = "";
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g_freq; }
 
-// nvcamera (gpuwarm.h): ntdll's LdrLoadDll refuses NvCamera64.dll, as if the driver had no NvCamera folder.
-struct UStr { USHORT len, max; PWSTR buf; };   // UNICODE_STRING
-using LdrLoadDllFn = LONG(NTAPI*)(PWSTR path, PULONG flags, UStr* name, PVOID* base);
-LdrLoadDllFn g_origLdr = nullptr;
-std::atomic<long> g_camRefused{ 0 };
-int g_camMode = 0;   // 1 kept out, 0 the driver's own
+// nvcamera (gpuwarm.h): the refusal is gone; a 1 in fastload_nvcamera.txt is only reported
+int g_camMode = 0;
 int g_cacheWarm = 0;   // nvcachewarm: 1 on
 HRESULT g_cacheHr = S_FALSE;
 double g_cacheMs = -1;
-bool IsNvCamera(const UStr* s) {
-	__try {
-		if (!s || !s->buf) return false;
-		size_t n = s->len / 2;
-		if (n >= 4 && !_wcsnicmp(s->buf + n - 4, L".dll", 4)) n -= 4;
-		static const wchar_t kName[] = L"nvcamera64";
-		const size_t m = sizeof kName / sizeof kName[0] - 1;
-		if (n < m || _wcsnicmp(s->buf + n - m, kName, m)) return false;
-		return n == m || s->buf[n - m - 1] == L'\\' || s->buf[n - m - 1] == L'/';
-	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
-}
-LONG NTAPI HkLdrLoadDll(PWSTR path, PULONG flags, UStr* name, PVOID* base) {
-	if (IsNvCamera(name)) {
-		g_camRefused++;
-		if (base) *base = nullptr;
-		return (LONG)0xC0000135;   // STATUS_DLL_NOT_FOUND
-	}
-	return g_origLdr(path, flags, name, base);
-}
-
 using CreateFactoryFn = HRESULT(WINAPI*)(REFIID, void**);
 using D3D12CreateFn = HRESULT(WINAPI*)(IUnknown*, UINT, REFIID, void**);
 using D3D11CreateFn = HRESULT(WINAPI*)(IDXGIAdapter*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
@@ -153,7 +129,28 @@ DWORD WINAPI Warm(LPVOID) {
 				auto ser = (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)GetProcAddress(GetModuleHandleA("d3d12.dll"), "D3D12SerializeRootSignature");
 				if (*(volatile int*)(g_base + kRvaDebugLayer) || *(volatile int*)(g_base + kRvaDred)) g_cacheHr = E_ABORT;   // keep their rule
 				else if (ser) {
+					// not empty: boot 170C1's empty one took 0 ms and left the cache set-up to the render thread
+					D3D12_DESCRIPTOR_RANGE ranges[2] = {};
+					ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; ranges[0].NumDescriptors = 8;
+					ranges[0].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+					ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV; ranges[1].NumDescriptors = 2;
+					ranges[1].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+					D3D12_ROOT_PARAMETER params[3] = {};
+					params[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+					params[0].Constants.Num32BitValues = 4;
+					params[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+					params[1].Descriptor.ShaderRegister = 1;
+					params[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+					params[2].DescriptorTable.NumDescriptorRanges = 2;
+					params[2].DescriptorTable.pDescriptorRanges = ranges;
+					D3D12_STATIC_SAMPLER_DESC smp = {};
+					smp.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+					smp.AddressU = smp.AddressV = smp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+					smp.MaxLOD = D3D12_FLOAT32_MAX;
+					smp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 					D3D12_ROOT_SIGNATURE_DESC rd{};
+					rd.NumParameters = 3; rd.pParameters = params;
+					rd.NumStaticSamplers = 1; rd.pStaticSamplers = &smp;
 					rd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 					ID3DBlob* blob = nullptr;
 					ID3DBlob* err = nullptr;
@@ -258,12 +255,6 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 		if (fscanf(fp, "%d", &g_cacheWarm) != 1) g_cacheWarm = 0;
 		fclose(fp);
 	}
-	if (g_camMode == 1) {   // before the worker and anything else can load the driver
-		void* ldr = (void*)GetProcAddress(GetModuleHandleA("ntdll.dll"), "LdrLoadDll");
-		if (!ldr || GetModuleHandleW(L"NvCamera64.dll") || MH_CreateHook(ldr, (void*)&HkLdrLoadDll, (void**)&g_origLdr) != MH_OK)
-			g_camMode = -1;
-		else if (MH_EnableHook(ldr) != MH_OK) { MH_RemoveHook(ldr); g_camMode = -1; }
-	}
 	if (mode != 1) { g_state = -1; return false; }
 	int dmode = 1;
 	if (FILE* fp = fopen((dir + "fastload_devahead.txt").c_str(), "r")) {
@@ -293,9 +284,9 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 }
 
 void Gpuwarm_Report() {
-	Log("nvcamera: %s", g_camMode == 1 ? "kept out of the process (NVIDIA filters, photo mode and RTX HDR off in this game; fastload_nvcamera.txt)"
-	                    : g_camMode == -1 ? "hook failed or already loaded - the driver's own"
-	                                      : "the driver's own (fastload_nvcamera.txt 1 keeps NvCamera64.dll out)");
+	if (g_camMode == 1)
+		Log("nvcamera: fastload_nvcamera.txt 1 ignored - the NVIDIA driver fails the D3D12 device without NvCamera64.dll (boot "
+		    "170N1: no usable GPU, the game hung before the menu); the driver's own");
 	switch (g_state.load()) {
 	case 0: Log("gpuwarm: off (the plugin loaded after the game's start-up code: global.ini DontLoadFromDllMain=0)"); return;
 	case -1: Log("gpuwarm: off (fastload_gpuwarm.txt)"); return;
@@ -315,7 +306,6 @@ void Gpuwarm_Frame() {
 		    Ms(g_t0, g_t1), g_adapters, g_ok, g_note[0] ? "; " : "", g_note, g_skippedSys ? "system info skipped" : "system info never came",
 		    g_skipped ? "GPU info skipped" : "GPU info never came");
 	else Log("gpuwarm: the driver warm-up is still running at the first frame");
-	if (g_camMode == 1) Log("nvcamera: %ld load(s) of NvCamera64.dll refused", g_camRefused.load());
 	if (g_cacheWarm == 1)
 		Log("nvcachewarm: %s", g_cacheMs < 0 ? "not run (no worker device)" : g_cacheHr == E_ABORT ? "skipped (debug layer or DRED on)" : "");
 	if (g_cacheWarm == 1 && g_cacheMs >= 0 && g_cacheHr != E_ABORT)
