@@ -373,6 +373,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 				if (g_mhEarly) Gpuwarm_EarlyInstall(b, h);   // the graphics driver loaded on a worker (gpuwarm.cpp)
 				if (g_mhEarly) Cvars_Install(b, h);   // the settings hooks on before the game registers any (cvars.cpp; boot 121)
 			}
+			Startfast_EarlyInstall(b, h);   // CPU detection pins the main thread, not the whole process (startfast.cpp; ~0.35 s)
 		}
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
 	}

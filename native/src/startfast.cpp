@@ -2,6 +2,7 @@
 #include "startfast.h"
 #include "log.h"
 #include <windows.h>
+#include <intrin.h>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -75,7 +76,95 @@ bool Same(uintptr_t at, const unsigned char* bytes, size_t n) {
 	__try { return !memcmp((void*)at, bytes, n); } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+// CPU detection (startfast.h): the two `call [SetProcessAffinityMask]` in FUN_18136739c and the import slot they use
+constexpr uintptr_t kRvaProbeLoopCall = 0x136743a;      // in the per-core loop; returns to +1367440
+constexpr uintptr_t kRvaProbeRestoreCall = 0x1367462;   // the restore after it; returns to +1367468
+constexpr uintptr_t kRvaSpamSlot = 0x3a037d8;           // WHGame.dll's import slot for kernel32!SetProcessAffinityMask
+const unsigned char kProbeLoopBytes[] = { 0xff,0x15,0x98,0xc3,0x69,0x02 };
+const unsigned char kProbeRestoreBytes[] = { 0xff,0x15,0x70,0xc3,0x69,0x02 };
+
+bool SlotHolds(void** slot, void* fn) {
+	__try { return *slot == fn; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+using SpamFn = BOOL(WINAPI*)(HANDLE, DWORD_PTR);
+SpamFn g_realSpam = nullptr;
+uintptr_t g_raLoop = 0, g_raRestore = 0;
+DWORD_PTR g_savedThreadMask = 0;   // the main thread's own mask before the first core
+int g_probeCores = 0, g_probeRuns = 0;
+bool g_probeFellBack = false;   // a core went the game's own way: the process mask needs the real restore too
+LARGE_INTEGER g_probeT0{};
+
+BOOL WINAPI HkSetProcessAffinityMask(HANDLE proc, DWORD_PTR mask) {
+	const uintptr_t ra = (uintptr_t)_ReturnAddress();
+	if (ra == g_raLoop && proc == GetCurrentProcess()) {
+		const DWORD_PTR prev = SetThreadAffinityMask(GetCurrentThread(), mask);
+		if (!prev) {   // refused: the game's own way for this core
+			g_probeFellBack = true;
+			return g_realSpam(proc, mask);
+		}
+		if (!g_savedThreadMask) {
+			g_savedThreadMask = prev;
+			QueryPerformanceCounter(&g_probeT0);
+			g_probeCores = 0;
+		}
+		g_probeCores++;
+		return TRUE;
+	}
+	if (ra == g_raRestore && proc == GetCurrentProcess() && g_savedThreadMask) {
+		SetThreadAffinityMask(GetCurrentThread(), g_savedThreadMask);
+		g_savedThreadMask = 0;
+		if (g_probeFellBack) {   // the process mask was changed for some core: restore it as the game does
+			g_probeFellBack = false;
+			g_realSpam(proc, mask);
+		}
+		LARGE_INTEGER t, f;
+		QueryPerformanceCounter(&t);
+		QueryPerformanceFrequency(&f);
+		Log("startfast: CPU detection %d: the main thread (not the process) on each of %d cores, %.1f ms", ++g_probeRuns,
+		    g_probeCores, (t.QuadPart - g_probeT0.QuadPart) * 1000.0 / f.QuadPart);
+		return TRUE;
+	}
+	return g_realSpam(proc, mask);
+}
+
 }   // namespace
+
+void Startfast_EarlyInstall(uintptr_t base, void* self) {
+	char path[MAX_PATH] = {};
+	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
+	std::string dir(path);
+	dir = dir.substr(0, dir.find_last_of("\\/") + 1);
+	int mode = 0;
+	if (FILE* f = fopen((dir + "fastload_cpuprobe.txt").c_str(), "r")) {
+		if (fscanf(f, "%d", &mode) != 1) mode = 0;
+		fclose(f);
+	}
+	if (mode != 1) {
+		Log("startfast: CPU detection mode %d - the game's own (the whole process on each core; fastload_cpuprobe.txt 1 = only "
+		    "the main thread)", mode);
+		return;
+	}
+	const auto real = (SpamFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetProcessAffinityMask");
+	void** slot = (void**)(base + kRvaSpamSlot);
+	const bool slotOk = real && SlotHolds(slot, (void*)real);
+	if (!Same(base + kRvaProbeLoopCall, kProbeLoopBytes, sizeof kProbeLoopBytes) ||
+	    !Same(base + kRvaProbeRestoreCall, kProbeRestoreBytes, sizeof kProbeRestoreBytes) || !slotOk) {
+		Log("startfast: CPU detection code or its import differs (another game version? imports not bound yet?) - left alone");
+		return;
+	}
+	g_realSpam = real;
+	g_raLoop = base + kRvaProbeLoopCall + 6;
+	g_raRestore = base + kRvaProbeRestoreCall + 6;
+	DWORD old;
+	if (!VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old)) {
+		Log("startfast: CPU detection: VirtualProtect failed - left alone");
+		return;
+	}
+	InterlockedExchangePointer(slot, (void*)&HkSetProcessAffinityMask);
+	VirtualProtect(slot, sizeof(void*), old, &old);
+	Log("startfast: CPU detection mode 1 - its per-core probe pins the main thread, not the whole process");
+}
 
 void Startfast_Install(uintptr_t base, void* self) {
 	char path[MAX_PATH] = {};

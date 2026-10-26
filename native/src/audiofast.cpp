@@ -103,8 +103,38 @@ void Hold(int slot) {
 	if (i < kMaxHolds) g_holds[i] = { slot, tid, t0, t1, timedOut };
 }
 
+// CryMovie's start-up (FUN_1807eb10c) looks up the 16 TrackView parameter ids ("TrackViewParam1".."16") into a global
+// table and ignores the result: the first audio system call after the four requests (boots 158-159: Main waited 418-526 ms
+// there, 34-101 ms after the pushes). While the requests run, those 16 get at once the id the lookup gives a known name
+// (CRC32 of the lower-case name, FUN_180480a5c); at the first frame, after the requests, the game's own lookup runs for each
+// and writes the real answer (0 and its "INVALID_AUDIO_CONTROL_ID" line for an unknown name). Nothing plays a TrackView
+// sequence before the first frame.
+constexpr uintptr_t kRvaTrackViewIdsRet = 0x7eb181;   // after its call [rax+0x40] (slot 8) in the 16-name loop
+constexpr uintptr_t kRvaCrcTable = 0x40999f0;         // the lookup's CRC32 table
+struct Deferred { uintptr_t sys; const char* name; uint32_t* out; };
+constexpr int kMaxDeferred = 16;
+Deferred g_deferred[kMaxDeferred] = {};
+int g_nDeferred = 0;   // Main only
+bool g_deferOk = false;
+
+bool Defer(uintptr_t sys, uintptr_t name, uintptr_t out) {
+	if (!g_deferOk || !name || !out || g_nDeferred >= kMaxDeferred || GetCurrentThreadId() != g_mainTid) return false;
+	const uint32_t* tbl = (const uint32_t*)(g_base + kRvaCrcTable);
+	uint32_t crc = 0xffffffff;
+	for (const unsigned char* p = (const unsigned char*)name; *p; p++) {
+		const unsigned char ch = (*p >= 'A' && *p <= 'Z') ? *p + 0x20 : *p;   // as the game: ASCII upper case only
+		crc = crc >> 8 ^ tbl[(ch ^ crc) & 0xff];
+	}
+	*(uint32_t*)out = ~crc;
+	g_deferred[g_nDeferred++] = { sys, (const char*)name, (uint32_t*)out };
+	return true;
+}
+
 template <int N> uintptr_t __fastcall Gate(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
-	if (Busy()) Hold(N);
+	if (Busy()) {
+		if (N == 8 && (uintptr_t)_ReturnAddress() == g_base + kRvaTrackViewIdsRet && Defer(a, b, c)) return 1;
+		Hold(N);
+	}
 	return g_orig[N](a, b, c, d);
 }
 
@@ -207,7 +237,11 @@ void Audiofast_Install(uintptr_t base, void* self) {
 		if (fscanf(fp, "%d", &mode) != 1) mode = 0;
 		fclose(fp);
 	}
-	if (mode != 1) { Log("audiofast: off (fastload_audiofast.txt 1 = the sound system's start-up requests without Main waiting)"); return; }
+	if (mode != 1 && mode != 2) {
+		Log("audiofast: off (fastload_audiofast.txt 1 = the sound system's start-up requests without Main waiting, 2 = also "
+		    "CryMovie's TrackView ids answered at once)");
+		return;
+	}
 	g_base = base;
 	g_vt = (void**)(base + kRvaVtable);
 	for (const Slot& s : kSlots)
@@ -223,6 +257,10 @@ void Audiofast_Install(uintptr_t base, void* self) {
 	const uintptr_t callAt = base + kRvaSignal + 7;
 	const uintptr_t used = callAt + 6 + *(int32_t*)(callAt + 2);
 	if (!g_iat || (uintptr_t)g_iat != used) { Log("audiofast: the game's SetEvent import not found where its signal calls it - off"); return; }
+	const uint32_t* crc = (const uint32_t*)(base + kRvaCrcTable);
+	g_deferOk = mode == 2 && !memcmp((void*)(base + kRvaTrackViewIdsRet - 3), "\xff\x50\x40", 3) && crc[0] == 0 && crc[1] == 0x77073096 &&
+	            crc[255] == 0x2d02ef8d;
+	if (mode == 2 && !g_deferOk) Log("audiofast: CryMovie's TrackView id loop or the CRC table differs: those lookups wait as the rest");
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
 	g_mainTid = Early_MainThread();
 	g_wake = CreateEventA(nullptr, FALSE, FALSE, nullptr);
@@ -239,7 +277,7 @@ void Audiofast_Install(uintptr_t base, void* self) {
 	g_on = true;
 	g_reported = false;
 	Log("audiofast: on (the sound system's 4 start-up requests without Main waiting; %d audio system slots wait for them; "
-	    "fastload_audiofast.txt 1)", kNumSlots - 1);
+	    "%sfastload_audiofast.txt %d)", kNumSlots - 1, g_deferOk ? "CryMovie's 16 TrackView ids answered at once; " : "", mode);
 }
 
 void Audiofast_Frame() {
@@ -248,6 +286,24 @@ void Audiofast_Frame() {
 	Hold(-1);   // the first frame: everything done before the game runs on
 	g_on = false;
 	Restore();
+	if (g_nDeferred) {   // the game's own lookup for the ids answered early, now that the tables are in
+		int unknown = 0, changed = 0;
+		const bool done = !Busy();
+		for (int i = 0; done && i < g_nDeferred; i++) {
+			const Deferred& r = g_deferred[i];
+			const uint32_t early = *r.out;
+			g_orig[8](r.sys, (uintptr_t)r.name, (uintptr_t)r.out, 0);
+			unknown += *r.out == 0;
+			changed += *r.out != early;
+		}
+		if (done)
+			Log("audiofast: CryMovie's %d TrackView parameter ids were answered at once, the game's lookup at the first frame: "
+			    "%d known, %d unknown (0, as the game), %d differed from the early answer", g_nDeferred, g_nDeferred - unknown,
+			    unknown, changed);
+		else
+			Log("audiofast: CryMovie's %d TrackView parameter ids answered at once; the requests still not done at the first "
+			    "frame, so their early answers stay", g_nDeferred);
+	}
 	const double ms = 1000.0 / g_freq;
 	const long n = g_pending.load(), d = g_done.load();
 	std::string s;

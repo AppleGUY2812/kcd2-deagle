@@ -30,9 +30,14 @@
 // on. The flag is cleared before the setup, so the game saves and puts back 0, and the render thread puts the real
 // value back when its part ends (the lambda's vftable slot); until then Main's texture loads (ForName, which reads the
 // flag to postpone or load) wait, and other threads see 0 as during the game's own wait.
+// Mode 4 = mode 3 and CSystem::Init's flush right after (renderer slot 59 from +7a191c), where Main waited for the whole
+// setup in mode 3 (boots 158rt3au/b: 521 / 434 ms, 0 ms after the hand-over): it is owed instead, and Main pays it (the
+// game's own flush) at its next renderer call, texture load or real flush, or at the first frame; the renderer gate
+// stays on until then.
 // The log lines at the first frame give Main's real-flush waits, the first one after each hand-over (to see whether a
 // wait only moved), and when the render thread ran the setup's part.
 // "rtsync:" lines. fastload_rtsync.txt: 2 the shader-quality settings only (default), 1 and the shader manager, 3 and
-// the system-resource setup too (1 and 3 not run in game yet), 0 off.
+// the system-resource setup too (queue 158: 1.0 s sooner to the menu with audiofast 1), 4 and CSystem::Init's flush after
+// it (not run in game yet), 0 off.
 void Rtsync_Install(uintptr_t gameBase, void* selfModule);   // Init, before the renderer starts
 void Rtsync_Frame();   // the frame tick: off from the first frame, its counts logged once

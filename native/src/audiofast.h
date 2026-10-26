@@ -14,7 +14,9 @@
 // tables on the calling thread waits (vtable slots 6-14, 16, 22-24: the id lookups, listeners, impl info,
 // ExternalUpdate), and so do other blocking pushes (they share the event; later normal pushes queue behind the four);
 // the first frame waits too, then the slots and the import go back. "audiofast:" lines: when each request finished and
-// every wait.
-// fastload_audiofast.txt next to the plugin: 1 on, 0 off (default until a boot pair tests it).
+// every wait. Mode 2: also CryMovie's 16 TrackView parameter-id lookups (the one wait left in boots 158-159, 418-526 ms
+// on Main) don't wait: they get the id at once (CRC32 of the lower-case name, what the lookup gives a known name), and
+// the game's own lookup runs for them at the first frame and writes the real answer.
+// fastload_audiofast.txt next to the plugin: 1 on, 2 on + the TrackView ids, 0 off (default until a boot pair tests it).
 void Audiofast_Install(uintptr_t gameBase, void* selfModule);   // Init, before the sound system's init
 void Audiofast_Frame();   // the frame tick: waits for the requests if needed, puts everything back, logs once

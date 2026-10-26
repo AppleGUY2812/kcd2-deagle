@@ -52,6 +52,15 @@ constexpr uintptr_t kRvaLam2Slot = 0x3df03f8;  // the second lambda's vftable (0
 constexpr uintptr_t kRvaLam2Call = 0x1ded870;  // mov rcx,[renderer]; jmp [rax+0xaf0] (FUN_181683268)
 constexpr uintptr_t kRvaRendererVt = 0x3dfc008;   // CD3D9Renderer's vtable: 381 slots, the setup is 52, the second lambda's 53
 constexpr int kRendererSlots = 381, kIsrSlot = 52, kLam2Slot = 53;
+// Mode 4: CSystem::Init flushes and waits (renderer slot 59, FUN_1807a1e98) right after the renderer's post-init that runs
+// the setup, so Main waited there for the whole hand-over (rt3au boots: 434-521 ms, 0 ms after it). That flush is owed
+// instead: slot 59 runs on without its flush, and Main pays it (the game's own flush) at its next renderer call, texture
+// load or real flush, or at the first frame; the renderer gate stays until it is paid.
+constexpr uintptr_t kRvaSysFlushRet = 0x7a191c;     // CSystem::Init: call [rax+0x1d8] (slot 59) returns here
+constexpr uintptr_t kRvaSlot59FlushCall = 0x7a1ee3; // slot 59: call FUN_1807a2138 (the flush)
+constexpr uintptr_t kRvaSlot59 = 0x7a1e98;
+constexpr int kSyncSlot = 59;
+const unsigned char kSysFlushBytes[] = { 0xff,0x90,0xd8,0x01,0x00,0x00 };   // call [rax+0x1d8]
 constexpr uintptr_t kRvaForName = 0x9b8ec4;    // CTexture::ForName: reads the flag (postpone the load or load now)
 constexpr uintptr_t kRvaForNameRead1 = 0x9b8f0b, kRvaForNameRead2 = 0x9b8f59;   // its reads (8a 05 disp32)
 const unsigned char kForNameBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x08 };   // mov rax,rsp; mov [rax+8],rbx
@@ -112,6 +121,11 @@ std::atomic<long long> g_lamT0{ 0 }, g_lamT1{ 0 }, g_lam2T1{ 0 };  // render thr
 long long g_gateTicks = 0, g_gates = 0, g_isrFirstAfterTicks = -1, g_isrFirstAfterAt = 0, g_firstGateAt = 0;
 uintptr_t g_isrFirstAfterRet = 0;
 char g_gateWhat[64] = "";
+bool g_owedOn = false;                     // mode 4
+bool g_owedArmed = false, g_owedUsed = false;   // Main: slot 59 from CSystem::Init let through, its flush comes next
+std::atomic<void*> g_owedRt{ nullptr };    // the flush Main owes (set and taken under g_vtLock)
+long long g_owedT = 0, g_owedPaidAt = -1, g_owedPaidTicks = 0;
+char g_owedWhere[64] = "";
 constexpr size_t kThunkSize = 0x90;
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
@@ -156,7 +170,9 @@ void Submit(void* rt) {
 // Both lambdas have run (or the setup ended without them): the renderer's slots back, Main let go. Any thread.
 void Release() {
 	AcquireSRWLockExclusive(&g_vtLock);
-	if (g_gateOn.load(std::memory_order_acquire)) {
+	if (g_gateOn.load(std::memory_order_acquire) && g_owedRt.load()) {
+		SetEvent(g_setupDone);   // mode 4: the lambdas ran; the gate stays until Main has paid its owed flush (PayOwed)
+	} else if (g_gateOn.load(std::memory_order_acquire)) {
 		if (g_vtPatched) {
 			DWORD old = 0;
 			if (VirtualProtect(g_rendVt, kRendererSlots * sizeof(void*), PAGE_READWRITE, &old)) {
@@ -213,10 +229,36 @@ void WaitSetup(const char* what, uintptr_t a, uintptr_t b) {
 	}
 }
 
+// Main: the flush CSystem::Init asked for (mode 4), now; then the renderer's slots back
+void PayOwed(const char* what, uintptr_t a, uintptr_t b) {
+	AcquireSRWLockExclusive(&g_vtLock);
+	void* rt = g_owedRt.exchange(nullptr);
+	ReleaseSRWLockExclusive(&g_vtLock);
+	if (!rt) return;
+	const long long t0 = Now();
+	g_orig(rt);   // waits for the lambdas too if they are still running
+	g_owedPaidTicks = Now() - t0;
+	g_owedPaidAt = t0 - g_owedT;
+	snprintf(g_owedWhere, sizeof g_owedWhere, what, (unsigned long long)a, (unsigned long long)b);
+	Release();
+}
+
 // The generated thunks' call: Main waits while the gate is on, every other thread goes straight on
 void __fastcall GateSlot(int slot, uintptr_t from) {
-	if (g_gateOn.load(std::memory_order_acquire) && GetCurrentThreadId() == g_mainTid && !g_isrGaveUp)
+	if (GetCurrentThreadId() != g_mainTid) return;
+	// slot 59's own renderer call before its flush (slot 199 from +7a1ece: this thread's aux geometry, submitted next):
+	// part of slot 59, through without waiting while its flush is about to be owed
+	if (g_owedArmed && from >= g_base + kRvaSlot59 && from < g_base + kRvaSlot59FlushCall) return;
+	g_owedArmed = false;
+	if (g_gateOn.load(std::memory_order_acquire) && !g_isrGaveUp) {
+		if (g_owedOn && !g_owedUsed && slot == kSyncSlot && from == g_base + kRvaSysFlushRet) {
+			g_owedUsed = true;   // slot 59 runs on; HkFlush makes its flush owed
+			g_owedArmed = true;
+			return;
+		}
 		WaitSetup("renderer slot %llu from +%llx", (uintptr_t)slot, from - g_base);
+	}
+	if (g_owedRt.load(std::memory_order_relaxed)) PayOwed("renderer slot %llu from +%llx", (uintptr_t)slot, from - g_base);
 }
 
 // One thunk per slot: save the 4 argument registers and xmm0-3, GateSlot(slot, caller), restore, jump to the original (stack
@@ -279,6 +321,8 @@ void PatchVtable() {
 uintptr_t __fastcall HkForName(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
 	if (g_gateOn.load(std::memory_order_acquire) && GetCurrentThreadId() == g_mainTid && !g_isrGaveUp)
 		WaitSetup("a texture load from +%llx", (uintptr_t)_ReturnAddress() - g_base, 0);
+	if (g_owedRt.load(std::memory_order_relaxed) && GetCurrentThreadId() == g_mainTid)
+		PayOwed("a texture load from +%llx", (uintptr_t)_ReturnAddress() - g_base, 0);
 	return g_forNameOrig(a, b, c, d);
 }
 
@@ -315,6 +359,17 @@ void __fastcall HkFlush(void* rt) {
 		const uintptr_t r = (uintptr_t)_ReturnAddress();
 		if (r == g_ret) { g_skipped++; return; }
 		if (g_isrOn && GetCurrentThreadId() == g_mainTid) {
+			if (g_owedArmed && r == g_base + kRvaSlot59FlushCall + 5) {   // mode 4: CSystem::Init's flush, owed
+				g_owedArmed = false;
+				AcquireSRWLockExclusive(&g_vtLock);
+				const bool owe = g_gateOn.load(std::memory_order_acquire);   // on = the lambdas not done yet
+				if (owe) {
+					g_owedRt = rt;
+					g_owedT = Now();
+				}
+				ReleaseSRWLockExclusive(&g_vtLock);
+				if (owe) return;
+			}
 			if (r == g_base + kRvaIsrRet && g_inIsr && !g_isrSkipped) {   // the setup's lambda stays queued for now
 				g_isrSkipped = true;
 				g_isrRt = rt;
@@ -349,8 +404,20 @@ void __fastcall HkFlush(void* rt) {
 		}
 	}
 	const bool timed = g_on.load(std::memory_order_relaxed) && GetCurrentThreadId() == g_mainTid;
+	bool paid = false;   // a real flush on Main pays an owed one (it sends everything queued)
+	if (timed && g_owedRt.load(std::memory_order_relaxed)) {
+		AcquireSRWLockExclusive(&g_vtLock);
+		paid = g_owedRt.exchange(nullptr) != nullptr;
+		ReleaseSRWLockExclusive(&g_vtLock);
+	}
 	const long long t0 = timed ? Now() : 0;
 	g_orig(rt);
+	if (paid) {
+		g_owedPaidTicks = Now() - t0;
+		g_owedPaidAt = t0 - g_owedT;
+		snprintf(g_owedWhere, sizeof g_owedWhere, "a real flush from +%llx", (unsigned long long)((uintptr_t)_ReturnAddress() - g_base));
+		Release();
+	}
 	if (timed) {
 		const long long d = Now() - t0;
 		g_waitTicks += d;
@@ -438,7 +505,7 @@ void Rtsync_Install(uintptr_t base, void* self) {
 		fclose(fp);
 	}
 	g_reported = true;   // until installed
-	if (mode < 1 || mode > 3) { Log("rtsync: off (fastload_rtsync.txt)"); return; }
+	if (mode < 1 || mode > 4) { Log("rtsync: off (fastload_rtsync.txt)"); return; }
 	if (memcmp((void*)(base + kRvaFlush), kFlushBytes, sizeof kFlushBytes) || memcmp((void*)(base + kRvaQualityRet), kRetBytes, sizeof kRetBytes) ||
 	    memcmp((void*)(base + kRvaTail), kTailBytes, sizeof kTailBytes)) {
 		Log("rtsync: the renderer's sync code differs (another game version?) - off");
@@ -452,19 +519,27 @@ void Rtsync_Install(uintptr_t base, void* self) {
 	                      *(const uint8_t*)(base + kRvaFlushCall1) == 0xe8 && RipTarget(base + kRvaFlushCall1, 1, 5) == base + kRvaSubmit &&
 	                      *(const uint8_t*)(base + kRvaFlushCall2) == 0xe8 && RipTarget(base + kRvaFlushCall2, 1, 5) == base + kRvaSubmit;
 	g_submit = (SubmitFn)(base + kRvaSubmit);
-	g_shaderOn = (mode == 1 || mode == 3) && submitOk && !memcmp((void*)(base + kRvaShaderRet - 5), kShaderBytes, sizeof kShaderBytes) &&
+	g_shaderOn = (mode == 1 || mode >= 3) && submitOk && !memcmp((void*)(base + kRvaShaderRet - 5), kShaderBytes, sizeof kShaderBytes) &&
 	             !memcmp((void*)(base + kRvaClose1Ret - 6), kCallSlotBytes, sizeof kCallSlotBytes) &&
 	             !memcmp((void*)(base + kRvaClose2Ret - 6), kCallSlotBytes, sizeof kCallSlotBytes);
 	void* t = (void*)(base + kRvaFlush);
 	if (MH_CreateHook(t, (void*)&HkFlush, (void**)&g_orig) != MH_OK || MH_EnableHook(t) != MH_OK) { Log("rtsync: hook failed - off"); return; }
-	g_isrOn = mode == 3 && submitOk && InstallIsr(base);
+	g_isrOn = mode >= 3 && submitOk && InstallIsr(base);
+	if (mode == 4 && g_isrOn) {
+		g_owedOn = !memcmp((void*)(base + kRvaSysFlushRet - 6), kSysFlushBytes, sizeof kSysFlushBytes) &&
+		           *(const uint8_t*)(base + kRvaSlot59FlushCall) == 0xe8 && RipTarget(base + kRvaSlot59FlushCall, 1, 5) == base + kRvaFlush &&
+		           g_rendOrig[kSyncSlot] == (void*)(base + kRvaSlot59);
+		if (!g_owedOn) Log("rtsync: CSystem::Init's flush after the setup differs (another game version?) - it waits as in mode 3");
+	}
 	g_on = true;
 	g_reported = false;
 	Log("rtsync: on (until the first frame, the shader-quality settings don't wait for the render thread%s%s; "
 	    "fastload_rtsync.txt %d)",
 	    g_shaderOn ? "; the shader manager's work handed to it (its 2 pak closes held until Main's next wait)"
 	               : mode != 2 ? "; the shader manager's code differs: its wait stays" : "",
-	    g_isrOn ? "; the renderer's system-resource setup handed to it (Main's texture loads and renderer calls wait for it)" : "", mode);
+	    g_owedOn ? "; the renderer's system-resource setup handed to it (Main's texture loads and renderer calls wait for it) and "
+	               "CSystem::Init's flush after it owed until Main next needs the renderer"
+	    : g_isrOn ? "; the renderer's system-resource setup handed to it (Main's texture loads and renderer calls wait for it)" : "", mode);
 }
 
 void Rtsync_Frame() {
@@ -475,6 +550,7 @@ void Rtsync_Frame() {
 		g_orig(g_shaderRt);
 		RunHeldCloses("at the first frame");
 	}
+	PayOwed("the first frame", 0, 0);
 	if (g_isrOn && (g_flagHeld.load(std::memory_order_acquire) || g_gateOn.load(std::memory_order_acquire)) && g_isrRt) {
 		if (!g_isrSubmitted) { Submit(g_isrRt); g_isrSubmitted = true; }   // the setup's lambdas not run yet: run them now
 		g_orig(g_isrRt);
@@ -508,5 +584,12 @@ void Rtsync_Frame() {
 			    g_gates ? g_gateWhat : "none", g_firstGateAt * ms, g_isrGaveUp ? " (GAVE UP once after 2 s)" : "",
 			    g_isrFirstAfterTicks < 0 ? -1.0 : g_isrFirstAfterTicks * ms, g_isrFirstAfterAt * ms,
 			    (unsigned long long)g_isrFirstAfterRet);
+		if (g_owedOn) {
+			if (!g_owedUsed) Log("rtsync: CSystem::Init's flush after the setup never came while the setup ran (nothing owed)");
+			else if (g_owedPaidAt < 0) Log("rtsync: CSystem::Init's flush after the setup ran as the game's (the setup was done)");
+			else
+				Log("rtsync: CSystem::Init's flush after the setup owed, paid at %s %.0f ms after it was skipped (%.0f ms there)",
+				    g_owedWhere, g_owedPaidAt * ms, g_owedPaidTicks * ms);
+		}
 	}
 }
