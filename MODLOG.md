@@ -1159,3 +1159,11 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   doesn't see it, casts the shadow), CharacterMesh1P (arms; FirstPersonCamera on its fp_camera_socket), MeshBody1P
   (SK_ron_fbi_fp_body: body without arms, SetLeaderPoseComponent(Mesh) so it copies the third-person pose). Clothes:
   a first-person copy per shirt (SK_SWAT_Shirt_*_FP, sleeves only), gloves = ArmsMaterial swap. 15 FP skeletal meshes.
+- 2026-10-26 arm swap demo (kcd2-deagle-7d): KCD2 merges worn clothing per body part into skin attachments on Henry
+  (`clothing_arms`, `clothing_hands`, `clothing_torso`, `clothing_legs`, ...; `listatt 0x7777`); hiding them works
+  (`hideatt`). Every garment has its sleeves in its own "arms" skin (`EquipmentPart="arms"`, 140 in
+  CharacterComponent.xml, `arms/arms_splited/`), except mail shirts (sleeves in the torso skin). No Lua call says
+  which items are worn. KCD2-Convertor .skin -> .dae: the mesh comes out turned 180 deg about Z relative to
+  tools/henry_rig.py (x, y negated; weights and joint names fine). Gauntlets need `-notex` (feature materials).
+  Demo: Henry's clothing on the Grizzly idle pose by direction-matched retarget + 2-bone IK, fingers wrap the grip
+  (Desktop\Deagle Progress\ARM SWAP DEMO*.png; tools/armswap/proof_swap.py).
