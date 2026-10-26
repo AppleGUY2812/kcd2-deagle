@@ -21,9 +21,9 @@ local PARTS = { "vm_mesh", "vm_mag1", "vm_mag2", "vm_round_1", "vm_round_2", "vm
 Deagle.SKIN_RIGID_MTL = { pom = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_pom",
 	spom = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid" }
 Deagle.skinRigidLook = Deagle.skinRigidLook or "spom"
--- on by default since they draw with SilPOM and follow the bones (in game 2026-10-26): the body draws NoDraw
--- (<skin>_rigid.mtl) and the pieces show it; deagle_spom off brings the skinned body back
-if Deagle.skinRigidOn == nil then Deagle.skinRigidOn = true end
+-- off by default (the user 2026-10-26: "spom off, i dont think spom is worth it anymore"; the pieces also shifted
+-- against the skinned gun in play). deagle_spom on swaps the body to NoDraw (<skin>_rigid.mtl) and shows the pieces
+if Deagle.skinRigidOn == nil then Deagle.skinRigidOn = false end
 -- each piece's offset from its bone: none (the CGFs are in their bone's frame); deagle_spom rot <x> <y> <z> turns
 -- them, degrees, live, in case they show turned in game (SetAttachmentAngles keeps the .cdf's zero position)
 Deagle.skinRigidRot = Deagle.skinRigidRot or { 0, 0, 0 }

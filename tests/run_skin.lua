@@ -38,9 +38,9 @@ local function pieces()
 	return out, n
 end
 local function sent(pat) local c = 0 for i = 1, #M.native do if M.native[i]:find(pat) then c = c + 1 end end return c end
-check("SPOM is the default: pieces on, Silhouette POM", Deagle.skinRigidOn == true and Deagle.skinRigidLook == "spom", Deagle.skinRigidLook)
-M.console("deagle_spom", "pom"); step(0.1)
-check("no plugin: the default SPOM pieces wait, the skinned body stays (no pieces to show it)", select(2, pieces()) == 0 and M.attachMtl.vm_mesh == base .. "_mirror", M.attachMtl.vm_mesh)
+check("SPOM is off by default (the skinned mirror body), Silhouette POM when on", Deagle.skinRigidOn == false and Deagle.skinRigidLook == "spom", Deagle.skinRigidLook)
+M.console("deagle_spom", "on"); M.console("deagle_spom", "pom"); step(0.1)
+check("no plugin: the SPOM pieces wait, the skinned body stays (no pieces to show it)", select(2, pieces()) == 0 and M.attachMtl.vm_mesh == base .. "_mirror", M.attachMtl.vm_mesh)
 local before = #M.native
 M.console("deagle_native_ok"); step(0.4)
 local p, np = pieces()
