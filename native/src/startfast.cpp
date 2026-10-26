@@ -37,6 +37,42 @@ std::atomic<long> g_events{0}, g_handed{0};
 int g_mode = 1;
 bool g_async = false;
 
+// inputahead (startfast.h): GameInput's first GameInputCreate made on a worker, through the game's own WhGdk.dll
+const unsigned char kGetWrapperBytes[] = { 0x48,0x8d,0x05 };   // GetWhGdkWrapper: lea rax, [static wrapper]; ret
+const unsigned char kCreateBytes[] = { 0x48,0x8b,0xca,0xe9,0x00,0x00,0x00,0x00,0xff,0x25 };   // slot 0: GameInputCreate(out)
+int g_ahead = 0;
+std::atomic<int> g_aheadState{ 0 };   // 0 not started, 1 running, 2 done, -1 skipped
+double g_aheadMs = -1, g_aheadStartMs = -1;
+long g_aheadHr = 0;
+const char* g_aheadWhy = "";
+long long g_installTicks = 0;
+void* g_gameInput = nullptr;   // kept for the process (GameInput: create once, keep the reference)
+
+DWORD WINAPI InputAhead(LPVOID) {
+	LARGE_INTEGER f, a, b;
+	QueryPerformanceFrequency(&f);
+	QueryPerformanceCounter(&a);
+	g_aheadStartMs = (a.QuadPart - g_installTicks) * 1000.0 / f.QuadPart;
+	wchar_t exe[MAX_PATH] = {};
+	GetModuleFileNameW(nullptr, exe, MAX_PATH);
+	std::wstring dll(exe);
+	dll = dll.substr(0, dll.find_last_of(L"\\/") + 1) + L"WhGdk.dll";   // where the game's LoadLibraryA("WhGdk") finds it
+	HMODULE m = LoadLibraryW(dll.c_str());
+	using GetFn = void*(*)();
+	using CreateFn = long(__fastcall*)(void* self, void** out);
+	GetFn get = m ? (GetFn)GetProcAddress(m, "GetWhGdkWrapper") : nullptr;
+	if (!get) { g_aheadWhy = "WhGdk.dll or GetWhGdkWrapper not found"; g_aheadState = -1; return 0; }
+	if (memcmp((void*)get, kGetWrapperBytes, sizeof kGetWrapperBytes)) { g_aheadWhy = "GetWhGdkWrapper differs"; g_aheadState = -1; return 0; }
+	void* w = get();
+	CreateFn create = w ? *(CreateFn*)*(void**)w : nullptr;
+	if (!create || memcmp((void*)create, kCreateBytes, sizeof kCreateBytes)) { g_aheadWhy = "the wrapper's create differs"; g_aheadState = -1; return 0; }
+	g_aheadHr = create(w, &g_gameInput);
+	QueryPerformanceCounter(&b);
+	g_aheadMs = (b.QuadPart - a.QuadPart) * 1000.0 / f.QuadPart;
+	g_aheadState = 2;
+	return 0;
+}
+
 inline void AddRef(void* p) { if (p) (*(unsigned long(__stdcall***)(void*))p)[1](p); }
 inline void Release(void* p) { if (p) (*(unsigned long(__stdcall***)(void*))p)[2](p); }
 
@@ -65,10 +101,18 @@ uint64_t __fastcall HkInputInit(void* self) {
 	LARGE_INTEGER f, a, b;
 	QueryPerformanceFrequency(&f);
 	QueryPerformanceCounter(&a);
+	const int ahead = g_aheadState.load();
 	const uint64_t r = g_origInputInit(self);
 	QueryPerformanceCounter(&b);
 	Log("startfast: input init %.0f ms on thread %lu (controller list %s)", (b.QuadPart - a.QuadPart) * 1000.0 / f.QuadPart,
 	    GetCurrentThreadId(), g_async ? "async, callbacks to the main thread" : "the game's own: blocking");
+	if (g_ahead == 1) {
+		if (ahead == 2)
+			Log("inputahead: GameInput was made on a worker before the input init: %.0f ms, from %.0f ms after the plugin's start-up "
+			    "pieces (HRESULT 0x%08lx)", g_aheadMs, g_aheadStartMs, (unsigned long)g_aheadHr);
+		else if (ahead == -1) Log("inputahead: skipped (%s)", g_aheadWhy);
+		else Log("inputahead: the worker was still making GameInput when the input init came (the game's call waited for it)");
+	}
 	return r;
 }
 
@@ -175,6 +219,16 @@ void Startfast_Install(uintptr_t base, void* self) {
 		if (fscanf(f, "%d", &g_mode) != 1) g_mode = 1;
 		fclose(f);
 	}
+	if (FILE* f = fopen((dir + "fastload_inputahead.txt").c_str(), "r")) {
+		if (fscanf(f, "%d", &g_ahead) != 1) g_ahead = 0;
+		fclose(f);
+	}
+	if (g_ahead == 1) {
+		LARGE_INTEGER t; QueryPerformanceCounter(&t); g_installTicks = t.QuadPart;
+		g_aheadState = 1;
+		if (HANDLE h = CreateThread(nullptr, 0, InputAhead, nullptr, 0, nullptr)) { CloseHandle(h); Log("inputahead: on - GameInput made on a worker now"); }
+		else { g_aheadState = -1; g_aheadWhy = "no thread"; }
+	} else Log("inputahead: off (fastload_inputahead.txt 1: GameInput made on a worker at start-up)");
 	void* init = (void*)(base + kRvaInputInit);
 	if (Same(base + kRvaInputInit, kInputInitBytes, sizeof kInputInitBytes) &&
 	    MH_CreateHook(init, (void*)&HkInputInit, (void**)&g_origInputInit) == MH_OK && MH_EnableHook(init) == MH_OK) {}
