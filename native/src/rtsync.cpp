@@ -124,6 +124,27 @@ char g_gateWhat[64] = "";
 bool g_owedOn = false;                     // mode 4
 bool g_owedArmed = false, g_owedUsed = false;   // Main: slot 59 from CSystem::Init let through, its flush comes next
 std::atomic<void*> g_owedRt{ nullptr };    // the flush Main owes (set and taken under g_vtLock)
+// Mode 5 = mode 4 and renderer slots that only return a 32-bit (or smaller) field or a constant are not gated. Boot 161ar1: 23 ms
+// after the hand-over a cvar change ran the q_Renderer setting's callback (FUN_18193f34c), which asked for the feature
+// flags (slot 16: mov eax,[rcx+0x160]; ret) and waited 475 ms there for the setup. The setup's call tree (938 functions,
+// direct calls 5 deep) writes none of the 11 renderer fields these getters read. 58 of the 381 slots are such getters.
+bool g_trivial[kRendererSlots] = {};
+int g_nTrivial = 0;
+
+bool TrivialFn(const uint8_t* b) {
+	auto is = [&](std::initializer_list<int> pat) {   // -1: any byte
+		size_t i = 0;
+		for (int x : pat) { if (x >= 0 && b[i] != (uint8_t)x) return false; i++; }
+		return true;
+	};
+	return is({ 0x8b,0x81,-1,-1,-1,-1,0xc3 }) || is({ 0x8b,0x41,-1,0xc3 }) ||                       // mov eax,[rcx+d]
+	       is({ 0x0f,0xb6,0x81,-1,-1,-1,-1,0xc3 }) || is({ 0x0f,0xb7,0x81,-1,-1,-1,-1,0xc3 }) ||      // movzx eax,[rcx+d32]
+	       is({ 0x0f,0xb6,0x41,-1,0xc3 }) || is({ 0x0f,0xb7,0x41,-1,0xc3 }) ||                        // movzx eax,[rcx+d8]
+	       is({ 0x8a,0x81,-1,-1,-1,-1,0xc3 }) || is({ 0x8a,0x41,-1,0xc3 }) ||                         // mov al,[rcx+d]
+	       is({ 0xf3,0x0f,0x10,0x81,-1,-1,-1,-1,0xc3 }) || is({ 0xf3,0x0f,0x10,0x41,-1,0xc3 }) ||     // movss xmm0,[rcx+d]
+	       is({ 0x33,0xc0,0xc3 }) || is({ 0x32,0xc0,0xc3 }) || is({ 0xb0,-1,0xc3 }) ||                // constants
+	       is({ 0xb8,-1,-1,-1,-1,0xc3 }) || is({ 0xc3 }) || is({ 0xc2,0x00,0x00 });                    // and empty ones
+}
 long long g_owedT = 0, g_owedPaidAt = -1, g_owedPaidTicks = 0;
 char g_owedWhere[64] = "";
 constexpr size_t kThunkSize = 0x90;
@@ -309,7 +330,7 @@ void PatchVtable() {
 		DWORD old = 0;
 		if (VirtualProtect(g_rendVt, kRendererSlots * sizeof(void*), PAGE_READWRITE, &old)) {
 			for (int i = 0; i < kRendererSlots; i++)
-				if (i != kIsrSlot && i != kLam2Slot && g_rendVt[i] == g_rendOrig[i])
+				if (i != kIsrSlot && i != kLam2Slot && !g_trivial[i] && g_rendVt[i] == g_rendOrig[i])
 					InterlockedExchangePointer(&g_rendVt[i], g_thunks + 0x40 + i * kThunkSize);
 			VirtualProtect(g_rendVt, kRendererSlots * sizeof(void*), old, &old);
 			g_vtPatched = true;
@@ -505,7 +526,7 @@ void Rtsync_Install(uintptr_t base, void* self) {
 		fclose(fp);
 	}
 	g_reported = true;   // until installed
-	if (mode < 1 || mode > 4) { Log("rtsync: off (fastload_rtsync.txt)"); return; }
+	if (mode < 1 || mode > 5) { Log("rtsync: off (fastload_rtsync.txt)"); return; }
 	if (memcmp((void*)(base + kRvaFlush), kFlushBytes, sizeof kFlushBytes) || memcmp((void*)(base + kRvaQualityRet), kRetBytes, sizeof kRetBytes) ||
 	    memcmp((void*)(base + kRvaTail), kTailBytes, sizeof kTailBytes)) {
 		Log("rtsync: the renderer's sync code differs (another game version?) - off");
@@ -525,11 +546,15 @@ void Rtsync_Install(uintptr_t base, void* self) {
 	void* t = (void*)(base + kRvaFlush);
 	if (MH_CreateHook(t, (void*)&HkFlush, (void**)&g_orig) != MH_OK || MH_EnableHook(t) != MH_OK) { Log("rtsync: hook failed - off"); return; }
 	g_isrOn = mode >= 3 && submitOk && InstallIsr(base);
-	if (mode == 4 && g_isrOn) {
+	if (mode >= 4 && g_isrOn) {
 		g_owedOn = !memcmp((void*)(base + kRvaSysFlushRet - 6), kSysFlushBytes, sizeof kSysFlushBytes) &&
 		           *(const uint8_t*)(base + kRvaSlot59FlushCall) == 0xe8 && RipTarget(base + kRvaSlot59FlushCall, 1, 5) == base + kRvaFlush &&
 		           g_rendOrig[kSyncSlot] == (void*)(base + kRvaSlot59);
 		if (!g_owedOn) Log("rtsync: CSystem::Init's flush after the setup differs (another game version?) - it waits as in mode 3");
+		for (int i = 0; g_owedOn && mode == 5 && i < kRendererSlots; i++)
+			if (TrivialFn((const uint8_t*)g_rendOrig[i])) { g_trivial[i] = true; g_nTrivial++; }
+		if (g_owedOn && mode == 5) Log("rtsync: %d of the renderer's %d slots are one-instruction getters or constants: not gated", g_nTrivial,
+		                  kRendererSlots);
 	}
 	g_on = true;
 	g_reported = false;
@@ -537,8 +562,8 @@ void Rtsync_Install(uintptr_t base, void* self) {
 	    "fastload_rtsync.txt %d)",
 	    g_shaderOn ? "; the shader manager's work handed to it (its 2 pak closes held until Main's next wait)"
 	               : mode != 2 ? "; the shader manager's code differs: its wait stays" : "",
-	    g_owedOn ? "; the renderer's system-resource setup handed to it (Main's texture loads and renderer calls wait for it) and "
-	               "CSystem::Init's flush after it owed until Main next needs the renderer"
+	    g_owedOn ? "; the renderer's system-resource setup handed to it (Main's texture loads and renderer calls wait for it) "
+	               "and CSystem::Init's flush after it owed until Main next needs the renderer"
 	    : g_isrOn ? "; the renderer's system-resource setup handed to it (Main's texture loads and renderer calls wait for it)" : "", mode);
 }
 

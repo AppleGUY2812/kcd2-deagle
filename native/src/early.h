@@ -17,7 +17,10 @@
 // 64 KB VirtualAlloc + free (the address-space lock), in fastload_early_probe.csv. Why: boots 153-155, Main stopped
 // ~1.5 s at 1.3-3.4 s after launch in its D3D set-up (16 ms of CPU), the outside sampler saw no thread at all then; it
 // came with streamahead's start-up read in 10 of 11 boots, and once (155hold2) without it.
-// fastload_early.csv: one row a sample, the thread and its busy share since its last sample in the last two columns.
+// fastload_early.csv: one row a sample, then the thread, its busy share since its last sample and whether the frames
+// are exact. Since 2026-10-25 late each sample's stack copy is unwound with the images' unwind data (as questsample.cpp)
+// after the thread is resumed: up to 48 exact return addresses (the scan before kept 24, stale ones among them, and
+// reached CSystem::Init's frame in ~8% of Main's samples); the scan stays as the fallback when the unwind stops early.
 void Early_Start(HMODULE self);    // DllMain, DLL_PROCESS_ATTACH
 void Early_Report(uintptr_t gameBase, size_t gameSize);   // Init's first lines: the times, the top places, fastload_early.csv
 void Early_Frame(uintptr_t gameBase, size_t gameSize);    // the first frame (fastload_early.txt 2, default): Main to here, a line a second

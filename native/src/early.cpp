@@ -13,9 +13,10 @@
 namespace {
 
 constexpr int kMax = 14000;    // 30 s at 10 ms for Main, plus the other threads until the first frame
-constexpr int kRet = 24;       // return addresses kept per sample
+constexpr int kRet = 48;       // return addresses kept per sample
 // cpuUs: the thread's user + kernel time (GetThreadTimes: 15.6 ms steps); cyc: its exact CPU cycles (QueryThreadCycleTime)
-struct Sample { uint32_t tMs, cpuUs, grabUs; uint8_t n, th, ok; uint64_t rip, cyc; uint64_t ret[kRet]; };   // ok: written
+// unw: the frames come from unwinding the stack copy (exact); 0: from scanning it for return addresses (stale ones too)
+struct Sample { uint32_t tMs, cpuUs, grabUs; uint8_t n, th, ok, unw; uint64_t rip, cyc; uint64_t ret[kRet]; };   // ok: written
 Sample g_s[kMax];              // static and touched before use: a sampler never allocates or faults while its thread is stopped
 volatile LONG g_n = 0;         // slots taken (a slot's ok is set once it is written)
 volatile LONG g_stop = 0;
@@ -39,7 +40,7 @@ Target g_t[] = { { nullptr, 0, 0, 0, L"", "Main" },
                  { nullptr, 0, 0, 0, L"JobWorker_fastload pipelib", "pipelib" },
                  { nullptr, 0, 0, 0, L"fastload ngxearly", "ngxearly" } };
 constexpr int kTargets = sizeof g_t / sizeof g_t[0];
-uint8_t g_stacks[kTargets][64 * 1024];
+uint8_t g_stacks[kTargets][128 * 1024];   // the used part only is copied (stack base - rsp); 128 KB lets the unwind reach the thread start
 
 // The memory probe (mode 3): every 10 ms, how late a 10 ms sleep wakes (the thread not run), one first touch of a fresh
 // page (a page fault: the process's working-set lock) and a 64 KB VirtualAlloc + touch + free (the address-space lock).
@@ -63,6 +64,38 @@ bool AfterCall(uint64_t a) {
 	if (Copy(c, (uintptr_t)a - 8, 8) != 8) return false;
 	auto ff2 = [&](int i) { return c[i] == 0xFF && (c[i + 1] & 0x38) == 0x10; };
 	return c[3] == 0xE8 || ff2(6) || ff2(5) || ff2(4) || ff2(2) || ff2(1);
+}
+
+// The stack copy unwound with the images' own unwind data (RtlLookupFunctionEntry / RtlVirtualUnwind, as questsample.cpp):
+// the exact return addresses, innermost first, the leaf's rip not included. After the thread is resumed (the lookup can
+// take a lock the stopped thread might hold); registers pointing into the copied range are moved onto the copy.
+int UnwindCopy(const CONTEXT& c0, const uint8_t* copy, size_t len, uint64_t* out, int max) {
+	CONTEXT c = c0;
+	const uint64_t lo = c0.Rsp, hi = c0.Rsp + len, d = (uint64_t)copy - lo, end = (uint64_t)copy + len;
+	auto rebase = [&](DWORD64& r) { if (r >= lo && r < hi) r += d; };
+	c.Rsp += d;
+	int n = 0;
+	__try {
+		for (int i = 0; i <= max; i++) {
+			rebase(c.Rbp); rebase(c.Rbx); rebase(c.Rsi); rebase(c.Rdi); rebase(c.R12); rebase(c.R13); rebase(c.R14); rebase(c.R15);
+			if (i > 0) {
+				out[n++] = c.Rip;
+				if (n >= max) break;
+			}
+			if (c.Rsp < (uint64_t)copy || c.Rsp + 8 > end) break;
+			const DWORD64 sp = c.Rsp;
+			DWORD64 ib = 0;
+			PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &ib, nullptr);
+			if (!fe) { c.Rip = *(const DWORD64*)c.Rsp; c.Rsp += 8; }   // a leaf without unwind data
+			else {
+				void* hd = nullptr;
+				DWORD64 est = 0;
+				RtlVirtualUnwind(UNW_FLAG_NHANDLER, ib, c.Rip, fe, &c, &hd, &est, nullptr);
+			}
+			if (c.Rip < 0x10000 || c.Rsp <= sp || c.Rsp > end) break;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	return n;
 }
 
 // One sample of thread ti: stopped only for the context and the stack copy, nothing allocated meanwhile.
@@ -99,11 +132,15 @@ bool Grab(int ti) {
 	s.th = (uint8_t)ti;
 	s.rip = c.Rip;
 	s.n = 0;
-	for (size_t i = 0; i + 8 <= n && s.n < kRet; i += 8) {
-		uint64_t v;
-		memcpy(&v, stack + i, 8);
-		if (AfterCall(v)) s.ret[s.n++] = v;
-	}
+	const int un = n >= 8 ? UnwindCopy(c, stack, n, s.ret, kRet) : 0;
+	s.unw = un >= 3;
+	if (s.unw) s.n = (uint8_t)un;
+	else   // the unwind stopped early (code without unwind data, e.g. a hook's trampoline): scan the copy instead
+		for (size_t i = 0; i + 8 <= n && s.n < kRet; i += 8) {
+			uint64_t v;
+			memcpy(&v, stack + i, 8);
+			if (AfterCall(v)) s.ret[s.n++] = v;
+		}
 	MemoryBarrier();
 	*(volatile uint8_t*)&s.ok = 1;
 	return true;
@@ -332,7 +369,8 @@ std::vector<Sample> Snapshot() {
 void Dump(const std::vector<Sample>& v, uintptr_t game, size_t gameSize, std::map<std::string, int>* leafOut,
           std::map<std::string, int>* inclOut) {
 	FILE* csv = fopen((g_dir + "fastload_early.csv").c_str(), "w");
-	if (csv) fprintf(csv, "t_ms,cpu_ms,grab_us,rip,frames,thread,busy\n");   // busy: % of the time since its last sample (cycles)
+	// busy: % of the time since its last sample (cycles); unwound: 1 = exact frames, 0 = scanned (stale return addresses too)
+	if (csv) fprintf(csv, "t_ms,cpu_ms,grab_us,rip,frames,thread,busy,unwound\n");
 	uint64_t lastCyc[kTargets] = {};
 	uint32_t lastT[kTargets] = {};
 	bool have[kTargets] = {};
@@ -351,7 +389,7 @@ void Dump(const std::vector<Sample>& v, uintptr_t game, size_t gameSize, std::ma
 		lastCyc[s.th] = s.cyc;
 		lastT[s.th] = s.tMs;
 		have[s.th] = true;
-		if (csv) fprintf(csv, ",%s,%.0f\n", g_t[s.th].label, busy);
+		if (csv) fprintf(csv, ",%s,%.0f,%d\n", g_t[s.th].label, busy, (int)s.unw);
 	}
 	if (csv) fclose(csv);
 	if (FILE* p = fopen((g_dir + "fastload_early_probe.csv").c_str(), "w")) {

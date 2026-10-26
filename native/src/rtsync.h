@@ -33,11 +33,13 @@
 // Mode 4 = mode 3 and CSystem::Init's flush right after (renderer slot 59 from +7a191c), where Main waited for the whole
 // setup in mode 3 (boots 158rt3au/b: 521 / 434 ms, 0 ms after the hand-over): it is owed instead, and Main pays it (the
 // game's own flush) at its next renderer call, texture load or real flush, or at the first frame; the renderer gate
-// stays on until then.
+// stays on until then. Mode 5 = mode 4 and the renderer's 58 one-instruction slots ungated (a field getter or a constant):
+// in boot 161ar1 the wait only moved to slot 16 (the feature flags, read by the q_Renderer setting's callback 23 ms after
+// the hand-over: 475 ms). The setup's call tree (938 functions, direct calls 5 deep) writes none of the 11 fields read.
 // The log lines at the first frame give Main's real-flush waits, the first one after each hand-over (to see whether a
 // wait only moved), and when the render thread ran the setup's part.
 // "rtsync:" lines. fastload_rtsync.txt: 2 the shader-quality settings only (default), 1 and the shader manager, 3 and
 // the system-resource setup too (queue 158: 1.0 s sooner to the menu with audiofast 1), 4 and CSystem::Init's flush after
-// it (not run in game yet), 0 off.
+// it (queue 162: with cpuprobe 1, audiofast 2, fastalloc 2 the menu 1.3 s sooner), 5 and the getters (not run yet), 0 off.
 void Rtsync_Install(uintptr_t gameBase, void* selfModule);   // Init, before the renderer starts
 void Rtsync_Frame();   // the frame tick: off from the first frame, its counts logged once

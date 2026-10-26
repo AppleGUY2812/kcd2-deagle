@@ -1,7 +1,8 @@
 // Outside-the-game test of early.cpp's mode 3 (the default): the samplers run on threads made with
 // THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH, find threads by name, sample them with a memory probe beside, and report at
 // "Init" and at the "first frame". b529e1f killed the game 0.3 s after launch in every boot of 157 (a function-local
-// static on such a thread). The child run ("early_test tls") shows that mechanism on its own. Prints PASS / FAIL, exit 0/1.
+// static on such a thread). The child run ("early_test tls") shows that mechanism on its own. Also: Main's samples are
+// unwound to the thread's start (exact frames, 2026-10-25 late). Prints PASS / FAIL, exit 0/1.
 #include "../src/early.h"
 #include "../src/log.h"
 #include <windows.h>
@@ -115,6 +116,24 @@ int main(int argc, char** argv) {
 	const std::string log = ReadAll(dir + "early_test.log");
 	const std::string csv = ReadAll(dir + "fastload_early.csv");
 	const std::string probe = ReadAll(dir + "fastload_early_probe.csv");
+	// Main's rows: unwound (last column 1), and an unwound stack ends at the thread's start (ntdll's RtlUserThreadStart)
+	int mainRows = 0, mainUnw = 0, rooted = 0;
+	for (size_t at = 0; at < csv.size();) {
+		size_t e = csv.find('\n', at);
+		if (e == std::string::npos) e = csv.size();
+		std::string line = csv.substr(at, e - at);
+		at = e + 1;
+		if (!line.empty() && line.back() == '\r') line.pop_back();   // read in binary: the text-mode file's \r\n
+		if (line.find(",Main,") == std::string::npos) continue;
+		mainRows++;
+		if (line.size() < 2 || line.compare(line.size() - 2, 2, ",1")) continue;
+		mainUnw++;
+		const size_t f0 = line.find(',', line.find(',', line.find(',') + 1) + 1) + 1;   // the rip + frames field
+		const std::string frames = line.substr(f0, line.find(',', f0) - f0);
+		const std::string last = frames.substr(frames.find_last_of(' ') + 1);
+		if (!_strnicmp(last.c_str(), "ntdll.dll+", 10)) rooted++;
+	}
+	printf("Main rows %d, unwound %d, reaching the thread start %d\n", mainRows, mainUnw, rooted);
 	struct Check { const char* what; bool ok; } checks[] = {
 		{ "Init line", log.find("early: DllMain") != std::string::npos },
 		{ "first-frame line", log.find("early: Main from DllMain to the first frame") != std::string::npos },
@@ -127,6 +146,8 @@ int main(int argc, char** argv) {
 		{ "csv RenderThread rows", csv.find(",RenderThread,") != std::string::npos },
 		{ "csv gpuwarm rows", csv.find(",gpuwarm,") != std::string::npos },
 		{ "probe csv rows > 100", Lines(probe) > 100 },
+		{ "Main samples unwound (80%+)", mainRows > 0 && mainUnw * 10 >= mainRows * 8 },
+		{ "unwound Main stacks reach the thread start (80%+)", mainUnw > 0 && rooted * 10 >= mainUnw * 8 },
 	};
 	bool all = true;
 	for (const Check& c : checks) {
