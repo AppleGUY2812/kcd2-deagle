@@ -14,3 +14,8 @@ bool Levelprof_SetDbTypeGate(void (*f)(uint32_t type));
 // The game-profile list's size now (C_GameProfileManager, filled by the AI module's level-load step after LoadEntities);
 // negative when it can't be read.
 long long Levelprof_GameProfiles();
+// The thread that runs CLevelSystem::LoadLevel (0 until it starts), whether it runs now, and f called on that thread as
+// it ends (false when the LoadLevel hook is off). For physlock.
+unsigned long Levelprof_MainTid();
+bool Levelprof_InLoadLevel();
+bool Levelprof_SetEndCall(void (*f)());

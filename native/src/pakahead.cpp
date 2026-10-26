@@ -589,7 +589,8 @@ void StartAhead() {
 	// At most 2 GB held; free RAM decides the rest as it goes (ramgov.h: read while >= 1.5 GB free, free the farthest
 	// entries below 1.2 GB). The old rule fixed the cap at start from free RAM - 3.5 GB: boot 14 started with 6.6 GB free,
 	// held 2 GB, and the game's growth then paged it out. Pin only with lots to spare.
-	kCapBytes = 2048ull << 20;
+	// 3 GB with >= 12 GB free at start (32 GB PC, 2026-10-25: list 1,716 MB + 978 MB of repeats); a 16 GB PC keeps 2 GB.
+	kCapBytes = (freeMb >= 12000 ? 3072ull : 2048ull) << 20;
 	g_pin = freeMb >= 7500;
 	// room to lock the held buffers: the minimum working set bounds what VirtualLock may pin
 	SIZE_T mn = 0, mx = 0;

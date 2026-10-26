@@ -42,6 +42,7 @@
 #include "audiofast.h"
 #include "questfast.h"
 #include "levelprof.h"
+#include "physlock.h"
 #include "applyprof.h"
 #include "paklock.h"
 #include "dbahead.h"
@@ -53,9 +54,11 @@
 #include "tblcache.h"
 #include "early.h"
 #include "dbasync.h"
+#include "zipidx.h"
 #include "ngxearly.h"
 #include "memsite.h"
 #include "crashlog.h"
+#include "fastalloc.h"
 
 namespace {
 
@@ -90,6 +93,8 @@ void GameplayStarted(const char* why) {
 	Streamahead_OnLoaded();
 	Applyfast_OnLoaded();
 	Terrainfast_OnLoaded();
+	Fastalloc_Report("gameplay start");
+	Zipidx_Report("gameplay start");
 	Paklock_Report("LoadLevel end to gameplay");
 	Dbahead_OnLoaded();
 	Xmlahead_OnLoaded();   // the XML read-ahead list for the next start, from this run (xmlahead.cpp)
@@ -110,6 +115,7 @@ void Tick() {
 	Rtsync_Frame();      // the shader-quality settings wait for the render thread again (rtsync.cpp)
 	Audiofast_Frame();   // the sound system's start-up requests finished before the game runs on (audiofast.cpp)
 	Early_Frame(g_game.base, g_game.size);   // Main from DllMain to the first frame (early.cpp)
+	Streamahead_FirstFrame();   // held read-ahead readers start at the first frame (streamahead.cpp)
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)
@@ -240,6 +246,8 @@ DWORD WINAPI Init(LPVOID) {
 	MH_SetFreezeLast(Early_MainThread());
 	MH_DeferEnables(TRUE);   // the hooks below go on in two freezes, not one each
 	// first, so the start-up window samples the game from here (it began after all the installs, ~6.5 s later)
+	STEP(Fastalloc_Install(g_game.base, g_self));   // from here if DllMain could not (does nothing when it did; fastalloc.cpp)
+	STEP(Zipidx_Install(g_game.base, g_self));   // baked archive indexes, if DllMain could not (zipidx.cpp)
 	STEP(Hitch_Install(g_game.base, g_game.size, g_self));   // samples the main thread in frames over 250 ms (hitch.cpp)
 	STEP(Memsite_Install(g_self));   // who holds the memory, a diagnostic, off by default (memsite.cpp)
 	STEP(Cvars_Install(g_game.base, g_self));      // load-time game settings at registration (cvars.cpp)
@@ -263,6 +271,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Questdump_Install(g_game.base));   // the quest graph dump for questbench N dump (questdump.cpp)
 	STEP(Animahead_Install(g_game.base, g_self));   // human animation sets during the terrain wait (animahead.cpp)
 	STEP(Levelprof_Install(g_game.base, g_self));   // the level load's main-thread work timed / sampled, mode file (levelprof.cpp)
+	STEP(Physlock_Install(g_game.base, g_self));   // Main's CryPhysics lock spin in LoadEntities, after levelprof (physlock.cpp)
 	STEP(Applyprof_Install(g_game.base, g_self));   // the apply step's pieces timed, log only (applyprof.cpp)
 	STEP(Paklock_Install(g_game.base, g_self));   // CryPak reads outside the open-files lock, mode file (paklock.cpp)
 	STEP(Dbahead_Install(g_game.base, g_self));   // SmartObjectAnimations in the level-start database job (dbahead.cpp)
@@ -357,6 +366,8 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 			const auto* nt = (const IMAGE_NT_HEADERS*)(b + ((const IMAGE_DOS_HEADER*)b)->e_lfanew);
 			if (nt->OptionalHeader.SizeOfImage > kRvaAllocInit && !*(volatile unsigned char*)(b + kRvaAllocInit)) {
 				g_mhEarly = MH_Initialize() == MH_OK;
+				if (g_mhEarly) Fastalloc_Install(b, h);   // CryMalloc's small blocks from mimalloc, before the game's first one (fastalloc.cpp)
+				if (g_mhEarly) Zipidx_Install(b, h);   // baked archive indexes, before the first pak opens (zipidx.cpp)
 				g_earlyHooks = g_mhEarly ? Questfast_EarlyInstall(b, h) : 0;
 				if (g_mhEarly) Rttrname_EarlyInstall(b, h);   // rttr's type naming without the no-op re-derivations (rttrname.cpp)
 				if (g_mhEarly) Gpuwarm_EarlyInstall(b, h);   // the graphics driver loaded on a worker (gpuwarm.cpp)

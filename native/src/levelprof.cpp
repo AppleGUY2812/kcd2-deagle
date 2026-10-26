@@ -4,6 +4,7 @@
 #include "questsample.h"
 #include "readiness.h"
 #include "paklock.h"
+#include "fastalloc.h"
 #include "log.h"
 #include "MinHook.h"
 #include <windows.h>
@@ -36,6 +37,7 @@ std::atomic<int> g_phase{0};      // the innermost timed hook on Main (0 = none)
 std::atomic<bool> g_inLoad{false};
 std::atomic<long long> g_calls[kN][2], g_ticks[kN][2];   // [hook][0 Main, 1 other threads]
 std::atomic<int> g_lines{0};
+void (*volatile g_endCall)() = nullptr;   // runs on Main as LoadLevel ends (Levelprof_SetEndCall)
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long t) { return (double)t * 1000.0 / g_freq; }
@@ -130,6 +132,7 @@ template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, ui
 	}
 	if (I == kLoadLevel && depth == 0) {
 		g_mainTid = GetCurrentThreadId();
+		Paklock_LevelStart((const char*)b);   // CLevelSystem::LoadLevel(this, level name): the level warm starts first
 		g_inLoad = true;
 		for (int i = 0; i < kN; i++) for (int k = 0; k < 2; k++) { g_calls[i][k] = 0; g_ticks[i][k] = 0; }
 		Paklock_Report("before LoadLevel");   // the counters start over for the load
@@ -162,7 +165,10 @@ template <int I> uint64_t __fastcall Wrap(uint64_t a, uint64_t b, uint64_t c, ui
 			if (I == kDb) Log("levelprof: object database type 0x%x %.0f ms (thread %lu%s)", (uint32_t)b, Ms(dt), GetCurrentThreadId(), main ? ", Main" : "");
 			else Log("levelprof: %s %.0f ms (thread %lu%s)", g_h[I].name, Ms(dt), GetCurrentThreadId(), main ? ", Main" : "");
 		}
-		if (I == kLoadLevel) { g_inLoad = false; g_watch = false; Totals("LoadLevel done"); Paklock_Report("LoadLevel"); }
+		if (I == kLoadLevel) {
+			g_inLoad = false; g_watch = false; Totals("LoadLevel done"); Paklock_Report("LoadLevel"); Paklock_LevelEnd(); Fastalloc_Report("LoadLevel done");
+			if (void (*e)() = g_endCall) e();
+		}
 	}
 	return r;
 }
@@ -210,3 +216,11 @@ bool Levelprof_SetDbTypeGate(void (*f)(uint32_t)) {
 }
 
 long long Levelprof_GameProfiles() { return g_base ? ProfileCount() : -1; }
+
+unsigned long Levelprof_MainTid() { return g_mainTid.load(std::memory_order_relaxed); }
+bool Levelprof_InLoadLevel() { return g_inLoad.load(std::memory_order_relaxed); }
+bool Levelprof_SetEndCall(void (*f)()) {
+	if (!g_h[kLoadLevel].orig) return false;
+	g_endCall = f;
+	return true;
+}

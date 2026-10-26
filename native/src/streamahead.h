@@ -22,6 +22,7 @@ int Streamahead_Serve(uint8_t* cache, uint8_t* entry, uint8_t* out, int64_t offs
                       StreamReadFn orig);
 void Streamahead_Record(uint8_t* cache, uint8_t* entry, int64_t offset, int64_t want, long long ticks);
 void Streamahead_Stats(long long* served, long long* gameFirst, long long* notListed);
+void Streamahead_FirstFrame();                // the game's first frame: held readers start (fastload_streamaheadhold.txt 1)
 void Streamahead_OnLoaded();                  // gameplay started (fastload_main.cpp: the level state back to 0)
 // A save-load / fast-travel screen waits (readiness.cpp, every frame). While it does, the readers stop (the disk is the
 // game's) and a copy handed to the game is kept, up to 256 MB, for when it asks the same bytes again; the kept copies

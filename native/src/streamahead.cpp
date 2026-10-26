@@ -20,7 +20,8 @@ constexpr ULONGLONG kRecordMaxMs = 30 * 60 * 1000;   // recording stops at the l
 constexpr ULONGLONG kKeepMs = 30 * 60 * 1000;        // nothing held after this (a long stay at the menu)
 constexpr ULONGLONG kListAfterMs = 5000;             // the list is written this long after gameplay first starts
 constexpr ULONGLONG kFreeAfterMs = 20000;            // ... and what was never asked for is freed this long after
-constexpr long long kCapBytes = 512ll << 20;         // held at once (16 GB PC: pakahead holds up to 2 GB too)
+long long kCapBytes = 512ll << 20;                   // held at once (16 GB PC: pakahead holds up to 2 GB too); 2 GB with
+                                                     // >= 12 GB free at start (32 GB PC, 2026-10-25: list 1,869 MB)
 // Free RAM: ramgov.h (read while >= 1.5 GB free, free the farthest copies below 1.2 GB). Was a fixed 3.5 GB floor: boot
 // 13 (2026-10-24) read 6,535 of 24,271 at the menu, then waited for RAM through the whole load (1.8 GB free).
 // Readers in parallel: the game's IO thread reads one request at a time (queue depth 1); boot 13's single reader made
@@ -205,8 +206,13 @@ void IoPriority(HANDLE h, bool low) {
 }
 
 // may a reader take another chunk now (not while a loading screen waits: the disk is the game's then)
+// fastload_streamaheadhold.txt 1: the readers wait for the game's first frame (the menu). Their start-up copies (2.3 GB of
+// fresh pages) ran while Main created the D3D device, and Main stalled 1.5 s in every boot until they ended (peer 2026-10-25).
+std::atomic<bool> g_hold{ false };
+long long s_holdMs = 0;
+
 bool MayRead() {
-	return !g_gate.load(std::memory_order_relaxed) && g_held.load() + kChunk <= kCapBytes && ramgov::CanTake(kChunk);
+	return !g_hold.load(std::memory_order_relaxed) && !g_gate.load(std::memory_order_relaxed) && g_held.load() + kChunk <= kCapBytes && ramgov::CanTake(kChunk);
 }
 
 // next chunk for a reader: the first waiting item and its neighbours in the same pak (state 0 -> 1). false = list done
@@ -572,6 +578,11 @@ long long Streamahead_Ready() { return s_ready.load(); }
 long long Streamahead_KeptServed() { return s_keptServed.load(); }
 long long Streamahead_HeldBytes() { return g_held.load(); }
 
+void Streamahead_FirstFrame() {
+	if (!g_hold.exchange(false)) return;
+	Log("streamahead: the readers start at the first frame, %llu ms after the plugin started", GetTickCount64() - g_start);
+}
+
 void Streamahead_OnLoaded() {
 	ULONGLONG z = 0;
 	g_loadedAt.compare_exchange_strong(z, GetTickCount64());
@@ -590,9 +601,16 @@ void Streamahead_Install(void* self) {
 		fclose(fp);
 	}
 	if (g_mode == 0) { Log("streamahead: off"); g_listDone = true; return; }
+	if (FILE* fp = fopen((g_dir + "fastload_streamaheadhold.txt").c_str(), "r")) {
+		int h = 0;
+		if (fscanf(fp, "%d", &h) == 1 && h == 1) g_hold = true;
+		fclose(fp);
+	}
+	if (g_hold) Log("streamahead: the readers wait for the first frame (fastload_streamaheadhold.txt 1)");
 	g_recs.reserve(100000);
 	if (g_mode == 2 && LoadList()) {
 		g_serveOn = true;
+		if (ramgov::AvailMb() >= 12000) kCapBytes = 2048ll << 20;   // the whole list fits; a 16 GB PC keeps 512 MB
 		Log("streamahead: reading ahead with %d readers, at most %lld MB held, while >= %lld MB RAM free (%lld MB free now)",
 		    kReaders, kCapBytes >> 20, ramgov::TakeLevel().load(), ramgov::AvailMb());
 		g_readersLeft = kReaders;

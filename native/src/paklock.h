@@ -14,7 +14,18 @@
 // read of the same file ended fills a window from there with the game's own ReadFile call, and the reads inside it are
 // copies. At most 64 windows (least recently used goes first); a file's window is dropped with the file (its destructor).
 // Reading a whole stored entry instead (tried, boot 51) read 605 MB of sound banks at the menu and kept them: never.
-// fastload_paklock.txt: `<mode> <window KB>`: mode 1 on (default), 0 the game's own FReadRaw (both modes time the modify
-// side's waits); window KB (16-1024), 0 = stored entries read the game's way (default), counted by size.
+// Windows apply only to entries over 16 MB (Trosecko: terrain/terrain.dat 181 MB in level-pak terrain.pak, 130,000 reads
+// of ~1.4 KB, terrain/hlods.dat 317 MB in level.pak): on small entries each fill was one more cold read (boots 141, 143).
+// Level warm (boots 142-143): those reads wait on the disk, not on the calls: with or without windows, Main's reads of
+// terrain.dat cost 0.6-0.8 s when the file is not in the Windows file cache (cold read 181 MB 0.4 s, cached 44 ms), and
+// the cache does not keep it from one start to the next (game start-up repurposes it). So at LoadLevel's start (levelprof)
+// a thread reads, through the file cache, the 1 MB pieces of stored pak entries that the last load of this level read on
+// its thread (fastload_levelwarm_<level>.txt next to the plugin, first-read order, pieces that cost Main 0.2 ms or 8 reads,
+// at most 512 MB), and every load rewrites that list. No memory is held: the pieces sit in the file cache (standby).
+// fastload_paklock.txt: `<mode> <window KB> <warm>`: mode 1 on (default), 0 the game's own FReadRaw (both modes time the
+// modify side's waits); window KB (16-1024), 0 = stored entries read the game's way (default), counted by size; warm 1 on
+// (default), 0 off.
 void Paklock_Install(uintptr_t gameBase, void* selfModule);
+void Paklock_LevelStart(const char* level);   // Main, as CLevelSystem::LoadLevel begins: the level warm starts
+void Paklock_LevelEnd();                      // Main, as it ends: the warm's result, the list for the next load
 void Paklock_Report(const char* when);   // reads outside the lock, modify-side waits (all threads)
