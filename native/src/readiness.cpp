@@ -82,6 +82,10 @@ struct ReaderAcc {
 	uint32_t mask = 0;      // the last pause mask seen (not 0)
 };
 
+// the AI frame job's counters (see HkAiWait below)
+struct AiAcc {
+	long long launches = 0, waits = 0, waited = 0, waitTicks = 0, maxWait = 0, spanTicks = 0;
+};
 // the AI frame job's phase times at one moment (see AiPhases below)
 struct PhaseSnap { std::vector<double> sum; std::vector<long long> n; };
 
@@ -125,9 +129,6 @@ using AiLaunchFn = void(__fastcall*)(void*);
 using AiWaitFn = uint32_t(__fastcall*)(void*);
 AiLaunchFn g_aiLaunchOrig = nullptr;
 AiWaitFn g_aiWaitOrig = nullptr;
-struct AiAcc {
-	long long launches = 0, waits = 0, waited = 0, waitTicks = 0, maxWait = 0, spanTicks = 0;
-};
 AiAcc g_ai;                  // Main only
 long long g_aiLaunchT = 0;   // Main: the last job start
 DWORD g_mainTid = 0;
