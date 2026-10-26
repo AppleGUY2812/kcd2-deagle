@@ -17,6 +17,9 @@
 // The fastload Init thread waits for the static initializers, as it did. The other plugins' start-up threads
 // (deagle_native, kcd2_render) start earlier: they wait for WHGame and gEnv by polling. If the static initializers fail,
 // CreateGameStartup returns null (the loader would have failed LoadLibraryA).
+// Queue 175 (3 boots each): no gain. The worker started 13 ms after DllMain instead of ~0.25 s, but the driver load
+// then took longer (contention with Main's Steam start-up in SetupAPI and inside nvwgf2umx) and ended no sooner; menu
+// 7.49 against 7.42 s, control the same. Off.
 // fastload_dllinit.txt next to the plugin: 1 on, 0 off (default). "dllinit:" lines.
 bool Dllinit_EarlyInstall(uintptr_t gameBase, void* selfModule);   // DllMain, MinHook initialized, before WHGame's entry runs
 void Dllinit_WaitStatic();   // Init: returns once WHGame's static initializers ran (at once when they weren't held)

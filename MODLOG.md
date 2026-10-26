@@ -1079,3 +1079,15 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   and CUDA (nvcuda64 through nvwgf2umx+28da3b). ~28 samples are DLL loads, each through the Steam overlay's
   LoadLibrary hook (gameoverlayrenderer64). NvCameraEnable.exe (DriverStore ...\NvCamera): on / off (the base
   profile, NvAPI_DRS), and allowlisting-allow / -disallow / -remove <exe path> per program.
+- Queue 175 (build 174, 3 boots each, early 3, D = E + dllinit 1): dllinit started the driver worker 13 ms after the
+  plugin's DllMain instead of 251-265 ms, but its device creation took longer (1083-1851 ms against 1037-1242), so it
+  was done no sooner (1096-1865 ms after DllMain against 1289-1493) and Main's GPU query waited the same (466-996
+  against 694-908 ms). Menu 7.49 against 7.42 s, control 25.83 both. In 175D1/D2 the worker waited 0.32 s in SetupAPI
+  (388-705 ms, while Main was in Steam's start-up: steamclient64, WS2_32) and 0.23-0.43 s in nvwgf2umx's
+  ZwWaitForSingleObject; none of that in the E boots. dllinit stays off.
+- The driver load's wall time by part (the gpuwarm thread's exact stacks, those 6 boots): NvCamera64 300-470 ms,
+  signature checks (imagehlp, wintrust, crypt32) 110-240 ms, device enumeration (SetupAPI, CfgMgr32) 70-120 ms (490
+  with the contention), the rest (nvwgf2umx, D3D12Core, dxgi) 350-830 ms; 0.65-0.8 s of it on the CPU. Main reaches
+  the GPU query ~0.59 s after the plugin's DllMain (175E1) and the load ends 1.1-1.5 s after it, so Main waits
+  whatever the start. Left on this wait: NvCamera off for KingdomCome.exe only (NvCameraEnable.exe
+  allowlisting-disallow), est. -0.3..-0.45 s to the menu; the user decides (photo mode, filters, RTX HDR off in KCD2).
