@@ -1117,3 +1117,26 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   (+7a18fc), while the render thread was in FUN_180b1b114 (the first root signature / the driver's DXCache set-up),
   and ~0.51 s at ~7 s (the menu, readymenu's 0.5 s hold); the rtsync gate 3.10-3.45 s (~0.38 s). During LoadLevel
   Main waited in ~10 of ~370 samples: that step is Main's CPU.
+- Entity streaming under the loading screen (queues 181 / 183): FUN_1809b6b20's per-class spawn budget is the cvar
+  es_PerInstanceStreamingClassSpawnBudget (0x18492f7a4, 2) only without a fader; under one it is the immediate 4
+  (`mov ecx,4` at +9b6b77, `cmovne r12d,ecx` +9b6b7c), and the loading screen is a fader. Only 4 classes stream per
+  instance (FUN_180cb31cc: SmallLights 0x100, EnvironmentLights 0x40, ReflexLights 0x40, Particles 0x100); mgr+0x144 =
+  spawn + despawn leftovers (FUN_180c81f98). The cvar alone (181): no effect. Both to 32 (183, 4 boots each): in
+  control 23.23 vs 23.75 s, the settle gate 1.1 vs 1.4-1.5 s. Installed 2026-10-26 12:55 (readiness "1 128 0.1 32").
+- MSVC magic-static guards: 0 never run, -1 running, then the global epoch, counted up from INT_MIN (negative). "Done"
+  = not 0 and not -1. dbpool in fastload_184 tested "> 0", so nothing was pooled in queue 183 (fixed in 185).
+- Object DB extra parts: FUN_18096d914's static (FUN_1819bca74, registers wh_sys_ExcludedTableParts; guard 0x1855d48e0)
+  first runs inside the first type-0x1 table's load (vt+0x48 FUN_180ef3a4c -> d18444 -> d18490 -> d18604; samples
+  183A1/A3). 183A1: type 0x1 101 ms (127 tables), type 0x7 ActorClass 11 ms, type 0x4 813 ms, so group 4 starts
+  ~0.12 s after group 1. Row checks: CharacterComponent 16 rows and InventoryPreset 3945 rows have stable name hashes
+  (row+0x20 string); Item's 5606 rows don't (its +0x20 is no name; 185 logs raw-field hashes to find a stable one).
+- Main after the device (183S): the CryDX12 device init FUN_180fd4f7c makes its descriptor heaps, then the command
+  list pool (FUN_180fd5d54 -> FUN_1805073a0 -> CCommandList init FUN_180507cf8): ~0.45 s in D3D12Core / the driver at
+  1.26-1.74 s. The renderer post-init tail FUN_1814477e4 flushes twice (FUN_1807a2138), then gets the default font,
+  "Preloading default textures...", "Compiling default renderer resources...". Main waits there 0.36-0.38 s while the
+  render thread loads the BinCaches (FUN_1818dd280: ResourceLayout = root signatures ~0.25 s, mostly NvMemMapStoragex
+  (the DXCache set-up, see nvcachewarm), RenderPass, VertexFormat, PipelineState ~0.18 s) and runs FUN_180babe30.
+  The menu's first frames: Main waits at the frame sync 0.25-0.46 s while the render thread makes PSOs
+  (FUN_1807acebc -> 7ad47c -> 7ad9e8 -> 7ada80 -> D3D12Core).
+- Post-init XGenAI module message (FUN_1807e30c4) at ~6 s: 0.43-0.46 s on Main (183S1-4): FUN_18093faa0 (via f8a9a8 ->
+  1352aa8) 0.15 s, smart objects (FUN_181096ca4 -> 3e5c50 -> 3e6c7c, 1096fdc) ~0.2 s, f8b184 -> f8b288 0.05 s.
