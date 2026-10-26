@@ -62,6 +62,7 @@
 #include "memsite.h"
 #include "crashlog.h"
 #include "fastalloc.h"
+#include "morphpool.h"
 
 namespace {
 
@@ -292,6 +293,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(dbprofOn = Dbprof_Install(g_game.base));   // the object database tables timed one by one, log only (dbprof.cpp)
 	STEP(Dbasync_Install(g_game.base, g_self, Early_MainThread(), dbprofOn));   // the dubbing database on a worker (dbasync.cpp)
 	STEP(Tblcache_Install(g_game.base, g_self));   // the XML tables recorded once and replayed (tblcache.cpp)
+	STEP(Morphpool_Install(g_game.base, g_self));   // the heads' facial morph data parsed on a pool, mode file (morphpool.cpp)
 	STEP(Readiness_Install(g_game.base));   // logs which streaming task holds a loading / black screen: save load, fast travel (readiness.cpp)
 	STEP(ApplyHooks("start-up"));
 	MH_DeferEnables(FALSE);   // hooks made later (commands, ftpre) go on at once again

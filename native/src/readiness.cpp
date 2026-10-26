@@ -6,6 +6,7 @@
 #include "hitch.h"
 #include "mainreads.h"
 #include "streamahead.h"
+#include "morphpool.h"
 #include "early.h"
 #include <windows.h>
 #include <intrin.h>
@@ -746,7 +747,9 @@ void Readiness_Frame() {
 				}
 			}
 			const double waited = Secs(now - g.t0);
+			// and no heads' morph data on morphpool's threads (not in the game's cache yet: morphpool.h)
 			if (g.eligible && !all && g.letAt < 0 && early::Step(g.early, g_earlyCfg, waited, mustReady, detailBusy) &&
+			    Morphpool_Pending() == 0 &&
 			    g_earlyMode.load(std::memory_order_relaxed) == 1) {
 				const int r = LetIn(g.obs, g.mask);
 				char one[200];
@@ -797,6 +800,7 @@ void Readiness_Frame() {
 		for (auto& g : g_gates) if (early::Eligible(g.mask)) loadGate = true;
 		TempBudget(loadGate);
 		Streamahead_SetGate(loadGate);
+		Morphpool_SetGate(loadGate);
 		Hitch_Window(loadGate);
 	}
 	// every file the main thread reads while a gate holds the screen, up to 1.5 s after (mainreads.cpp): names the
