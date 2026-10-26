@@ -706,7 +706,7 @@ Fn4 g_parse = nullptr;
 std::atomic<long long> s_parseN[2], s_parseTicks[2], s_parseMax[2];   // [0] before the level load, [1] after
 // RT_ParseShader (sm, shader, mask, flags), any thread: timing; with 3c also one lock for every parse (see 3c)
 // SRW locks are not fair: our thread releasing and re-taking the lock for each of its ~450 menu parses kept winning, and
-// the render thread waited 4.5-4.7 s for one parse (boots 170I2/I3: no menu frames, found by kcd2-deagle-1f). A game
+// the render thread waited 4.5-4.7 s for one parse (boots 170I2/I3: no menu frames, found by kcd2-deagle-66). A game
 // thread that waits is counted, and ours lets it go first.
 std::atomic<int> g_gameParseWaiting{0};
 uint64_t __fastcall HkParse(uint64_t a, uint64_t b, uint64_t c, uint64_t d) {
