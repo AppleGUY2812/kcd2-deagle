@@ -604,6 +604,9 @@ DWORD WINAPI Watch(LPVOID) {
 		static unsigned ticks = 0;
 		if (no == 0 && g_startup && ++ticks % 5 == 0) FindTargets(false, true);
 		for (size_t who = 0; who < g_targets.size() && ss.size() < (size_t)kMaxSamples; who++) {
+			// the driver warm-up worker can't be suspended while it is in the driver: boot 18:45 had no samples of any
+			// thread at 0.6-2.1 s after the plugin, its warm-up + device (810 + 719 ms); early.cpp samples Main there
+			if (no == 0 && g_startup && g_targets[who].name == "JobWorker_fastload gpuwarm") continue;
 			Sample s;
 			if (Grab(g_targets[who], (uint8_t)who, &s, tMs)) ss.push_back(s);
 		}

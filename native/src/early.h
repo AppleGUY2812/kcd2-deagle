@@ -5,9 +5,12 @@
 // is still loading; a normal thread can't start until the loader lock is free, after WHGame's 19,869 static
 // initializers. Early_Start (from DllMain) notes the time and starts a sampler thread made with
 // THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH, which may run under the loader lock: it samples the thread that ran DllMain
-// every 10 ms (instruction pointer + return addresses) into fixed buffers until Early_Report. Log only.
+// every 10 ms (instruction pointer + return addresses + its CPU time) into fixed buffers until Early_Report (mode 1) or
+// the first frame (mode 2, default since 2026-10-25: the hitch sampler went blind at 0.6-2.1 s after the plugin in boot
+// 18:45 while it could not suspend the driver worker). Log only.
 void Early_Start(HMODULE self);    // DllMain, DLL_PROCESS_ATTACH
 void Early_Report(uintptr_t gameBase, size_t gameSize);   // Init's first lines: the times, the top places, fastload_early.csv
+void Early_Frame(uintptr_t gameBase, size_t gameSize);    // the first frame (fastload_early.txt 2, default): Main to here, a line a second
 DWORD Early_MainThread();   // the thread that ran DllMain: the game's main thread
 void Early_Where(unsigned long long addr, uintptr_t gameBase, size_t gameSize, char* out, size_t n);   // "module+rva"
 

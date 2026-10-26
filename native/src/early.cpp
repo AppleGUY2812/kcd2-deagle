@@ -12,7 +12,7 @@ namespace {
 
 constexpr int kMax = 3000;     // 30 s at 10 ms
 constexpr int kRet = 24;       // return addresses kept per sample
-struct Sample { uint32_t tMs; uint8_t n; uint64_t rip; uint64_t ret[kRet]; };
+struct Sample { uint32_t tMs, cpuUs, grabUs; uint8_t n; uint64_t rip; uint64_t ret[kRet]; };   // cpuUs: Main's user + kernel time
 Sample g_s[kMax];              // static: the sampler never allocates (the heap lock may be held by the suspended thread)
 volatile LONG g_n = 0;
 volatile LONG g_stop = 0;
@@ -24,6 +24,8 @@ HANDLE g_main = nullptr;
 HMODULE g_self = nullptr;
 uintptr_t g_stackBase = 0;
 bool g_whgameAtDllMain = false;
+int g_mode = 2;   // fastload_early.txt: 0 off, 1 until Init, 2 until the first frame
+double g_procToDllMain = 0;
 
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 
@@ -43,6 +45,9 @@ bool AfterCall(uint64_t a) {
 DWORD WINAPI Sampler(LPVOID) {
 	g_samplerStart = Now();
 	while (!g_stop && g_n < kMax) {
+		FILETIME cr{}, ex{}, kt{}, ut{};
+		const bool times = GetThreadTimes(g_main, &cr, &ex, &kt, &ut) != 0;
+		const long long g0 = Now();
 		if (SuspendThread(g_main) != (DWORD)-1) {
 			CONTEXT c{};
 			c.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
@@ -55,7 +60,11 @@ DWORD WINAPI Sampler(LPVOID) {
 			ResumeThread(g_main);
 			if (ok) {
 				Sample& s = g_s[g_n];
-				s.tMs = (uint32_t)((Now() - g_dllMain) * 1000 / g_freq);
+				const long long now = Now();
+				s.tMs = (uint32_t)((now - g_dllMain) * 1000 / g_freq);
+				s.grabUs = (uint32_t)((now - g0) * 1000000 / g_freq);
+				auto t100 = [](const FILETIME& x) { return ((unsigned long long)x.dwHighDateTime << 32) | x.dwLowDateTime; };
+				s.cpuUs = times ? (uint32_t)((t100(kt) + t100(ut)) / 10) : 0;
 				s.rip = c.Rip;
 				s.n = 0;
 				for (size_t i = 0; i + 8 <= n && s.n < kRet; i += 8) {
@@ -105,11 +114,12 @@ void Early_Start(HMODULE self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA(self, path, MAX_PATH);
 	if (char* sl = strrchr(path, '\\')) strcpy_s(sl + 1, MAX_PATH - (sl + 1 - path), "fastload_early.txt");
-	if (FILE* fp = fopen(path, "r")) {   // fastload_early.txt next to the plugin: 0 = no early sampler
-		int m = 1;
-		if (fscanf(fp, "%d", &m) == 1 && m == 0) { fclose(fp); return; }
+	if (FILE* fp = fopen(path, "r")) {   // fastload_early.txt next to the plugin: 0 off, 1 until Init, 2 (default) the first frame
+		int m = 2;
+		if (fscanf(fp, "%d", &m) == 1 && m >= 0 && m <= 2) g_mode = m;
 		fclose(fp);
 	}
+	if (!g_mode) return;
 	auto create = (NtCreateThreadExFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtCreateThreadEx");
 	if (!g_main || !create) return;
 	HANDLE t = nullptr;
@@ -126,67 +136,134 @@ void Early_Where(uint64_t a, uintptr_t game, size_t gameSize, char* out, size_t 
 	snprintf(out, n, "%s+%llx", m.c_str(), (unsigned long long)rva);
 }
 
-void Early_Report(uintptr_t game, size_t gameSize) {
-	const long long initAt = Now();
-	g_stop = 1;
-	Sleep(30);
-	FILETIME create{}, a{}, b{}, c{};
-	GetProcessTimes(GetCurrentProcess(), &create, &a, &b, &c);
-	auto ft = [](const FILETIME& x) { return ((unsigned long long)x.dwHighDateTime << 32) | x.dwLowDateTime; };
-	const double procToDllMain = ((long long)(ft(g_dllMainFt) - ft(create))) / 10000.0;
-	const double toInit = (initAt - g_dllMain) * 1000.0 / g_freq;
-	const double toSampler = g_samplerStart ? (g_samplerStart - g_dllMain) * 1000.0 / g_freq : -1;
-	const int n = (int)g_n;
-	Log("early: DllMain %.0f ms after the process started (WHGame.dll %s then; thread %lu); the Init thread %.0f ms after DllMain; "
-	    "the early sampler started %.0f ms after DllMain (%d samples)", procToDllMain, g_whgameAtDllMain ? "loaded" : "not loaded",
-	    g_mainTid, toInit, toSampler, n);
-	if (!n) return;
-	// the leaf and every frame, counted once per sample (inclusive), by module+rva
-	std::map<std::string, int> leaf, incl;
-	std::string dir;
-	{
-		char p[MAX_PATH] = {};
-		GetModuleFileNameA(g_self, p, MAX_PATH);
-		dir = p;
-		dir = dir.substr(0, dir.find_last_of('\\') + 1);
+namespace {
+std::string g_dir;
+
+std::string Top(const std::map<std::string, int>& c, int k) {
+	std::vector<std::pair<int, std::string>> v;
+	for (auto& e : c) v.push_back({ e.second, e.first });
+	std::sort(v.begin(), v.end(), [](auto& x, auto& y) { return x.first > y.first; });
+	std::string out;
+	for (int i = 0; i < (int)v.size() && i < k; i++) {
+		char one[200];
+		snprintf(one, sizeof one, "%s%s %d", i ? ", " : "", v[i].second.c_str(), v[i].first);
+		out += one;
 	}
-	FILE* csv = fopen((dir + "fastload_early.csv").c_str(), "w");
-	if (csv) fprintf(csv, "t_ms,rip,frames\n");
+	return out;
+}
+
+std::string Key(uint64_t a, uintptr_t game, size_t gameSize) {
+	uint64_t rva = 0;
+	const std::string m = ModName(a, game, gameSize, &rva);
+	char k[160];
+	snprintf(k, sizeof k, "%s+%llx", m.c_str(), (unsigned long long)rva);
+	return k;
+}
+
+// samples [0, n): fastload_early.csv, and the leaf modules + most-sampled frames over [from, n)
+void Dump(int from, int n, uintptr_t game, size_t gameSize, std::map<std::string, int>* leafOut, std::map<std::string, int>* inclOut) {
+	FILE* csv = fopen((g_dir + "fastload_early.csv").c_str(), "w");
+	if (csv) fprintf(csv, "t_ms,cpu_ms,grab_us,rip,frames\n");
 	for (int i = 0; i < n; i++) {
 		const Sample& s = g_s[i];
-		uint64_t rva = 0;
-		char k[160];
-		std::string m = ModName(s.rip, game, gameSize, &rva);
-		snprintf(k, sizeof k, "%s+%llx", m.c_str(), (unsigned long long)rva);
-		leaf[m]++;
+		const std::string k = Key(s.rip, game, gameSize);
+		if (i >= from && leafOut) (*leafOut)[k.substr(0, k.find('+'))]++;
+		if (csv) fprintf(csv, "%u,%.1f,%u,%s", s.tMs, s.cpuUs / 1000.0, s.grabUs, k.c_str());
 		std::map<std::string, int> seen;
-		if (csv) fprintf(csv, "%u,%s", s.tMs, k);
-		std::string fr;
 		for (int j = 0; j < s.n; j++) {
-			uint64_t r2 = 0;
-			std::string m2 = ModName(s.ret[j], game, gameSize, &r2);
-			char k2[160];
-			snprintf(k2, sizeof k2, "%s+%llx", m2.c_str(), (unsigned long long)r2);
-			if (csv) fprintf(csv, " %s", k2);
-			if (!seen[k2]++) incl[k2]++;
+			const std::string k2 = Key(s.ret[j], game, gameSize);
+			if (csv) fprintf(csv, " %s", k2.c_str());
+			if (i >= from && inclOut && !seen[k2]++) (*inclOut)[k2]++;
 		}
 		if (csv) fprintf(csv, "\n");
 	}
 	if (csv) fclose(csv);
-	auto top = [&](const std::map<std::string, int>& c, int k) {
-		std::vector<std::pair<int, std::string>> v;
-		for (auto& e : c) v.push_back({ e.second, e.first });
-		std::sort(v.begin(), v.end(), [](auto& x, auto& y) { return x.first > y.first; });
-		std::string out;
-		for (int i = 0; i < (int)v.size() && i < k; i++) {
-			char one[200];
-			snprintf(one, sizeof one, "%s%s %d", i ? ", " : "", v[i].second.c_str(), v[i].first);
-			out += one;
-		}
-		return out;
-	};
+}
+}  // namespace
+
+void Early_Report(uintptr_t game, size_t gameSize) {
+	const long long initAt = Now();
+	if (g_mode == 1) {
+		g_stop = 1;
+		Sleep(30);
+	}
+	FILETIME create{}, a{}, b{}, c{};
+	GetProcessTimes(GetCurrentProcess(), &create, &a, &b, &c);
+	auto ft = [](const FILETIME& x) { return ((unsigned long long)x.dwHighDateTime << 32) | x.dwLowDateTime; };
+	g_procToDllMain = ((long long)(ft(g_dllMainFt) - ft(create))) / 10000.0;
+	const double toInit = (initAt - g_dllMain) * 1000.0 / g_freq;
+	const double toSampler = g_samplerStart ? (g_samplerStart - g_dllMain) * 1000.0 / g_freq : -1;
+	const int n = (int)g_n;
+	Log("early: DllMain %.0f ms after the process started (WHGame.dll %s then; thread %lu); the Init thread %.0f ms after DllMain; "
+	    "the early sampler started %.0f ms after DllMain (%d samples)%s", g_procToDllMain, g_whgameAtDllMain ? "loaded" : "not loaded",
+	    g_mainTid, toInit, toSampler, n, g_mode == 2 ? "; it goes on until the first frame (fastload_early.txt 2)" : "");
+	if (!n) return;
+	{
+		char p[MAX_PATH] = {};
+		GetModuleFileNameA(g_self, p, MAX_PATH);
+		g_dir = p;
+		g_dir = g_dir.substr(0, g_dir.find_last_of('\\') + 1);
+	}
+	std::map<std::string, int> leaf, incl;
+	Dump(0, n, game, gameSize, &leaf, &incl);
 	Log("early: %d samples of the DllMain thread from %u to %u ms after DllMain; by module (leaf): %s", n, g_s[0].tMs, g_s[n - 1].tMs,
-	    top(leaf, 8).c_str());
-	Log("early: most-sampled frames (samples, of %d): %s", n, top(incl, 30).c_str());
+	    Top(leaf, 8).c_str());
+	Log("early: most-sampled frames (samples, of %d): %s", n, Top(incl, 30).c_str());
 	Log("early: every sample in fastload_early.csv");
+}
+
+// The first frame (mode 2): Main from DllMain to here, one line a second (its CPU use from the thread's own times, the
+// longest stretch without a sample: Main could not be suspended then, e.g. in the kernel), and every sample in the csv.
+namespace {
+uintptr_t g_rGame = 0;
+size_t g_rSize = 0;
+DWORD WINAPI FrameReport(LPVOID) {
+	const uintptr_t game = g_rGame;
+	const size_t gameSize = g_rSize;
+	Sleep(20);   // the sampler's last sample
+	const int n = (int)g_n;
+	if (n < 2 || g_dir.empty()) return 0;
+	Dump(0, n, game, gameSize, nullptr, nullptr);
+	const double t0 = g_procToDllMain;
+	Log("early: Main from DllMain to the first frame, %d samples (times below from the process start: DllMain + %.0f ms); "
+	    "every sample in fastload_early.csv", n, t0);
+	int i = 0;
+	while (i < n) {
+		const uint32_t sec = g_s[i].tMs / 1000;
+		int j = i;
+		uint32_t maxGap = 0, gapAt = 0;
+		std::map<std::string, int> leaf, fr;
+		while (j < n && g_s[j].tMs / 1000 == sec) {
+			if (j > 0 && g_s[j].tMs - g_s[j - 1].tMs > maxGap) { maxGap = g_s[j].tMs - g_s[j - 1].tMs; gapAt = g_s[j - 1].tMs; }
+			const std::string k = Key(g_s[j].rip, game, gameSize);
+			leaf[k.substr(0, k.find('+'))]++;
+			// the deepest game frames say the phase: the 3rd WHGame frame from the top
+			int seenGame = 0;
+			for (int r = 0; r < g_s[j].n; r++) {
+				const uint64_t a = g_s[j].ret[r];
+				if (a >= game && a < game + gameSize && ++seenGame == 3) { fr[Key(a, game, gameSize)]++; break; }
+			}
+			j++;
+		}
+		const Sample& a = g_s[i];
+		const Sample& b = g_s[j - 1];
+		const double wall = (double)b.tMs - a.tMs;
+		const double cpu = (b.cpuUs - a.cpuUs) / 1000.0;
+		Log("early: Main %.1f-%.1f s: %d samples, busy %.0f%% (CPU %.0f ms of %.0f), longest gap %u ms at %.2f s; leaf %s; game frames %s",
+		    (sec * 1000 + t0) / 1000.0, ((sec + 1) * 1000 + t0) / 1000.0, j - i, wall > 0 ? 100.0 * cpu / wall : 0.0, cpu, wall, maxGap,
+		    (gapAt + t0) / 1000.0, Top(leaf, 4).c_str(), Top(fr, 3).c_str());
+		i = j;
+	}
+	return 0;
+}
+}  // namespace
+
+void Early_Frame(uintptr_t game, size_t gameSize) {
+	static bool done = false;
+	if (done || g_mode != 2) return;
+	done = true;
+	g_stop = 1;
+	g_rGame = game;
+	g_rSize = gameSize;
+	if (HANDLE t = CreateThread(nullptr, 0, &FrameReport, nullptr, 0, nullptr)) CloseHandle(t);   // off Main: ~1200 samples to name
 }

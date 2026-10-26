@@ -39,6 +39,7 @@
 #include "gpuwarm.h"
 #include "pipelib.h"
 #include "rtsync.h"
+#include "audiofast.h"
 #include "questfast.h"
 #include "levelprof.h"
 #include "applyprof.h"
@@ -107,6 +108,8 @@ void Tick() {
 	Dbasync_Frame();     // the first frame waits for the dubbing database's worker (dbasync.cpp)
 	Gpuwarm_Frame();     // the driver warm-up's time, once (gpuwarm.cpp)
 	Rtsync_Frame();      // the shader-quality settings wait for the render thread again (rtsync.cpp)
+	Audiofast_Frame();   // the sound system's start-up requests finished before the game runs on (audiofast.cpp)
+	Early_Frame(g_game.base, g_game.size);   // Main from DllMain to the first frame (early.cpp)
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)
@@ -245,6 +248,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Ngxearly_Install(g_game.base, g_self));   // NVIDIA NGX (DLSS) started once the device exists, off the render thread (ngxearly.cpp)
 	STEP(Pipelib_Install(g_game.base, g_self));   // the D3D12 pipeline library made on a worker (pipelib.cpp)
 	STEP(Rtsync_Install(g_game.base, g_self));   // the shader-quality settings don't wait for the render thread (rtsync.cpp)
+	STEP(Audiofast_Install(g_game.base, g_self));   // the sound system's start-up requests without Main waiting (audiofast.cpp)
 	STEP(ApplyHooks("early"));   // the settings registered early and the input init come soon: on now
 	STEP(Loadwatch_Install(g_game.base));   // exact terrain-step timing (loadwatch.cpp)
 	STEP(Terrainfast_Install(g_game.base, g_self));   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)
