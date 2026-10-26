@@ -29,6 +29,12 @@ function Deagle:RemoveStaleEntities()
 	if n > 0 then log("removed " .. n .. " stale entities from the save") end
 end
 
+-- every hide / show of the gun: the SPOM pieces (world entities, skin.lua) go with it
+function Deagle:VmSetHidden(vm, h)
+	pcall(vm.Hide, vm, h)
+	for _, id in ipairs(self.rigidIds or {}) do local e = System.GetEntity(id) if e then pcall(e.Hide, e, h) end end
+end
+
 function Deagle:VmEntity()
 	local vm = self.vmId and System.GetEntity(self.vmId)
 	if vm then return vm end
@@ -189,7 +195,7 @@ function Deagle:VmFollow()
 	if fp ~= self.vmInFp then
 		self.vmInFp = fp
 		local vm = self.vmId and System.GetEntity(self.vmId)
-		if vm then pcall(vm.Hide, vm, fp and 0 or 1) end
+		if vm then self:VmSetHidden(vm, fp and 0 or 1) end
 		self:SetBodyHidden(fp and true or false)
 		log("first person " .. tostring(fp))
 	end
@@ -254,7 +260,7 @@ function Deagle:VmTick(token)
 	self:HoldGameMapsOff()
 	if (self.zoom ~= nil) ~= (self.vmZoomHidden == true) then     -- the gun out of view while the debug zoom is on
 		local vm = self.vmId and System.GetEntity(self.vmId)
-		if vm then pcall(vm.Hide, vm, self.zoom and 1 or 0) end
+		if vm then self:VmSetHidden(vm, self.zoom and 1 or 0) end
 		self.vmZoomHidden = self.zoom ~= nil
 	end
 	self:FlashFollow()
@@ -565,7 +571,7 @@ function Deagle:VmShow()
 	local first = not self.drawnOnce and self.cfg.vm.anims.drawFirst and self.state.ammo > 0
 	self.drawnOnce = true
 	self:VmPlay(self.state.ammo == 0 and "drawEmpty" or first and "drawFirst" or "draw", false, 1.0, 0)
-	pcall(vm.Hide, vm, 0)
+	self:VmSetHidden(vm, 0)
 	self.vmRoundsShown = nil
 	self:VmRounds(self:MagRounds())
 	if self.state.magOut and self.gun.mags then pcall(vm.HideAttachment, vm, 0, "vm_mag1", true, true) end
@@ -592,7 +598,7 @@ function Deagle:VmHide()
 	self:BarrelSmokeStop()
 	self.vmToken = (self.vmToken or 0) + 1
 	local vm = self.vmId and System.GetEntity(self.vmId)
-	if vm then pcall(vm.Hide, vm, 1) end
+	if vm then self:VmSetHidden(vm, 1) end
 	self:SetBodyHidden(false)
 end
 

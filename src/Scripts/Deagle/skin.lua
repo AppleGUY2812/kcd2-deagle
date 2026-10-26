@@ -49,13 +49,13 @@ function Deagle:SkinApply()
 	if not vm then return end
 	local want = tostring(self.cfg.skin or "main")
 	-- the entity's script table too: a rebuilt viewmodel can get the old one's freed id back (UseGun always respawns it)
-	local key = tostring(self.vmId) .. "|" .. tostring(vm) .. "|" .. tostring(self.gun and self.gun.id) .. "|" .. want
+	local key = tostring(self.vmId) .. "|" .. tostring(vm) .. "|" .. tostring(self.gun and self.gun.id) .. "|" .. want .. "|" .. tostring(self.native)
 	if self.skinApplied == key then return end
 	self.skinApplied = key
 	local mtl = self:SkinMtl(want) or self:SkinMtl("main")
 	if not mtl then return end   -- a gun without skins keeps its own material
 	local defs = self.gun and self.SKIN_RIGID[self.gun.id]
-	if self.skinRigidOn and defs and defs[want] then mtl = mtl .. "_rigid" end   -- the skinned body NoDraw: the pieces show it
+	if self.skinRigidOn and defs and defs[want] and self.native then mtl = mtl .. "_rigid" end   -- no plugin: no pieces, the body stays   -- the skinned body NoDraw: the pieces show it
 	local n = 0
 	for _, part in ipairs(PARTS) do
 		local ok, r = pcall(vm.ChangeAttachmentMaterial, vm, part, mtl)
@@ -65,30 +65,44 @@ function Deagle:SkinApply()
 	log(string.format("skin %s on %s: %s (%d parts%s)", want, tostring(self.gun.id), mtl, n, rigid > 0 and (", " .. rigid .. " rigid pieces") or ""))
 end
 
--- the rigid pieces of skin `want` shown (the .cdf's attachments), every other skin's hidden; returns how many are shown
+-- the rigid pieces of skin `want` as world entities (2026-10-26, kcd2-deagle-8a): the .cdf's CA_BONE copies never drew on
+-- the viewmodel, plain POM included (in game 2026-10-25: only the magazine showed; MODLOG 2026-10-14, the flash cards
+-- had the same bug), while the same CGF as a world object draws with Silhouette POM (deagle_spom test). So each piece is
+-- a BasicEntity without physics (rounds fly through), and the plugin puts it on its bone every frame right after it
+-- places the gun (native/src/main.cpp RigidStep: viewmodel TM x the bone's pose). Needs the plugin: without it the
+-- skinned body stays. Returns how many pieces are out.
+function Deagle:RigidClear()
+	for _, id in ipairs(self.rigidIds or {}) do pcall(System.RemoveEntity, id) end
+	self.rigidIds = {}
+	if self.native then self:Native("rigid clear") end
+end
 function Deagle:SkinRigid(vm, want)
 	local defs = self.gun and self.SKIN_RIGID[self.gun.id]
-	if not defs then return 0 end
-	local shown = 0
-	self.skinRigidMade = {}
-	for name, d in pairs(defs) do
-		for _, bone in ipairs(d.bones) do
-			local att = "vm_rigid_" .. name .. "_" .. bone
-			local okb, b = pcall(vm.GetAttachmentBone, vm, 0, att)
-			if okb and b ~= nil then   -- nil: this viewmodel's .cdf has no such piece (an old pak)
-				if name == want then
-					pcall(vm.ChangeAttachmentMaterial, vm, att, self.SKIN_RIGID_MTL[self.skinRigidLook] or self.SKIN_RIGID_MTL.pom)
-					pcall(vm.HideAttachment, vm, 0, att, false, false)
-					self.skinRigidMade[att] = true; shown = shown + 1
-				else
-					pcall(vm.HideAttachment, vm, 0, att, true, true)
-				end
-			end
+	if defs then   -- the .cdf's attachment copies stay hidden (they never draw; a pak without them answers nil)
+		for name, d in pairs(defs) do
+			for _, bone in ipairs(d.bones) do pcall(vm.HideAttachment, vm, 0, "vm_rigid_" .. name .. "_" .. bone, true, true) end
 		end
 	end
-	return shown
+	self:RigidClear()
+	local d = defs and defs[want]
+	if not d or not self.native then return 0 end
+	local mtl = self.SKIN_RIGID_MTL[self.skinRigidLook] or self.SKIN_RIGID_MTL.pom
+	local pos = vm:GetWorldPos()
+	for _, bone in ipairs(d.bones) do
+		local cgf = d.cgf .. bone:lower() .. ".cgf"
+		local e = System.SpawnEntity({ class = "BasicEntity", name = "deagle_vmpiece_" .. bone, position = pos,
+			flags = ENTITY_FLAG_NO_SAVE, properties = { object_Model = cgf } })
+		if e then
+			pcall(e.LoadObject, e, 0, cgf); pcall(e.DestroyPhysics, e); pcall(e.SetMaterial, e, mtl); pcall(e.SetViewDistRatio, e, 255)
+			local okh, h = pcall(vm.IsHidden, vm); if okh and h then pcall(e.Hide, e, 1) end   -- as hidden as the gun
+			self.rigidIds[#self.rigidIds + 1] = e.id
+			self:Native("rigid 0x" .. U.entityHex(e.id) .. " " .. bone)
+		else
+			log("$4spom: piece " .. bone .. " did not spawn")
+		end
+	end
+	return #self.rigidIds
 end
-
 -- deagle_spom pom | spom: the rigid pieces' material, live; deagle_spom test: two 5x copies of the frame piece 1.5 m
 -- ahead as plain world objects, Silhouette POM on the left, plain POM on the right (does SilPOM draw our mesh at all,
 -- away from the viewmodel?)
@@ -122,10 +136,10 @@ function Deagle:SpomCmd(arg)
 		self:Notify("gun pieces " .. arg .. (arg == "on" and " (" .. self.skinRigidLook .. ")" or ""))
 	elseif self.SKIN_RIGID_MTL[arg] then
 		self.skinRigidLook = arg
-		local vm = self.vmId and System.GetEntity(self.vmId)
 		local n = 0
-		for att, ok in pairs(self.skinRigidMade or {}) do
-			if ok and vm and pcall(vm.ChangeAttachmentMaterial, vm, att, self.SKIN_RIGID_MTL[arg]) then n = n + 1 end
+		for _, id in ipairs(self.rigidIds or {}) do
+			local e = System.GetEntity(id)
+			if e and pcall(e.SetMaterial, e, self.SKIN_RIGID_MTL[arg]) then n = n + 1 end
 		end
 		log("spom: the rigid pieces wear " .. arg .. " (" .. n .. " pieces)"); self:Notify("gun pieces: " .. arg)
 	else

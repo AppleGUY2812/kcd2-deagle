@@ -67,6 +67,10 @@ local function newEntity(name, props)
 		return 0
 	end
 	function e:Hide(h) self.hidden = (h == 1) end
+	function e:IsHidden() return self.hidden == true end
+	function e:LoadObject(slot, path) self.model = path return slot end
+	function e:SetMaterial(m) self.material = m end
+	function e:DestroyPhysics() self.physics = false end
 	-- like the engine: a layer keeps its clip (a finished one-shot holds its last frame) until replaced or stopped;
 	-- asking for the clip that is already on the layer is refused
 	e.layers = {}

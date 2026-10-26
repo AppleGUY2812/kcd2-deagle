@@ -28,30 +28,47 @@ check("an unknown skin: refused, nothing changed", Deagle.cfg.skin == "silver" a
 M.console("deagle_skin", "mirror"); step(0.1)
 check("deagle_skin mirror: the polished set", M.attachMtl.vm_mesh == base .. "_mirror" and Deagle.cfg.skin == "mirror", M.attachMtl.vm_mesh)
 local rig = "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_"
-local made0 = M.runtimeCgf or 0
-check("the .cdf brings the 10 pieces, each on its own bone, at identity", M.cdfAttach.vm_rigid_mirror_J_Gun == "CA_BONE"
-	and M.attachCgf.vm_rigid_mirror_tag_slide == rig .. "tag_slide.cgf" and M.attachCgf.vm_rigid_mirror_tag_mag_release == rig .. "tag_mag_release.cgf",
-	M.attachCgf.vm_rigid_mirror_J_Gun)
-check("mirror: the rigid pieces are off by default (hidden, the skinned body shows)", M.hidden.vm_rigid_mirror_J_Gun == true and M.attachMtl.vm_mesh == base .. "_mirror", M.hidden.vm_rigid_mirror_J_Gun)
-M.console("deagle_spom", "on"); step(0.1)
+local POM, SPOM = rig .. "pom", "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid"
+-- the SPOM gun pieces: world entities (CGF attachments never draw on the viewmodel), placed by the plugin every frame
+local function pieces()
+	local out, n = {}, 0
+	for k, e in pairs(M.entities()) do
+		if type(k) ~= "string" and type(e.name) == "string" and e.name:find("^deagle_vmpiece_") then out[e.name:sub(16)] = e; n = n + 1 end
+	end
+	return out, n
+end
+local function sent(pat) local c = 0 for i = 1, #M.native do if M.native[i]:find(pat) then c = c + 1 end end return c end
+check("mirror: no pieces by default (the skinned body shows)", select(2, pieces()) == 0 and M.attachMtl.vm_mesh == base .. "_mirror", select(2, pieces()))
+M.console("deagle_spom", "on"); step(0.4)
+check("no plugin: spom on keeps the skinned body (no pieces to show it)", select(2, pieces()) == 0 and M.attachMtl.vm_mesh == base .. "_mirror", M.attachMtl.vm_mesh)
+local before = #M.native
+M.console("deagle_native_ok"); step(0.4)
+local p, np = pieces()
 check("deagle_spom on: the body NoDraw variant", M.attachMtl.vm_mesh == base .. "_mirror_rigid", M.attachMtl.vm_mesh)
-check("deagle_spom on: the 10 pieces shown, none made at run time", M.hidden.vm_rigid_mirror_J_Gun == false and M.hidden.vm_rigid_mirror_tag_mag_release == false
-	and (M.runtimeCgf or 0) == made0 and (M.boneAttach or 0) == 0, M.runtimeCgf)
-check("mirror: the pieces wear plain POM by default", M.attachMtl.vm_rigid_mirror_J_Gun == "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid_pom", M.attachMtl.vm_rigid_mirror_J_Gun)
-M.console("deagle_spom", "rot 0 0 90"); step(0.1)
-check("deagle_spom rot 0 0 90: every piece turned live", math.abs(M.attachAngles.vm_rigid_mirror_tag_slide.z - math.pi / 2) < 1e-6, M.attachAngles.vm_rigid_mirror_tag_slide.z)
-M.console("deagle_spom", "rot 0 0 0"); step(0.1)
-check("deagle_spom rot 0 0 0: turned back live", M.attachAngles.vm_rigid_mirror_tag_slide.z == 0, M.attachAngles.vm_rigid_mirror_tag_slide.z)
+check("deagle_spom on: 10 world pieces, each its bone's CGF, no physics, plain POM",
+	np == 10 and p.tag_slide and p.tag_slide.model == rig .. "tag_slide.cgf" and p.J_Gun.model == rig .. "j_gun.cgf"
+	and p.tag_slide.physics == false and p.J_Gun.material == POM, np)
+local lines = {} for i = before + 1, #M.native do lines[#lines + 1] = M.native[i] end
+local joined = table.concat(lines, "\n")
+check("the plugin is told each piece and its bone", sent("^%[DN%] rigid 0x%x+ tag_slide$") >= 1 and sent("^%[DN%] rigid 0x%x+ J_Gun$") >= 1
+	and joined:find("rigid clear") ~= nil, joined)
+check("the .cdf's attachment copies stay hidden", M.hidden.vm_rigid_mirror_J_Gun == true and M.hidden.vm_rigid_mirror_tag_slide == true, M.hidden.vm_rigid_mirror_J_Gun)
+local vm = System.GetEntity(Deagle.vmId)
+Deagle:VmSetHidden(vm, 1); step(0.1)
+check("gun hidden: the pieces hide with it", p.tag_slide.hidden == true and p.J_Gun.hidden == true, p.tag_slide.hidden)
+Deagle:VmSetHidden(vm, 0); step(0.1)
+check("gun shown: the pieces show", p.tag_slide.hidden == false, p.tag_slide.hidden)
 M.console("deagle_spom", "spom"); step(0.1)
-check("deagle_spom spom: every piece switched to Silhouette POM, live", M.attachMtl.vm_rigid_mirror_tag_slide == "objects/manmade/weapons/guns/ron_grizzly/rigid/ron_grizzly_rigid", M.attachMtl.vm_rigid_mirror_tag_slide)
+check("deagle_spom spom: every piece switched to Silhouette POM, live", p.tag_slide.material == SPOM and p.tag_trigger.material == SPOM, p.tag_slide.material)
 M.console("deagle_spom", "pom"); step(0.1)
-local made = M.runtimeCgf
 M.console("deagle_skin", "main"); step(0.1)
 M.console("deagle_skin", "main"); step(0.1)
 check("deagle_skin main: back to the gun as built", M.attachMtl.vm_mesh == base, M.attachMtl.vm_mesh)
-check("main: the rigid pieces hidden", M.hidden.vm_rigid_mirror_J_Gun == true and M.hidden.vm_rigid_mirror_tag_trigger == true, M.hidden.vm_rigid_mirror_J_Gun)
+check("main: the pieces removed", select(2, pieces()) == 0, select(2, pieces()))
 M.console("deagle_skin", "mirror"); step(0.1)
-check("mirror again: shown again, nothing loaded", M.hidden.vm_rigid_mirror_J_Gun == false and M.runtimeCgf == made, M.runtimeCgf)
+check("mirror again: 10 pieces again", select(2, pieces()) == 10, select(2, pieces()))
+M.console("deagle_spom", "off"); step(0.1)
+check("deagle_spom off: pieces gone, the skinned body back", select(2, pieces()) == 0 and M.attachMtl.vm_mesh == base .. "_mirror", M.attachMtl.vm_mesh)
 M.console("deagle_skin", "main"); step(0.1)
 M.attachMtl = {}
 Deagle:UseGun("deagle"); Deagle:VmEntity(); step(0.6)

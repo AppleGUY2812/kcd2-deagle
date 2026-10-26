@@ -410,6 +410,54 @@ static void SmokeStep() {
 	g_nSmokes = keep;
 }
 
+// ---- rigid gun pieces (Silhouette POM): plain world entities that ride the viewmodel's bones. KCD2's SilPOM only works
+// on static meshes, and CGF attachments on the viewmodel never draw (MODLOG 2026-10-14 / 10-26: the CA_BONE pieces in
+// the .cdf drew nothing, plain POM included), so Lua spawns one BasicEntity per piece (each CGF is in its bone's frame)
+// and the plugin puts it on its bone right after placing the gun: world = viewmodel TM x the bone's model-space pose.
+// WHGame 1.5.6, from ScriptBind_Entity::GetBonePos (FUN_1837d3ef8): ICharacterInstance +0x58 GetIDefaultSkeleton ->
+// +0x38 GetJointIDByName (short, -1 none); ICharacterInstance +0x38 GetISkeletonPose -> +0xD8 GetAbsJointByID (QuatT:
+// quat x y z w, then t at +0x10).
+struct RigidPiece { uint32_t id; char bone[48]; int joint; };
+static RigidPiece g_rigid[16];
+static int g_nRigid = 0;
+static uintptr_t g_rigidChr = 0;   // the character the joint ids were looked up on (a rebuilt viewmodel: look up again)
+using ChrSlotFn = uintptr_t(__fastcall*)(uintptr_t e, int slot);                    // IEntity +0x328 GetCharacter
+using ObjGetFn = uintptr_t(__fastcall*)(uintptr_t o);
+using JointIdFn = int16_t(__fastcall*)(uintptr_t defSkel, const char* name);        // IDefaultSkeleton +0x38
+using AbsJointFn = const float*(__fastcall*)(uintptr_t pose, int joint);           // ISkeletonPose +0xD8
+static void RigidStep(uintptr_t es, uintptr_t vm, const float* V, SetWorldTMFn setTM) {
+	auto getChr = (ChrSlotFn)VFn(vm, 0x328); uintptr_t chr = getChr ? getChr(vm, 0) : 0; if (!chr) return;
+	auto getPose = (ObjGetFn)VFn(chr, 0x38); uintptr_t pose = getPose ? getPose(chr) : 0; if (!pose) return;
+	auto absJoint = (AbsJointFn)VFn(pose, 0xD8); if (!absJoint) return;
+	auto getEntity = (GetEntityFn)VFn(es, 0x70); if (!getEntity) return;
+	if (chr != g_rigidChr) {
+		g_rigidChr = chr;
+		auto getDef = (ObjGetFn)VFn(chr, 0x58); uintptr_t def = getDef ? getDef(chr) : 0;
+		auto jointId = def ? (JointIdFn)VFn(def, 0x38) : nullptr;
+		for (int i = 0; i < g_nRigid; i++) {
+			g_rigid[i].joint = jointId ? (int)jointId(def, g_rigid[i].bone) : -1;
+			if (g_rigid[i].joint < 0) Log("rigid: no joint %s on the viewmodel", g_rigid[i].bone);
+		}
+	}
+	for (int i = 0; i < g_nRigid; i++) {
+		const RigidPiece& r = g_rigid[i];
+		if (r.joint < 0) continue;
+		uintptr_t e = getEntity(es, r.id); if (!e) continue;
+		const float* j = absJoint(pose, r.joint); if (!j) continue;
+		float x = j[0], y = j[1], z = j[2], w = j[3];
+		float M[9] = { 1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y),
+		               2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x),
+		               2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y) };
+		float tm[12];
+		for (int row = 0; row < 3; row++) {
+			const float* v = V + row * 4;
+			for (int c = 0; c < 3; c++) tm[row * 4 + c] = v[0] * M[c] + v[1] * M[3 + c] + v[2] * M[6 + c];
+			tm[row * 4 + 3] = v[0] * j[4] + v[1] * j[5] + v[2] * j[6] + v[3];
+		}
+		if (Finite(tm, 12)) setTM(e, tm, 0);
+	}
+}
+
 static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
 	auto getEntity = (GetEntityFn)VFn(es, 0x70);
@@ -442,6 +490,7 @@ static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	}
 	setTM(e, tm, 0);
 	memcpy(g_vmTM, tm, sizeof(tm)); g_haveVmTM = true;
+	if (g_nRigid) RigidStep(es, e, tm, setTM);
 	if (g_nFlashes) MoveFlashes();
 	LiveStep(newFrame);
 	SmokeStep();
@@ -1009,6 +1058,7 @@ static void Command(const char* line) {
 		LeanReset();  // upright (Lua sends the lean's numbers again: freecam.lua LeanParams)
 		Keys_Reset();   // let go of the keys Lua pressed (keys.cpp)
 		g_layerSet = 0;   // a new viewmodel: Lua weights its layers again
+		g_nRigid = 0; g_rigidChr = 0;   // the rigid gun pieces: Lua sends them again (skin.lua SkinRigid)
 		PreloadTracers();
 		// the handshake, then the player's saved settings (settings.cpp)
 		std::vector<std::string> saved = SettingsReplay();
@@ -1025,6 +1075,14 @@ static void Command(const char* line) {
 		unsigned long long id = 0;
 		const char* hex = strstr(rest, "0x"); hex = hex ? hex + 2 : rest;
 		if (sscanf_s(hex, "%llx", &id) == 1) { g_vmId = (uint32_t)id; Log("viewmodel entity %08X", g_vmId); }
+	}
+	else if (!strcmp(cmd, "rigid")) {   // rigid clear | rigid <entity id hex> <bone>: a piece that rides that bone
+		unsigned long long id = 0; char bone[48] = {};
+		if (!strncmp(rest, "clear", 5)) { g_nRigid = 0; g_rigidChr = 0; Log("rigid: cleared"); }
+		else if (sscanf_s(rest, "%llx %47s", &id, bone, (unsigned)sizeof(bone)) == 2 && g_nRigid < 16) {
+			RigidPiece& r = g_rigid[g_nRigid++]; r.id = (uint32_t)id; strcpy_s(r.bone, bone); r.joint = -1; g_rigidChr = 0;
+			Log("rigid: piece %08X on %s (%d)", r.id, r.bone, g_nRigid);
+		}
 	}
 	else if (!strcmp(cmd, "follow")) { g_follow = atoi(rest) != 0; Log("follow %d", (int)g_follow); }
 	else if (!strcmp(cmd, "flashfx")) {   // flashfx <effect> <scale> <pos xyz> <dir xyz>: a flash on the muzzle (viewmodel axes)
