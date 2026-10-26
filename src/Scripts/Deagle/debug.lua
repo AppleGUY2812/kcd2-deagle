@@ -638,3 +638,56 @@ function Deagle:Stress(arg)
 		or mode == "aim" and string.format("stress test: %d rounds/s where you look, %d s", rps, total)
 		or string.format("stress test: %d rounds/s, look at the sky for %d s", rps, total))
 end
+
+-- ---------------------------------------------------------------------------
+-- Arm IK test (2026-10-26, "option 1": Henry's own arms hold the gun; throwaway). deagle_armik right|left|both|off:
+-- Henry's body shows and the plugin bends his arms (the chrparams' arm IK) to the gun arms' wrists every frame. Once a
+-- second it logs how far each of Henry's hands is from its goal ("armik reach"): ~0 cm = reached, more = out of reach
+-- or trailing. Position only: his hands keep the animation's turn, so the fingers don't hold the grip yet.
+-- ---------------------------------------------------------------------------
+local ARMIK_MASK = { right = 1, left = 2, both = 3, on = 3, off = 0 }
+local ARMIK_HANDS = { { "RightHand", { "j_wrist_ri", "hand_RI" } }, { "LeftHand", { "j_wrist_le", "hand_LE" } } }
+
+function Deagle:ArmIk(arg)
+	local mask = ARMIK_MASK[string.lower(arg or "")]
+	if not mask then log("usage: deagle_armik right|left|both|off") return end
+	local p = self:Player()
+	if not p then log("armik: no player") return end
+	if not self.native then log("armik: needs the native plugin") return end
+	if mask > 0 then
+		if self.armIkBody == nil then self.armIkBody = self.cfg.vm.hideBody end
+		self.cfg.vm.hideBody = false
+		self:SetBodyHidden(false)
+		self:Native("armik " .. mask .. " 0x" .. U.entityHex(p.id))
+	else
+		self:Native("armik 0")
+		if self.armIkBody ~= nil then self.cfg.vm.hideBody = self.armIkBody; self.armIkBody = nil end
+	end
+	self.armIkMask = mask
+	log("armik " .. arg .. (mask > 0 and ": body shown, arms on the gun" or ": off"))
+	self:Notify("arm IK test: " .. arg)
+	if mask > 0 and not self.armIkTimer then
+		local function tick()
+			if (self.armIkMask or 0) == 0 then self.armIkTimer = nil return end
+			self.armIkTimer = Script.SetTimer(1000, tick)
+			local pl, vm = self:Player(), self.vmId and System.GetEntity(self.vmId)
+			if not pl or not vm or not self.vmShown then return end
+			local out = {}
+			for s, h in ipairs(ARMIK_HANDS) do
+				if math.floor(self.armIkMask / s) % 2 == 1 then   -- Lua 5.1: no bit operators (s is 1 or 2)
+					local ok, hp = pcall(pl.GetBonePos, pl, h[1])
+					local gp
+					for _, b in ipairs(h[2]) do
+						local ok2, v = pcall(vm.GetBonePos, vm, b)
+						if ok2 and v and (v.x ~= 0 or v.y ~= 0 or v.z ~= 0) then gp = v break end
+					end
+					if ok and hp and gp then out[#out + 1] = string.format("%s %.1f cm", h[1], 100 * U.vlen(vsub(hp, gp))) end
+				end
+			end
+			if #out > 0 then log("armik reach: " .. table.concat(out, ", ")) end
+		end
+		self.armIkTimer = Script.SetTimer(1000, tick)
+	end
+end
+
+System.AddCCommand("deagle_armik", "Deagle:ArmIk([[%1]])", "deagle_armik right|left|both|off: test - Henry's body shows and his own arms reach for the gun's hands (arm IK); logs how far each hand is from the gun once a second")

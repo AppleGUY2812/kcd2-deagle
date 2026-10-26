@@ -458,6 +458,50 @@ static void RigidStep(uintptr_t es, uintptr_t vm, const float* V, SetWorldTMFn s
 	}
 }
 
+// ---- arm IK test (2026-10-26, "option 1": Henry's own arms hold the gun; a throwaway test, off unless "armik" is sent).
+// Each drawn frame, after the gun is placed, the gun arms' wrists (j_wrist_ri / _le on the MW arms, hand_RI / _LE on
+// Ready or Not's) are the world goals of Henry's chrparams arm IK (RgtArm01 / LftArm01, 2BIK, position only).
+// WHGame 1.5.6: ISkeletonPose vt+0x170 = CSkeletonPose::SetHumanLimbIK(const Vec3& world, const char* handle)
+// (FUN_1837cb47c: world -> model space by the character's location, then a setup in CLimbIk, 16 max); CLimbIk's
+// prepare (FUN_181ab08b0) takes the setups and clears them, and CSkeletonAnim pushes it on layer 15 "LimbIK"
+// (FUN_18083ec18). So a goal holds for one animation update: it goes again every frame, and stopping hands the arms back.
+static uint32_t g_armIkPlayer = 0;
+static int g_armIkMask = 0;               // 1 right arm, 2 left arm
+static uintptr_t g_armIkVmChr = 0;
+static int g_armIkJ[2] = { -1, -1 };      // the viewmodel's right / left wrist joints
+using LimbIkFn = bool(__fastcall*)(uintptr_t pose, const float* world, const char* handle);
+static void ArmIkStep(uintptr_t es, uintptr_t vm, const float* V) {
+	auto getChr = (ChrSlotFn)VFn(vm, 0x328); uintptr_t chr = getChr ? getChr(vm, 0) : 0; if (!chr) return;
+	auto getPose = (ObjGetFn)VFn(chr, 0x38); uintptr_t pose = getPose ? getPose(chr) : 0; if (!pose) return;
+	auto absJoint = (AbsJointFn)VFn(pose, 0xD8); if (!absJoint) return;
+	if (chr != g_armIkVmChr) {
+		g_armIkVmChr = chr;
+		auto getDef = (ObjGetFn)VFn(chr, 0x58); uintptr_t def = getDef ? getDef(chr) : 0;
+		auto jointId = def ? (JointIdFn)VFn(def, 0x38) : nullptr;
+		static const char* const kWrist[2][2] = { { "j_wrist_ri", "hand_RI" }, { "j_wrist_le", "hand_LE" } };
+		for (int s = 0; s < 2; s++) {
+			g_armIkJ[s] = -1;
+			for (int n = 0; n < 2 && jointId && g_armIkJ[s] < 0; n++) g_armIkJ[s] = (int)jointId(def, kWrist[s][n]);
+		}
+		Log("armik: viewmodel wrists right %d, left %d", g_armIkJ[0], g_armIkJ[1]);
+	}
+	auto getEntity = (GetEntityFn)VFn(es, 0x70); uintptr_t pe = getEntity ? getEntity(es, g_armIkPlayer) : 0; if (!pe) return;
+	auto getPChr = (ChrSlotFn)VFn(pe, 0x328); uintptr_t pchr = getPChr ? getPChr(pe, 0) : 0; if (!pchr) return;
+	auto getPPose = (ObjGetFn)VFn(pchr, 0x38); uintptr_t ppose = getPPose ? getPPose(pchr) : 0; if (!ppose) return;
+	auto limbIk = (LimbIkFn)VFn(ppose, 0x170); if (!limbIk) return;
+	static const char* const kHandle[2] = { "RgtArm01", "LftArm01" };
+	static int said = 0;
+	for (int s = 0; s < 2; s++) {
+		if (!(g_armIkMask & (1 << s)) || g_armIkJ[s] < 0) continue;
+		const float* j = absJoint(pose, g_armIkJ[s]); if (!j) continue;
+		float w[3];
+		for (int r = 0; r < 3; r++) w[r] = V[r * 4] * j[4] + V[r * 4 + 1] * j[5] + V[r * 4 + 2] * j[6] + V[r * 4 + 3];
+		if (!Finite(w, 3)) continue;
+		bool ok = limbIk(ppose, w, kHandle[s]);
+		if (said < 2) { said++; Log("armik: %s goal %.3f %.3f %.3f (%s)", kHandle[s], w[0], w[1], w[2], ok ? "taken" : "refused"); }
+	}
+}
+
 static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	uintptr_t es; if (!ReadPtr(g_env + 0xA0, es) || !es) return false;
 	auto getEntity = (GetEntityFn)VFn(es, 0x70);
@@ -491,6 +535,7 @@ static bool PlaceViewmodel(const float* cam, bool newFrame) {
 	setTM(e, tm, 0);
 	memcpy(g_vmTM, tm, sizeof(tm)); g_haveVmTM = true;
 	if (g_nRigid) RigidStep(es, e, tm, setTM);
+	if (g_armIkMask && g_armIkPlayer && newFrame) ArmIkStep(es, e, tm);
 	if (g_nFlashes) MoveFlashes();
 	LiveStep(newFrame);
 	SmokeStep();
@@ -1085,6 +1130,14 @@ static void Command(const char* line) {
 		}
 	}
 	else if (!strcmp(cmd, "follow")) { g_follow = atoi(rest) != 0; Log("follow %d", (int)g_follow); }
+	else if (!strcmp(cmd, "armik")) {   // armik <mask: 1 right, 2 left, 3 both, 0 off> [<player entity id hex>]: the arm IK test
+		int mask = 0; unsigned long long id = 0;
+		int n = sscanf_s(rest, "%d %llx", &mask, &id);
+		g_armIkMask = n >= 1 ? mask : 0;
+		if (n >= 2) g_armIkPlayer = (uint32_t)id;
+		g_armIkVmChr = 0;   // look the wrists up again (another gun)
+		Log("armik: mask %d, player %08X", g_armIkMask, g_armIkPlayer);
+	}
 	else if (!strcmp(cmd, "flashfx")) {   // flashfx <effect> <scale> <pos xyz> <dir xyz>: a flash on the muzzle (viewmodel axes)
 		char effect[96] = {}; float scale = 1;
 		int n = sscanf_s(rest, "%95s %f %f %f %f %f %f %f", effect, (unsigned)sizeof(effect), &scale, &g_flashPos[0], &g_flashPos[1],
