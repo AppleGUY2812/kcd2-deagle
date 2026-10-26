@@ -26,6 +26,12 @@
 // signatures: 432 of the worker's 969 ms in boot 165e3's exact stacks, and Main waits for the worker (580-680 ms with
 // zipidx 1). fastload_nvcamera.txt 1: ntdll's LdrLoadDll refuses NvCamera64.dll in this process (as if the driver had no
 // NvCamera folder), so those NVIDIA features are off in this game; 0 (default) the driver's own. "nvcamera:" lines.
+// nvcachewarm (2026-10-25): the render thread's first root signature (ResourceLayoutBinCache.txt, FUN_180b1afd0, at
+// 3.0 s) spent 287 ms inside NvMemMapStoragex.dll (boot 165e3): the NVIDIA driver setting up its shader disk cache
+// (DXCache, 3.9 GB here), once per process, on the chain Main's slot-5 flush and spec gate wait for. With
+// fastload_nvcachewarm.txt 1 the worker makes one empty root signature on its device (the renderer's, see devahead)
+// after the support checks, so that set-up runs ~1.3 s earlier beside Main. Skipped when the debug layer or DRED is on
+// (the worker holds a device reference meanwhile). "nvcachewarm:" lines. 0 (default) off.
 // fastload_gpuwarm.txt next to the plugin: 1 on (default), 0 off. Needs the plugin loaded before WHGame's static
 // initializers (global.ini DontLoadFromDllMain=0). "gpuwarm:" lines in the log.
 bool Gpuwarm_EarlyInstall(uintptr_t gameBase, void* selfModule);   // DllMain, MinHook initialized

@@ -48,6 +48,7 @@
 #include "dbahead.h"
 #include "samelevel.h"
 #include "readymenu.h"
+#include "smartobj.h"
 #include "startfast.h"
 #include "gpumemo.h"
 #include "dbprof.h"
@@ -257,6 +258,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Pipelib_Install(g_game.base, g_self));   // the D3D12 pipeline library made on a worker (pipelib.cpp)
 	STEP(Rtsync_Install(g_game.base, g_self));   // the shader-quality settings don't wait for the render thread (rtsync.cpp)
 	STEP(Audiofast_Install(g_game.base, g_self));   // the sound system's start-up requests without Main waiting (audiofast.cpp)
+	STEP(Smartobj_Install(g_game.base, g_self));   // the AI smart objects' animation lookups spread over cores (smartobj.cpp)
 	STEP(ApplyHooks("early"));   // the settings registered early and the input init come soon: on now
 	STEP(Loadwatch_Install(g_game.base));   // exact terrain-step timing (loadwatch.cpp)
 	STEP(Terrainfast_Install(g_game.base, g_self));   // the load's stream finalize every 1 ms, not 20 (terrainfast.cpp)

@@ -60,6 +60,9 @@ using LdrLoadDllFn = LONG(NTAPI*)(PWSTR path, PULONG flags, UStr* name, PVOID* b
 LdrLoadDllFn g_origLdr = nullptr;
 std::atomic<long> g_camRefused{ 0 };
 int g_camMode = 0;   // 1 kept out, 0 the driver's own
+int g_cacheWarm = 0;   // nvcachewarm: 1 on
+HRESULT g_cacheHr = S_FALSE;
+double g_cacheMs = -1;
 bool IsNvCamera(const UStr* s) {
 	__try {
 		if (!s || !s->buf) return false;
@@ -121,6 +124,8 @@ DWORD WINAPI Warm(LPVOID) {
 				a->Release();
 			}
 			g_dt1 = Now();
+			ID3D12Device* warmDev = g_cacheWarm == 1 ? g_dev : nullptr;   // nvcachewarm, below: our own reference
+			if (warmDev) warmDev->AddRef();
 			SetEvent(g_devDone);
 			for (UINT i = 0;; i++) {
 				IDXGIAdapter1* a = nullptr;
@@ -143,6 +148,27 @@ DWORD WINAPI Warm(LPVOID) {
 				a->Release();
 			}
 			SetEvent(g_done);
+			if (warmDev) {   // nvcachewarm (gpuwarm.h): the driver's shader disk cache set up by one root signature
+				const long long c0 = Now();
+				auto ser = (PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)GetProcAddress(GetModuleHandleA("d3d12.dll"), "D3D12SerializeRootSignature");
+				if (*(volatile int*)(g_base + kRvaDebugLayer) || *(volatile int*)(g_base + kRvaDred)) g_cacheHr = E_ABORT;   // keep their rule
+				else if (ser) {
+					D3D12_ROOT_SIGNATURE_DESC rd{};
+					rd.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+					ID3DBlob* blob = nullptr;
+					ID3DBlob* err = nullptr;
+					g_cacheHr = ser(&rd, D3D_ROOT_SIGNATURE_VERSION_1, &blob, &err);
+					if (SUCCEEDED(g_cacheHr) && blob) {
+						ID3D12RootSignature* rs = nullptr;
+						g_cacheHr = warmDev->CreateRootSignature(0, blob->GetBufferPointer(), blob->GetBufferSize(), __uuidof(ID3D12RootSignature), (void**)&rs);
+						if (rs) rs->Release();
+					}
+					if (blob) blob->Release();
+					if (err) err->Release();
+				}
+				g_cacheMs = Ms(c0, Now());
+				warmDev->Release();
+			}
 		} else snprintf(g_note, sizeof g_note, "no IDXGIFactory6 / D3D");
 		if (f6) f6->Release();
 		f1->Release();
@@ -228,6 +254,10 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 		if (fscanf(fp, "%d", &g_camMode) != 1) g_camMode = 0;
 		fclose(fp);
 	}
+	if (FILE* fp = fopen((dir + "fastload_nvcachewarm.txt").c_str(), "r")) {
+		if (fscanf(fp, "%d", &g_cacheWarm) != 1) g_cacheWarm = 0;
+		fclose(fp);
+	}
 	if (g_camMode == 1) {   // before the worker and anything else can load the driver
 		void* ldr = (void*)GetProcAddress(GetModuleHandleA("ntdll.dll"), "LdrLoadDll");
 		if (!ldr || GetModuleHandleW(L"NvCamera64.dll") || MH_CreateHook(ldr, (void*)&HkLdrLoadDll, (void**)&g_origLdr) != MH_OK)
@@ -286,4 +316,9 @@ void Gpuwarm_Frame() {
 		    g_skipped ? "GPU info skipped" : "GPU info never came");
 	else Log("gpuwarm: the driver warm-up is still running at the first frame");
 	if (g_camMode == 1) Log("nvcamera: %ld load(s) of NvCamera64.dll refused", g_camRefused.load());
+	if (g_cacheWarm == 1)
+		Log("nvcachewarm: %s", g_cacheMs < 0 ? "not run (no worker device)" : g_cacheHr == E_ABORT ? "skipped (debug layer or DRED on)" : "");
+	if (g_cacheWarm == 1 && g_cacheMs >= 0 && g_cacheHr != E_ABORT)
+		Log("nvcachewarm: one root signature on the worker's device: %.0f ms (HRESULT 0x%08x); the driver's shader cache was set up "
+		    "before the render thread's first one", g_cacheMs, (unsigned)g_cacheHr);
 }
