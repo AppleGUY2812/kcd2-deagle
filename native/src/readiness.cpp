@@ -58,6 +58,11 @@ std::atomic<int> g_earlyMode{ 0 };   // "let me in early" (readiness_early.h): 0
 std::atomic<int> g_tempMB{ 0 };
 int g_tempOrig = -1;   // KB, the value we raised from (-1: not raised)
 int g_tempSet = -1;    // KB, the value we wrote (restore only while it is still there)
+// "readiness spawn <N>": es_PerInstanceStreamingClassSpawnBudget (how many entities the entity streaming manager spawns
+// a frame per streamable class, 2; 4 while a fader is up: FUN_1809b6b20) raised to this while a save-load or
+// fast-travel gate waits, then put back; 0 = the game's own (default). Kept as the fourth number in fastload_readiness.txt.
+std::atomic<int> g_spawnN{ 0 };
+int g_spawnOrig = -1, g_spawnSet = -1;
 std::string g_modeFile;
 early::Cfg g_earlyCfg;   // its hold: fastload_readiness.txt's third number (s, 0.05-1; 0.3 by default)
 long long g_freq = 1, g_lastTick = 0;
@@ -492,6 +497,35 @@ void TempBudget(bool want) {
 	}
 }
 
+// es_PerInstanceStreamingClassSpawnBudget's variable (int): FUN_1809b6b20 reads it each frame per streamable class
+// (`mov r12d, [rip+...]` at +0x9b6b5d, checked at install), so a write takes effect at the next frame. With the stream
+// callback thread freed (morphpool.h), the settle gate waits on EntityStreaming: boots 180B1-4, ~300 entities in flight
+// at 1.0 s, ready at 1.3-1.4 s, while the spawns are 2 % of Main (the AI update ~60 %: the frames are long, the count
+// per frame small). Same rules as the temp budget: raised only from the game's value, put back if still ours.
+constexpr uintptr_t kRvaSpawnBudget = 0x492f7a4, kRvaSpawnRead = 0x9b6b5d;
+const unsigned char kSpawnReadBytes[] = { 0x44,0x8b,0x25,0x40,0x8c,0xf7,0x03 };
+bool g_spawnOk = false;
+void SpawnBudget(bool want) {
+	if (!g_spawnOk) return;
+	const int n = g_spawnN.load(std::memory_order_relaxed);
+	int32_t v = 0;
+	if (!Rd(g_base + kRvaSpawnBudget, &v, 4)) return;
+	if (want && n > 0 && g_spawnOrig < 0 && v > 0 && v < n) {
+		const int32_t w = n;
+		if (Wr(g_base + kRvaSpawnBudget, &w, 4)) {
+			g_spawnOrig = v;
+			g_spawnSet = w;
+			Log("readiness: entity spawns per class a frame %d -> %d while the screen waits", v, w);
+		}
+	} else if (!want && g_spawnOrig >= 0) {
+		if (v == g_spawnSet && Wr(g_base + kRvaSpawnBudget, &g_spawnOrig, 4))
+			Log("readiness: entity spawns per class a frame back to %d", g_spawnOrig);
+		else
+			Log("readiness: entity spawns per class a frame left at %d (changed by something else since we set %d)", v, g_spawnSet);
+		g_spawnOrig = g_spawnSet = -1;
+	}
+}
+
 // The HDD reader (the one thread that reads every game pak), from ~/re/work/settle_feed/report.md section 4 (layout
 // INFERRED, not yet checked against the game's debug views): engine E = *(base+0x547dae8) - 0xf0; reader T = *(E+0x78):
 // sorted queue T+0x70/+0x78 and incoming T+0xa0/+0xa8 (vectors of pointers), T+0xf8 the count of threads parked in
@@ -600,14 +634,17 @@ void Readiness_Install(uintptr_t base) {
 	g_modeFile = path;
 	g_modeFile = g_modeFile.substr(0, g_modeFile.find_last_of('\\') + 1) + "fastload_readiness.txt";
 	if (FILE* fp = fopen(g_modeFile.c_str(), "r")) {
-		int m = 0, t = 0;
+		int m = 0, t = 0, sp = 0;
 		double hold = 0;
-		const int n = fscanf(fp, "%d %d %lf", &m, &t, &hold);
+		const int n = fscanf(fp, "%d %d %lf %d", &m, &t, &hold, &sp);
 		if (n >= 1 && (m == 0 || m == 1)) g_earlyMode = m;
 		if (n >= 2 && t >= 0 && t <= 512) g_tempMB = t;
-		if (n == 3 && hold >= 0.05 && hold <= 1.0) g_earlyCfg.hold = hold;
+		if (n >= 3 && hold >= 0.05 && hold <= 1.0) g_earlyCfg.hold = hold;
+		if (n >= 4 && sp >= 0 && sp <= 64) g_spawnN = sp;
 		fclose(fp);
 	}
+	g_spawnOk = !memcmp((void*)(base + kRvaSpawnRead), kSpawnReadBytes, sizeof kSpawnReadBytes);
+	if (!g_spawnOk && g_spawnN) Log("readiness: the entity spawn budget's code differs - spawn %d not used", g_spawnN.load());
 	void* start = (void*)(base + kRvaStart);
 	const bool ok = !memcmp(start, kStartBytes, sizeof kStartBytes) &&
 	                !memcmp((void*)(base + kRvaIsReady), kIsReadyBytes, sizeof kIsReadyBytes);
@@ -626,9 +663,11 @@ void Readiness_Install(uintptr_t base) {
 	                MH_CreateHook(aiW, (void*)&HkAiWait, (void**)&g_aiWaitOrig) == MH_OK &&
 	                MH_EnableHook(aiL) == MH_OK && MH_EnableHook(aiW) == MH_OK;
 	Log("readiness: %s (logs every readiness gate that holds the screen 0.25 s or more, and which task holds it); "
-	    "let me in early %s (once the must-have tasks are ready %.2f s); stream temp budget while it waits: %s; the AI "
-	    "frame job timed %s", h ? "on" : "FAILED to hook the observer start", g_earlyMode ? "ON" : "off", g_earlyCfg.hold,
+	    "let me in early %s (once the must-have tasks are ready %.2f s); stream temp budget while it waits: %s; entity "
+	    "spawns per class a frame while it waits: %s; the AI frame job timed %s", h ? "on" : "FAILED to hook the observer start",
+	    g_earlyMode ? "ON" : "off", g_earlyCfg.hold,
 	    g_tempMB ? (std::to_string(g_tempMB.load()) + " MB").c_str() : "the game's own",
+	    g_spawnN ? std::to_string(g_spawnN.load()).c_str() : "the game's own",
 	    ai ? "(the AI module's job start and Main's wait for it)" : "NOT (its code differs or the hooks failed)");
 }
 
@@ -636,7 +675,8 @@ void Readiness_Command(const char* args) {
 	while (args && *args == ' ') args++;
 	const auto save = [] {
 		if (FILE* f = fopen(g_modeFile.c_str(), "w")) {
-			if (g_earlyCfg.hold != early::Cfg{}.hold) fprintf(f, "%d %d %.2f\n", g_earlyMode.load(), g_tempMB.load(), g_earlyCfg.hold);
+			if (g_spawnN.load()) fprintf(f, "%d %d %.2f %d\n", g_earlyMode.load(), g_tempMB.load(), g_earlyCfg.hold, g_spawnN.load());
+			else if (g_earlyCfg.hold != early::Cfg{}.hold) fprintf(f, "%d %d %.2f\n", g_earlyMode.load(), g_tempMB.load(), g_earlyCfg.hold);
 			else fprintf(f, "%d %d\n", g_earlyMode.load(), g_tempMB.load());
 			fclose(f);
 		}
@@ -675,9 +715,21 @@ void Readiness_Command(const char* args) {
 		Log("readiness: temp takes 0 (the game's own) or 32-512 MB");
 		return;
 	}
-	Log("readiness: %s, let me in early %s (hold %.2f s), temp budget %d MB (0 = the game's)  (readiness early 0|1, "
-	    "readiness hold 0.05-1, readiness temp 0|32-512)", g_off ? "off" : "on", g_earlyMode ? "ON" : "off", g_earlyCfg.hold,
-	    g_tempMB.load());
+	if (args && !strncmp(args, "spawn", 5)) {
+		int n = -1;
+		if (sscanf(args + 5, "%d", &n) == 1 && (n == 0 || (n >= 4 && n <= 64))) {
+			g_spawnN = n;
+			save();
+			Log("readiness: entity spawns per class a frame while a load screen waits: %s (kept for the next start)",
+			    n ? std::to_string(n).c_str() : "the game's own");
+			return;
+		}
+		Log("readiness: spawn takes 0 (the game's own) or 4-64");
+		return;
+	}
+	Log("readiness: %s, let me in early %s (hold %.2f s), temp budget %d MB (0 = the game's), entity spawns %d (0 = the "
+	    "game's)  (readiness early 0|1, readiness hold 0.05-1, readiness temp 0|32-512, readiness spawn 0|4-64)",
+	    g_off ? "off" : "on", g_earlyMode ? "ON" : "off", g_earlyCfg.hold, g_tempMB.load(), g_spawnN.load());
 }
 
 void Readiness_Frame() {
@@ -799,6 +851,7 @@ void Readiness_Frame() {
 		bool loadGate = false;
 		for (auto& g : g_gates) if (early::Eligible(g.mask)) loadGate = true;
 		TempBudget(loadGate);
+		SpawnBudget(loadGate);
 		Streamahead_SetGate(loadGate);
 		Morphpool_SetGate(loadGate);
 		Hitch_Window(loadGate);
