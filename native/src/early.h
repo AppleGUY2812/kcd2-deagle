@@ -8,6 +8,16 @@
 // every 10 ms (instruction pointer + return addresses + its CPU time) into fixed buffers until Early_Report (mode 1) or
 // the first frame (mode 2, default since 2026-10-25: the hitch sampler went blind at 0.6-2.1 s after the plugin in boot
 // 18:45 while it could not suspend the driver worker). Log only.
+// Mode 3 (default since 2026-10-25): also the game's render and audio threads ("RenderThread", "AudioThread(NoCfg)") and our
+// GPU workers (gpuwarm, pipelib, ngxearly), found by name every 100 ms; every sampled thread has its own sampler thread
+// (one that can't be stopped, e.g. in the kernel, no longer blinds the others), all sample buffers touched before use;
+// busy shares from each thread's CPU cycles (QueryThreadCycleTime); per second: while Main waited, how often each other
+// thread was busy; for each stretch of 300 ms+ without a Main sample: what the others and the memory probe did then.
+// The memory probe: every 10 ms a 10 ms sleep (late = not run), a first touch of a fresh page (the working-set lock) and a
+// 64 KB VirtualAlloc + free (the address-space lock), in fastload_early_probe.csv. Why: boots 153-155, Main stopped
+// ~1.5 s at 1.3-3.4 s after launch in its D3D set-up (16 ms of CPU), the outside sampler saw no thread at all then; it
+// came with streamahead's start-up read in 10 of 11 boots, and once (155hold2) without it.
+// fastload_early.csv: one row a sample, the thread and its busy share since its last sample in the last two columns.
 void Early_Start(HMODULE self);    // DllMain, DLL_PROCESS_ATTACH
 void Early_Report(uintptr_t gameBase, size_t gameSize);   // Init's first lines: the times, the top places, fastload_early.csv
 void Early_Frame(uintptr_t gameBase, size_t gameSize);    // the first frame (fastload_early.txt 2, default): Main to here, a line a second
