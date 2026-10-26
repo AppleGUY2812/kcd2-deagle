@@ -114,11 +114,28 @@ void Store(void* tt, const GStr& derived) {
 	ReleaseSRWLockExclusive(&g_lock);
 }
 
+void NameV2(void* reg, void** t, void* sv, bool check);
+bool g_v2 = true;   // off for the session after a check finds a rename it would have missed
+long long g_v2calls = 0;
+SRWLOCK g_v2lock = SRWLOCK_INIT;
+
 // FUN_1804f353c, the game's steps in its order; only the no-op derive + update pairs are skipped.
 void __fastcall HkCustom(void* reg, void** t, void* sv) {
 	if (!*((char*)*t + kValid)) return;
 	LARGE_INTEGER a; QueryPerformanceCounter(&a);
 	g_calls++;
+	static thread_local int depth = 0;
+	if (g_mode >= 3 && g_v2 && !depth) {   // v2: only the types a rename can change (rttrname.h); a nested call goes v1
+		AcquireSRWLockExclusive(&g_v2lock);
+		depth++;
+		const long long n = g_v2calls++;
+		NameV2(reg, t, sv, g_mode == 4 || n < 8 || (n & 63) == 0);
+		depth--;
+		ReleaseSRWLockExclusive(&g_v2lock);
+		LARGE_INTEGER z; QueryPerformanceCounter(&z);
+		g_ticks += z.QuadPart - a.QuadPart;
+		return;
+	}
 	{
 		const char* const* v = (const char* const*)sv;
 		GStr s; Empty(s);
@@ -212,6 +229,228 @@ void __fastcall HkCustom(void* reg, void** t, void* sv) {
 	g_t2 += z.QuadPart - m.QuadPart;
 }
 
+// ---- v2 (mode 3, rttrname.h): only the types a rename can change are visited ----
+constexpr size_t kClassFn = 0xb8;   // type_data: class_data* (*)(), as FUN_1804f2510 calls it
+constexpr size_t kNested = 0x98;    // class_data: vector<type_data*> template arguments {begin, end}
+struct TI {
+	void* td = nullptr;
+	bool inList = false, derivedKind = false, wrapper = false, tmpl = false;
+	bool dirty = false, tdirty = false;   // for the plain pass / the template pass
+	std::vector<int> rawDeps;   // non-raw types whose raw type is this one
+	std::vector<int> argDeps;   // templates with this type among their arguments
+};
+std::vector<TI> g_ti;
+std::vector<void*> g_hk;   // open addressing: type_data* -> index in g_ti
+std::vector<int> g_hv;
+size_t g_hcount = 0;
+inline size_t Hash(void* p) { uint64_t x = (uint64_t)p; x ^= x >> 33; x *= 0xff51afd7ed558ccdULL; x ^= x >> 29; return (size_t)x; }
+int Find(void* p) {
+	const size_t m = g_hk.size() - 1;
+	for (size_t h = Hash(p) & m;; h = (h + 1) & m) {
+		if (g_hk[h] == p) return g_hv[h];
+		if (!g_hk[h]) return -1;
+	}
+}
+void Put(void* p, int v) {
+	const size_t m = g_hk.size() - 1;
+	size_t h = Hash(p) & m;
+	while (g_hk[h]) h = (h + 1) & m;
+	g_hk[h] = p; g_hv[h] = v;
+}
+int Get(void* p) {
+	const int i = Find(p);
+	if (i >= 0) return i;
+	if ((g_hcount + 1) * 2 > g_hk.size()) {   // grow
+		std::vector<void*> ok; ok.swap(g_hk);
+		std::vector<int> ov; ov.swap(g_hv);
+		g_hk.assign(ok.size() * 2, nullptr); g_hv.assign(ok.size() * 2, -1);
+		for (size_t k = 0; k < ok.size(); k++) if (ok[k]) Put(ok[k], ov[k]);
+	}
+	const int v = (int)g_ti.size();
+	g_ti.emplace_back(); g_ti.back().td = p;
+	Put(p, v); g_hcount++;
+	return v;
+}
+uint64_t g_bloom[4];
+inline void BloomClear() { memset(g_bloom, 0, sizeof g_bloom); }
+inline void BloomAdd(void* p) { const size_t h = Hash(p) >> 56; g_bloom[h >> 6] |= 1ull << (h & 63); }
+inline bool BloomHas(void* p) { const size_t h = Hash(p) >> 56; return (g_bloom[h >> 6] >> (h & 63)) & 1; }
+
+std::vector<int> g_pdirty, g_tdirty, g_wrappers, g_pendingRaw;   // dirty lists (flags in TI), carried between calls
+std::vector<void*> g_snap;
+size_t g_lastSize = 0;
+long long g_v2checks = 0, g_v2pd = 0, g_v2td = 0, g_v2scans = 0, g_v2new = 0, g_v2emptyArgs = 0;
+char g_v2bad[200] = "";
+inline bool NameIsOrig(void* td) {
+	const GStr& n = NameOf(td);
+	const char* const* o = (const char* const*)((char*)td + kOrig);
+	return n.size == (size_t)o[1] && !memcmp(n.data(), o[0], n.size);
+}
+inline void MarkP(int i) { TI& x = g_ti[i]; if (!x.dirty) { x.dirty = true; g_pdirty.push_back(i); } }
+inline void MarkT(int i) { TI& x = g_ti[i]; if (!x.tdirty) { x.tdirty = true; g_tdirty.push_back(i); } }
+
+bool Args(void* p, void*** ab, void*** ae) {   // a template's arguments, as FUN_1804f2510 reads them
+	__try {
+		using ClassFn = char* (*)();
+		ClassFn f = *(ClassFn*)((char*)p + kClassFn);
+		if (!f) return false;
+		char* cd = f();
+		if (!cd) return false;
+		*ab = *(void***)(cd + kNested);
+		*ae = *(void***)(cd + kNested + 8);
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void Discover(void* p) {   // a type seen in the list for the first time
+	int i = Get(p);
+	if (g_ti[i].inList) return;
+	g_ti[i].inList = true;
+	g_v2new++;
+	void* raw = *(void**)((char*)p + kRaw);
+	const uint32_t fl = *(uint32_t*)((char*)p + kFlags);
+	if (raw != p) {
+		const int r = Get(raw);   // may grow g_ti
+		g_ti[r].rawDeps.push_back(i);
+		g_ti[i].derivedKind = true;
+		if (fl & 4) { g_ti[i].wrapper = true; g_wrappers.push_back(i); }
+		MarkP(i);
+	}
+	if (fl & 0x400) {
+		g_ti[i].tmpl = true;
+		void** ab = nullptr; void** ae = nullptr;
+		if (!Args(p, &ab, &ae)) { ab = ae = nullptr; snprintf(g_v2bad, sizeof g_v2bad, "template %p: its arguments couldn't be read", p); g_v2 = false; }
+		if (ab == ae) g_v2emptyArgs++;
+		for (void** a = ab; a != ae; a++) { const int k = Get(*a); g_ti[k].argDeps.push_back(i); }
+		MarkT(i);
+	}
+}
+
+int Idx(void* p) {
+	int i = Find(p);
+	if (i < 0 || !g_ti[i].inList) { Discover(p); i = Find(p); }
+	return i;
+}
+// One naming call, v2. check: also run the game's full algorithm and count renames v2 would have missed.
+void NameV2(void* reg, void** t, void* sv, bool check) {
+	void* self = *t;
+	bool selfRenamed;
+	{
+		const char* const* v = (const char* const*)sv;
+		GStr s; Empty(s);
+		g_make(&s, v[0], v[0] + (size_t)v[1]);
+		selfRenamed = !Equal(s, NameOf(self));
+		g_update(reg, &s, t);   // frees s
+	}
+	void** b = *(void***)((char*)reg + 0x28);
+	void** e = *(void***)((char*)reg + 0x30);
+	g_snap.assign(b, e);
+	if (g_snap.size() != g_lastSize) {   // new types (the list only grows; renames move entries)
+		g_v2scans++;
+		if (g_snap.size() < g_lastSize) { snprintf(g_v2bad, sizeof g_v2bad, "the type list shrank (%zu -> %zu)", g_lastSize, g_snap.size()); g_v2 = false; }
+		for (void* p : g_snap) {
+			const int i = Find(p);
+			if (i < 0 || !g_ti[i].inList) Discover(p);
+		}
+	}
+	if (!g_v2) check = true;   // turned off above: this call the game's full way
+	const int si = Get(self);
+	std::vector<int> renamed;   // this call's renames (their template users get looked at)
+	if (selfRenamed) {
+		renamed.push_back(si);
+		for (int d : g_ti[si].rawDeps) MarkP(d);
+		if (g_ti[si].derivedKind) g_pendingRaw.push_back(-1 - si);   // its own derived name comes back next call
+	}
+	for (int r : g_pendingRaw) {   // templates renamed last call: their derived types; a custom-named derived type itself
+		if (r >= 0) for (int d : g_ti[r].rawDeps) MarkP(d);
+		else MarkP(-1 - r);
+	}
+	g_pendingRaw.clear();
+	for (int w : g_wrappers) MarkP(w);
+	long long missed = 0;
+	auto doPlain = [&](void*& slot, int i) {   // the game's derive + update; true if renamed
+		GStr d; Empty(d);
+		g_derive(&d, &slot);
+		if (Equal(d, NameOf(slot))) { g_free(&d); return false; }
+		g_update(reg, &d, &slot);   // frees d
+		renamed.push_back(i);
+		return true;
+	};
+	// the plain pass, in the list's order
+	if (check) {
+		for (void*& p : g_snap) {
+			if (p == self || *(void**)((char*)p + kRaw) == p) continue;
+			const int i = Idx(p);
+			const bool flagged = g_ti[i].dirty;
+			g_ti[i].dirty = false;
+			if (doPlain(p, i) && !flagged && !missed++)
+				snprintf(g_v2bad, sizeof g_v2bad, "type %p '%.60s' renamed without a v2 mark", p, NameOf(p).data());
+		}
+	} else if (g_pdirty.size() == 1 && g_ti[g_pdirty[0]].td != self) {
+		g_ti[g_pdirty[0]].dirty = false;
+		void* p = g_ti[g_pdirty[0]].td;
+		doPlain(p, g_pdirty[0]);
+		g_v2pd++;
+	} else if (!g_pdirty.empty()) {
+		BloomClear();
+		for (int i : g_pdirty) BloomAdd(g_ti[i].td);
+		for (void*& p : g_snap) {
+			if (!BloomHas(p) || p == self) continue;
+			const int i = Find(p);
+			if (i < 0 || !g_ti[i].dirty) continue;
+			g_ti[i].dirty = false;
+			doPlain(p, i);
+			g_v2pd++;
+		}
+	}
+	{   // what is still marked (the custom-named type itself) stays for the next call
+		std::vector<int> keep;
+		for (int i : g_pdirty) if (g_ti[i].dirty) keep.push_back(i);
+		g_pdirty.swap(keep);
+	}
+	// the template pass: templates holding a renamed type, the new ones, and those carried from earlier calls
+	for (int r : renamed) for (int u : g_ti[r].argDeps) MarkT(u);
+	auto doTmpl = [&](void*& slot, int i) {
+		if (!NameIsOrig(slot)) return false;   // FUN_1804f2510 keeps a name that is no longer the compiler's
+		GStr s; Empty(s);
+		g_tmpl(&s, slot);
+		if (Equal(s, NameOf(slot))) { g_free(&s); return false; }
+		g_update(reg, &s, &slot);   // frees s
+		g_pendingRaw.push_back(i);
+		for (int u : g_ti[i].argDeps) { MarkT(u); BloomAdd(g_ti[u].td); }   // later in the list: this call; earlier: the next
+		return true;
+	};
+	if (check) {
+		BloomClear();
+		for (void*& p : g_snap) {
+			if (p == self || !(*(uint32_t*)((char*)p + kFlags) & 0x400)) continue;
+			const int i = Idx(p);
+			const bool flagged = g_ti[i].tdirty;
+			g_ti[i].tdirty = false;
+			if (doTmpl(p, i) && !flagged && !missed++)
+				snprintf(g_v2bad, sizeof g_v2bad, "template %p '%.60s' renamed without a v2 mark", p, NameOf(p).data());
+		}
+	} else if (!g_tdirty.empty()) {
+		BloomClear();
+		for (int i : g_tdirty) BloomAdd(g_ti[i].td);
+		for (void*& p : g_snap) {
+			if (!BloomHas(p) || p == self) continue;
+			const int i = Find(p);
+			if (i < 0 || !g_ti[i].tdirty) continue;
+			g_ti[i].tdirty = false;
+			doTmpl(p, i);
+			g_v2td++;
+		}
+	}
+	{
+		std::vector<int> keep;
+		for (int i : g_tdirty) if (g_ti[i].tdirty) keep.push_back(i);
+		g_tdirty.swap(keep);
+	}
+	g_lastSize = (size_t)(*(void***)((char*)reg + 0x30) - *(void***)((char*)reg + 0x28));
+	if (check) g_v2checks++;
+	if (missed) { g_v2 = false; g_mismatch += missed; }   // the full algorithm already did this call right; v1 from now on
+}
+
 bool Check(uintptr_t base, uintptr_t rva, const unsigned char* bytes, size_t n) { return !memcmp((void*)(base + rva), bytes, n); }
 
 }  // namespace
@@ -226,7 +465,7 @@ bool Rttrname_EarlyInstall(uintptr_t base, void* self) {
 		if (fscanf(fp, "%d", &g_mode) != 1) g_mode = 1;
 		fclose(fp);
 	}
-	if (g_mode != 1 && g_mode != 2) { g_mode = 0; return false; }
+	if (g_mode < 1 || g_mode > 4) { g_mode = 0; return false; }
 	if (!Check(base, kRvaCustomName, kCustomBytes, sizeof kCustomBytes) || !Check(base, kRvaDerive, kDeriveBytes, sizeof kDeriveBytes) ||
 	    !Check(base, kRvaUpdate, kUpdateBytes, sizeof kUpdateBytes) || !Check(base, kRvaAssign, kAssignBytes, sizeof kAssignBytes) ||
 	    !Check(base, kRvaFree, kFreeBytes, sizeof kFreeBytes) || !Check(base, kRvaTmplName, kTmplBytes, sizeof kTmplBytes) ||
@@ -237,6 +476,9 @@ bool Rttrname_EarlyInstall(uintptr_t base, void* self) {
 	g_free = (FreeFn)(base + kRvaFree);
 	g_tmpl = (TmplFn)(base + kRvaTmplName);
 	g_make = (MakeFn)(base + kRvaMake);
+	g_hk.assign(32768, nullptr);
+	g_hv.assign(32768, -1);
+	g_ti.reserve(16384);
 	g_memo.reserve(16384);
 	g_tmemo.reserve(4096);
 	void* t = (void*)(base + kRvaCustomName);
@@ -250,6 +492,11 @@ void Rttrname_Report() {
 	if (g_mode == -1) { Log("rttrname: the rttr naming code differs (another game version?) - off"); return; }
 	if (g_mode == -2) { Log("rttrname: hook failed - off"); return; }
 	if (!g_orig) { Log("rttrname: off (the plugin loaded after the game's start-up code: global.ini DontLoadFromDllMain=0)"); return; }
+	if (g_mode >= 3)
+		Log("rttrname: v2 (mode %d) %s: %lld of %lld namings in v2, %lld checked against the game's full pass; %lld derived names and %lld "
+		    "template names redone; %lld list scans for new types (%lld types, %lld templates with no arguments yet)%s%s",
+		    g_mode, g_v2 ? "on" : "OFF after a check", g_v2calls, g_calls.load(), g_v2checks, g_v2pd, g_v2td, g_v2scans, g_v2new,
+		    g_v2emptyArgs, g_v2bad[0] ? ": " : "", g_v2bad);
 	Log("rttrname: %lld type namings in %.0f ms; %lld other types looked at, %lld unchanged names skipped, %lld derived the game's way; "
 	    "%lld skips checked; template names: %lld looked at, %lld unchanged skipped, %lld checked; %lld differ%s%s (the plain "
 	    "names %.0f ms, the template names %.0f ms)", g_calls.load(), g_ticks.load() * 1000.0 / g_freq, g_visited.load(),

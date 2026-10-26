@@ -13,7 +13,16 @@
 // template-instance pass, the order, the locks) calls the game's own functions as before.
 // Checked: the first 4,000 skips, then every 64th, also derive the game's way and must give the remembered string;
 // one mismatch turns the memory off for the session (the full game work runs again from then on).
-// fastload_rttrname.txt next to the plugin: 1 on (default), 0 off, 2 check every skip. Needs the plugin loaded before
+// v2 (mode 3, 2026-10-25): v1 still looked at every type in every call (boot 164b1: 1.1 M plain and 1.8 M template looks
+// for ~3.7 k changes, 305 ms, inside the static initializers that hold the loader lock until ~0.7 s). The game's rules
+// make the changes traceable: a derived name changes only when its raw type's name does; a template's name is re-derived
+// only while it is still its compiler name, from its arguments' current names (FUN_1804f2510, arguments at class_data
+// +0x98). So v2 keeps, per type, its derived types and the templates using it; a rename marks those, and each pass
+// visits only the marked ones, in the list's order (the list is sorted by name: a 256-bit filter over the copy finds
+// them), new types (the list grew) included. Templates renamed late in a call mark earlier ones for the next call, as
+// the game's full pass would. Checked: the first 8 calls and every 64th run the game's full algorithm instead and count
+// any rename v2 had not marked; one turns v2 off for the session (v1 from then on). Mode 4 checks every call.
+// fastload_rttrname.txt next to the plugin: 1 on (default), 0 off, 2 check every skip, 3 v2, 4 v2 checked every call. Needs the plugin loaded before
 // WHGame's static initializers (global.ini DontLoadFromDllMain=0). "rttrname:" line in the log.
 bool Rttrname_EarlyInstall(uintptr_t gameBase, void* selfModule);   // DllMain, MinHook initialized; true if hooked
 void Rttrname_Report();   // Init: one log line with the counts

@@ -54,6 +54,32 @@ char g_note[160] = "";
 inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart; }
 inline double Ms(long long a, long long b) { return (double)(b - a) * 1000.0 / g_freq; }
 
+// nvcamera (gpuwarm.h): ntdll's LdrLoadDll refuses NvCamera64.dll, as if the driver had no NvCamera folder.
+struct UStr { USHORT len, max; PWSTR buf; };   // UNICODE_STRING
+using LdrLoadDllFn = LONG(NTAPI*)(PWSTR path, PULONG flags, UStr* name, PVOID* base);
+LdrLoadDllFn g_origLdr = nullptr;
+std::atomic<long> g_camRefused{ 0 };
+int g_camMode = 0;   // 1 kept out, 0 the driver's own
+bool IsNvCamera(const UStr* s) {
+	__try {
+		if (!s || !s->buf) return false;
+		size_t n = s->len / 2;
+		if (n >= 4 && !_wcsnicmp(s->buf + n - 4, L".dll", 4)) n -= 4;
+		static const wchar_t kName[] = L"nvcamera64";
+		const size_t m = sizeof kName / sizeof kName[0] - 1;
+		if (n < m || _wcsnicmp(s->buf + n - m, kName, m)) return false;
+		return n == m || s->buf[n - m - 1] == L'\\' || s->buf[n - m - 1] == L'/';
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+LONG NTAPI HkLdrLoadDll(PWSTR path, PULONG flags, UStr* name, PVOID* base) {
+	if (IsNvCamera(name)) {
+		g_camRefused++;
+		if (base) *base = nullptr;
+		return (LONG)0xC0000135;   // STATUS_DLL_NOT_FOUND
+	}
+	return g_origLdr(path, flags, name, base);
+}
+
 using CreateFactoryFn = HRESULT(WINAPI*)(REFIID, void**);
 using D3D12CreateFn = HRESULT(WINAPI*)(IUnknown*, UINT, REFIID, void**);
 using D3D11CreateFn = HRESULT(WINAPI*)(IDXGIAdapter*, UINT, HMODULE, UINT, const UINT*, UINT, UINT, void**, UINT*, void**);
@@ -198,6 +224,16 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 		if (fscanf(fp, "%d", &mode) != 1) mode = 1;
 		fclose(fp);
 	}
+	if (FILE* fp = fopen((dir + "fastload_nvcamera.txt").c_str(), "r")) {
+		if (fscanf(fp, "%d", &g_camMode) != 1) g_camMode = 0;
+		fclose(fp);
+	}
+	if (g_camMode == 1) {   // before the worker and anything else can load the driver
+		void* ldr = (void*)GetProcAddress(GetModuleHandleA("ntdll.dll"), "LdrLoadDll");
+		if (!ldr || GetModuleHandleW(L"NvCamera64.dll") || MH_CreateHook(ldr, (void*)&HkLdrLoadDll, (void**)&g_origLdr) != MH_OK)
+			g_camMode = -1;
+		else if (MH_EnableHook(ldr) != MH_OK) { MH_RemoveHook(ldr); g_camMode = -1; }
+	}
 	if (mode != 1) { g_state = -1; return false; }
 	int dmode = 1;
 	if (FILE* fp = fopen((dir + "fastload_devahead.txt").c_str(), "r")) {
@@ -227,6 +263,9 @@ bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 }
 
 void Gpuwarm_Report() {
+	Log("nvcamera: %s", g_camMode == 1 ? "kept out of the process (NVIDIA filters, photo mode and RTX HDR off in this game; fastload_nvcamera.txt)"
+	                    : g_camMode == -1 ? "hook failed or already loaded - the driver's own"
+	                                      : "the driver's own (fastload_nvcamera.txt 1 keeps NvCamera64.dll out)");
 	switch (g_state.load()) {
 	case 0: Log("gpuwarm: off (the plugin loaded after the game's start-up code: global.ini DontLoadFromDllMain=0)"); return;
 	case -1: Log("gpuwarm: off (fastload_gpuwarm.txt)"); return;
@@ -246,4 +285,5 @@ void Gpuwarm_Frame() {
 		    Ms(g_t0, g_t1), g_adapters, g_ok, g_note[0] ? "; " : "", g_note, g_skippedSys ? "system info skipped" : "system info never came",
 		    g_skipped ? "GPU info skipped" : "GPU info never came");
 	else Log("gpuwarm: the driver warm-up is still running at the first frame");
+	if (g_camMode == 1) Log("nvcamera: %ld load(s) of NvCamera64.dll refused", g_camRefused.load());
 }

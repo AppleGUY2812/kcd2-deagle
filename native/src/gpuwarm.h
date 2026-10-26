@@ -21,6 +21,11 @@
 // layer or DRED is on (enabling those with a device alive removes it / misses it), and drops the worker's reference
 // after. NVIDIA Aftermath (on in this install) makes GPU crash dumps only for devices made after its set-up: this one
 // is made before, so the game's GPU crash dumps are lost. "devahead:" lines. fastload_devahead.txt: 1 on (default), 0 off.
+// nvcamera (2026-10-25): inside that device creation the NVIDIA driver loads NvCamera64.dll (photo mode, game filters,
+// RTX HDR; they need the NVIDIA overlay, off on this PC). It loads nvapi and nvcuda, makes its own D3D11 device and checks
+// signatures: 432 of the worker's 969 ms in boot 165e3's exact stacks, and Main waits for the worker (580-680 ms with
+// zipidx 1). fastload_nvcamera.txt 1: ntdll's LdrLoadDll refuses NvCamera64.dll in this process (as if the driver had no
+// NvCamera folder), so those NVIDIA features are off in this game; 0 (default) the driver's own. "nvcamera:" lines.
 // fastload_gpuwarm.txt next to the plugin: 1 on (default), 0 off. Needs the plugin loaded before WHGame's static
 // initializers (global.ini DontLoadFromDllMain=0). "gpuwarm:" lines in the log.
 bool Gpuwarm_EarlyInstall(uintptr_t gameBase, void* selfModule);   // DllMain, MinHook initialized
