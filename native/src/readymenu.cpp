@@ -24,7 +24,7 @@ constexpr uintptr_t kMenu = 0x120;   // C_UIMenu; its +0x58 controller's vt[1](p
 
 uintptr_t g_base = 0;
 std::string g_dir;
-std::atomic<int> g_mode{0}, g_idleS{5};
+std::atomic<int> g_mode{0}, g_idleS{5}, g_delayMs{500};   // delay: menu ready -> our load (third number)
 using StartupFn = void(__fastcall*)(uintptr_t);
 using LoadLastFn = bool(__fastcall*)(uintptr_t);
 StartupFn g_origStartup = nullptr;
@@ -69,16 +69,17 @@ bool OpenPause(uintptr_t ui) {
 
 void Load() {
 	if (FILE* f = fopen((g_dir + "fastload_readymenu.txt").c_str(), "r")) {
-		int m = 0, s = 5;
-		const int n = fscanf_s(f, "%d %d", &m, &s);
+		int m = 0, s = 5, d = 500;
+		const int n = fscanf_s(f, "%d %d %d", &m, &s, &d);
 		if (n >= 1 && m >= 0 && m <= 1) g_mode = m;
 		if (n >= 2 && s >= 2 && s <= 120) g_idleS = s;
+		if (n >= 3 && d >= 0 && d <= 5000) g_delayMs = d;
 		fclose(f);
 	}
 }
 
 void Save() {
-	if (FILE* f = fopen((g_dir + "fastload_readymenu.txt").c_str(), "w")) { fprintf(f, "%d %d\n", g_mode.load(), g_idleS.load()); fclose(f); }
+	if (FILE* f = fopen((g_dir + "fastload_readymenu.txt").c_str(), "w")) { fprintf(f, "%d %d %d\n", g_mode.load(), g_idleS.load(), g_delayMs.load()); fclose(f); }
 }
 
 }  // namespace
@@ -100,8 +101,8 @@ void Readymenu_Install(uintptr_t base, void* self) {
 		Log("readymenu: start-up hook FAILED - off");
 		return;
 	}
-	Log("readymenu: mode %d (%s), %d s without input", g_mode.load(), g_mode ? "the newest save loads by itself at the menu" : "off",
-	    g_idleS.load());
+	Log("readymenu: mode %d (%s), %d s without input, starts %d ms after the menu is ready", g_mode.load(),
+	    g_mode ? "the newest save loads by itself at the menu" : "off", g_idleS.load(), g_delayMs.load());
 }
 
 void Readymenu_Frame(int s) {
@@ -131,7 +132,7 @@ void Readymenu_Frame(int s) {
 		    (now - g_start) / 1000.0, (now - g_startupAt) / 1000.0, Animahead_MenuSettled() ? "done" : "still running (the load waits for them)",
 		    Terrainfast_MenuPreloadDone() ? "done" : "cut short (the load reads the rest)");
 	}
-	if (now - g_readyAt < 500) return;
+	if (now - g_readyAt < (ULONGLONG)g_delayMs.load()) return;
 	// Input counts only while the game is the foreground window: someone in another program is not in the game's menus
 	// (boot 79: typing in another window held the load 24.8 s).
 	const ULONGLONG idle = IdleMs();
