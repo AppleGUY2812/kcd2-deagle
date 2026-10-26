@@ -110,9 +110,20 @@ bool Grab(int ti) {
 }
 
 using NtCreateThreadExFn = LONG(NTAPI*)(PHANDLE, ACCESS_MASK, PVOID, HANDLE, PVOID, PVOID, ULONG, SIZE_T, SIZE_T, SIZE_T, PVOID);
+using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+using NtQitFn = LONG(NTAPI*)(HANDLE, int, PVOID, ULONG, PULONG);
+// Resolved in Early_Start on Main. The sampler threads are made with THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH, which also
+// leaves them without the DLL's TLS block: no function-local statics (MSVC's guard reads a TLS variable), no
+// thread_local, nothing that needs either may run on them (b529e1f did: the game died at 0.3 s in every boot of 157).
+NtCreateThreadExFn g_create = nullptr;
+DescFn g_desc = nullptr;
+NtQitFn g_qit = nullptr;
+DWORD g_named[2048];   // threads already named something else
+int g_nNamed = 0;
+
 // 0x2 = THREAD_CREATE_FLAGS_SKIP_THREAD_ATTACH: no DllMain thread notifications, so no wait for the loader lock there
 bool Spawn(LPTHREAD_START_ROUTINE fn, void* arg) {
-	static const auto create = (NtCreateThreadExFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtCreateThreadEx");
+	const NtCreateThreadExFn create = g_create;
 	HANDLE t = nullptr;
 	if (!create || create(&t, THREAD_ALL_ACCESS, nullptr, GetCurrentProcess(), (PVOID)fn, arg, 0x2, 0, 0, 0, nullptr) < 0 || !t)
 		return false;
@@ -128,16 +139,14 @@ DWORD WINAPI TargetSampler(LPVOID p) {
 }
 
 struct Tbi { LONG exitStatus; PVOID teb; HANDLE pid, tid; ULONG_PTR affinity; LONG prio, basePrio; };
-using NtQitFn = LONG(NTAPI*)(HANDLE, int, PVOID, ULONG, PULONG);
 
 // Mode 3: the other threads by their names (set as they start); each found one gets its own sampler. Runs on Main's
 // sampler with no thread stopped (it allocates).
 void FindThreads() {
-	using DescFn = HRESULT(WINAPI*)(HANDLE, PWSTR*);
-	static const DescFn desc = (DescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
-	static const NtQitFn qit = (NtQitFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationThread");
-	static DWORD named[2048];   // threads already named something else
-	static int nNamed = 0;
+	const DescFn desc = g_desc;
+	const NtQitFn qit = g_qit;
+	DWORD* const named = g_named;
+	int& nNamed = g_nNamed;
 	if (!desc || !qit) return;
 	HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
 	if (snap == INVALID_HANDLE_VALUE) return;
@@ -249,6 +258,10 @@ void Early_Start(HMODULE self) {
 	GetCurrentThreadStackLimits(&lo, &hi);
 	g_stackBase = hi;
 	g_main = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, g_mainTid);
+	g_create = (NtCreateThreadExFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtCreateThreadEx");
+	g_qit = (NtQitFn)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationThread");
+	g_desc = (DescFn)GetProcAddress(GetModuleHandleW(L"kernelbase.dll"), "GetThreadDescription");   // kernel32's is a forwarder
+	if (!g_desc) g_desc = (DescFn)GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
 	g_t[0].h = g_main;
 	g_t[0].stackBase = g_stackBase;
 	g_t[0].tid = g_mainTid;

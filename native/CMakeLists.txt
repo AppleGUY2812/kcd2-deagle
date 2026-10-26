@@ -40,6 +40,9 @@ add_executable(hitch_test test/hitch_test.cpp src/hitch.cpp src/log.cpp ${MINHOO
 target_include_directories(hitch_test PRIVATE ${MINHOOK_INC})
 target_compile_options(hitch_test PRIVATE /W3 /EHa /O2)   # as the plugin: guarded reads catch inline faults
 set_property(TARGET hitch_test PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
+# outside-the-game test: early.cpp's mode 3 samplers on SKIP_THREAD_ATTACH threads, as at launch (native/test/early_test.cpp)
+add_executable(early_test test/early_test.cpp src/early.cpp src/log.cpp)
+target_compile_options(early_test PRIVATE /W3 /EHa /O2)   # as the plugin
 # outside-the-game test: crashlog.cpp's records of caught faults (native/test/crashlog_test.cpp, runs on Windows)
 add_executable(crashlog_test test/crashlog_test.cpp src/crashlog.cpp src/log.cpp)
 target_compile_options(crashlog_test PRIVATE /W3 /EHa /O2)
