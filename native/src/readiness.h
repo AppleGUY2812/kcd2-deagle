@@ -28,7 +28,8 @@ void Readiness_Install(uintptr_t gameBase);   // after MH_Initialize
 // memory or a pause holds it), asleep with nothing queued, temp memory full.
 // "readiness spawn <N>" (4-64; 0 = the game's own, the default; kept as the file's fourth number): while a save-load or
 // fast-travel gate waits, es_PerInstanceStreamingClassSpawnBudget (the entities spawned a frame per streamable class: 2,
-// 4 while a fader is up) is raised to that, then put back. With morphpool on, the settle gate waits on EntityStreaming.
+// 4 while a fader is up) is raised to that, and so is the constant 4 the game uses while a fader (the loading screen)
+// is up; both put back after. With morphpool on, the settle gate waits on EntityStreaming (lights and particles).
 // "readiness hold <s>" (0.05-1, the default 0.3; kept as the file's third number): how long the must-have tasks stay
 // ready before "let me in early" opens the gate.
 // The AI module's frame job (one "XGenUpdateJob" a frame, which Main waits for at the end of C_XGenAIModule's Update) is

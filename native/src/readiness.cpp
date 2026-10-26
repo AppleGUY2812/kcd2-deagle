@@ -502,9 +502,24 @@ void TempBudget(bool want) {
 // callback thread freed (morphpool.h), the settle gate waits on EntityStreaming: boots 180B1-4, ~300 entities in flight
 // at 1.0 s, ready at 1.3-1.4 s, while the spawns are 2 % of Main (the AI update ~60 %: the frames are long, the count
 // per frame small). Same rules as the temp budget: raised only from the game's value, put back if still ours.
-constexpr uintptr_t kRvaSpawnBudget = 0x492f7a4, kRvaSpawnRead = 0x9b6b5d;
+// Queue 181 (spawn 32 on the variable only): no change, because while a fader is up (the loading screen) the function
+// uses the constant 4 instead: `mov ecx, 4` at +0x9b6b77, `cmovne r12d, ecx` at +0x9b6b7c. So the constant's byte
+// (+0x9b6b78) is raised to N too while the gate waits and put back to 4 after (Main writes it, and Main is the only
+// thread that runs FUN_1809b6b20). The 4 streamable classes (FUN_180cb31cc: small / environment / reflex lights,
+// particles, caps 256 / 64 / 64 / 256) and the despawns share the budget; a full class still stops at its cap.
+constexpr uintptr_t kRvaSpawnBudget = 0x492f7a4, kRvaSpawnRead = 0x9b6b5d, kRvaFaderImm = 0x9b6b78;
 const unsigned char kSpawnReadBytes[] = { 0x44,0x8b,0x25,0x40,0x8c,0xf7,0x03 };
-bool g_spawnOk = false;
+const unsigned char kFaderBytes[] = { 0xb9,0x04,0x00,0x00,0x00,0x44,0x0f,0x45,0xe1 };   // at +0x9b6b77
+bool g_spawnOk = false, g_faderOk = false;
+int g_faderSet = -1;   // the constant we wrote (-1: the game's 4 is there)
+bool WrCode(uintptr_t a, uint8_t v) {
+	DWORD old = 0;
+	if (!VirtualProtect((void*)a, 1, PAGE_EXECUTE_READWRITE, &old)) return false;
+	*(volatile uint8_t*)a = v;
+	VirtualProtect((void*)a, 1, old, &old);
+	FlushInstructionCache(GetCurrentProcess(), (void*)a, 1);
+	return true;
+}
 void SpawnBudget(bool want) {
 	if (!g_spawnOk) return;
 	const int n = g_spawnN.load(std::memory_order_relaxed);
@@ -523,6 +538,20 @@ void SpawnBudget(bool want) {
 		else
 			Log("readiness: entity spawns per class a frame left at %d (changed by something else since we set %d)", v, g_spawnSet);
 		g_spawnOrig = g_spawnSet = -1;
+	}
+	// the constant used while a fader is up
+	if (!g_faderOk) return;
+	const uintptr_t imm = g_base + kRvaFaderImm;
+	const uint8_t cur = *(const volatile uint8_t*)imm;
+	if (want && n > 4 && g_faderSet < 0 && cur == 4) {
+		if (WrCode(imm, (uint8_t)n)) {
+			g_faderSet = n;
+			Log("readiness: entity spawns per class a frame under the loading screen's fader 4 -> %d", n);
+		}
+	} else if (!want && g_faderSet >= 0) {
+		if (cur == g_faderSet && WrCode(imm, 4)) Log("readiness: entity spawns under a fader back to 4");
+		else Log("readiness: entity spawns under a fader left at %d (changed by something else since we set %d)", cur, g_faderSet);
+		g_faderSet = -1;
 	}
 }
 
@@ -645,6 +674,8 @@ void Readiness_Install(uintptr_t base) {
 	}
 	g_spawnOk = !memcmp((void*)(base + kRvaSpawnRead), kSpawnReadBytes, sizeof kSpawnReadBytes);
 	if (!g_spawnOk && g_spawnN) Log("readiness: the entity spawn budget's code differs - spawn %d not used", g_spawnN.load());
+	g_faderOk = g_spawnOk && !memcmp((void*)(base + kRvaFaderImm - 1), kFaderBytes, sizeof kFaderBytes);
+	if (g_spawnOk && !g_faderOk && g_spawnN) Log("readiness: the fader's spawn constant differs - only the variable is raised");
 	void* start = (void*)(base + kRvaStart);
 	const bool ok = !memcmp(start, kStartBytes, sizeof kStartBytes) &&
 	                !memcmp((void*)(base + kRvaIsReady), kIsReadyBytes, sizeof kIsReadyBytes);
