@@ -12,7 +12,8 @@
 // gameinputredist.dll (through the Steam overlay's hooks) 60-90 ms in most boots of queues 159-167 but 370-870 ms in
 // about 40% of them, at random. fastload_inputahead.txt 1: a worker started here loads the game's WhGdk.dll and makes that
 // first call, keeping the reference for the process (GameInput's docs: create once, keep it); the game's own call then
-// only adds a reference. 0 (default) off. "inputahead:" lines.
+// only adds a reference. 1 on (default since queue 171: the input init 31-37 ms vs 71-573 ms; the worker's own call
+// took 71-1272 ms beside Main), 0 off. "inputahead:" lines.
 // CPU detection (2026-10-25): the game's per-core probe (FUN_18136739c, run twice at start-up, "CPU Information" in the
 // game log) pins the WHOLE PROCESS to each of the 12 logical cores in turn (SetProcessAffinityMask) to read CPUID there.
 // Every thread of the process is squeezed onto that one core each time; Main sat in the kernel 74-988 ms (mean 346 ms,

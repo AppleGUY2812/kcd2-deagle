@@ -50,6 +50,7 @@
 #include "samelevel.h"
 #include "readymenu.h"
 #include "smartobj.h"
+#include "dllinit.h"
 #include "startfast.h"
 #include "gpumemo.h"
 #include "dbprof.h"
@@ -231,6 +232,7 @@ DWORD WINAPI Init(LPVOID) {
 	{ LARGE_INTEGER t; QueryPerformanceCounter(&t); g_initStart = t.QuadPart; }
 	Log("fastload v1 loaded");
 	Crashlog_Install(g_self);   // crash-type exceptions to fastload_crash.txt (crashlog.cpp)
+	Dllinit_WaitStatic();   // after WHGame's static initializers, as when the loader ran them (dllinit.cpp)
 	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); i++) Sleep(100);
 	g_game = GetModule("WHGame.dll");
 	if (!g_game.base) { Log("WHGame.dll not found"); return 0; }
@@ -376,6 +378,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 				if (g_mhEarly) Rttrname_EarlyInstall(b, h);   // rttr's type naming without the no-op re-derivations (rttrname.cpp)
 				if (g_mhEarly) Gpuwarm_EarlyInstall(b, h);   // the graphics driver loaded on a worker (gpuwarm.cpp)
 				if (g_mhEarly) Cvars_Install(b, h);   // the settings hooks on before the game registers any (cvars.cpp; boot 121)
+				if (g_mhEarly) Dllinit_EarlyInstall(b, h);   // WHGame's static initializers outside the loader lock, off by default (dllinit.cpp)
 			}
 			Startfast_EarlyInstall(b, h);   // CPU detection pins the main thread, not the whole process (startfast.cpp; ~0.35 s)
 		}

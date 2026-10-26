@@ -47,7 +47,7 @@ uintptr_t g_base = 0;
 HANDLE g_done = nullptr, g_devDone = nullptr;   // the support checks done; the device made (or not)
 std::atomic<bool> g_started{ false }, g_skipped{ false }, g_skippedSys{ false }, g_waitLogged{ false };
 std::atomic<int> g_state{ 0 };   // 0 not installed, 1 on, -1 off by file, -2 code differs, -3 hook failed
-long long g_freq = 1, g_t0 = 0, g_t1 = 0;
+long long g_freq = 1, g_t0 = 0, g_t1 = 0, g_tInstall = 0;   // g_tInstall: DllMain (the worker made)
 int g_adapters = 0, g_ok = 0, g_devMode = 1;
 char g_note[160] = "";
 
@@ -237,6 +237,7 @@ char __fastcall HkDevCreate(void* devObj, void* adapter, unsigned* level) {
 
 bool Gpuwarm_EarlyInstall(uintptr_t base, void* self) {
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = f.QuadPart;
+	g_tInstall = Now();
 	g_base = base;
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)self, path, MAX_PATH);
@@ -302,8 +303,10 @@ void Gpuwarm_Frame() {
 	static std::atomic<bool> done{ false };
 	if (g_state != 1 || done.exchange(true)) return;
 	if (WaitForSingleObject(g_done, 0) == WAIT_OBJECT_0)
-		Log("gpuwarm: the driver warm-up took %.0f ms on the worker (%d adapters, %d usable%s%s); the crash reporter's two queries: %s, %s",
-		    Ms(g_t0, g_t1), g_adapters, g_ok, g_note[0] ? "; " : "", g_note, g_skippedSys ? "system info skipped" : "system info never came",
+		Log("gpuwarm: the driver warm-up took %.0f ms on the worker, from %.0f ms after the plugin's DllMain (%d adapters, %d usable%s%s); "
+		    "the crash reporter's two queries: %s, %s",
+		    Ms(g_t0, g_t1), Ms(g_tInstall, g_t0), g_adapters, g_ok, g_note[0] ? "; " : "", g_note,
+		    g_skippedSys ? "system info skipped" : "system info never came",
 		    g_skipped ? "GPU info skipped" : "GPU info never came");
 	else Log("gpuwarm: the driver warm-up is still running at the first frame");
 	if (g_cacheWarm == 1)

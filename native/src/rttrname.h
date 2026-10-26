@@ -22,7 +22,8 @@
 // them), new types (the list grew) included. Templates renamed late in a call mark earlier ones for the next call, as
 // the game's full pass would. Checked: the first 8 calls and every 64th run the game's full algorithm instead and count
 // any rename v2 had not marked; one turns v2 off for the session (v1 from then on). Mode 4 checks every call.
-// fastload_rttrname.txt next to the plugin: 1 on (default), 0 off, 2 check every skip, 3 v2, 4 v2 checked every call. Needs the plugin loaded before
+// fastload_rttrname.txt next to the plugin: 3 v2 (default since queue 171: 1935 of 1935 namings, no miss; launch ->
+// menu -0.2 s in queue 170), 1 v1, 0 off, 2 v1 check every skip, 4 v2 checked every call. Needs the plugin loaded before
 // WHGame's static initializers (global.ini DontLoadFromDllMain=0). "rttrname:" line in the log.
 bool Rttrname_EarlyInstall(uintptr_t gameBase, void* selfModule);   // DllMain, MinHook initialized; true if hooked
 void Rttrname_Report();   // Init: one log line with the counts

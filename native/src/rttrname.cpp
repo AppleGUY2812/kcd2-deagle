@@ -61,7 +61,7 @@ FreeFn g_free = nullptr;
 TmplFn g_tmpl = nullptr;
 MakeFn g_make = nullptr;
 
-int g_mode = 1;   // 1 on, 2 check every skip
+int g_mode = 3;   // 1 v1, 2 v1 check every skip, 3 v2 (default since boot queue 171), 4 v2 checked every call
 struct Memo { void* raw; const char* orig; size_t origLen; const char* rawOrig; size_t rawOrigLen; std::string rawName, result; };
 std::unordered_map<void*, Memo> g_memo;
 SRWLOCK g_lock = SRWLOCK_INIT;
@@ -462,7 +462,7 @@ bool Rttrname_EarlyInstall(uintptr_t base, void* self) {
 	std::string dir(path);
 	dir = dir.substr(0, dir.find_last_of("\\/") + 1);
 	if (FILE* fp = fopen((dir + "fastload_rttrname.txt").c_str(), "r")) {
-		if (fscanf(fp, "%d", &g_mode) != 1) g_mode = 1;
+		if (fscanf(fp, "%d", &g_mode) != 1) g_mode = 3;
 		fclose(fp);
 	}
 	if (g_mode < 1 || g_mode > 4) { g_mode = 0; return false; }

@@ -63,7 +63,7 @@ const char* LockLoad() {
 	if (*(const unsigned char*)load != 0xe9 || !memcmp(before, load, 5)) return "hook not on yet";
 	return nullptr;
 }
-int g_mode = 0, g_threads = 0;
+int g_mode = 1, g_threads = 0;   // 1 by default since boot queue 171 (menu -0.5 s)
 long long g_freq = 1;
 std::atomic<int> g_calls{ 0 }, g_work{ 0 };   // all calls; calls that do the work (the first has the flag at +0x48 off)
 
@@ -138,7 +138,7 @@ void Smartobj_Install(uintptr_t base, void* self) {
 	std::string dir(path);
 	dir = dir.substr(0, dir.find_last_of("\\/") + 1);
 	if (FILE* fp = fopen((dir + "fastload_smartobj.txt").c_str(), "r")) {
-		if (fscanf(fp, "%d %d", &g_mode, &g_threads) < 1) g_mode = 0;
+		if (fscanf(fp, "%d %d", &g_mode, &g_threads) < 1) g_mode = 1;
 		fclose(fp);
 	}
 	if (g_mode != 1 && g_mode != 2) { Log("smartobj: off (fastload_smartobj.txt: 1 spread over cores, 2 timed)"); return; }

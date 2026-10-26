@@ -40,7 +40,7 @@ bool g_async = false;
 // inputahead (startfast.h): GameInput's first GameInputCreate made on a worker, through the game's own WhGdk.dll
 const unsigned char kGetWrapperBytes[] = { 0x48,0x8d,0x05 };   // GetWhGdkWrapper: lea rax, [static wrapper]; ret
 const unsigned char kCreateBytes[] = { 0x48,0x8b,0xca,0xe9,0x00,0x00,0x00,0x00,0xff,0x25 };   // slot 0: GameInputCreate(out)
-int g_ahead = 0;
+int g_ahead = 1;   // 1 by default since boot queue 171
 std::atomic<int> g_aheadState{ 0 };   // 0 not started, 1 running, 2 done, -1 skipped
 double g_aheadMs = -1, g_aheadStartMs = -1;
 long g_aheadHr = 0;
@@ -220,7 +220,7 @@ void Startfast_Install(uintptr_t base, void* self) {
 		fclose(f);
 	}
 	if (FILE* f = fopen((dir + "fastload_inputahead.txt").c_str(), "r")) {
-		if (fscanf(f, "%d", &g_ahead) != 1) g_ahead = 0;
+		if (fscanf(f, "%d", &g_ahead) != 1) g_ahead = 1;
 		fclose(f);
 	}
 	if (g_ahead == 1) {
