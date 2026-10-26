@@ -44,7 +44,9 @@ bool g_namesChanged = true;
 // samples it. Hitch_Window(true) samples Main, the threads above and the stream engine's two serial stages (the one pak
 // reader and the one callback thread) until Hitch_Window(false), reported as one "window", with each thread's CPU use.
 std::atomic<bool> g_window{false};
-const char* const kWindowNames[] = { "Streaming File IO HDD", "Streaming AsyncCallback" };
+// Since 2026-10-26 also the regular job workers ("JobWorker_0*": 00-09): Main waits ~0.65 s of the window for the AI
+// frame job (readiness's AI line), which runs on them.
+const char* const kWindowNames[] = { "Streaming File IO HDD", "Streaming AsyncCallback", "JobWorker_0*" };
 // The start-up window (#0, plugin load -> the first frame tick) also samples the job workers ("JobWorker_00 (Regular)"
 // ... "JobWorker_08 (Helper)"): a name ending in '*' matches by prefix. Until #0 is reported.
 // Up to 32 threads (16 until boot 123, when the plugin's own named workers, "JobWorker_fastload ...", filled the last
