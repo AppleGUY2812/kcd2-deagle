@@ -1027,3 +1027,25 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   moved 3 ms on (slot 333 from +52f390, 352 ms) and the render thread crashed at the first frames (WHGame+39ae34 in
   the command processing, FUN_1805be8b0, garbage pointer). Removed. The gate must stop Main at its first renderer
   call, getters included.
+
+## 2026-10-26: launch -> menu critical path; driver, GameInput and smart-object facts (kcd2-deagle-66)
+- Critical path to the renderer (boots 164-166): WHGame's static constructors hold the loader lock 0.2-0.7 s (rttr
+  naming 0.3 s of it), so the gpuwarm worker can't load the driver before ~0.7 s; its D3D12 device creation takes
+  0.95-1.1 s; Main's renderer GPU query (WHGame+189fa54) waits for it 0.25-1.0 s. A Main gain before ~2 s is eaten here.
+- Inside that device creation the NVIDIA driver LoadLibrary's NvCamera64.dll (photo mode / filters / RTX HDR): 432 of
+  969 ms (boot 165e3, exact stacks). It loads nvapi + nvcuda and makes a D3D11 device. Refusing it in LdrLoadDll is
+  fastload_nvcamera.txt 1.
+- The render thread's first root signature (ResourceLayoutBinCache.txt) spends 287 ms in NvMemMapStoragex.dll: the
+  driver's shader disk cache set-up (%LOCALAPPDATA%\NVIDIA\DXCache), once per process (nvcachewarm moves it).
+- The renderer's first CreateCommandList (pool FUN_1805073a0 -> FUN_180507c14, vtable +0x60) costs ~0.3 s of driver
+  set-up on Main at 2.2 s. Not movable: it needs the device, and the device worker is already on the critical path.
+- rttr template names (FUN_1804f2510): a template whose name is no longer the compiler's keeps it ("frozen"); otherwise
+  prefix up to the first '<' + the arguments' current names + the suffix after the last '>'. Derived names
+  (FUN_1804f3cbc) come from the raw type's current name. rttrname v2 only redoes types a rename can reach.
+- Input init (FUN_180da1fcc) first creates GameInput through WhGdk.dll's wrapper (GetWhGdkWrapper, slot 0 =
+  GameInputCreate). GameInput is a per-process singleton; its first creation (inside gameinputredist.dll, through the
+  Steam overlay's hooks) took 60-90 ms in most boots but 370-870 ms in ~40%, at random. Later calls only add a reference.
+- CGame init's smart objects (FUN_181096ec8 -> per type FUN_181096fdc): per action x actor class, Mannequin's database
+  manager Load(adb) (framework +0x80 -> +0xb0 -> +0x18 -> +0x38) then a C_FragmentDatabase query (tag filter
+  FUN_181e5bb80, scoring FUN_180942f24, random pick from the global LCG 0x18492d7e0). Only Load writes shared state.
+- Localization at 6.3-7.1 s (LocalizedStringManager, FUN_1809ea788 -> FUN_18071aec0): 0.81 s CPU on Main.
