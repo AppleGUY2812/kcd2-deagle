@@ -1049,3 +1049,33 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   manager Load(adb) (framework +0x80 -> +0xb0 -> +0x18 -> +0x38) then a C_FragmentDatabase query (tag filter
   FUN_181e5bb80, scoring FUN_180942f24, random pick from the global LCG 0x18492d7e0). Only Load writes shared state.
 - Localization at 6.3-7.1 s (LocalizedStringManager, FUN_1809ea788 -> FUN_18071aec0): 0.81 s CPU on Main.
+- WHGame's C runtime start-up (dllinit.cpp): entry 0x1c1fe0c = _DllMainCRTStartup (reason 1: __security_init_cookie
+  0x1c20394, then the dispatch FUN_181c1fce4); process attach FUN_181c1fb48 = _initterm_e (1 entry, 0x3a2bd70) +
+  _initterm (19,741 entries, 0x3a05468..0x3a2bd50) + the current thread's dynamic TLS init. User DllMain FUN_181c20444
+  = DisableThreadLibraryCalls; thread attach / detach FUN_181c1f098 / FUN_181c1f0c0 call FUN_18041a6a0 (mov al,1; ret).
+  TLS callbacks 0x1c1f6a4 (reason 2: FUN_1800812d0, a thread-local = 0 + _tlregdtor) and 0x1c1f71c (TLS dtors).
+  CreateGameStartup (export, 0x19db050) is the exe's first call into WHGame after LoadLibrary (KingdomCome.exe+353b,
+  right after GetProcAddress at +346c). Direct-call reachability from the 19,741 initializers: 51,081 functions /
+  chunks, 1.84 M instructions, 0 thread starts (_beginthreadex / _beginthread / RegisterWaitForSingleObject / Bink's
+  async thread; 13 such calls exist elsewhere in .text); WHGame imports no CreateThread. Calls through pointers are
+  not traced.
+- Queue 171 (12 boots, build 171): Main's GPU query (WHGame+189fa54) waited 579-1157 ms in every boot; the worker's
+  device 907-1399 ms; the renderer's own device creation 13-52 ms with 0 ms waited (devahead works). This PC has 3
+  adapters (all usable). nvcachewarm's root signature 185-238 ms on the worker, no gain at the render thread.
+- CSystem::Init after the renderer (disassembly): renderer slot 5 PostInit at +7a18fc (the setup hand-over),
+  slot 59 flush at +7a1916 (owed in rtsync 4), then the spec auto detect (system vt+0x520, +7a1933) and the spec
+  apply (vt+0x530, +7a194b, FUN_181dd95d0). Main reaches the q_Renderer callback 24 ms after the hand-over and waits
+  there 0.42-0.51 s (all 12 boots of 171): on this path rtsync 4 saves ~nothing; the render thread's part is
+  0.33-0.43 s (system render targets through D3D12 resource creation, system textures read from paks and uploaded).
+- The q_Renderer callback (FUN_18193f34c): flags = renderer slot 16; bit 20 clear -> cvar->Set (vt+0x50); else
+  cvar->GetIVal (vt+0x10) clamped to 0..4; then an 8-byte read-modify-write of renderer+0x2e18 (byte 1 = that value)
+  and a no-op copy of +0x2e20. A concurrent write by the render thread to the other bytes of that qword would be lost
+  (a possible cause of boot 163b1's crash, not proven). Renderer slot 333 (vt+0xa68) is EF_Query(id, out*) through
+  the folded thunk FUN_18052f36c (SystemInit asks 0x20 -> mgpu.cfg, 0x13, 8).
+- The driver worker's device creation, boot 165e3 (80 exact samples, 740-1709 ms after the plugin): nvldumdx.dll
+  checks the driver's signatures (imagehlp under WinVerifyTrust, 740-783 and 881-934 ms), nvwgf2umx's adapter open
+  queries device properties through SetupAPI / CfgMgr32 (1061-1190 ms) and the kernel (win32u), then NvCamera64's
+  init (1266-1676 ms): its own WinVerifyTrust (bcrypt, crypt32, cryptnet), a D3D11 device, nvapi64 + nvapi64_impl,
+  and CUDA (nvcuda64 through nvwgf2umx+28da3b). ~28 samples are DLL loads, each through the Steam overlay's
+  LoadLibrary hook (gameoverlayrenderer64). NvCameraEnable.exe (DriverStore ...\NvCamera): on / off (the base
+  profile, NvAPI_DRS), and allowlisting-allow / -disallow / -remove <exe path> per program.
