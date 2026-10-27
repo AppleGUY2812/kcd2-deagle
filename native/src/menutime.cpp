@@ -28,6 +28,8 @@ DWORD g_mainTid = 0;
 bool g_open = false;      // an open is being recorded
 double g_openT0 = 0;      // when its fader callback started
 unsigned g_opens = 0;
+void* g_openMv[16];       // the movies advanced during the open (to match against the outside-menus list)
+int g_nOpenMv = 0;
 thread_local int t_callDepth = 0, t_invDepth = 0;
 
 void Add(Slot s, double t0) { g_acc[s].ms += Now() - t0; g_acc[s].n++; }
@@ -39,6 +41,8 @@ void Flush() {
 	for (int i = 0; i < kN; i++)
 		if (g_acc[i].n) k += snprintf(b + k, sizeof b - k, " %s %.1f ms%s", kName[i], g_acc[i].ms,
 		                              i >= kCall ? (" (" + std::to_string(g_acc[i].n) + ")").c_str() : "");
+	for (int i = 0; i < g_nOpenMv && k < (int)sizeof b - 24; i++) k += snprintf(b + k, sizeof b - k, "%s%p", i ? " " : "; movies ", g_openMv[i]);
+	g_nOpenMv = 0;
 	Log("%s", b);
 	memset(g_acc, 0, sizeof g_acc);
 }
@@ -97,22 +101,37 @@ void* __fastcall HkInvoke(void* a, void* b, void* c, void* d, void* e, int f, ch
 // Outside menus: the menu engine's advance time per minute (HUD and any movie kept loaded), to see what keepload costs.
 double g_outMs = 0, g_outT0 = 0;
 unsigned g_outCalls = 0;
+constexpr int kMaxMv = 24;
+struct Mv { void* m; double ms; unsigned n; };
+Mv g_mv[kMaxMv];
+int g_nMv = 0;
 float __fastcall HkAdv(void* m, float dt, int x) {
 	if (!g_open) {
 		if (Hitch_MapvdMasking && Hitch_MapvdMasking()) return o_adv(m, dt, x);   // a menu is open: not counted
 		double t = Now(); float r = o_adv(m, dt, x); double t1 = Now();
 		g_outMs += t1 - t; g_outCalls++;
+		int i = 0;
+		while (i < g_nMv && g_mv[i].m != m) i++;
+		if (i == g_nMv && g_nMv < kMaxMv) g_mv[g_nMv++] = { m, 0, 0 };
+		if (i < g_nMv) { g_mv[i].ms += t1 - t; g_mv[i].n++; }
 		if (g_outT0 == 0) g_outT0 = t1;
 		else if (t1 - g_outT0 >= 60000) {
 			const double s = (t1 - g_outT0) / 1000;
-			Log("menutime: menu engine outside menus: %.2f ms a second, %.0f advances a second (HUD + kept menus)", g_outMs / s, g_outCalls / s);
-			g_outMs = 0; g_outCalls = 0; g_outT0 = t1;
+			char b[700]; int k = 0;
+			for (int j = 0; j < g_nMv && k < (int)sizeof b - 48; j++)
+				k += snprintf(b + k, sizeof b - k, " %p %.2f/%.0f", g_mv[j].m, g_mv[j].ms / s, g_mv[j].n / s);
+			Log("menutime: menu engine outside menus: %.2f ms a second, %.0f advances a second, %d movies (each: ms/advances a second):%s",
+			    g_outMs / s, g_outCalls / s, g_nMv, b);
+			g_outMs = 0; g_outCalls = 0; g_outT0 = t1; g_nMv = 0;
 		}
 		return r;
 	}
 	if (GetCurrentThreadId() != g_mainTid) return o_adv(m, dt, x);
 	if (Now() - g_openT0 > 300) { Flush(); return o_adv(m, dt, x); }
 	double t = Now(); float r = o_adv(m, dt, x); Add(kAdvance, t);
+	int i = 0;
+	while (i < g_nOpenMv && g_openMv[i] != m) i++;
+	if (i == g_nOpenMv && g_nOpenMv < 16) g_openMv[g_nOpenMv++] = m;
 	return r;
 }
 
