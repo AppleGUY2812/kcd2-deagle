@@ -20,7 +20,12 @@ Desktop\Deagle Progress\ARM SWAP DEMO 3 - *.mp4 (both reloads, same fit code, on
 
 1. **Skeleton.** The viewmodel uses Henry's skeleton (`tools/henry_rig.py` imports it with bone frames equal to the
    game's joints). Clothing skins bind to joints by name, so Henry's skeleton is what lets every clothing item fit.
-2. **Retarget** (`tools/armswap/retarget.py`, class `Fit`), per frame, per side:
+2. **Scale the viewmodel to Henry's size** (`Fit.source_scale()`): shooters often shrink first-person arms (CoD's
+   hand is 6.3 cm wrist to knuckle; Henry 8.3, RoN 9.3, a real adult ~9). Scale the whole viewmodel, gun included,
+   by Henry's arm length / the source's, about the camera: the viewmodel's origin is the camera, so the picture
+   doesn't change, and the source arms become Henry's size (CoD x1.24, RoN x0.95). Without it Henry's real-size
+   gauntlets look huge on a miniature gun.
+3. **Retarget** (`tools/armswap/retarget.py`, class `Fit`), per frame, per side:
    1. Copy each source bone's rest-to-pose rotation onto Henry's matching bone (gives every bone its twist).
    2. Walk back from the source wrist along the source forearm and upper arm using **Henry's** lengths, and place
       Henry's shoulders there (root follows the midpoint, clavicles aim at them). Forearm and upper arm keep the
@@ -31,10 +36,10 @@ Desktop\Deagle Progress\ARM SWAP DEMO 3 - *.mp4 (both reloads, same fit code, on
       Copying finger angles alone misses by 2-6 cm on a different-sized hand (the "thumb sticks out" bug).
    It uses joint positions and each source bone's own rest-to-pose rotation only, so bone axes, rolls and rest poses
    of the source game don't matter.
-3. **Clothing** (in game, to build): the plugin reads Henry's `clothing_arms` and `clothing_hands` skin attachments
+4. **Clothing** (in game, to build): the plugin reads Henry's `clothing_arms` and `clothing_hands` skin attachments
    (one skin each + 6 LOD materials with the item's generated colours) and binds copies onto the viewmodel; rebinds
    when Henry re-dresses. Henry's body stays visible with those two attachments hidden (`hideatt`).
-4. **Hiding rules** come with the game: vertex colour alpha is a bitmask, a cleared bit i = the vertex is in hiding
+5. **Hiding rules** come with the game: vertex colour alpha is a bitmask, a cleared bit i = the vertex is in hiding
    group i (`Libs/Tables/Character/ClothingHidingGroup.xml`); worn items hide groups (`HidingGroups=` in
    CharacterComponent.xml, e.g. gauntlets hide "UnderGloves" = bit 3 of arms pieces). The game applies these itself;
    the offline demo reproduces them.
@@ -66,7 +71,10 @@ blender -b <gun>_vm.blend -P tools/armswap/proof_anim.py -- <out dir> <tex dir> 
 ```
 From WSL: `powershell.exe -NoProfile -Command "(Get-Process -Id $PID).PriorityClass = 'Idle'; $env:PROOF_DIAG='1';
 $env:BLENDER_USER_SCRIPTS='E:\Tools\blender-user'; & 'E:\Tools\blender-4.3.2-windows-x64\blender.exe' -b ..."`.
-Rendering the 51-frame RoN reload (4 views, 640x360, Cycles CPU 24 samples) takes ~10 min.
+Rendering the 51-frame RoN reload (4 views, 640x360, Cycles CPU 24 samples) takes ~10 min on all 12 threads, which
+makes a running KCD2 stutter: the script uses 3 threads by default (~3x slower); `PROOF_THREADS=0` = all, only with
+the game closed. With the game closed, `PROOF_GPU=1` renders on the graphics card (OptiX); never while KCD2 runs (it
+fills ~7.4 of the 8 GB video memory).
 
 ## Getting KCD2 clothing into Blender (demo only)
 
@@ -98,14 +106,15 @@ Rendering the 51-frame RoN reload (4 views, 640x360, Cycles CPU 24 samples) take
 
 ## Measured (reload clips, mean / max over the clip)
 
-| | RoN Grizzly: angle copy | RoN: full fit | CoD Glock: angle copy | CoD: full fit |
-|---|---|---|---|---|
-| forearm direction | 18.9 / 24.2 deg | 1.2 / 3.0 deg | 21.4 / 48.0 deg | 2.5 / 6.1 deg |
-| fingertips (worst finger) | 2.6 / 2.8 cm | 0.7 / 1.1 cm | 4.4 / 5.9 cm | 1.6 / 2.3 cm |
-| elbow | 8.8 / 11.2 cm | 1.4 / 2.2 cm | 10.2 / 19.8 cm | 6.1 / 6.4 cm |
+| | RoN: angle copy | RoN: full fit + scale | CoD: angle copy | CoD: full fit, no scale | CoD: full fit + scale |
+|---|---|---|---|---|---|
+| forearm direction | 18.9 / 24.2 deg | 1.0 / 3.2 deg | 21.4 / 48.0 deg | 2.5 / 6.1 deg | 2.7 / 9.7 deg |
+| fingertips (worst finger) | 2.6 / 2.8 cm | 0.3 / 0.6 cm | 4.4 / 5.9 cm | 1.6 / 2.3 cm | 1.3 / 1.8 cm |
+| elbow | 8.8 / 11.2 cm | 0.5 / 1.2 cm | 10.2 / 19.8 cm | 6.1 / 6.4 cm | 1.3 / 4.7 cm |
 
-Arm lengths (upper arm / forearm / hand): Henry 26.6 / 26.2 / 8.3 cm, RoN 28.1 / 27.1 / 9.3, CoD 22.0 / 21.0 / 6.3.
-CoD's elbow sits ~6 cm further back because Henry's forearm is 5 cm longer; the direction matches.
+Arm lengths (upper arm / forearm / hand): Henry 26.6 / 26.2 / 8.3 cm; RoN 28.1 / 27.1 / 9.3 (scaled x0.947:
+26.6 / 25.7 / 8.8); CoD 22.0 / 21.0 / 6.3 (scaled x1.239: 27.2 / 26.1 / 7.8). Measure with `PROOF_DIAG=1`;
+`PROOF_NO_SCALE=1` turns the scaling off.
 
 ## Not proven yet (in order of risk)
 
@@ -118,7 +127,9 @@ CoD's elbow sits ~6 cm further back because Henry's forearm is 5 cm longer; the 
 4. Mail shirts: sleeves are in `clothing_torso`, which also has the chest. Needs a decision (show the torso piece
    clipped by the camera, or hide).
 5. Gauntlet thumb plates are bulkier than a bare thumb; the grip can look thicker than the source.
-6. Animation audit: retargeted clips must pass `tools/build_vm.sh --audit` like any clip.
+6. Viewmodel scale in game: the plugin places the viewmodel every frame; a scaled character must draw right, and
+   everything measured on its bones (muzzle, ejection port, rigid pieces, flash) must scale with it.
+7. Animation audit: retargeted clips must pass `tools/build_vm.sh --audit` like any clip.
 
 ## Files
 

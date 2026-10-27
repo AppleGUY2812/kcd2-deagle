@@ -56,6 +56,18 @@ class Fit:
         _, fn, sides, self.arm_meshes = PROFILES[self.profile]
         self.sides = [("Right", fn(sides[0])), ("Left", fn(sides[1]))]
 
+    def source_scale(self):
+        """source arm size / Henry's (shoulder -> elbow -> wrist -> middle knuckle, rest pose, both sides). Shooters
+        often shrink first-person arms (CoD's hand: 6.3 cm wrist to knuckle; Henry 8.3, RoN 9.3). Scaling the whole
+        viewmodel (gun + arms) by 1 / this about the camera leaves the picture unchanged and makes the source arms
+        Henry's size, so his real-size arms and clothing fit."""
+        src = hen = 0.0
+        for H, m in self.sides:
+            for a, b in (("Arm", "ForeArm"), ("ForeArm", "Hand"), ("Hand", "HandMiddle1")):
+                src += (self.sp(m[b], True) - self.sp(m[a], True)).length
+                hen += (self.hp(H + b, True) - self.hp(H + a, True)).length
+        return src / hen
+
     # --- positions / rotations ---
     def upd(self): self.bpy.context.view_layer.update()
     def sp(self, j, rest=False):

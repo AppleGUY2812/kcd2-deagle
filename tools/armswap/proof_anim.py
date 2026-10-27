@@ -90,6 +90,10 @@ def hen_pose(b): return h.matrix_world @ h.pose.bones[b].matrix
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import retarget
 fit = retarget.Fit(bpy, ron, h, G)
+SRC_SCALE = fit.source_scale()
+if not os.environ.get("PROOF_NO_SCALE"):   # the viewmodel (camera at its origin) scaled to Henry's size: same picture
+    ron.matrix_world = Matrix.Scale(1 / SRC_SCALE, 4) @ ron.matrix_world; bpy.context.view_layer.update()
+print("ANIM source arm size vs Henry %.3f, viewmodel scaled x%.3f" % (SRC_SCALE, 1 if os.environ.get("PROOF_NO_SCALE") else 1 / SRC_SCALE))
 print("ANIM source profile", fit.profile)
 MODE = os.environ.get("PROOF_FIT", "full")
 
@@ -112,6 +116,16 @@ cam_data = bpy.data.cameras.new("cam"); cam = bpy.data.objects.new("cam", cam_da
 cam_data.sensor_fit = "VERTICAL"; cam_data.angle = 1.101; cam_data.clip_start = 0.01
 scene.camera = cam
 scene.render.engine = "CYCLES"; scene.cycles.device = "CPU"; scene.cycles.samples = SAMPLES; scene.cycles.use_denoising = True
+# CPU threads: 3 by default so a running game keeps its cores (all 12 made KCD2 stutter, 2026-10-26); PROOF_THREADS=0 = all
+scene.render.threads_mode = "FIXED" if int(os.environ.get("PROOF_THREADS", "3")) > 0 else "AUTO"
+if scene.render.threads_mode == "FIXED": scene.render.threads = int(os.environ.get("PROOF_THREADS", "3"))
+# PROOF_GPU=1: render on the graphics card (OptiX), only with the game closed: KCD2 fills ~7.4 of the 3070 Ti's 8 GB and
+# a GPU render on top overflows video memory (worse stutter than the CPU render, or a crash)
+if os.environ.get("PROOF_GPU"):
+    cp = bpy.context.preferences.addons["cycles"].preferences
+    cp.compute_device_type = "OPTIX"; cp.get_devices()
+    for d in cp.devices: d.use = d.type == "OPTIX"
+    scene.cycles.device = "GPU"
 scene.render.resolution_x, scene.render.resolution_y = RES_X, RES_X * 9 // 16
 scene.render.resolution_percentage = 100
 w = bpy.data.worlds.new("w"); w.use_nodes = True; w.node_tree.nodes["Background"].inputs[0].default_value = (0.42, 0.45, 0.5, 1)
