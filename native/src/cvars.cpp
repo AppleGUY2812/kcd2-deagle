@@ -247,8 +247,13 @@ void Cvars_OnLoaded() {
 		if (!w.loadOnly || w.restored) continue;
 		if (w.var) {
 			if (w.isFloat) *(float*)w.var = (float)w.def; else *(int*)w.var = (int)w.def;
+			// and through the console: a raw write skips the game's change handling (2026-10-27: sys_SleepIfInactiveWH
+			// read 1 after the write, yet the game drew at full speed in the background, 100 % GPU, Brave at 1 fps,
+			// until "sys_SleepIfInactiveWH 1" was typed in the console)
+			void* v = ConFind(w.name.c_str());
+			const bool con = v && ConSet(v, w.def);
 			w.restored = true;
-			Log("cvars: gameplay started, %s back to %g", w.name.c_str(), w.def);
+			Log("cvars: gameplay started, %s back to %g%s", w.name.c_str(), w.def, con ? " (through the console)" : " (raw write only: not in the console)");
 		} else if (w.con) {
 			w.restored = ConSetText(w.con, w.conOld.c_str());
 			Log("cvars: gameplay started, %s back to %s through the console%s", w.name.c_str(), w.conOld.c_str(),
