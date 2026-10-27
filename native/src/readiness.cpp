@@ -879,9 +879,15 @@ void Readiness_Frame() {
 	}
 	g_unlock(g_service + 0x38);
 	{
-		bool loadGate = false;
-		for (auto& g : g_gates) if (early::Eligible(g.mask)) loadGate = true;
-		TempBudget(loadGate);
+		bool loadGate = false, apseGate = false;
+		for (auto& g : g_gates) {
+			if (early::Eligible(g.mask)) loadGate = true;
+			if (g.mask == 0x81) apseGate = true;
+		}
+		// The inventory / map open (gate 0x81) waits for the paperdoll's textures; with the game's 20 MB the reader slept
+		// with work queued 26-47 % and temp full 91-99 % (85 MB in use), 0.6-3.6 s black for 0.5 MB of textures
+		// (2026-10-26 23:43). Only the temp budget is raised there, nothing else of the load-screen set.
+		TempBudget(loadGate || apseGate);
 		SpawnBudget(loadGate);
 		Streamahead_SetGate(loadGate);
 		Morphpool_SetGate(loadGate);
