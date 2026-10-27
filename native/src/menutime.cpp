@@ -13,6 +13,8 @@
 #include "MinHook.h"
 #include "log.h"
 
+extern bool (*Hitch_MapvdMasking)();   // hitch.cpp, set by mapvd.cpp: true while a menu has the view distance lowered
+
 namespace {
 double g_freq = 0;
 inline double Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.QuadPart * 1000.0 / g_freq; }
@@ -92,8 +94,23 @@ void* __fastcall HkInvoke(void* a, void* b, void* c, void* d, void* e, int f, ch
 	t_invDepth++; double t = Now(); void* r = o_invoke(a, b, c, d, e, f, g); Add(kInvoke, t); t_invDepth--;
 	return r;
 }
+// Outside menus: the menu engine's advance time per minute (HUD and any movie kept loaded), to see what keepload costs.
+double g_outMs = 0, g_outT0 = 0;
+unsigned g_outCalls = 0;
 float __fastcall HkAdv(void* m, float dt, int x) {
-	if (!g_open || GetCurrentThreadId() != g_mainTid) return o_adv(m, dt, x);
+	if (!g_open) {
+		if (Hitch_MapvdMasking && Hitch_MapvdMasking()) return o_adv(m, dt, x);   // a menu is open: not counted
+		double t = Now(); float r = o_adv(m, dt, x); double t1 = Now();
+		g_outMs += t1 - t; g_outCalls++;
+		if (g_outT0 == 0) g_outT0 = t1;
+		else if (t1 - g_outT0 >= 60000) {
+			const double s = (t1 - g_outT0) / 1000;
+			Log("menutime: menu engine outside menus: %.2f ms a second, %.0f advances a second (HUD + kept menus)", g_outMs / s, g_outCalls / s);
+			g_outMs = 0; g_outCalls = 0; g_outT0 = t1;
+		}
+		return r;
+	}
+	if (GetCurrentThreadId() != g_mainTid) return o_adv(m, dt, x);
 	if (Now() - g_openT0 > 300) { Flush(); return o_adv(m, dt, x); }
 	double t = Now(); float r = o_adv(m, dt, x); Add(kAdvance, t);
 	return r;
