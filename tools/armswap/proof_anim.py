@@ -137,8 +137,31 @@ def pose_frame():
         E = hen_pose(H + "ForeArm").translation; W = hen_pose(H + "Hand").translation
         swing(H + "ForeArm", W - E, T - E)
         for m in rows[3:]: set_world_rot(m[0], target_rot(*m))
+        if not os.environ.get("PROOF_NO_AIM"):
+            # Henry's hand is ~11% smaller and his thumb root sits ~2 cm nearer the wrist than RoN's: copied angles leave the
+            # thumb out to the side. Aim each thumb bone at RoN's next thumb joint instead (roll kept from the copy).
+            ends = ["thumb_2_" + R, "thumb_3_" + R, "thumb_4_end_" + R]
+            for i, rn in enumerate(ends, 1):
+                J = hen_pose(H + "HandThumb%d" % i).translation; N = hen_pose(H + "HandThumb%d" % (i + 1)).translation
+                swing(H + "HandThumb%d" % i, N - J, ron_pose(rn).translation - J)
         miss.append((hen_pose(H + "Hand").translation - T).length * 1000)
     return miss
+
+if os.environ.get("PROOF_DIAG"):   # thumb / finger check: where each Henry joint sits vs its RoN joint, in RoN hand space
+    scene.frame_set(int(os.environ["PROOF_DIAG"])); pose_frame()
+    for R, H in (("RI", "Right"), ("LE", "Left")):
+        hand = ron_pose("hand_" + R).inverted()
+        def p(M): return [round(x * 100, 1) for x in (hand @ M.translation)]
+        print("DIAG", R, "hand rest-length ron %.1f cm" % ((ron_rest("middle_2_" + R).translation - ron_rest("hand_" + R).translation).length * 100),
+              "henry %.1f cm" % ((hen_rest(H + "HandMiddle1").translation - hen_rest(H + "Hand").translation).length * 100))
+        for hb, rb in ((H + "HandThumb1", "thumb_1_" + R), (H + "HandThumb2", "thumb_2_" + R), (H + "HandThumb3", "thumb_3_" + R),
+                       (H + "HandThumb4", "thumb_4_end_" + R), (H + "HandIndex1", "index_2_" + R), (H + "HandIndex4", "index_5_end_" + R),
+                       (H + "HandPinky1", "pinky_2_" + R)):
+            print("DIAG  %-18s henry %s  ron %-14s %s  off %.1f cm" % (hb, p(hen_pose(hb)), rb, p(ron_pose(rb)),
+                  (hen_pose(hb).translation - ron_pose(rb).translation).length * 100))
+        print("DIAG  henry thumb bone parents", [h.data.bones[H + "HandThumb%d" % i].parent.name for i in (1, 2, 3, 4)])
+        print("DIAG  ron thumb bone parents", [ron.data.bones["thumb_%d_%s" % (i, R)].parent.name for i in (1, 2, 3)])
+    sys.exit(0)
 
 cam_data = bpy.data.cameras.new("cam"); cam = bpy.data.objects.new("cam", cam_data); scene.collection.objects.link(cam)
 cam_data.sensor_fit = "VERTICAL"; cam_data.angle = 1.101; cam_data.clip_start = 0.01
