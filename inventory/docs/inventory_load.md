@@ -2,9 +2,10 @@
 
 Static analysis only (2026-10-18): WHGame.dll in Ghidra (ProLiant project `~/re/proj/KCD2`, addresses below are
 VAs at image base 0x180000000) plus level / UI data from the paks. Nothing was run in game.
-Extracted data: `E:\Tools\deagle-work\inv_re\` (UI prefabs, UI XMLs, dummy scripts, `kutnohorsko_apse_entities.xml`
-= the 770 room entities pulled out of `Levels/kutnohorsko/level.pak:objects_mission0.xml`).
-Older, related notes: `docs/kcd2_map_open.md` (map tiles, Apse cvars).
+Extracted data: the `inv_re` folder of the private E: work tree (UI prefabs, UI XMLs, dummy scripts,
+`kutnohorsko_apse_entities.xml` = the 770 room entities pulled out of
+`Levels/kutnohorsko/level.pak:objects_mission0.xml`).
+Older, related notes: `../../docs/kcd2_map_open.md` (map tiles, Apse cvars).
 
 ## TL;DR
 - The room is real level geometry: prefab `ui/Apse2` (+ `ui/Shop2` for trading), parked **~4 km off the map at
@@ -162,7 +163,7 @@ Tests (stand in the same spot, wait 10 s, open the inventory 5 times, before vs 
 `kill $(cat ~/re/qk/daemon.pid)` (don't `pkill -f`, it matches your own ssh shell).
 
 ## Measured, then decompiled (2026-10-18, later)
-- Live (`deagle_invtime 1`): the black screen is mostly one gate, `0x181f4a260`, called each frame by the screen's
+- Live (`inv_invtime 1`): the black screen is mostly one gate, `0x181f4a260`, called each frame by the screen's
   update (`0x180567d70`, its only caller): 450-700 ms every open. Then the readiness wait (40-360 ms), then the fade.
   Streaming cvars, the observer timeout / off, `wh_ui_ApseUnloadMode 0`, `wh_ui_ApseCameraChangeTime 0.05` and short
   fades changed nothing.
@@ -179,18 +180,18 @@ Tests (stand in the same spot, wait 10 s, open the inventory 5 times, before vs 
   `wh_cc_LRUCache 0` ("LRU cache for clothing system": off), `wh_cc_MaxSkinLoadingInProgress 40`,
   `wh_cc_MaxSkinLoaderJobQueueSize 20`, `wh_cc_PreloadMaterials 1`, `wh_cc_HiddenInvisibleManagerPriorityDecrease 100`
   (the dummy is behind the black screen), `wh_cc_TotalUpdateBudget 10`.
-- Next, in game (a setting, not a patch): A/B with `deagle_invtime 1`, 5 opens each: defaults, then
+- Next, in game (a setting, not a patch): A/B with `inv_invtime 1`, 5 opens each: defaults, then
   `wh_cc_LRUCache 1` (2nd open on should be faster if the skins stay cached), then `wh_cc_MaxSkinLoaderJobs 4`. If a
-  cvar only applies at start, it goes in `user.cfg`. `deagle_invtime 2` (the gate skipped, a test, save first) tells
+  cvar only applies at start, it goes in `user.cfg`. `inv_invtime 2` (the gate skipped, a test, save first) tells
   whether the readiness wait (it watches clothing too) just takes the time over.
 
 ## Measured in game (2026-10-23): what helped, what did not
-- `deagle_invtime 2` (gate told ready at once): open -> fade in **1.12 s -> ~0.65 s**, over 5+ opens. This is the win
-  that shipped: `invtime` is now a kept setting, default **2**, applied from `NativeHello` at every load
-  (`deagle_set invtime 0` turns it off, `1` only logs).
-- `deagle_invtime 3` (readiness mask `0x81` passed as 0): no faster than `2` - the fade still came ~460 ms after the
+- `inv_invtime 2` (gate told ready at once): open -> fade in **1.12 s -> ~0.65 s**, over 5+ opens. This is the win
+  that shipped: `invtime` is now a kept setting, default **2**, applied from the mod's `Hello` at every load
+  (`inv_set invtime 0` turns it off, `1` only logs).
+- `inv_invtime 3` (readiness mask `0x81` passed as 0): no faster than `2` - the fade still came ~460 ms after the
   wait was removed.
-- `deagle_invtime 4` (`IsReady(0x81)` forced to 1): no gain either, 677 / 670 / 702 / 672 / 686 / 932 / 829 / 813 ms
+- `inv_invtime 4` (`IsReady(0x81)` forced to 1): no gain either, 677 / 670 / 702 / 672 / 686 / 932 / 829 / 813 ms
   against 647-657 ms for `2`/`3`. The readiness wait was never the bottleneck.
 - What is left (~460-490 ms) is the Apse room's ~434 MB of textures streaming in at `r_TexturesStreamingMaxRequestedMB 4`
   after KCD2's idle trim threw them out on close. The gate hook cannot touch it; the levers are the streaming budget /

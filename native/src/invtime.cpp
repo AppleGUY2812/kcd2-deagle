@@ -1,5 +1,5 @@
 // Inventory / map screen timing (WHGame 1.5.6), log only. The screen (wh::guimodule::C_UICharacterBase) opens like this
-// (decompiled, docs/inventory_load.md):
+// (decompiled, inventory/docs/inventory_load.md):
 //   0xc47894  open: fades to black, makes the fader (this+0x3e8)
 //   0x1f4a260 every frame until the readiness wait exists: "is the object behind this+0x20 ready" (its vfunc +0x80);
 //             only then does the screen ask for the readiness wait. wh_sys_ReadinessObserverEnabled 0, its timeout 0.3,

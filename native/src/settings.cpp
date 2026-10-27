@@ -7,6 +7,7 @@
 #include <utility>
 
 static std::string g_path;
+static std::string g_setCmd = "deagle_set";
 static std::vector<std::pair<std::string, std::string>> g_set;
 static std::mutex g_mu;
 
@@ -38,19 +39,20 @@ static void Write() {   // whole file, through a temporary one so a crash mid-wr
 	std::string tmp = g_path + ".tmp";
 	FILE* f = nullptr;
 	if (fopen_s(&f, tmp.c_str(), "w") || !f) { Log("settings: can't write %s", tmp.c_str()); return; }
-	fprintf(f, "# Desert Eagle mod settings (deagle_set); deagle_reset clears them\n");
+	fprintf(f, "# settings replayed as \"%s <key> <value>\" at every hello\n", g_setCmd.c_str());
 	for (auto& kv : g_set) fprintf(f, "%s %s\n", kv.first.c_str(), kv.second.c_str());
 	fclose(f);
 	if (!MoveFileExA(tmp.c_str(), g_path.c_str(), MOVEFILE_REPLACE_EXISTING)) Log("settings: can't replace %s (%lu)", g_path.c_str(), GetLastError());
 }
 
-void SettingsInit(void* module) {
+void SettingsInit(void* module, const char* file, const char* setCmd) {
 	std::lock_guard<std::mutex> lk(g_mu);
+	g_setCmd = setCmd && *setCmd ? setCmd : "deagle_set";
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA((HMODULE)module, path, MAX_PATH);
 	char* slash = strrchr(path, '\\');
 	if (!slash) return;
-	strcpy_s(slash + 1, path + MAX_PATH - (slash + 1), "deagle_settings.txt");
+	strcpy_s(slash + 1, path + MAX_PATH - (slash + 1), file && *file ? file : "deagle_settings.txt");
 	g_path = path;
 	FILE* f = nullptr;
 	if (fopen_s(&f, path, "r") || !f) { Log("settings: none yet (%s)", path); return; }
@@ -93,6 +95,6 @@ void SettingsReset() {
 std::vector<std::string> SettingsReplay() {
 	std::lock_guard<std::mutex> lk(g_mu);
 	std::vector<std::string> out;
-	for (auto& kv : g_set) out.push_back("deagle_set " + kv.first + " " + kv.second);
+	for (auto& kv : g_set) out.push_back(g_setCmd + " " + kv.first + " " + kv.second);
 	return out;
 }

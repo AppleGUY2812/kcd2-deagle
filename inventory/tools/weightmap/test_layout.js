@@ -1,6 +1,6 @@
 // Runs the weight map's treemap code (the pure part of common.as) in Node and checks it:
 // every box inside its rectangle, no overlaps, areas proportional to weight. Optional: --dump <json> writes a
-// mock inventory layout for tools/ui/weightmap/mock_render.py.
+// mock inventory layout for inventory/tools/weightmap/mock_render.py.
 const fs = require("fs");
 const path = require("path");
 const src = fs.readFileSync(path.join(__dirname, "common.as"), "utf8");

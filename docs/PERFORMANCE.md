@@ -81,7 +81,7 @@ included), viewmodel / HUD / motion 0.2. These are our choice (anchored on [1][2
 - `tools/loadtime.py`: the real boot / level / save-load / fast-travel / Apse-open times, read off `kcd.log` (and the
   plugin log's `invtime` lines). `python3 tools/loadtime.py` = the running session, `--all` = every kept log. It needs
   `log_IncludeTime 1` (the plugin sends it at start; `tools/live.sh cmd "log_IncludeTime 1"` in a running game), and
-  the Apse rows need `deagle_invtime` on. `tests/test_loadtime.py` keeps its parsing honest.
+  the Apse rows need `inv_invtime` on (inventory.asi's `inventory.log`). `tests/test_loadtime.py` keeps its parsing honest.
 - `tests/run_perf.lua`: the gates (section 2, step 8) and a garbage split per function.
 - The plugin log (`deagle_native.log` next to the exe): `ron: update <avg> us avg, <max> max ...` every 3000 updates.
 - PresentMon for frame percentiles and CPU / GPU split [6].

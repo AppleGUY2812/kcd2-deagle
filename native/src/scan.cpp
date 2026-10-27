@@ -48,6 +48,21 @@ uintptr_t FindUnique(const Module& m, const char* pattern) {
 	return h.size() == 1 ? h[0] : 0;
 }
 
+uintptr_t FindLogAlwaysHandler(const Module& m) {
+	static const char* kFull =
+		"40 53 48 83 EC ?? 48 8B 02 48 8B CA 48 8B DA FF 50 28 BA 01 00 00 00 48 8B CB 3B C2 74 27 48 8B 03 "
+		"FF 50 28 BA 02 00 00 00 4C 8D 0D ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? 89 44 24 20 8D 4A 05 E8 ?? ?? ?? ?? EB 35";
+	// the same without the 6 bytes MinHook overwrites (40 53 48 83 EC ??)
+	static const char* kTail =
+		"48 8B 02 48 8B CA 48 8B DA FF 50 28 BA 01 00 00 00 48 8B CB 3B C2 74 27 48 8B 03 FF 50 28 BA 02 00 00 00 "
+		"4C 8D 0D ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? 89 44 24 20 8D 4A 05 E8 ?? ?? ?? ?? EB 35";
+	if (uintptr_t a = FindUnique(m, kFull)) return a;
+	for (uintptr_t hit : FindAll(m, kTail, 8)) {
+		if (hit >= m.base + 6 && *(const uint8_t*)(hit - 6) == 0xE9) return hit - 6;   // a jump in front: hooked
+	}
+	return 0;
+}
+
 uintptr_t RipTarget(uintptr_t insn, int dispOffset, int insnLen) {
 	return insn + insnLen + *(int32_t*)(insn + dispOffset);
 }

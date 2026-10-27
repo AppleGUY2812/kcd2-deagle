@@ -14,7 +14,7 @@ set(MINHOOK_INC third_party/minhook/include third_party/minhook/src)
 # libdeflate v1.26 (MIT): unpack + crc32 only, for src/fastzip.cpp
 set(LIBDEFLATE_SRC third_party/libdeflate/lib/deflate_decompress.c third_party/libdeflate/lib/crc32.c
     third_party/libdeflate/lib/utils.c third_party/libdeflate/lib/x86/cpu_features.c)
-add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp src/invtime.cpp
+add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp
     src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
 target_include_directories(deagle_native PRIVATE ${MINHOOK_INC} src)
@@ -28,6 +28,13 @@ add_library(fastload SHARED src/fastload_main.cpp src/scan.cpp src/log.cpp src/f
 target_include_directories(fastload PRIVATE ${MINHOOK_INC} third_party/libdeflate third_party/mimalloc/include src)
 target_compile_options(fastload PRIVATE /W3 /EHa /O2)
 set_target_properties(fastload PROPERTIES SUFFIX ".asi" OUTPUT_NAME "fastload")
+# inventory.asi: the Inventory Tools mod's plugin (src/inventory_main.cpp; inventory/README.md): the fast-transfer key,
+# Shift / Ctrl for the weight map, and invtime. Its own settings file and log, next to the .asi.
+add_library(inventory SHARED src/inventory_main.cpp src/scan.cpp src/log.cpp src/keys.cpp src/invtime.cpp src/settings.cpp ${MINHOOK_SRC})
+target_compile_features(inventory PRIVATE cxx_std_17)
+target_include_directories(inventory PRIVATE ${MINHOOK_INC} src)
+target_compile_options(inventory PRIVATE /W3 /EHa /O2)
+set_target_properties(inventory PROPERTIES SUFFIX ".asi" OUTPUT_NAME "inventory")
 # outside-the-game test: KCD2's FMOD 2.02 and Ready or Not's 2.03 in one process (native/test/ron_coexist.cpp)
 add_executable(ron_coexist test/ron_coexist.cpp src/ron.cpp src/log.cpp)
 set_property(TARGET ron_coexist PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")

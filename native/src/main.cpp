@@ -15,7 +15,6 @@
 #include "freecam.h"
 #include "ronvm.h"
 #include "lean.h"
-#include "invtime.h"
 #include "ron.h"
 #include "probe.h"
 #include "rounds.h"
@@ -348,11 +347,6 @@ static void MoveFlashes() {
 // an empty box and is culled until its first update computes one, which runs after the frame's culling
 // (docs/flash_no_delay_research.md): measured in game 2026-10-12 one game frame late. To test against that.
 static bool g_flyKeys = false;   // flykeys: read the Flight mod's keys here (OnCamera)
-// fastkey <key>|off: the weight map's fast-transfer key (fastmove.lua). Read here every frame while KCD2 has focus, so it
-// works in the inventory, chest and shop screens (their action maps send Lua no keys): "deagle_fastkey 1" on the press,
-// again every 150 ms while it stays down (the first repeat after 400 ms, like a key repeat), "deagle_fastkey 0" on the
-// release. Lua sends it on to the open screen.
-static int g_fastVk = 0;
 static float g_flashSeed = 0;
 static uintptr_t g_live = 0;
 static float g_liveScale = 1, g_liveSizes[8] = {};
@@ -1350,14 +1344,7 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "cfgreset")) SettingsReset();
 	else if (!strcmp(cmd, "freecam")) Freecam_Command(rest);
-	else if (!strcmp(cmd, "invtime")) Invtime_Command(rest);
 	else if (FastloadCommand(line)) {}   // the load-time commands (questbench, hitch, loaded ...): fastload.asi
-	else if (!strcmp(cmd, "fastkey")) {
-		char k[24] = {};
-		sscanf_s(rest, "%23s", k, (unsigned)sizeof(k));
-		g_fastVk = strcmp(k, "off") ? VkOfKey(k) : 0;
-		Log("fastkey %s -> vk %d", k, g_fastVk);
-	}
 	else if (!strcmp(cmd, "flykeys")) {   // Lua takes the keys over only on this answer (an older plugin doesn't answer)
 		g_flyKeys = atoi(rest) != 0;
 		Log("flykeys %s", g_flyKeys ? "on" : "off");
@@ -1610,42 +1597,6 @@ static void OnCamera(uintptr_t camera) {
 			g_console.push_back(c);
 		}
 	}
-	{   // Shift / Ctrl for the weight map's multi-select: Scaleform's Key.isDown never sees them in KCD2's menus (user
-		// 2026-10-21: shift / ctrl click did nothing). Sent on change only, as "deagle_mods <1 shift + 2 ctrl>".
-		static int wasMods = -1;
-		int m = 0;
-		if (g_fastVk) {
-			HWND w = GetForegroundWindow();
-			DWORD pid = 0;
-			if (w) GetWindowThreadProcessId(w, &pid);
-			if (pid == GetCurrentProcessId())
-				m = ((GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 1 : 0) | ((GetAsyncKeyState(VK_CONTROL) & 0x8000) ? 2 : 0);
-		}
-		if (m != wasMods) {
-			wasMods = m;
-			char b[32];
-			snprintf(b, sizeof b, "deagle_mods %d", m);
-			std::lock_guard<std::mutex> lk(g_consoleMu);
-			g_console.push_back(b);
-		}
-	}
-	{   // fastkey: the weight map's fast-transfer key (see g_fastVk)
-		static bool was = false;
-		static DWORD next = 0;
-		bool d = false;
-		if (g_fastVk) {
-			HWND w = GetForegroundWindow();
-			DWORD pid = 0;
-			if (w) GetWindowThreadProcessId(w, &pid);
-			d = pid == GetCurrentProcessId() && (GetAsyncKeyState(g_fastVk) & 0x8000) != 0;
-		}
-		DWORD now = GetTickCount();
-		const char* send = nullptr;
-		if (d && (!was || (int)(now - next) >= 0)) { send = "deagle_fastkey 1"; next = now + (was ? 150 : 400); }
-		else if (!d && was) send = "deagle_fastkey 0";
-		was = d;
-		if (send) { std::lock_guard<std::mutex> lk(g_consoleMu); g_console.push_back(send); }
-	}
 	if (g_env) {
 		std::deque<std::string> run;
 		{ std::lock_guard<std::mutex> lk(g_consoleMu); run.swap(g_console); }
@@ -1728,7 +1679,7 @@ static DWORD WINAPI Init(LPVOID) {
 		Log("sound root %s", g_soundRoot.c_str());
 	}
 	uintptr_t gp = FindUnique(g_game, "48 89 5C 24 08 57 48 83 EC ?? 48 8B 01 49 8B F8 4C 8D 44 24 20 C7 44 24 20 05 00 00 00 FF 50 38 32 DB 84 C0 74 11");
-	uintptr_t lh = FindUnique(g_game, "40 53 48 83 EC ?? 48 8B 02 48 8B CA 48 8B DA FF 50 28 BA 01 00 00 00 48 8B CB 3B C2 74 27 48 8B 03 FF 50 28 BA 02 00 00 00 4C 8D 0D ?? ?? ?? ?? 4C 8D 05 ?? ?? ?? ?? 89 44 24 20 8D 4A 05 E8 ?? ?? ?? ?? EB 35");
+	uintptr_t lh = FindLogAlwaysHandler(g_game);
 	g_getParamStr = (GetParamStrFn)gp;
 	Log("GetParam<str> %p  LogAlways handler %p", (void*)gp, (void*)lh);
 	FindHitReact();

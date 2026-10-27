@@ -53,14 +53,13 @@ check("deagle_reset: shipped values back (Deagle, tracers on, motion 1, ads off,
 	Deagle.gun.id == "deagle" and c.tracers == true and c.vm.motion == 1 and c.vm.ads == false and c.hud.enabled == true and c.vm.arms == "mw"
 	and c.accuracy.scale == 1 and c.tracer.mode == "trail" and c.debugPaths == false and #c.flashGrow == 0, c.vm.motion)
 Deagle:OnGameplayStarted()
-local hello, invt
+local hello
 for i = #M.native, 1, -1 do
-	if not invt and M.native[i]:match("^%[DN%] invtime ") then invt = M.native[i] end
 	if M.native[i] == "[DN] hello" then hello = M.native[i] break end
 end
 for _, kv in ipairs(want) do M.console("deagle_set", kv) end
-check("replayed at a load: " .. tostring(hello) .. ", " .. tostring(invt) .. ", then the same values again",
-	hello == "[DN] hello" and invt == "[DN] invtime 2" and c.tracers == false and c.vm.motion == 0.5 and c.vm.arms == "medieval" and c.accuracy.scale == 0.5
+check("replayed at a load: " .. tostring(hello) .. ", then the same values again",
+	hello == "[DN] hello" and c.tracers == false and c.vm.motion == 0.5 and c.vm.arms == "medieval" and c.accuracy.scale == 0.5
 	and c.tracer.mode == "flying" and Deagle.gun.id == "glock_17" and table.concat(c.flashGrow, ",") == "0.7,1,1.1", c.vm.motion)
 M.console("deagle_reset")
 -- the free camera's look mode: the plugin says it's on; Lua aims the camera every frame (freecam rot) and stops at off

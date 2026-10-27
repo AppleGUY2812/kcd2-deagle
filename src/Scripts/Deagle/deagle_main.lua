@@ -139,8 +139,6 @@ Deagle.cfg = {
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F2 / mouse 4 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
-	invtime = 2,              -- skip the Apse "clothes ready" gate on every load (docs/inventory_load.md): the open went 1.12 s -> 0.65 s;
-	                          -- deagle_set invtime 0 turns it off, deagle_set invtime 1 only logs (Henry may miss clothes for a moment)
 	-- deagle_set debugShotLog 1: every shot logs Henry's eye, the aim, the free camera (plugin log) and the round's place
 	-- each frame to kcd.log ("[Deagle] shot N ..."), to line a recording up with where the round really was
 	debugShotLog = false,
@@ -593,7 +591,6 @@ function Deagle:NativeHello()
 	self.native, self.ronParamsFor = false, nil   -- the plugin forgets a Ready or Not gun's numbers at hello
 	self.leanSent, self.leanParamsSent, self.sprintSent, self.wallSent = nil, nil, nil, nil   -- and the lean's, upright
 	self:Native("hello")
-	self:Native("invtime " .. tostring(self.cfg.invtime))   -- every load and init: the plugin forgets the mode at hello
 end
 
 -- which entity to place, offset, whether to follow the camera now, motion strength
@@ -810,7 +807,6 @@ local AFTER_SET = {
 	["hud.enabled"] = function(self) self.hudOk = nil end,
 	tracers = function(self) self:Notify("tracers " .. (self.cfg.tracers and "on" or "off")) end,
 	debugPaths = function(self) if not self.cfg.debugPaths then self.paths = {} end end,
-	invtime = function(self) self:Native("invtime " .. tostring(self.cfg.invtime)) end,
 	["flashMesh.look"] = function(self) self:FlashMeshRebuild() end,
 	["flashMesh.roll"] = function(self) self:FlashMeshRebuild() end,
 }
@@ -1016,7 +1012,6 @@ System.AddCCommand("deagle_log_actions", "Deagle.state.logActions = not Deagle.s
 System.AddCCommand("deagle_fx", "Deagle:FxTest(Deagle.Arg([[%1]]))", "deagle_fx <effect>: spawn a particle effect 3 m ahead")
 System.AddCCommand("deagle_vm_respawn", "Deagle:VmRespawn()", "Rebuild the viewmodel entity")
 System.AddCCommand("deagle_native_ok", "Deagle.native = true; System.LogAlways('[Deagle] native plugin linked'); if Deagle.MotionParams then Deagle:MotionParams() end; Deagle:RonWarm(); Deagle:FlyLink()", "internal: native plugin handshake")
-System.AddCCommand("deagle_invtime", "Deagle:Native('invtime ' .. Deagle.Arg([[%1]]))", "deagle_invtime 1|2|0: log how long the inventory / map screen's black screen waits at each step (plugin log, invtime lines); 2 = the same plus a test that skips the clothing-loaded gate (save first). On at 2 by default, kept: deagle_set invtime 0 turns it off, 1 only logs")
 System.AddCCommand("deagle_flykey", "Deagle:FlyKey([[%line]])", "internal: the plugin's read of a Flight mod key (<name> 0|1)")
 System.AddCCommand("deagle_ron_state", "Deagle:RonState([[%1]])", "internal: Ready or Not's sound engine started in the plugin (1) or failed (0)")
 System.AddCCommand("deagle_native_test", "Deagle:NativeHello() Deagle:Snd('decho/decho-1.wav', 1)", "ping the native plugin and play a shot sound")

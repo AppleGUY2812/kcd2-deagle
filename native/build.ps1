@@ -14,14 +14,17 @@ $cmake = Join-Path $vs "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\c
 # 2026-10-20): the old binary goes first, and each cmake step's exit code is checked
 $asi = "$work\build\Release\deagle_native.asi"
 $fl = "$work\build\Release\fastload.asi"
-Remove-Item $asi,$fl -Force -ErrorAction SilentlyContinue
+$inv = "$work\build\Release\inventory.asi"
+Remove-Item $asi,$fl,$inv -Force -ErrorAction SilentlyContinue
 & $cmake -S $work -B "$work\build" -G "Visual Studio 17 2022" -A x64 | Select-String -Pattern "error|Error|Generating done" | % Line
 if ($LASTEXITCODE -ne 0) { "BUILD FAILED (configure, exit $LASTEXITCODE)"; exit 1 }
 # --clean-first: robocopy keeps the sources' own (older) timestamps, so an incremental build linked the previous
 # build's objects for every file not touched since (2026-10-23: a working-tree build silently missed rounds.cpp's split)
-& $cmake --build "$work\build" --config Release --clean-first 2>&1 | Select-String -Pattern "error|warning C4|deagle_native.vcxproj ->|fastload.vcxproj ->" | % Line
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $asi) -or -not (Test-Path $fl)) { "BUILD FAILED (compile, exit $LASTEXITCODE)"; exit 1 }
+& $cmake --build "$work\build" --config Release --clean-first 2>&1 | Select-String -Pattern "error|warning C4|deagle_native.vcxproj ->|fastload.vcxproj ->|inventory.vcxproj ->" | % Line
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $asi) -or -not (Test-Path $fl) -or -not (Test-Path $inv)) { "BUILD FAILED (compile, exit $LASTEXITCODE)"; exit 1 }
 Copy-Item $asi $out -Force
 $flOut = Join-Path (Split-Path $out) "fastload.asi"
 Copy-Item $fl $flOut -Force
-"BUILT " + (Get-Item $out).Length + " + fastload.asi " + (Get-Item $flOut).Length
+$invOut = Join-Path (Split-Path $out) "inventory.asi"
+Copy-Item $inv $invOut -Force
+"BUILT " + (Get-Item $out).Length + " + fastload.asi " + (Get-Item $flOut).Length + " + inventory.asi " + (Get-Item $invOut).Length

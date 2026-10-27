@@ -27,7 +27,7 @@ if kind == "inv":
     edits += [
         ("var _loc1_ = g_View.GetIdOnMousePosition();", "var _loc1_ = WM_IdOnMouse(g_View);"),
         ("function fc_setShopMode(isTrader, playerId)\n{\n", "function fc_setShopMode(isTrader, playerId)\n{\n   WM_HideAll();\n"),
-        # time the item-list fill on each open (2026-10-26, menu-open work): "[Deagle] fastmove: ... setItems ..."
+        # time the item-list fill on each open (2026-10-26, menu-open work): "[Inv] fastmove: ... setItems ..."
         ("function fc_setItems(idx)\n{\n   DebugTrace.log(\"g_ItemsA: \" + g_ItemsA.join(\",\"),DebugTrace.C_DEBUG,\"fc_setItems\");\n   g_Data.SetDataFromArray(g_ItemsA);\n",
          "function fc_setItems(idx)\n{\n   var _st0 = getTimer();\n   var _stN = g_ItemsA.length;\n"
          "   DebugTrace.log(\"g_ItemsA: \" + g_ItemsA.join(\",\"),DebugTrace.C_DEBUG,\"fc_setItems\");\n   var _st1 = getTimer();\n"

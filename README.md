@@ -48,6 +48,7 @@ Video checks: drag an OBS clip onto `Desktop\Make Scrubbable.bat`, then step wit
 |---|---|
 | `src/` | mod content, packed into `data/deagle.pak`: particles, viewmodel, clips, and the scripts in `Scripts/Deagle/`, one file per system (see below) |
 | `native/` | the C++ plugin (MinHook) and its build/install scripts |
+| `inventory/` | the Inventory Tools mod (its own pak + `inventory.asi`, split out on 2026-10-26): weight map, G fast transfer, inventory open speed; see `inventory/README.md` (plugin source `native/src/inventory_main.cpp`) |
 | `tools/` | the conversion pipeline (Blender, rc, audits) |
 | `tests/` | mock-engine tests |
 | `assets/` | build inputs that aren't committed (MWII sounds, the game's Animations.img) |

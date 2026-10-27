@@ -5,20 +5,20 @@ import pathlib, sys
 
 kind, src, dst = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 t = src.read_text(encoding="utf-8")
-MODS = ('<function name="DeagleMods" funcname="fc_deagleMods"><param name="Shift" desc="" type="int"/>'
+MODS = ('<function name="InvMods" funcname="fc_invMods"><param name="Shift" desc="" type="int"/>'
         '<param name="Ctrl" desc="" type="int"/></function>')
-STAT = '<event name="OnDeagleStat" fscommand="onDeagleStat"><param name="Text" desc="" type="string"/></event>'
+STAT = '<event name="OnInvStat" fscommand="onInvStat"><param name="Text" desc="" type="string"/></event>'
 funcs = {
-    "inv": ['<function name="DeagleFast" funcname="fc_deagleFast" />',
-            '<function name="DeagleShopClick" funcname="fc_deagleShopClick" />', MODS],
-    "tr": ['<function name="DeagleFast" funcname="fc_deagleFast" />', MODS],
-    "md": ['<function name="DeagleAutoMax" funcname="fc_deagleAutoMax" />'],
+    "inv": ['<function name="InvFast" funcname="fc_invFast" />',
+            '<function name="InvShopClick" funcname="fc_invShopClick" />', MODS],
+    "tr": ['<function name="InvFast" funcname="fc_invFast" />', MODS],
+    "md": ['<function name="InvAutoMax" funcname="fc_invAutoMax" />'],
 }[kind]
 events = {
-    "inv": ['<event name="OnDeagleActive" fscommand="onDeagleActive"><param name="Active" desc="" type="bool"/></event>',
-            '<event name="OnDeagleFastMove" fscommand="onDeagleFastMove" />',
-            '<event name="OnDeagleFastShop" fscommand="onDeagleFastShop" />', STAT],
-    "tr": ['<event name="OnDeagleActive" fscommand="onDeagleActive"><param name="Active" desc="" type="bool"/></event>',
+    "inv": ['<event name="OnInvActive" fscommand="onInvActive"><param name="Active" desc="" type="bool"/></event>',
+            '<event name="OnInvFastMove" fscommand="onInvFastMove" />',
+            '<event name="OnInvFastShop" fscommand="onInvFastShop" />', STAT],
+    "tr": ['<event name="OnInvActive" fscommand="onInvActive"><param name="Active" desc="" type="bool"/></event>',
            STAT],
     "md": [],
 }[kind]

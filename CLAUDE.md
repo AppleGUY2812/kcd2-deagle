@@ -34,7 +34,9 @@ script file needs an owner here: `tests/run_all.sh` fails otherwise, or when thi
   and its textures, the effects tools (`tools/ron/mk_*fx*.py`, `tools/ron/mk_water*_tex.py`, the fx converter).
 - 🟪 Everything else: `deagle_main.lua` (settings, `Deagle.U`, input, start-up, commands), `flash.lua`, `recoil.lua`,
   `weapon.lua`, `viewmodel.lua`, `hits.lua` (and the `hole` column of `surfaces.lua`), `npc.lua`, `tracers.lua`,
-  `shells.lua`, `freecam.lua`, `physics.lua`, `debug.lua`, `motion.lua`, and the rest of `native/`.
+  `shells.lua`, `freecam.lua`, `physics.lua`, `debug.lua`, `motion.lua`, and the rest of `native/`; also `inventory/`
+  (the Inventory Tools mod: weight map, G fast transfer, inventory open speed; its movies and UI definitions in
+  `inventory/src/Libs/UI/` are built by `inventory/tools/weightmap/build.sh`, never hand-edited) and `native/src/inventory_main.cpp`.
 - 🟫 Flight (the "deagle-game-todo-notion" session): `flight.lua` (and `tests/run_flight.lua`): Henry flies by physics
   velocity, never SetPos (the Flight mod's crash). Also `skin.lua` (gun finishes, `deagle_skin`).
 - Commit only your own hunks (never `git commit -a`, check `git diff --cached --stat` first), keep

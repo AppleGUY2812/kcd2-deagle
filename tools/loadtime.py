@@ -14,7 +14,7 @@ Spans, and the markers they are measured between (the first line and the last li
   level     Loading level X -> gameplay started      a new level (a fresh boot, or a region change)
   save      Loading saved game -> gameplay started   a load into a level that is already up
   travel    SkipTime.gfx -> its next line that ends the skip   (map fast travel / sleep)
-  apse      invtime open -> invtime readiness done (deagle_native.log, needs deagle_invtime on)
+  apse      invtime open -> invtime readiness done (inventory.log, needs inv_invtime on)
 
 `-` means the log has no timestamps there; `?` means the start or the end marker never appeared.
 """
@@ -116,7 +116,7 @@ def spans(path):
 
 
 def apse(path):
-    """Apse opens from the plugin log: open -> fade in, in ms (deagle_invtime)."""
+    """Apse opens from the plugin log: open -> fade in, in ms (inv_invtime)."""
     if not os.path.exists(path):
         return []
     out, start = [], None
@@ -132,9 +132,9 @@ def apse(path):
     return out
 
 
-def report(path, plugin):
+def report(path, invlog):
     print("== %s" % os.path.basename(path))
-    rows = spans(path) + (apse(plugin) if plugin else [])
+    rows = spans(path) + (apse(invlog) if invlog else [])
     if all(secs is None for kind, secs, *_ in rows):
         print("   no timestamps in this log (log_IncludeTime was off); %d markers, all without times" % len(rows))
         return
@@ -154,10 +154,10 @@ def report(path, plugin):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     all_logs = "--all" in sys.argv
-    plugin = os.path.join(GAME, "Bin/Win64MasterMasterSteamPGO/deagle_native.log")
+    invlog = os.path.join(GAME, "Bin/Win64MasterMasterSteamPGO/inventory.log")   # Inventory Tools' plugin: the invtime lines
     if args:
         for p in args:
-            report(p, plugin)
+            report(p, invlog)
         return
     if all_logs:
         back = os.path.join(GAME, "logbackups")
@@ -167,7 +167,7 @@ def main():
         for p in logs:
             report(p, None)
         return
-    report(os.path.join(GAME, "kcd.log"), plugin)
+    report(os.path.join(GAME, "kcd.log"), invlog)
 
 
 if __name__ == "__main__":
