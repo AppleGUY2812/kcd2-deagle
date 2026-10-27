@@ -156,12 +156,21 @@ bool Create() {
 	uintptr_t base = (uintptr_t)GetModuleHandleA("WHGame.dll");
 	if (!base) { Log("invtime: no WHGame.dll"); return false; }
 	g_base = base;
+	const uintptr_t end = base + GetModule("WHGame.dll").size;
 	for (auto& s : g_sites) {   // all or none: every byte as read from 1.5.6's WHGame.dll
 		s.at = base + s.rva;
-		if (memcmp((void*)s.at, s.bytes, sizeof(s.bytes)) != 0) {
-			Log("invtime: %s at +0x%x isn't the 1.5.6 code: nothing hooked", s.name, s.rva);
-			return false;
+		const unsigned char* p = (const unsigned char*)s.at;
+		if (memcmp(p, s.bytes, sizeof(s.bytes)) == 0) continue;
+		// another plugin hooked it first (fastload's readiness.cpp hooks "wait", 2026-10-26): a jump out of WHGame.dll at
+		// the start, and the bytes past the instructions MinHook moved (all five sites: under 8 bytes) still 1.5.6's.
+		// MinHook hooks through the jump (it relocates it into our trampoline), so both hooks run.
+		const uintptr_t to = s.at + 5 + *(const int32_t*)(p + 1);
+		if (p[0] == 0xE9 && (to < base || to >= end) && memcmp(p + 8, s.bytes + 8, sizeof(s.bytes) - 8) == 0) {
+			Log("invtime: %s at +0x%x is already hooked by another plugin (jump to %p): hooking through it", s.name, s.rva, (void*)to);
+			continue;
 		}
+		Log("invtime: %s at +0x%x isn't the 1.5.6 code: nothing hooked", s.name, s.rva);
+		return false;
 	}
 	for (int i = 0; i < kSites; i++) {
 		if (MH_CreateHook((void*)g_sites[i].at, g_sites[i].hook, (void**)g_sites[i].orig) != MH_OK) {
