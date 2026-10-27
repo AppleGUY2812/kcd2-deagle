@@ -106,6 +106,8 @@ using SetFlagsFn = void(__fastcall*)(uintptr_t att, uint32_t flags);            
 using AddBindingFn = uint32_t(__fastcall*)(uintptr_t att, uintptr_t obj, uintptr_t skin, uint32_t flags);  // att +0xD0
 using GetMtlFn = uintptr_t(__fastcall*)(uintptr_t obj, uint32_t lod);                   // obj +0x80 replacement material
 using SetMtlFn = void(__fastcall*)(uintptr_t obj, uintptr_t mtl, uint32_t lod);         // obj +0x78
+using StateFn = uint8_t(__fastcall*)(uintptr_t att);                                    // att +0x120: KCD2 stream state (+0x50)
+using SetStateFn = void(__fastcall*)(uintptr_t att, uint8_t state);                     // att +0x128 (0x1820f0b00); 6/7 = ready
 using MallocFn = uintptr_t(__fastcall*)(size_t);
 using CtorFn = uintptr_t(__fastcall*)(uintptr_t mem);
 using AssignFn = uintptr_t(__fastcall*)(uintptr_t slot, uintptr_t iface);
@@ -132,6 +134,19 @@ bool RemoveAtt(uintptr_t mgr, uintptr_t att) {
 }
 
 // Copies src's skin attachment onto dstMgr as dstName. Returns a short reason on failure, nullptr when bound.
+uint8_t State(uintptr_t att) { __try { auto f = (StateFn)Vf(att, 0x120); return f ? f(att) : 0xFF; } __except (EXCEPTION_EXECUTE_HANDLER) { return 0xFF; } }
+
+// Logs the qwords of two CAttachmentSKIN objects (0x198 bytes) that differ, to see what the game sets on its own
+// clothing attachments that a copy lacks. Pointers differ anyway; small values and flags are the interesting ones.
+void DiffAtt(const char* tag, uintptr_t a, uintptr_t b) {
+	char line[1024]; int len = sprintf_s(line, "clothcopy diff %s (own vs copy):", tag), shown = 0;
+	for (int off = 0; off < 0x198 && len < 900; off += 8) {
+		uintptr_t x = 0, y = 0; if (!Rd(a + off, x) || !Rd(b + off, y) || x == y) continue;
+		len += sprintf_s(line + len, sizeof(line) - len, " +%X %llX/%llX", off, (unsigned long long)x, (unsigned long long)y); shown++;
+	}
+	Log("%s%s", line, shown ? "" : " none");
+}
+
 const char* CopySkin(uintptr_t src, uintptr_t dstMgr, const char* dstName, uint32_t& outFlags, int& outMtls) {
 	__try {
 		uintptr_t obj = ((PtrFn)Vf(src, 0xE0))(src); if (!obj) return "source has no object";
@@ -153,6 +168,12 @@ const char* CopySkin(uintptr_t src, uintptr_t dstMgr, const char* dstName, uint3
 		if (!((AddBindingFn)Vf(att, 0xD0))(att, o2, skin, 0x800)) { RemoveAtt(dstMgr, att); return "AddBinding refused"; }
 		for (uint32_t l = 0; l < 6; l++) if (mtl[l]) ((SetMtlFn)Vf(o2, 0x78))(o2, mtl[l], l);
 		Hide(att, false);
+		// KCD2's clothing sets a bound attachment's stream state to 7 (0x181e96ff0); the setter also hands the character
+		// to the character manager (0x1820f31d0). A copy left at 0 bound fine but never drew (test 2026-10-26).
+		uint8_t s0 = State(src), d0 = State(att);
+		uint8_t want = (s0 == 6 || s0 == 7) ? s0 : 7;
+		((SetStateFn)Vf(att, 0x128))(att, want);
+		Log("clothcopy %s: stream state source %u, copy %u -> %u", dstName, s0, d0, State(att));
 		return nullptr;
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return "engine call faulted (caught)"; }
 }
@@ -185,6 +206,9 @@ bool ClothCopy(const char* rest, uintptr_t env) {
 		QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
 		Log("clothcopy %08X <- %08X %s: %s (flags %08X, %d LOD materials, %.3f ms)", dst, src, p, why ? why : "bound", fl, mt,
 			(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart);
+		uintptr_t own = FindAtt(dmgr, sname), cp = FindAtt(dmgr, dname);
+		if (own && cp) DiffAtt(p, own, cp);
+		if (own) { uint32_t of = 0; __try { of = ((U32Fn)Vf(own, 0x40))(own); } __except (EXCEPTION_EXECUTE_HANDLER) {} Log("clothcopy %s: the NPC's own %s flags %08X state %u", p, sname, of, State(own)); }
 	}
 	return true;
 }
