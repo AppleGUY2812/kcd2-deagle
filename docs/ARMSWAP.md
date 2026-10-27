@@ -121,9 +121,12 @@ Arm lengths (upper arm / forearm / hand): Henry 26.6 / 26.2 / 8.3 cm; RoN 28.1 /
 
 1. Binding Henry's clothing skins on the viewmodel in game. Test order: a male NPC first (same skeleton), then the
    viewmodel. Watch kcd.log for "Skin root joint ... was not found". First NPC test (2026-10-26, plugin 193): every
-   call succeeded ("bound") but the copy didn't draw, even with every hide flag cleared from Lua. Fix under test
-   (3f53402): KCD2 skin attachments have a stream state (+0x50; vt +0x120 get / +0x128 set) that its clothing sets to
-   7 after binding; the copy stayed at 0. The plugin log now also lists where the NPC's own attachment and the copy differ.
+   call succeeded ("bound") but the copy didn't draw, even with every hide flag cleared from Lua. Second test (197,
+   3f53402, stream state forced to 7): still nothing. The log showed why the live skin can't be shared: worn clothing
+   sits at stream state 5 (+0x50; vt +0x120 / +0x128) and its attachment holds per-LOD stream entries (+0x160..+0x190)
+   and two pointers (+0x38, +0x40) that a hand-made binding never gets. Fix under test (33664fd): load the same .skin
+   file fresh (CSkin vt +0x20 = path, CharacterManager 0x185189be0 vt +0x30 LoadModelSKIN), as the CDF loader does
+   for the viewmodel's own skins, and bind that.
 2. Skeleton extension: a skin with a joint the viewmodel lacks makes the engine extend and rebuild the skeleton (in
    public CryEngine that resets the character: a pop mid-clip). Henry's full skeleton on the viewmodel avoids it.
 3. Per-character clothing looks (blood / dirt zones) may live on Henry's character, not the material: missing on the
