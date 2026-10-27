@@ -220,6 +220,17 @@ bool ClothCopy(const char* rest, uintptr_t env) {
 		if (own && cp) DiffAtt(p, own, cp);
 		if (own) { uint32_t of = 0; __try { of = ((U32Fn)Vf(own, 0x40))(own); } __except (EXCEPTION_EXECUTE_HANDLER) {} Log("clothcopy %s: the NPC's own %s flags %08X state %u", p, sname, of, State(own)); }
 	}
+	// The manager keeps a sorted copy of its attachment list (+0xB8 from +0x78) and registers the skins from that copy;
+	// CreateAttachment only marks it dirty (+0xFC). The CDF loader rebuilds it at its end (0x180aba494); vt +0x138
+	// (0x1813e03d8) is the manager's own rebuild + "attachments changed" on the character (0x40000). Without it the
+	// copies were bound but never on the drawn list (tests 193 / 197 / 199).
+	__try { ((PtrFn)Vf(dmgr, 0x138))(dmgr); Log("clothcopy %08X: attachment list rebuilt", dst); }
+	__except (EXCEPTION_EXECUTE_HANDLER) { Log("clothcopy %08X: attachment list rebuild faulted (caught)", dst); }
+	static const char* const kShown[] = { "arms", "hands" };
+	for (const char* p : kShown) {
+		char dname[64]; sprintf_s(dname, "dn_clothing_%s", p);
+		if (uintptr_t cp = FindAtt(dmgr, dname)) Log("clothcopy %s after rebuild: state %u", dname, State(cp));
+	}
 	return true;
 }
 
