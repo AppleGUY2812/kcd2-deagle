@@ -13,7 +13,8 @@ If a step ever needs per-item or per-gun hand work, it is the wrong step: fix th
 | clothing on the arms | nothing: the game's own worn skins + materials are copied at run time | 0 |
 
 Status (2026-10-26): proven offline in Blender on two games' arms (RoN Grizzly, CoD Glock). The in-game parts
-(native clothing copy, Henry-skeleton viewmodel) are **not built yet**; see "Not proven yet".
+(native clothing copy, Henry-skeleton viewmodel) are **not built yet**; see "Not proven yet". Videos:
+Desktop\Deagle Progress\ARM SWAP DEMO 3 - *.mp4 (both reloads, same fit code, only the bone table differs).
 
 ## How it works
 
