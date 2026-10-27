@@ -23,7 +23,10 @@ def mip_bytes(w, h, dxgi):
     return max(1, (w + 3) // 4) * max(1, (h + 3) // 4) * bs
 
 
-def split(data):
+SRGB_OF = {71: 72, 77: 78, 98: 99}   # BC1 / BC3 / BC7 UNORM -> _SRGB (same bytes)
+
+
+def split(data, albedo, avg_bright=0.25):
     """-> (base bytes, [chunk1, chunk2, ...]) with chunk k = the k-th smallest streamed mip."""
     if data[:4] != b"DDS " or data[84:88] != b"DX10":
         raise ValueError("not a DX10 .dds")
@@ -45,8 +48,19 @@ def split(data):
     if len(keep) <= PERSIST:
         return None   # small: leave whole
     hdr = bytearray(data[:hlen])
-    struct.pack_into("<I", hdr, 28, len(keep))
+    # CryEngine's extended header, as the game's own split textures have it (without "CRYF" the game misreads the
+    # split: 2026-10-27, rainbow skins). Fields after the magic: flags @8, pitch @20, depth @24, mips @28,
+    # image flags @36 (0x200000 as all vanilla files, 0x800 = sRGB), average brightness @40, min colour @44,
+    # max colour @60 (texels are scaled by min..max: 0..1 = as stored), persistent mips @116, "CRYF" @124 (bytes "FYRC").
+    struct.pack_into("<I", hdr, 8, 0x21007)
+    struct.pack_into("<III", hdr, 20, 0, 0, len(keep))
+    srgb = albedo and (dxgi in SRGB_OF or dxgi in SRGB_OF.values())
+    struct.pack_into("<If", hdr, 36, 0x200000 | (0x800 if srgb else 0), avg_bright)
+    struct.pack_into("<4f", hdr, 44, 0, 0, 0, 0)
+    struct.pack_into("<4f", hdr, 60, 1, 1, 1, 1)
     hdr[116] = PERSIST
+    hdr[124:128] = b"FYRC"   # the uint32 FOURCC "CRYF", little-endian as in vanilla
+    if srgb and dxgi in SRGB_OF: struct.pack_into("<I", hdr, 128, SRGB_OF[dxgi])   # albedo is sRGB: read it as sRGB
     base = bytes(hdr) + b"".join(l[2] for l in keep[-PERSIST:])
     streamed = keep[:-PERSIST]               # mip 0 first
     chunks = [l[2] for l in reversed(streamed)]   # .1 = smallest streamed mip
@@ -66,7 +80,7 @@ def main():
                 tot_in += len(data)
                 if not i.filename.lower().endswith(".dds"):
                     zo.writestr(i.filename, data); tot_out += len(data); continue
-                r = split(data)
+                r = split(data, albedo=i.filename.lower().endswith("_diff.dds"))
                 if r is None:
                     zo.writestr(i.filename, data); tot_base += len(data); tot_out += len(data)
                     print(f"whole  {i.filename}"); continue
