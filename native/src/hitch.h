@@ -19,5 +19,6 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self);   // star
 // engine's pak reader and callback thread are sampled every 20 ms however short the frames are, and reported as one
 // "hitch: #N settle window" with each thread's CPU use. Any thread; idempotent.
 void Hitch_Window(bool on);
+void Hitch_MenuWindow(bool on);   // an instant (menu-open) fade's black: Main + render threads every 1 ms (menutime.cpp)
 void Hitch_Frame();                       // main thread, once a drawn frame (fastload_main.cpp)
 void Hitch_Command(const char* args);     // "hitch [on|off|<ms>]"

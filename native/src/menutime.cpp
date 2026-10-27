@@ -12,6 +12,7 @@
 #include <string>
 #include "MinHook.h"
 #include "log.h"
+#include "hitch.h"
 
 extern bool (*Hitch_MapvdMasking)();   // hitch.cpp, set by mapvd.cpp: true while a menu has the view distance lowered
 
@@ -65,11 +66,12 @@ double g_fOut = 0, g_fCb = 0, g_fIn = 0;
 float g_fDur = 0;
 unsigned g_fBlackFrames = 0;
 V1 o_fStart, o_fIn, o_fEnd, o_fUpd;
-void __fastcall HkfStart(void* a) { o_fStart(a); g_fOut = Now(); g_fCb = g_fIn = 0; g_fBlackFrames = 0; g_fDur = *(float*)((char*)a + 0x170); }
+void __fastcall HkfStart(void* a) { o_fStart(a); g_fOut = Now(); g_fCb = g_fIn = 0; g_fBlackFrames = 0; g_fDur = *(float*)((char*)a + 0x170); if (g_fDur < 0.05f) Hitch_MenuWindow(true); }
 void __fastcall HkfIn(void* a) { g_fIn = Now(); o_fIn(a); }
 void __fastcall HkfUpd(void* a) { if (*(char*)((char*)a + 0x38) == 2) g_fBlackFrames++; o_fUpd(a); }
 void __fastcall HkfEnd(void* a) {
 	o_fEnd(a);
+	Hitch_MenuWindow(false);
 	if (!g_fOut || !g_fCb || !g_fIn) { g_fOut = 0; return; }
 	const double t = Now();
 	Log("menutime: fade: out %.0f ms, black %.0f ms (%u frames; menu build in it), in %.0f ms, total %.0f ms (duration setting %.2f s)",

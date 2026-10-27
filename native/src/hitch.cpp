@@ -44,6 +44,7 @@ bool g_namesChanged = true;
 // samples it. Hitch_Window(true) samples Main, the threads above and the stream engine's two serial stages (the one pak
 // reader and the one callback thread) until Hitch_Window(false), reported as one "window", with each thread's CPU use.
 std::atomic<bool> g_window{false};
+std::atomic<bool> g_menuWin{false};   // menutime.cpp: an inventory / map open's black, sampled every 1 ms
 // Since 2026-10-26 also the regular job workers ("JobWorker_0*": 00-09): Main waits ~0.65 s of the window for the AI
 // frame job (readiness's AI line), which runs on them.
 const char* const kWindowNames[] = { "Streaming File IO HDD", "Streaming AsyncCallback", "JobWorker_0*" };
@@ -533,11 +534,11 @@ DWORD WINAPI Watch(LPVOID) {
 	long long start = 0;
 	uint32_t faults0 = 0;
 	SysPf sys0;
-	bool inWin = false;
+	bool inWin = false, winMenu = false;
 	long long winStart = 0;
 	std::vector<uint64_t> cpu0;
 	for (;;) {
-		Sleep(kIntervalMs);
+		Sleep(inWin && g_menuWin.load(std::memory_order_relaxed) ? 1 : kIntervalMs);
 		if (HANDLE fix = g_fixMain.exchange(nullptr)) {   // the start-up guess was not the main thread
 			ss.clear();
 			g_main = fix; g_mainStack = g_fixStack;
@@ -548,11 +549,12 @@ DWORD WINAPI Watch(LPVOID) {
 		if (g_targets.empty()) g_targets.push_back({ g_main, g_mainStack, "Main", GetThreadId(g_main) });
 		const long long now = Now();
 		const double gapMs = (now - last) * 1000.0 / (double)g_freq;
-		const bool win = g_window.load(std::memory_order_acquire) && g_on;
+		const bool menuWin = g_menuWin.load(std::memory_order_acquire);
+		const bool win = (g_window.load(std::memory_order_acquire) || menuWin) && g_on;
 		if (win != inWin) {
 			if (!ss.empty()) {   // whatever was being sampled ends here
 				const double ms = (now - (inWin ? winStart : start)) * 1000.0 / (double)g_freq;
-				if (inWin) Log("hitch: #%d below is the settle window: a save-load gate holding the screen", no);
+				if (inWin) Log("hitch: #%d below is the %s", no, winMenu ? "menu-open window: an inventory / map open's black, 1 ms samples" : "settle window: a save-load gate holding the screen");
 				Report(no, ms, ss, faults0, sys0, inWin ? &cpu0 : nullptr);
 				ReportFiles(no, inWin ? winStart : start, now);
 				ss.clear();
@@ -565,12 +567,13 @@ DWORD WINAPI Watch(LPVOID) {
 				faults0 = Faults();
 				sys0 = SysFaults();
 				RefreshModules();
-				FindTargets(true);
+				winMenu = menuWin;
+				FindTargets(!menuWin);   // a menu open: Main and the render threads only (1 ms samples of a dozen threads would slow it)
 				cpu0.clear();
 				for (const Target& t : g_targets) cpu0.push_back(CpuUs(t.h));
 				std::string found;
 				for (size_t i = 1; i < g_targets.size(); i++) found += (i > 1 ? ", " : "") + g_targets[i].name;
-				Log("hitch: #%d settle window on (a save-load gate holds the screen): sampling Main%s%s", no, found.empty() ? "" : ", ",
+				Log("hitch: #%d %s on: sampling Main%s%s", no, menuWin ? "menu-open window (1 ms)" : "settle window (a save-load gate holds the screen)", found.empty() ? "" : ", ",
 				    found.c_str());
 			} else FindTargets(false);
 		}
@@ -718,6 +721,7 @@ void Hitch_Frame() {
 }
 
 void Hitch_Window(bool on) { g_window.store(on, std::memory_order_release); }
+void Hitch_MenuWindow(bool on) { g_menuWin.store(on, std::memory_order_release); }
 
 void Hitch_Command(const char* args) {
 	while (args && *args == ' ') args++;
