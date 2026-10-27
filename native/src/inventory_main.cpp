@@ -6,7 +6,8 @@
 //     stays down (the first repeat after 400 ms, like a key repeat), "inv_fastkey 0" on the release; and Shift / Ctrl
 //     for the weight map's multi-select, as "inv_mods <1 shift + 2 ctrl>" on change only (Scaleform's Key.isDown never
 //     sees them there);
-//   - the inventory / map screen's speed (invtime.cpp): "invtime 2" skips the clothing gate before the fade.
+//   - the inventory / map screen's speed (invtime.cpp): "invtime 2" skips the clothing gate before the fade;
+//   - a frozen menu: names the Flash script function that is stuck (ashang.cpp).
 // Lua -> native commands through System.LogAlways("[INV] ..."); the console queue goes the other way, through KCD2's
 // own console. Its settings file is inventory_settings.txt and its log inventory.log, both next to the .asi.
 // The frame tick is CSystem::Update's vtable slot (as fastload.asi; it chains another mod's patch), so it shares no
@@ -26,6 +27,7 @@
 #include "keys.h"
 #include "invtime.h"
 #include "settings.h"
+#include "ashang.h"
 
 namespace {
 
@@ -131,7 +133,7 @@ uintptr_t __fastcall HkUpdate(void* sys, unsigned flags, int pause) {
 	DWORD want = 0;
 	const DWORD me = GetCurrentThreadId();
 	if (g_mainTid.compare_exchange_strong(want, me)) Log("inventory: frame tick on thread %lu", me);
-	if (want == 0 || want == me) Tick();
+	if (want == 0 || want == me) { AsHang_Frame(); Tick(); }
 	return r;
 }
 
@@ -265,6 +267,7 @@ static DWORD WINAPI Init(LPVOID) {
 	for (int i = 0; i < 240 && !g_env; i++) { g_env = FindEnv(); if (!g_env) Sleep(500); }
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)
+	AsHang_Install(g_game.base);   // names a stuck Flash script in this log (ashang.cpp)
 	if (!PatchUpdate())
 		Log("inventory: no frame tick: the fast-transfer key and the console queue are idle this session");
 	return 0;
