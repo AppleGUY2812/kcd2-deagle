@@ -692,3 +692,48 @@ function Deagle:ArmIk(arg)
 end
 
 System.AddCCommand("deagle_armik", "Deagle:ArmIk(Deagle.Arg([[%1]]))", "deagle_armik right|left|both|off: test - Henry's body shows and his own arms reach for the gun's hands (arm IK); logs how far each hand is from the gun once a second")
+
+-- Clothing copy test (2026-10-26, arm swap step 2, docs/ARMSWAP.md): the plugin copies Henry's worn clothing skins
+-- (clothing_arms, clothing_hands by default) onto another character, materials included. deagle_clothcopy npc = the
+-- nearest NPC within 6 m (same skeleton as Henry: should look right), vm = the gun's viewmodel (still Ready or Not /
+-- Call of Duty bones: expect wrong bending and a "Skin root joint" line in kcd.log; this only proves it binds), off =
+-- remove the copies from both. Optional 2nd word: the parts, e.g. arms,hands,torso. Results go to the plugin log.
+function Deagle:ClothCopy(arg)
+	arg = Deagle.Arg(arg)
+	local what, parts = string.match(arg or "", "^(%S+)%s*(%S*)$")
+	what = what and string.lower(what)
+	if what ~= "npc" and what ~= "vm" and what ~= "off" then log("usage: deagle_clothcopy npc|vm|off [arms,hands,...]") return end
+	if not self.native then log("clothcopy: needs the native plugin") return end
+	local p = self:Player()
+	if not p then log("clothcopy: no player") return end
+	local function send(id, extra) self:Native("clothcopy 0x" .. U.entityHex(id) .. " " .. extra) end
+	if what == "off" then
+		if self.clothNpc then send(self.clothNpc, "off") end
+		if self.vmId then send(self.vmId, "off") end
+		self.clothNpc = nil
+		log("clothcopy: copies removed")
+		return
+	end
+	parts = (parts ~= "" and parts) or "arms,hands"
+	if what == "vm" then
+		if not self.vmId then log("clothcopy: no viewmodel (draw the gun first)") return end
+		send(self.vmId, parts)
+		log("clothcopy vm " .. parts .. ": sent (see the plugin log)")
+		self:Notify("clothing copy -> gun arms: " .. parts)
+		return
+	end
+	local pp, best, bd = p:GetWorldPos(), nil, 36
+	for _, e in ipairs(System.GetEntitiesInSphere(pp, 6) or {}) do
+		if e.id ~= p.id and e.actor then
+			local q = e:GetWorldPos()
+			local d = (q.x - pp.x) ^ 2 + (q.y - pp.y) ^ 2 + (q.z - pp.z) ^ 2
+			if d < bd then best, bd = e, d end
+		end
+	end
+	if not best then log("clothcopy: no NPC within 6 m") return end
+	self.clothNpc = best.id
+	send(best.id, parts)
+	log(string.format("clothcopy npc %s (%s, %.1f m) %s: sent (see the plugin log)", tostring(best:GetName()), tostring(best.class), math.sqrt(bd), parts))
+	self:Notify("clothing copy -> " .. tostring(best:GetName()) .. ": " .. parts)
+end
+System.AddCCommand("deagle_clothcopy", "Deagle:ClothCopy([[%line]])", "deagle_clothcopy npc|vm|off [arms,hands,...]: test - copies Henry's worn clothing (sleeves, gauntlets) onto the nearest NPC or the gun's arms; off removes the copies")

@@ -88,9 +88,110 @@ uint32_t ParseId(const char* tok) {
 
 const char* TypeName(uint32_t t) { return t == 1 ? "bone" : t == 2 ? "skin" : t == 3 ? "face" : "?"; }
 
+// ---- clothcopy: Henry's worn clothing skins onto another character (docs/ARMSWAP.md; RE notes on the ProLiant
+// ~/re/work/clothing_attach/report.md). The same steps as KCD2's own clothing skin job (C_SkinLoaderJob 0x18093dd10):
+// CreateAttachment(name, 2 = skin) -> a new CSKINAttachment object from the engine's allocator -> its skin interface
+// pointer -> AddBinding(object, ISkin) -> the item's material on all 6 LODs. Every raw address is checked against
+// WHGame 1.5.6 (prologue bytes / vtables) before use; every call is SEH-guarded.
+constexpr uintptr_t kRvaMalloc = 0x4F75C0, kRvaObjCtor = 0x5ADAC4, kRvaAssignSkin = 0x5ADA88;   // CryModuleMalloc, CSKINAttachment ctor, smart-ptr assign
+constexpr uintptr_t kRvaVtAttSkin = 0x3A65A08, kRvaVtSkinObj = 0x3A3F158;                       // CAttachmentSKIN, CSKINAttachment vtables
+const uint8_t kSigMalloc[] = { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x83, 0x3D, 0xA3, 0x5D, 0xFA, 0x04, 0x00, 0x48, 0x8B, 0xD9 };
+const uint8_t kSigObjCtor[] = { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0xBA, 0x08, 0x00, 0x00, 0x00, 0x48, 0xC7, 0x41, 0x08, 0x00 };
+const uint8_t kSigAssign[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0x19, 0x48, 0x8B, 0xF9 };
+
+using CreateAttFn = uintptr_t(__fastcall*)(uintptr_t mgr, const char* name, uint32_t type, const char* joint, bool allowDup);  // mgr +0x10
+using RemoveAttFn = int(__fastcall*)(uintptr_t mgr, uintptr_t att);                     // mgr +0x18
+using PtrFn = uintptr_t(__fastcall*)(uintptr_t self);                                   // att +0xE0 object, +0xE8 skin iface; iface +0x10 ISkin
+using SetFlagsFn = void(__fastcall*)(uintptr_t att, uint32_t flags);                    // att +0x38
+using AddBindingFn = uint32_t(__fastcall*)(uintptr_t att, uintptr_t obj, uintptr_t skin, uint32_t flags);  // att +0xD0
+using GetMtlFn = uintptr_t(__fastcall*)(uintptr_t obj, uint32_t lod);                   // obj +0x80 replacement material
+using SetMtlFn = void(__fastcall*)(uintptr_t obj, uintptr_t mtl, uint32_t lod);         // obj +0x78
+using MallocFn = uintptr_t(__fastcall*)(size_t);
+using CtorFn = uintptr_t(__fastcall*)(uintptr_t mem);
+using AssignFn = uintptr_t(__fastcall*)(uintptr_t slot, uintptr_t iface);
+
+uintptr_t g_wh = 0; int g_whOk = -1;   // -1 unchecked, 0 wrong build, 1 WHGame 1.5.6
+bool WhOk() {
+	if (g_whOk >= 0) return g_whOk == 1;
+	g_wh = (uintptr_t)GetModuleHandleA("WHGame.dll");
+	__try {
+		g_whOk = g_wh && !memcmp((void*)(g_wh + kRvaMalloc), kSigMalloc, sizeof(kSigMalloc)) && !memcmp((void*)(g_wh + kRvaObjCtor), kSigObjCtor, sizeof(kSigObjCtor))
+			&& !memcmp((void*)(g_wh + kRvaAssignSkin), kSigAssign, sizeof(kSigAssign)) ? 1 : 0;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { g_whOk = 0; }
+	return g_whOk == 1;
+}
+
+uintptr_t FindAtt(uintptr_t mgr, const char* name) {
+	int n = Count(mgr);
+	for (int i = 0; i < n && i < 1024; i++) { AttInfo a{}; if (Info(mgr, (uint32_t)i, a) && a.name && !_stricmp(a.name, name)) return a.att; }
+	return 0;
+}
+
+bool RemoveAtt(uintptr_t mgr, uintptr_t att) {
+	__try { auto f = (RemoveAttFn)Vf(mgr, 0x18); if (!f) return false; f(mgr, att); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+// Copies src's skin attachment onto dstMgr as dstName. Returns a short reason on failure, nullptr when bound.
+const char* CopySkin(uintptr_t src, uintptr_t dstMgr, const char* dstName, uint32_t& outFlags, int& outMtls) {
+	__try {
+		uintptr_t obj = ((PtrFn)Vf(src, 0xE0))(src); if (!obj) return "source has no object";
+		if (((U32Fn)Vf(obj, 0x08))(obj) != 3) return "source object is not a skin mesh (cloth sim / other)";
+		uintptr_t iface = ((PtrFn)Vf(src, 0xE8))(src); if (!iface) return "source has no skin interface";
+		uintptr_t skin = ((PtrFn)Vf(iface, 0x10))(iface); if (!skin) return "source has no ISkin";
+		uintptr_t mtl[6] = {}; outMtls = 0;
+		for (uint32_t l = 0; l < 6; l++) { mtl[l] = ((GetMtlFn)Vf(obj, 0x80))(obj, l); outMtls += mtl[l] != 0; }
+		outFlags = ((U32Fn)Vf(src, 0x40))(src);
+		if (uintptr_t old = FindAtt(dstMgr, dstName)) RemoveAtt(dstMgr, old);
+		uintptr_t att = ((CreateAttFn)Vf(dstMgr, 0x10))(dstMgr, dstName, 2, nullptr, false); if (!att) return "CreateAttachment failed";
+		uintptr_t vt = 0; Rd(att, vt);
+		if (vt != g_wh + kRvaVtAttSkin) { RemoveAtt(dstMgr, att); return "new attachment has an unexpected vtable"; }
+		((SetFlagsFn)Vf(att, 0x38))(att, outFlags & ~1u);   // bit 0 = hidden (Henry's are hidden in first person)
+		uintptr_t mem = ((MallocFn)(g_wh + kRvaMalloc))(0x40); if (!mem) { RemoveAtt(dstMgr, att); return "engine allocator failed"; }
+		uintptr_t o2 = ((CtorFn)(g_wh + kRvaObjCtor))(mem);
+		Rd(o2, vt); if (vt != g_wh + kRvaVtSkinObj) { RemoveAtt(dstMgr, att); return "new object has an unexpected vtable"; }
+		((AssignFn)(g_wh + kRvaAssignSkin))(o2 + 8, ((PtrFn)Vf(att, 0xE8))(att));
+		if (!((AddBindingFn)Vf(att, 0xD0))(att, o2, skin, 0x800)) { RemoveAtt(dstMgr, att); return "AddBinding refused"; }
+		for (uint32_t l = 0; l < 6; l++) if (mtl[l]) ((SetMtlFn)Vf(o2, 0x78))(o2, mtl[l], l);
+		Hide(att, false);
+		return nullptr;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return "engine call faulted (caught)"; }
+}
+
+bool ClothCopy(const char* rest, uintptr_t env) {
+	char dstTok[24] = {}, parts[96] = {}, srcTok[24] = {};
+	int n = sscanf_s(rest, "%23s %95s %23s", dstTok, (unsigned)sizeof(dstTok), parts, (unsigned)sizeof(parts), srcTok, (unsigned)sizeof(srcTok));
+	if (n < 1) { Log("clothcopy: usage clothcopy <dst entityHex> [arms,hands|off] [src entityHex, default 7777]"); return true; }
+	if (!WhOk()) { Log("clothcopy: not WHGame 1.5.6 (signature mismatch), refusing"); return true; }
+	uint32_t dst = ParseId(dstTok), src = n >= 3 ? ParseId(srcTok) : 0x7777;
+	uintptr_t dmgr = env ? AttachmentManager(env, dst) : 0, smgr = env ? AttachmentManager(env, src) : 0;
+	if (!dmgr || !smgr) { Log("clothcopy %08X <- %08X: no attachment manager (dst %p, src %p)", dst, src, (void*)dmgr, (void*)smgr); return true; }
+	if (n < 2) strcpy_s(parts, "arms,hands");
+	if (!_stricmp(parts, "off")) {
+		int removed = 0;
+		for (const char* p : { "arms", "hands", "torso", "legs", "feet", "head", "neck", "waist" }) {
+			char nm[64]; sprintf_s(nm, "dn_clothing_%s", p);
+			if (uintptr_t a = FindAtt(dmgr, nm)) removed += RemoveAtt(dmgr, a);
+		}
+		Log("clothcopy %08X off: %d removed", dst, removed); return true;
+	}
+	char buf[96]; strcpy_s(buf, parts); char* ctx = nullptr;
+	for (char* p = strtok_s(buf, ",", &ctx); p; p = strtok_s(nullptr, ",", &ctx)) {
+		char sname[64], dname[64]; sprintf_s(sname, "clothing_%s", p); sprintf_s(dname, "dn_clothing_%s", p);
+		uintptr_t sa = FindAtt(smgr, sname);
+		if (!sa) { Log("clothcopy %08X <- %08X %s: source has no %s", dst, src, p, sname); continue; }
+		uint32_t fl = 0; int mt = 0; LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
+		const char* why = CopySkin(sa, dmgr, dname, fl, mt);
+		QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+		Log("clothcopy %08X <- %08X %s: %s (flags %08X, %d LOD materials, %.3f ms)", dst, src, p, why ? why : "bound", fl, mt,
+			(t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart);
+	}
+	return true;
+}
+
 }  // namespace
 
 bool GoreCommand(const char* cmd, const char* rest, uintptr_t env) {
+	if (!strcmp(cmd, "clothcopy")) return ClothCopy(rest, env);
 	bool list = !strcmp(cmd, "listatt"), hide = !strcmp(cmd, "hideatt");
 	if (!list && !hide) return false;
 	char idTok[24] = {}, match[96] = {}; int on = 1;
