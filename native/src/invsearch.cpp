@@ -3,7 +3,11 @@
 // I (leave the screen) and the other menu keys would fire on every letter. The bar itself (the matcher and its drawing)
 // lives in the movie: inventory/tools/weightmap/search.as.
 //
-// Why a window-procedure subclass and not a keyboard hook: WHGame.dll imports no raw-input calls, it runs the message
+// The game's actions read the keyboard through DirectInput (WHGame imports DirectInput8Create; CryInput's CDXInput),
+// which window messages never reach: swallowing WM_KEYDOWN alone let Backspace close the screen and X move an item
+// (2026-10-27). So while the bar types, the DirectInput keyboard's key-downs are dropped too (DiBlock below); the text
+// still comes from the window's WM_CHAR. Key-ups always pass, so no key the game saw go down sticks.
+// Why a window-procedure subclass for the text and not a keyboard hook: WHGame.dll imports no raw-input calls, it runs the message
 // loop itself (GetMessage/TranslateMessage/DispatchMessage) and its keyboard is fed by window messages — so a
 // WH_KEYBOARD_LL hook would work too, but this way the swallow happens in the game's own thread, after
 // TranslateMessage, which gives us the WM_CHAR text (layout, Shift, Caps Lock) for free.
@@ -11,7 +15,10 @@
 #include "invsearch.h"
 #include "log.h"
 #include <windows.h>
+#define DIRECTINPUT_VERSION 0x0800
+#include <dinput.h>
 #include <cstring>
+#include "MinHook.h"
 
 namespace {
 
@@ -25,6 +32,7 @@ bool g_keep = false;         // the bar shows a kept filter: only Backspace is t
 char g_text[80];
 int g_len = 0;
 bool g_ctrlF = false;        // the Ctrl+F edge (the bar's open / close key)
+volatile DWORD g_graceUntil = 0;   // the Enter / Escape / Ctrl+F that ended typing: its DirectInput key-down is dropped too
 DWORD g_rehookAt = 0;        // rate limit for the "someone replaced the procedure" path
 
 LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM w, LPARAM l);
@@ -70,6 +78,7 @@ void EditBack() {   // Backspace on a kept filter: the box looks like a text fie
 }
 
 void EndTyping(const char* cmd) {   // Escape / Alt: typing off, the text is dropped
+	g_graceUntil = GetTickCount() + 250;
 	g_active = false;
 	g_keep = false;
 	g_len = 0;
@@ -79,6 +88,7 @@ void EndTyping(const char* cmd) {   // Escape / Alt: typing off, the text is dro
 }
 
 void EndCommit() {   // Enter / Ctrl+F: typing off, the text stays (the bar shows it as "Filtered: ...")
+	g_graceUntil = GetTickCount() + 250;
 	g_active = false;
 	g_keep = true;      // and Backspace edits it instead of running the game's back action
 	g_ctrlF = true;
@@ -183,10 +193,100 @@ void Hook() {   // subclass the game's window; re-do it if another mod put its p
 	}
 }
 
+
+// ---- DirectInput: the game's own keyboard (see the top). Both device interfaces (A and W) are hooked; a device's type
+// is asked once (GetCapabilities) and kept, so the mouse and pads pass untouched.
+using GetDataFn = HRESULT(__stdcall*)(void* dev, DWORD cb, DIDEVICEOBJECTDATA* d, DWORD* n, DWORD flags);
+using GetStateFn = HRESULT(__stdcall*)(void* dev, DWORD cb, void* data);
+GetDataFn g_getData[2] = {};
+GetStateFn g_getState[2] = {};
+void* g_devs[16];
+bool g_devKb[16];
+int g_devN = 0;
+volatile LONG g_dropped = 0;
+
+bool IsKeyboard(void* dev) {
+	for (int i = 0; i < g_devN; i++) if (g_devs[i] == dev) return g_devKb[i];
+	DIDEVCAPS caps = {};
+	caps.dwSize = sizeof caps;
+	using CapsFn = HRESULT(__stdcall*)(void*, DIDEVCAPS*);
+	const bool kb = SUCCEEDED(((CapsFn)(*(void***)dev)[3])(dev, &caps)) && (caps.dwDevType & 0xFF) == DI8DEVTYPE_KEYBOARD;
+	if (g_devN < 16) { g_devs[g_devN] = dev; g_devKb[g_devN] = kb; g_devN++; }
+	return kb;
+}
+bool Grace() { return (int)(g_graceUntil - GetTickCount()) > 0; }
+bool Blocks(DWORD dik) { return g_active || Grace() || (g_keep && dik == DIK_BACK); }
+
+HRESULT GetData(int k, void* dev, DWORD cb, DIDEVICEOBJECTDATA* d, DWORD* n, DWORD flags) {
+	const HRESULT r = g_getData[k](dev, cb, d, n, flags);
+	if (FAILED(r) || !d || !n || !(g_active || g_keep || Grace()) || cb < sizeof(DIDEVICEOBJECTDATA_DX3) || !IsKeyboard(dev)) return r;
+	DWORD out = 0;
+	for (DWORD i = 0; i < *n; i++) {
+		DIDEVICEOBJECTDATA* e = (DIDEVICEOBJECTDATA*)((char*)d + (size_t)i * cb);
+		if ((e->dwData & 0x80) && Blocks(e->dwOfs)) { InterlockedIncrement(&g_dropped); continue; }   // a key-down: dropped
+		if (out != i) memmove((char*)d + (size_t)out * cb, e, cb);
+		out++;
+	}
+	*n = out;
+	return r;
+}
+HRESULT GetState(int k, void* dev, DWORD cb, void* data) {
+	const HRESULT r = g_getState[k](dev, cb, data);
+	if (SUCCEEDED(r) && data && cb == 256 && (g_active || g_keep || Grace()) && IsKeyboard(dev)) {
+		if (g_active || Grace()) memset(data, 0, 256);
+		else ((unsigned char*)data)[DIK_BACK] = 0;
+	}
+	return r;
+}
+HRESULT __stdcall GetDataA(void* dev, DWORD cb, DIDEVICEOBJECTDATA* d, DWORD* n, DWORD f) { return GetData(0, dev, cb, d, n, f); }
+HRESULT __stdcall GetDataW(void* dev, DWORD cb, DIDEVICEOBJECTDATA* d, DWORD* n, DWORD f) { return GetData(1, dev, cb, d, n, f); }
+HRESULT __stdcall GetStateA(void* dev, DWORD cb, void* data) { return GetState(0, dev, cb, data); }
+HRESULT __stdcall GetStateW(void* dev, DWORD cb, void* data) { return GetState(1, dev, cb, data); }
+
+void DiBlockInstall() {
+	using CreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, void**, void*);
+	HMODULE dm = GetModuleHandleA("dinput8.dll");
+	CreateFn create = dm ? (CreateFn)GetProcAddress(dm, "DirectInput8Create") : nullptr;
+	if (!create) { Log("invsearch: no DirectInput8Create: typed keys still reach the game's menu actions"); return; }
+	static const GUID iid[2] = { { 0xBF798030, 0x483A, 0x4DA2, { 0xAA, 0x99, 0x5D, 0x64, 0xED, 0x36, 0x97, 0x00 } },     // IDirectInput8A
+	                             { 0xBF798031, 0x483A, 0x4DA2, { 0xAA, 0x99, 0x5D, 0x64, 0xED, 0x36, 0x97, 0x00 } } };   // IDirectInput8W
+	static const GUID kb = { 0x6F1D2B61, 0xD5A0, 0x11CF, { 0xBF, 0xC7, 0x44, 0x45, 0x53, 0x54, 0x00, 0x00 } };          // GUID_SysKeyboard
+	void* const dataHk[2] = { (void*)&GetDataA, (void*)&GetDataW };
+	void* const stateHk[2] = { (void*)&GetStateA, (void*)&GetStateW };
+	void* hooked[4] = {};
+	int nh = 0;
+	for (int k = 0; k < 2; k++) {
+		void* di = nullptr;
+		if (FAILED(create(GetModuleHandleA(nullptr), DIRECTINPUT_VERSION, iid[k], &di, nullptr)) || !di) continue;
+		using CreateDevFn = HRESULT(__stdcall*)(void*, REFGUID, void**, void*);
+		void* dev = nullptr;
+		if (SUCCEEDED(((CreateDevFn)(*(void***)di)[3])(di, kb, &dev, nullptr)) && dev) {
+			void** vt = *(void***)dev;
+			void* fns[2] = { vt[10], vt[9] };   // GetDeviceData, GetDeviceState
+			void** orig[2] = { (void**)&g_getData[k], (void**)&g_getState[k] };
+			void* hk[2] = { dataHk[k], stateHk[k] };
+			for (int j = 0; j < 2; j++) {
+				bool dup = false;
+				for (int q = 0; q < nh; q++) dup |= hooked[q] == fns[j];
+				if (dup) {   // A and W share the code: one hook, the second interface's slot uses the same original
+					*orig[j] = j == 0 ? (void*)g_getData[0] : (void*)g_getState[0];
+					continue;
+				}
+				if (MH_CreateHook(fns[j], hk[j], orig[j]) == MH_OK && MH_EnableHook(fns[j]) == MH_OK) hooked[nh++] = fns[j];
+				else Log("invsearch: couldn't hook the DirectInput keyboard (%s %c)", j ? "GetDeviceState" : "GetDeviceData", k ? 'W' : 'A');
+			}
+			((IUnknown*)dev)->Release();
+		}
+		((IUnknown*)di)->Release();
+	}
+	Log("invsearch: DirectInput keyboard hooked (%d functions): keys typed into the search bar no longer reach the game", nh);
+}
+
 }  // namespace
 
 void InvSearch_Install(InvSearchSend send) {
 	g_send = send;
+	DiBlockInstall();
 }
 
 void InvSearch_Frame() {
@@ -215,6 +315,7 @@ void InvSearch_Command(const char* rest) {
 		g_keep = true;
 		Log("invsearch: typing off, Backspace still edits the kept filter");
 	} else if (!strcmp(rest, "off")) {
+		if (g_dropped) Log("invsearch: %ld key presses kept from the game while typing", (long)InterlockedExchange(&g_dropped, 0));
 		g_active = false;
 		g_keep = false;
 		g_len = 0;
