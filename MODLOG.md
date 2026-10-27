@@ -1167,3 +1167,23 @@ probe, user test). WHGame 1.5.6, read in the binary (keys.cpp has the addresses)
   tools/henry_rig.py (x, y negated; weights and joint names fine). Gauntlets need `-notex` (feature materials).
   Demo: Henry's clothing on the Grizzly idle pose by direction-matched retarget + 2-bone IK, fingers wrap the grip
   (Desktop\Deagle Progress\ARM SWAP DEMO*.png; tools/armswap/proof_swap.py).
+- 2026-10-26 arm swap, step 2 (kcd2-deagle-7d). Clothing skins onto the viewmodel, read in the binary (WHGame 1.5.6,
+  static only, not tried in game; notes on the ProLiant ~/re/work/clothing_attach/report.md):
+  - CAttachmentManager (vt 0x184060548): +0x10 CreateAttachment(name, type, joint, allowDup) (type 2 = skin; the .cdf
+    loader and Lua `CreateSkinAttachment` call (name, 2, 0, 0)), +0x18 remove by interface, +0x20 by name, +0x40 by
+    name, +0x48 by index, +0x68 count. ICharacterInstance +0x40 and +0x48 both return the manager.
+  - Skin attachment (CAttachmentSKIN, IAttachment vt 0x183a65a08): +0xD0 AddBinding(obj, ISkin*, flags) (needs the
+    ISkin; releases the previous object, so each attachment needs its own new object), +0x38 SetFlags, +0x40 GetFlags,
+    +0xE0 GetIAttachmentObject, +0xE8 GetIAttachmentSkin (-> +0x10 GetISkin). New object: CryModuleMalloc 0x1804f75c0
+    (0x40) + ctor 0x1805adac4, skin pointer set by 0x1805ada88(obj+8, GetIAttachmentSkin()). Object +0x80 / +0x78
+    get / set replacement material per LOD (6 LODs): KCD2's per-item clothing material lives there.
+  - One skin per body part (clothing_arms = the top layer's skin), not a merged mesh. Skins bind joints by name CRC; a
+    skeleton missing a joint gets extended (in public CryEngine that rebuilds the character: risk of a pop mid-clip).
+  - Plan: the viewmodel gets Henry's skeleton (gun clips retargeted), the plugin copies clothing_arms / clothing_hands
+    (skin + 6 materials) onto it and rebinds when Henry re-dresses. VCLOTH pieces (type 5) are skipped.
+- Retarget for any game's arms: tools/armswap/retarget.py (one bone table per source: Ready or Not, Call of Duty).
+  Copying joint angles alone missed by 2-6 cm (Henry's hand is 11% smaller than RoN's, his arm 20% longer than CoD's).
+  Now: forearm and upper arm keep the source's directions walking back from the palm, the palm centre sits on the
+  source's, every finger joint aims at the source's next joint. Reload clips, mean / max over the clip: RoN forearm
+  1.2 / 3.0 deg, fingertips <= 1.1 cm; CoD forearm 2.5 / 6.1 deg, fingertips <= 2.3 cm, elbow 6 cm further back (arm
+  length). `PROOF_DIAG=1` on tools/armswap/proof_anim.py prints this table.
