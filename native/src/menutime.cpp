@@ -66,9 +66,26 @@ TIMED3(mapL, kMapL)
 TIMED3(invL, kInvL)
 TIMED3(char, kChar)
 
+// The function name: b is the CryString's text pointer (FUN_180565144 passes *name). Read under SEH.
+void CallName(void* b, char* out, size_t n) {
+	out[0] = 0;
+	__try {
+		const char* s = (const char*)b;
+		size_t i = 0;
+		for (; i + 1 < n && s[i] >= 32 && s[i] < 127; i++) out[i] = s[i];
+		out[i] = 0;
+		if (i < 2) {   // not text: maybe a CryString* (pointer to the text)
+			s = *(const char* const*)b;
+			for (i = 0; i + 1 < n && s[i] >= 32 && s[i] < 127; i++) out[i] = s[i];
+			out[i] = 0;
+		}
+	} __except (1) { strcpy_s(out, n, "?"); }
+}
 void __fastcall HkCall(void* a, void* b, void* c, void* d, void* e) {
 	if (!g_open || t_callDepth) { o_call(a, b, c, d, e); return; }
-	t_callDepth++; double t = Now(); o_call(a, b, c, d, e); Add(kCall, t); t_callDepth--;
+	t_callDepth++; double t = Now(); o_call(a, b, c, d, e); double ms = Now() - t; t_callDepth--;
+	g_acc[kCall].ms += ms; g_acc[kCall].n++;
+	if (ms >= 3.0) { char nm[64]; CallName(b, nm, sizeof nm); Log("menutime:   call %s %.1f ms", nm, ms); }
 }
 void* __fastcall HkInvoke(void* a, void* b, void* c, void* d, void* e, int f, char g) {
 	if (!g_open || t_invDepth) return o_invoke(a, b, c, d, e, f, g);

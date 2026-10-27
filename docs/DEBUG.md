@@ -269,6 +269,9 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
 - `hitch <ms>`: the freeze sampler's threshold (250 by default, 50 to see every menu-open frame).
 - `fastload_menutime.txt` `0`: turns off the menu-open timer (default on, log only): every inventory / map open logs
   `menutime: open #N:` with the time of each step (fader, setup, map fill, SetItems, calls to Flash, GFx advance).
+  Calls into the menu scripts over 3 ms are logged by name (`menutime:   call <name> <ms>`).
+- `keepload <mask>`: which menu screens stay loaded after the menu closes (the game unloads them all; the next open
+  rebuilds the screen). `64` (default) = the map; `4` inventory, `16` character; add them up; `0` = the game's choice.
 - The map movie `Libs/UI/ApseMap.gfx` (built by `tools/ui/mapfast/build.sh`): its marker search tree sorts with the
   engine's native sort instead of a script compare.
 - `krender 1|0` (sent by the Deagle scripts, not by hand): the gun mirror plugin (KCD2 Render) runs only with the

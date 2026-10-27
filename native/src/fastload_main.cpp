@@ -22,6 +22,8 @@ void Perkcopy_Install(uintptr_t base, HMODULE self);   // perkcopy.cpp
 void Perkcopy_Command(const char* args);
 void Gfxlist_Install(uintptr_t base, HMODULE self);   // gfxlist.cpp
 void Menutime_Install(uintptr_t base, HMODULE self);  // menutime.cpp
+void Keepload_Install(uintptr_t base, HMODULE self);  // keepload.cpp
+void Keepload_Command(const char* args);
 #include "fastzip.h"
 #include "streamio.h"
 #include "streamahead.h"
@@ -301,6 +303,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Perkcopy_Install(g_game.base, g_self));   // map / inventory: the perk copy without per-perk re-checks (perkcopy.cpp)
 	STEP(Gfxlist_Install(g_game.base, g_self));    // map / inventory: Scaleform clip stops without the list walk (gfxlist.cpp)
 	STEP(Menutime_Install(g_game.base, g_self));   // map / inventory: each open's steps timed, log only (menutime.cpp)
+	STEP(Keepload_Install(g_game.base, g_self));   // map: stays loaded after the menu closes (keepload.cpp)
 	bool dbprofOn = false;
 	STEP(dbprofOn = Dbprof_Install(g_game.base, g_self));   // the object database tables timed one by one; dbpool (dbprof.cpp)
 	STEP(Dbasync_Install(g_game.base, g_self, Early_MainThread(), dbprofOn));   // the dubbing database on a worker (dbasync.cpp)
@@ -357,6 +360,7 @@ extern "C" __declspec(dllexport) int Fastload_Command(const char* line) {
 	else if (!strcmp(cmd, "ftinstant")) Ftinstant_Command(rest);
 	else if (!strcmp(cmd, "mapvd")) Mapvd_Command(rest);
 	else if (!strcmp(cmd, "perkcopy")) Perkcopy_Command(rest);
+	else if (!strcmp(cmd, "keepload")) Keepload_Command(rest);
 	else if (!strcmp(cmd, "fastzip")) Fastzip_Command(rest);
 	else if (!strcmp(cmd, "streamio")) Streamio_Command(rest);
 	else if (!strcmp(cmd, "readiness")) Readiness_Command(rest);
