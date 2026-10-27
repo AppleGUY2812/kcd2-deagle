@@ -58,9 +58,28 @@ V5 o_call;
 Inv7 o_invoke;
 Adv o_adv;
 
+// The screen fader's timeline (FUN_18085d9d8 state machine at +0x38): 1 fade out (FUN_1808bb608, timer +0x170 s),
+// 2 black: the callback FUN_1808bb17c builds the menu, then it holds until nothing holds the fader (+0x58 / +0xd8),
+// 3 fade in (FUN_1808bb290, +0x170 s again), 0 done (FUN_1808bb70c). Logged once per fade: "menutime: fade ...".
+double g_fOut = 0, g_fCb = 0, g_fIn = 0;
+float g_fDur = 0;
+unsigned g_fBlackFrames = 0;
+V1 o_fStart, o_fIn, o_fEnd, o_fUpd;
+void __fastcall HkfStart(void* a) { o_fStart(a); g_fOut = Now(); g_fCb = g_fIn = 0; g_fBlackFrames = 0; g_fDur = *(float*)((char*)a + 0x170); }
+void __fastcall HkfIn(void* a) { g_fIn = Now(); o_fIn(a); }
+void __fastcall HkfUpd(void* a) { if (*(char*)((char*)a + 0x38) == 2) g_fBlackFrames++; o_fUpd(a); }
+void __fastcall HkfEnd(void* a) {
+	o_fEnd(a);
+	if (!g_fOut || !g_fCb || !g_fIn) { g_fOut = 0; return; }
+	const double t = Now();
+	Log("menutime: fade: out %.0f ms, black %.0f ms (%u frames; menu build in it), in %.0f ms, total %.0f ms (duration setting %.2f s)",
+	    g_fCb - g_fOut, g_fIn - g_fCb, g_fBlackFrames, t - g_fIn, t - g_fOut, g_fDur);
+	g_fOut = 0;
+}
 void __fastcall HkFader(void* a) {
 	Flush();   // an earlier open that never got its 300 ms of advance
 	g_open = true; g_openT0 = Now(); g_mainTid = GetCurrentThreadId();
+	g_fCb = g_openT0;
 	double t = Now(); o_fader(a); Add(kFader, t);
 }
 #define TIMED1(fn, slot) void __fastcall Hk##fn(void* a) { double t = Now(); o_##fn(a); if (g_open) Add(slot, t); }
@@ -160,6 +179,10 @@ void Menutime_Install(uintptr_t base, HMODULE self) {
 		{ 0x7f6d94, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10 }, (void*)&HkCall, (void**)&o_call },
 		{ 0x1c2ea20, { 0x4c, 0x89, 0x44, 0x24, 0x18, 0x48, 0x89, 0x54, 0x24, 0x10 }, (void*)&HkInvoke, (void**)&o_invoke },
 		{ 0x1ca4d90, { 0x40, 0x55, 0x41, 0x55, 0x48, 0x8d, 0x6c, 0x24, 0xd8, 0x48 }, (void*)&HkAdv, (void**)&o_adv },
+		{ 0x8bb608, { 0x48, 0x89, 0x5c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18 }, (void*)&HkfStart, (void**)&o_fStart },
+		{ 0x8bb290, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20 }, (void*)&HkfIn, (void**)&o_fIn },
+		{ 0x8bb70c, { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9, 0xe8 }, (void*)&HkfEnd, (void**)&o_fEnd },
+		{ 0x85d9d8, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x30 }, (void*)&HkfUpd, (void**)&o_fUpd },
 	};
 	for (const Hook& h : hooks)
 		if (memcmp((void*)(base + h.rva), h.bytes, sizeof h.bytes)) {
