@@ -29,6 +29,7 @@
 #include "invsearch.h"
 #include "settings.h"
 #include "ashang.h"
+#include "uicalllog.h"
 
 namespace {
 
@@ -277,6 +278,7 @@ static DWORD WINAPI Init(LPVOID) {
 		std::lock_guard<std::mutex> lk(g_consoleMu);
 		g_console.push_back(c);
 	});
+	UiCallLog_Install(g_game.base, g_game.size);   // who calls the panels' Activate (uicalllog.cpp, for keepload)
 	AsHang_Install(g_game.base);   // names a stuck Flash script in this log (ashang.cpp)
 	if (!PatchUpdate())
 		Log("inventory: no frame tick: the fast-transfer key and the console queue are idle this session");
