@@ -250,6 +250,14 @@ static DWORD WINAPI Init(LPVOID) {
 	uintptr_t lh = FindLogAlwaysHandler(g_game);
 	g_getParamStr = (GetParamStrFn)gp;
 	Log("GetParam<str> %p  LogAlways handler %p", (void*)gp, (void*)lh);
+	// deagle_native.asi built before 2026-10-26 finds this handler only by its original first bytes: let it hook first
+	// (up to 15 s), or the Deagle mod loses its Lua channel. A newer one finds it either way.
+	if (lh && GetModuleHandleA("deagle_native.asi")) {
+		int waited = 0;
+		for (; waited < 300 && *(volatile const uint8_t*)lh != 0xE9; waited++) Sleep(50);
+		Log("inventory: deagle_native %s the LogAlways handler after %d ms", *(volatile const uint8_t*)lh == 0xE9 ? "hooked" : "did not hook",
+		    waited * 50);
+	}
 	if (gp && lh && MH_CreateHook((void*)lh, (void*)&HkLog, (void**)&g_origLog) == MH_OK && MH_EnableHook((void*)lh) == MH_OK)
 		Log("Lua channel hook installed");
 	else
