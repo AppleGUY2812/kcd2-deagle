@@ -10,6 +10,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <mutex>
+#include <atomic>
 #include "MinHook.h"
 #include "log.h"
 #include "hitch.h"
@@ -64,11 +66,13 @@ Adv o_adv;
 // 2 black: the callback FUN_1808bb17c builds the menu, then it holds until nothing holds the fader (+0x58 / +0xd8),
 // 3 fade in (FUN_1808bb290, +0x170 s again), 0 done (FUN_1808bb70c). Logged once per fade: "menutime: fade ...".
 double g_fOut = 0, g_fCb = 0, g_fIn = 0;
+double g_fadeT = -1e9;   // the last fade start (hidden-movie pause: 2 s grace)
 double g_menuWinT0 = 0;   // the 1 ms sampler: only in play (a save load's fade is instant too: 206 sampled 21 s of a load), 3 s at most
+bool g_menuWinOn = false;   // fastload_menuwin.txt 1: the 1 ms sampler (it makes the open's frame ~2.7x longer: 87 -> ~240 ms, 2026-10-27)
 float g_fDur = 0;
 unsigned g_fBlackFrames = 0;
 V1 o_fStart, o_fIn, o_fEnd, o_fUpd;
-void __fastcall HkfStart(void* a) { o_fStart(a); g_fOut = Now(); g_fCb = g_fIn = 0; g_fBlackFrames = 0; g_fDur = *(float*)((char*)a + 0x170); if (g_fDur < 0.05f && Readiness_LevelState() == 0) { Hitch_MenuWindow(true); g_menuWinT0 = g_fOut; } }
+void __fastcall HkfStart(void* a) { o_fStart(a); g_fOut = Now(); g_fadeT = g_fOut; g_fCb = g_fIn = 0; g_fBlackFrames = 0; g_fDur = *(float*)((char*)a + 0x170); if (g_menuWinOn && g_fDur < 0.05f && Readiness_LevelState() == 0) { Hitch_MenuWindow(true); g_menuWinT0 = g_fOut; } }
 void __fastcall HkfIn(void* a) { g_fIn = Now(); o_fIn(a); }
 void __fastcall HkfUpd(void* a) {
 	if (*(char*)((char*)a + 0x38) == 2) g_fBlackFrames++;
@@ -163,6 +167,54 @@ float __fastcall HkAdv(void* m, float dt, int x) {
 	return r;
 }
 
+// Hidden menu movies (2026-10-27): with keepload the map / inventory / character screens stay loaded after the menu
+// closes, and their movies kept advancing every frame: menu-engine time outside menus went 15 ms/s before the first
+// open -> 42-116 ms/s after (01:48 session, 6-10 movies, one at 43 ms/s). CFlashPlayer (WHGame 1.5.6 vtable 0x183dc07a8:
+// slot 0 Load FUN_18244e308, slot 12 Advance FUN_18085f0a8, slot 13 Render FUN_1803fab84) is hooked: an "Apse*" movie
+// (menu-only: the HUD, menus, loading screen are other files) that was drawn before but not for 250 ms skips its Advance,
+// except for 2 s after a menu fade starts (an opening screen may wait on its movie before it draws). One that is drawn
+// again advances again in that frame. If the game draws hidden screens anyway, nothing is skipped (the log says so).
+// "0" in fastload_mvpause.txt turns it off.
+typedef bool(__fastcall* PlLoadFn)(void* pl, const char* path, int a, int b);
+typedef void(__fastcall* PlAdvFn)(void* pl, float dt);
+typedef void(__fastcall* PlRenderFn)(void* pl);
+PlLoadFn o_plLoad; PlAdvFn o_plAdv; PlRenderFn o_plRender;
+struct Pl { void* p; char name[40]; bool apse; double lastRender; unsigned skips; bool logged; };
+constexpr int kMaxPl = 64;
+Pl g_pl[kMaxPl];
+std::atomic<int> g_nPl{0};
+std::mutex g_plMu;
+bool g_pauseOn = true;
+unsigned g_skipsAll = 0;
+Pl* FindPl(void* p) { const int n = g_nPl.load(std::memory_order_acquire); for (int i = 0; i < n; i++) if (g_pl[i].p == p) return &g_pl[i]; return nullptr; }
+bool __fastcall HkPlLoad(void* pl, const char* path, int a, int b) {
+	const bool r = o_plLoad(pl, path, a, b);
+	const char* nm = path ? path : "";
+	for (const char* q = nm; *q; q++) if (*q == '/' || *q == '\\') nm = q + 1;
+	std::lock_guard<std::mutex> l(g_plMu);
+	Pl* e = FindPl(pl);
+	if (!e && g_nPl.load() < kMaxPl) { e = &g_pl[g_nPl.load()]; e->p = pl; g_nPl.fetch_add(1, std::memory_order_release); }
+	if (e) { strncpy_s(e->name, nm, _TRUNCATE); e->apse = !_strnicmp(nm, "Apse", 4); e->lastRender = 0; e->skips = 0; e->logged = false; }
+	return r;
+}
+void __fastcall HkPlRender(void* pl) { if (Pl* e = FindPl(pl)) e->lastRender = Now(); o_plRender(pl); }
+void __fastcall HkPlAdv(void* pl, float dt) {
+	if (g_pauseOn) if (Pl* e = FindPl(pl)) if (e->apse && e->lastRender > 0) {
+		const double t = Now();
+		if (t - e->lastRender > 250 && t - g_fadeT > 2000) {
+			e->skips++;
+			if (!e->logged) { e->logged = true; Log("menutime: %s is hidden (not drawn for %.0f ms): not advanced until it is drawn again", e->name, t - e->lastRender); }
+			if (++g_skipsAll % 20000 == 0) {
+				char b[600]; int k = 0;
+				for (int i = 0; i < g_nPl.load() && k < 520; i++) if (g_pl[i].skips) k += snprintf(b + k, sizeof b - k, " %s %u", g_pl[i].name, g_pl[i].skips);
+				Log("menutime: hidden menu movies' advances skipped so far:%s", b);
+			}
+			return;
+		}
+	}
+	o_plAdv(pl, dt);
+}
+
 struct Hook { uintptr_t rva; uint8_t bytes[10]; void* hk; void** orig; };
 }  // namespace
 
@@ -192,7 +244,18 @@ void Menutime_Install(uintptr_t base, HMODULE self) {
 		{ 0x8bb290, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20 }, (void*)&HkfIn, (void**)&o_fIn },
 		{ 0x8bb70c, { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9, 0xe8 }, (void*)&HkfEnd, (void**)&o_fEnd },
 		{ 0x85d9d8, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x30 }, (void*)&HkfUpd, (void**)&o_fUpd },
+		{ 0x244e308, { 0x40, 0x53, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x56, 0x41 }, (void*)&HkPlLoad, (void**)&o_plLoad },
+		{ 0x85f0a8, { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x30 }, (void*)&HkPlAdv, (void**)&o_plAdv },
+		{ 0x3fab84, { 0x48, 0x83, 0xec, 0x38, 0x83, 0x3d, 0xe9, 0x31, 0x53, 0x04 }, (void*)&HkPlRender, (void**)&o_plRender },
 	};
+	{
+		std::string pf = file.substr(0, file.find_last_of('\\') + 1) + "fastload_mvpause.txt";
+		if (FILE* fp = fopen(pf.c_str(), "r")) { int m = 1; if (fscanf(fp, "%d", &m) == 1 && m == 0) g_pauseOn = false; fclose(fp); }
+		Log("menutime: hidden menu movies %s (fastload_mvpause.txt)", g_pauseOn ? "pause while not drawn" : "advance as the game does");
+		std::string wf = file.substr(0, file.find_last_of('\\') + 1) + "fastload_menuwin.txt";
+		if (FILE* fp = fopen(wf.c_str(), "r")) { int m = 0; if (fscanf(fp, "%d", &m) == 1 && m == 1) g_menuWinOn = true; fclose(fp); }
+		Log("menutime: 1 ms sampling of menu opens %s (fastload_menuwin.txt 1 = on; it slows the open it measures)", g_menuWinOn ? "ON" : "off");
+	}
 	for (const Hook& h : hooks)
 		if (memcmp((void*)(base + h.rva), h.bytes, sizeof h.bytes)) {
 			Log("menutime: code check failed at +%llx - not installed (other game version?)", (unsigned long long)h.rva);
