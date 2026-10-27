@@ -26,12 +26,23 @@ edits = [
 if kind == "inv":
     edits += [
         ("var _loc1_ = g_View.GetIdOnMousePosition();", "var _loc1_ = WM_IdOnMouse(g_View);"),
-        ("function fc_setShopMode(isTrader, playerId)\n{\n", "function fc_setShopMode(isTrader, playerId)\n{\n   WM_HideAll();\n"),
-        # time the item-list fill on each open (2026-10-26, menu-open work): "[Inv] fastmove: ... setItems ..."
+        ("function fc_setShopMode(isTrader, playerId)\n{\n", "function fc_setShopMode(isTrader, playerId)\n{\n   INV_Touch();\n   WM_HideAll();\n"),
+        # time the item-list fill on each open (2026-10-26, menu-open work): "[Inv] fastmove: ... setItems ...";
+        # a reopen that sends the same items again keeps the list (INV_SetSkip in inv.as)
         ("function fc_setItems(idx)\n{\n   DebugTrace.log(\"g_ItemsA: \" + g_ItemsA.join(\",\"),DebugTrace.C_DEBUG,\"fc_setItems\");\n   g_Data.SetDataFromArray(g_ItemsA);\n",
          "function fc_setItems(idx)\n{\n   var _st0 = getTimer();\n   var _stN = g_ItemsA.length;\n"
-         "   DebugTrace.log(\"g_ItemsA: \" + g_ItemsA.join(\",\"),DebugTrace.C_DEBUG,\"fc_setItems\");\n   var _st1 = getTimer();\n"
-         "   g_Data.SetDataFromArray(g_ItemsA);\n   WM_StatSet(_st0,_st1,getTimer(),_stN);\n"),
+         "   var _stS = idx + \"|\" + g_ItemsA.join(\",\");\n"
+         "   DebugTrace.log(\"g_ItemsA: \" + _stS,DebugTrace.C_DEBUG,\"fc_setItems\");\n   var _st1 = getTimer();\n"
+         "   if(INV_SetSkip(_stS))\n   {\n      WM_StatSet(_st0,_st1,getTimer(),_stN,true);\n   }\n"
+         "   else\n   {\n      g_Data.SetDataFromArray(g_ItemsA);\n      WM_StatSet(_st0,_st1,getTimer(),_stN,false);\n   }\n"),
+        # the clear before each refill waits: a refill with the same items then skips both (inv.as)
+        ("function fc_clearItems(idx)\n{\n   DebugTrace.log(\"\",DebugTrace.C_DEBUG,\"fc_clearItems\");\n   g_Data.Clear();\n",
+         "function fc_clearItems(idx)\n{\n   DebugTrace.log(\"\",DebugTrace.C_DEBUG,\"fc_clearItems\");\n   INV_ClearLater();\n"),
+        # anything else that changes the list first does the waiting clear and forgets the last items
+        ("function fc_addItem(idx)\n{\n", "function fc_addItem(idx)\n{\n   INV_Touch();\n"),
+        ("function fc_removeItem(id, idx)\n{\n", "function fc_removeItem(id, idx)\n{\n   INV_Touch();\n"),
+        ("function fc_changeItem(idx)\n{\n", "function fc_changeItem(idx)\n{\n   INV_Touch();\n"),
+        ("function fc_changeSelection(id, isSelected)\n{\n", "function fc_changeSelection(id, isSelected)\n{\n   INV_Touch();\n"),
     ]
 elif kind == "tr":
     edits += [
