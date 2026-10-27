@@ -60,7 +60,14 @@ for old, new in edits:
         sys.exit(f"patch.py: expected 1 match, found {n}: {old!r}")
     text = text.replace(old, new)
 
-text += "\n" + (here / "common.as").read_text(encoding="utf-8") + "\n" + (here / "total.as").read_text(encoding="utf-8") + "\n" + (here / "fast.as").read_text(encoding="utf-8") + "\n" + (here / f"{kind}.as").read_text(encoding="utf-8") + "\nWM_Setup();\n"
+# the inventory also gets the search bar (search.as); the weight map stays shared with the other screens
+extra = ""
+if kind == "inv":
+    extra = "\n" + (here / "search.as").read_text(encoding="utf-8")
+text += ("\n" + (here / "common.as").read_text(encoding="utf-8") + "\n" + (here / "total.as").read_text(encoding="utf-8")
+         + "\n" + (here / "fast.as").read_text(encoding="utf-8") + extra + "\n"
+         + (here / f"{kind}.as").read_text(encoding="utf-8")
+         + "\nWM_Setup();\n" + ("SB_Setup();\n" if kind == "inv" else ""))
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text(text, encoding="utf-8")
 print(f"patched {kind}: {len(edits)} edits -> {dst}")

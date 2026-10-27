@@ -20,7 +20,10 @@ local function log(msg) System.LogAlways("$5[Inv] " .. tostring(msg)) end
 if Script.LoadScript("Scripts/Inventory/fastmove.lua") ~= 1 then
 	log("$4failed to load Scripts/Inventory/fastmove.lua")
 end
-
+-- the item search's typing and bar state (Scripts/Inventory/search.lua), driven by the plugin's Ctrl+F and keys
+if Script.LoadScript("Scripts/Inventory/search.lua") ~= 1 then
+	log("$4failed to load Scripts/Inventory/search.lua")
+end
 -- what the plugin needs to know: sent at script start and again at every game load (it forgets both at "hello")
 function Inv:SendSettings()
 	self:Native("invtime " .. tostring(self.cfg.invtime))
@@ -87,3 +90,10 @@ System.AddCCommand("inv_fastmove_key", "Inv:FastKey([[%line]])", "inv_fastmove_k
 System.AddCCommand("inv_fastkey", "FastMove:Key(Inv.Arg([[%line]]))", "internal: the plugin's read of the fast-transfer key (1 press / repeat, 0 release)")
 System.AddCCommand("inv_mods", "FastMove:Mods(Inv.Arg([[%line]]))", "internal: the plugin's read of Shift (1) / Ctrl (2) for the weight map's multi-select")
 System.AddCCommand("inv_set", "Inv:Set([[%line]])", "inv_set <key> <value>: a kept setting replayed by the plugin at every hello")
+-- the plugin's keyboard for the item search (native/src/invsearch.cpp): Ctrl+F -> toggle, keys -> text, then Enter /
+-- Escape; the bar is the movie's (inventory/tools/weightmap/search.as)
+System.AddCCommand("inv_search_toggle", "InvSearch:Toggle()", "internal: Ctrl+F in the inventory: type in the item search")
+System.AddCCommand("inv_search_text", "InvSearch:Text([[%line]])", "internal: the keys typed into the search bar")
+System.AddCCommand("inv_search_commit", "InvSearch:Commit()", "internal: Enter in the search bar (keep the filter)")
+System.AddCCommand("inv_search_edit", "InvSearch:Edit()", "internal: Backspace on a kept filter (edit the query again)")
+System.AddCCommand("inv_search_cancel", "InvSearch:Cancel()", "internal: Escape in the search bar (clear the filter)")

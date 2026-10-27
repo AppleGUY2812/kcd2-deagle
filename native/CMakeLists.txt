@@ -30,7 +30,7 @@ target_compile_options(fastload PRIVATE /W3 /EHa /O2)
 set_target_properties(fastload PROPERTIES SUFFIX ".asi" OUTPUT_NAME "fastload")
 # inventory.asi: the Inventory Tools mod's plugin (src/inventory_main.cpp; inventory/README.md): the fast-transfer key,
 # Shift / Ctrl for the weight map, and invtime. Its own settings file and log, next to the .asi.
-add_library(inventory SHARED src/inventory_main.cpp src/scan.cpp src/log.cpp src/keys.cpp src/invtime.cpp src/settings.cpp src/ashang.cpp ${MINHOOK_SRC})
+add_library(inventory SHARED src/inventory_main.cpp src/scan.cpp src/log.cpp src/keys.cpp src/invtime.cpp src/invsearch.cpp src/settings.cpp src/ashang.cpp ${MINHOOK_SRC})
 target_compile_features(inventory PRIVATE cxx_std_17)
 target_include_directories(inventory PRIVATE ${MINHOOK_INC} src)
 target_compile_options(inventory PRIVATE /W3 /EHa /O2)

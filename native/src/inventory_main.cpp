@@ -26,6 +26,7 @@
 #include "scan.h"
 #include "keys.h"
 #include "invtime.h"
+#include "invsearch.h"
 #include "settings.h"
 #include "ashang.h"
 
@@ -112,7 +113,9 @@ static void Tick() {
 	{   // fastkey: the fast-transfer key (see g_fastVk)
 		static bool was = false;
 		static DWORD next = 0;
-		bool d = g_fastVk && HasFocus() && (GetAsyncKeyState(g_fastVk) & 0x8000) != 0;
+		// never while the search bar types: GetAsyncKeyState sees the key the window subclass swallows ("energy"
+		// pressed G, 2026-10-27 13:30 crash)
+		bool d = g_fastVk && HasFocus() && !InvSearch_Typing() && (GetAsyncKeyState(g_fastVk) & 0x8000) != 0;
 		DWORD now = GetTickCount();
 		const char* send = nullptr;
 		if (d && (!was || (int)(now - next) >= 0)) { send = "inv_fastkey 1"; next = now + (was ? 150 : 400); }
@@ -121,6 +124,7 @@ static void Tick() {
 		if (send) { std::lock_guard<std::mutex> lk(g_consoleMu); g_console.push_back(send); }
 	}
 	Keys_Frame();   // key presses Lua asked for (keys.cpp)
+	InvSearch_Frame();   // Ctrl+F / the search bar's keys (invsearch.cpp)
 	if (g_env) {
 		std::deque<std::string> run;
 		{ std::lock_guard<std::mutex> lk(g_consoleMu); run.swap(g_console); }
@@ -176,6 +180,7 @@ static const char* LuaString(uintptr_t pH) {
 
 static void Hello() {   // every save load / script start: the plugin knows nothing about the last one
 	Keys_Reset();   // let go of the keys Lua pressed (keys.cpp)
+	InvSearch_Reset();   // typing off (invsearch.h)
 	std::vector<std::string> saved = SettingsReplay();
 	{
 		std::lock_guard<std::mutex> lk(g_consoleMu);
@@ -208,6 +213,7 @@ static void Command(const char* line) {
 		}
 	}
 	else if (!strcmp(cmd, "key")) Keys_Command(rest);   // key <name> down|up|hold, key allup (keys.h)
+	else if (!strcmp(cmd, "search")) InvSearch_Command(rest);   // search on|off: the bar is open / closed (invsearch.h)
 }
 
 static int __fastcall HkLog(void* self, uintptr_t pH) {
@@ -267,6 +273,10 @@ static DWORD WINAPI Init(LPVOID) {
 	for (int i = 0; i < 240 && !g_env; i++) { g_env = FindEnv(); if (!g_env) Sleep(500); }
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)
+	InvSearch_Install([](const char* c) {     // the window subclass's commands to Lua, through the console queue
+		std::lock_guard<std::mutex> lk(g_consoleMu);
+		g_console.push_back(c);
+	});
 	AsHang_Install(g_game.base);   // names a stuck Flash script in this log (ashang.cpp)
 	if (!PatchUpdate())
 		Log("inventory: no frame tick: the fast-transfer key and the console queue are idle this session");
