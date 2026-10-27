@@ -108,6 +108,8 @@ using GetMtlFn = uintptr_t(__fastcall*)(uintptr_t obj, uint32_t lod);           
 using SetMtlFn = void(__fastcall*)(uintptr_t obj, uintptr_t mtl, uint32_t lod);         // obj +0x78
 using StateFn = uint8_t(__fastcall*)(uintptr_t att);                                    // att +0x120: KCD2 stream state (+0x50)
 using SetStateFn = void(__fastcall*)(uintptr_t att, uint8_t state);                     // att +0x128 (0x1820f0b00); 6/7 = ready
+using LoadSkinFn = void(__fastcall*)(uintptr_t cm, uintptr_t* out, const char* path, uint32_t flags);  // CharacterManager +0x30 (CDF loader 0x1805ae65f)
+constexpr uintptr_t kRvaCharMgr = 0x5189BE0;   // global ICharacterManager* (DAT_185189be0)
 using MallocFn = uintptr_t(__fastcall*)(size_t);
 using CtorFn = uintptr_t(__fastcall*)(uintptr_t mem);
 using AssignFn = uintptr_t(__fastcall*)(uintptr_t slot, uintptr_t iface);
@@ -153,6 +155,18 @@ const char* CopySkin(uintptr_t src, uintptr_t dstMgr, const char* dstName, uint3
 		if (((U32Fn)Vf(obj, 0x08))(obj) != 3) return "source object is not a skin mesh (cloth sim / other)";
 		uintptr_t iface = ((PtrFn)Vf(src, 0xE8))(src); if (!iface) return "source has no skin interface";
 		uintptr_t skin = ((PtrFn)Vf(iface, 0x10))(iface); if (!skin) return "source has no ISkin";
+		// Henry's live skin is a streamed clothing mesh that draws only through his own attachment's stream data (test
+		// 2026-10-26: bound, never drawn; his attachment holds per-LOD entries the copy lacked). Load the same .skin file
+		// fresh, as the CDF loader does for every viewmodel skin (those draw).
+		const char* path = (const char*)((PtrFn)Vf(skin, 0x20))(skin);   // CSkin vt 0x18406c9f0 +0x20 -> +0x28
+		char pbuf[260] = {}; size_t pl = 0;
+		if (path) for (; pl < sizeof(pbuf) - 1 && path[pl]; pl++) pbuf[pl] = path[pl];
+		if (pl < 6 || _stricmp(pbuf + pl - 5, ".skin")) return "source skin path unreadable (not a .skin)";
+		uintptr_t cm = 0; if (!Rd(g_wh + kRvaCharMgr, cm) || !cm) return "no character manager";
+		uintptr_t fresh = 0; ((LoadSkinFn)Vf(cm, 0x30))(cm, &fresh, pbuf, 0);   // the reference stays with the copy
+		Log("clothcopy %s: %s -> %s", dstName, pbuf, fresh ? "loaded" : "LOAD FAILED");
+		if (!fresh) return "LoadModelSKIN failed";
+		skin = fresh;
 		uintptr_t mtl[6] = {}; outMtls = 0;
 		for (uint32_t l = 0; l < 6; l++) { mtl[l] = ((GetMtlFn)Vf(obj, 0x80))(obj, l); outMtls += mtl[l] != 0; }
 		outFlags = ((U32Fn)Vf(src, 0x40))(src);
@@ -168,12 +182,8 @@ const char* CopySkin(uintptr_t src, uintptr_t dstMgr, const char* dstName, uint3
 		if (!((AddBindingFn)Vf(att, 0xD0))(att, o2, skin, 0x800)) { RemoveAtt(dstMgr, att); return "AddBinding refused"; }
 		for (uint32_t l = 0; l < 6; l++) if (mtl[l]) ((SetMtlFn)Vf(o2, 0x78))(o2, mtl[l], l);
 		Hide(att, false);
-		// KCD2's clothing sets a bound attachment's stream state to 7 (0x181e96ff0); the setter also hands the character
-		// to the character manager (0x1820f31d0). A copy left at 0 bound fine but never drew (test 2026-10-26).
-		uint8_t s0 = State(src), d0 = State(att);
-		uint8_t want = (s0 == 6 || s0 == 7) ? s0 : 7;
-		((SetStateFn)Vf(att, 0x128))(att, want);
-		Log("clothcopy %s: stream state source %u, copy %u -> %u", dstName, s0, d0, State(att));
+		// Stream state, log only: Henry's and the NPC's clothing sit at 5; forcing 7 on the copy (3f53402) changed nothing.
+		Log("clothcopy %s: stream state source %u, copy %u", dstName, State(src), State(att));
 		return nullptr;
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return "engine call faulted (caught)"; }
 }
