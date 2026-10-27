@@ -168,7 +168,8 @@ bool ClothCopy(const char* rest, uintptr_t env) {
 	if (n < 2) strcpy_s(parts, "arms,hands");
 	if (!_stricmp(parts, "off")) {
 		int removed = 0;
-		for (const char* p : { "arms", "hands", "torso", "legs", "feet", "head", "neck", "waist" }) {
+		static const char* const kParts[] = { "arms", "hands", "torso", "legs", "feet", "head", "neck", "waist" };
+		for (const char* p : kParts) {
 			char nm[64]; sprintf_s(nm, "dn_clothing_%s", p);
 			if (uintptr_t a = FindAtt(dmgr, nm)) removed += RemoveAtt(dmgr, a);
 		}
