@@ -1130,6 +1130,11 @@ static void Command(const char* line) {
 		}
 	}
 	else if (!strcmp(cmd, "follow")) { g_follow = atoi(rest) != 0; Log("follow %d", (int)g_follow); }
+	else if (!strcmp(cmd, "krender")) {   // the KCD2 Render plugin (separate mod) polls KRENDER_WANT: its gun mirror runs only at 1
+		const char* v = atoi(rest) != 0 ? "1" : "0";
+		SetEnvironmentVariableA("KRENDER_WANT", v);
+		Log("krender: KRENDER_WANT=%s (the mirror skin on and the gun out)", v);
+	}
 	else if (!strcmp(cmd, "armik")) {   // armik <mask: 1 right, 2 left, 3 both, 0 off> [<player entity id hex>]: the arm IK test
 		int mask = 0; unsigned long long id = 0;
 		int n = sscanf_s(rest, "%d %llx", &mask, &id);
@@ -1759,6 +1764,7 @@ BOOL APIENTRY DllMain(HMODULE h, DWORD reason, LPVOID) {
 		LogInit(h);
 		SettingsInit(h);
 		g_dllMainTid = GetCurrentThreadId();
+		SetEnvironmentVariableA("KRENDER_WANT", "0");   // the gun mirror stays off until Lua says "krender 1" (mirror skin, gun out)
 		CreateThread(nullptr, 0, Init, nullptr, 0, nullptr);
 	}
 	return TRUE;
