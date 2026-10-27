@@ -35,6 +35,49 @@ uint64_t __fastcall HkUnload(void* panel, char next, uint8_t own) {
 	if (++g_kept <= 10 || g_kept % 50 == 0) Log("keepload: screen %u kept loaded (next screen %d), %u times so far", own, next, g_kept);
 	return r & ~(uint64_t)0xff;
 }
+// The map's quest-item tracker (vtable near 0x183ed8dd0: init FUN_18174e130, shutdown FUN_182afe83c, game events
+// FUN_18085e104) listens to item events of the inventories it tracks (FUN_181f46f40 adds FUN_180dc7068 to each item).
+// FUN_180c4ded4(tracker, item, inventory) then looks the inventory's name (CryString at +0x10) up in the tracker's
+// std::map at +0xb0 (FUN_181507e80) and uses the result without checking it was found: for an inventory with no
+// entry it reads the tree's head node as a value. The game only listens while the map is loaded, i.e. inside the
+// menu; with the map kept loaded it also hears stash / loot moves in play, and one crashed the game (2026-10-27
+// 00:22, WHGame+489c97 reading 0x19 under FUN_180c4ded4 during ItemTransfer). The guard walks the same tree read-only
+// (MSVC _Tree: head at +0, root head+8, node left +0 / right +0x10 / isnil +0x19 / key char* +0x20; the game's
+// byte compare = strcmp) and skips the call when the name isn't there: nothing is tracked for it, nothing to remove.
+constexpr uintptr_t kRvaUntrack = 0xc4ded4;
+constexpr uint8_t kUntrackBytes[] = { 0x40, 0x55, 0x53, 0x56, 0x57, 0x41, 0x56, 0x48, 0x8b, 0xec, 0x48, 0x83, 0xec, 0x60 };
+typedef void(__fastcall* UntrackFn)(uintptr_t tracker, uintptr_t item, uintptr_t inv);
+UntrackFn o_untrack = nullptr;
+unsigned g_untrackSkips = 0;
+
+// 1 found, 0 not found, -1 unreadable (a broken tree: the game's own walk would crash too)
+int HasName(uintptr_t map, const char* key, char* shown, size_t n) {
+	__try {
+		strncpy_s(shown, n, key, _TRUNCATE);
+		const uintptr_t head = *(const uintptr_t*)map;
+		if (!head) return 0;
+		uintptr_t node = *(const uintptr_t*)(head + 8);
+		for (int guard = 0; node && node != head && !*(const uint8_t*)(node + 0x19) && guard < 100000; guard++) {
+			const int c = strcmp(*(const char* const*)(node + 0x20), key);
+			if (!c) return 1;
+			node = c > 0 ? *(const uintptr_t*)node : *(const uintptr_t*)(node + 0x10);
+		}
+		return 0;
+	} __except (1) { return -1; }
+}
+
+void __fastcall HkUntrack(uintptr_t tracker, uintptr_t item, uintptr_t inv) {
+	char shown[80] = "?";
+	int r = -1;
+	__try { r = HasName(tracker + 0xb0, *(const char* const*)(inv + 0x10), shown, sizeof shown); } __except (1) { r = -1; }
+	if (r != 1) {
+		if (++g_untrackSkips <= 10 || g_untrackSkips % 50 == 0)
+			Log("keepload: map quest tracker: %s '%s' - skipped the game's lookup that would read garbage (%u so far)",
+			    r ? "unreadable entry for" : "no entry for inventory", shown, g_untrackSkips);
+		return;
+	}
+	o_untrack(tracker, item, inv);
+}
 }  // namespace
 
 void Keepload_Install(uintptr_t base, HMODULE self) {
@@ -51,6 +94,10 @@ void Keepload_Install(uintptr_t base, HMODULE self) {
 	if (memcmp(p, kBytes, sizeof kBytes)) { Log("keepload: code check failed - not installed (other game version?)"); return; }
 	const bool h = MH_CreateHook(p, (void*)&HkUnload, (void**)&o_unload) == MH_OK && MH_EnableHook(p) == MH_OK;
 	Log("keepload: %s, mask %u (64 = the map stays loaded after closing; 0 = the game's choice)", h ? "on" : "hook FAILED", g_mask);
+	void* u = (void*)(base + kRvaUntrack);
+	if (memcmp(u, kUntrackBytes, sizeof kUntrackBytes)) { Log("keepload: map quest tracker guard: code check failed - not installed"); return; }
+	const bool g = MH_CreateHook(u, (void*)&HkUntrack, (void**)&o_untrack) == MH_OK && MH_EnableHook(u) == MH_OK;
+	Log("keepload: map quest tracker guard %s (an item event for an untracked inventory no longer reads garbage)", g ? "on" : "hook FAILED");
 }
 
 void Keepload_Command(const char* args) {
