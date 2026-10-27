@@ -16,9 +16,16 @@ GUNS = {"ron_grizzly": {"cdf": "ron_grizzly_vm.cdf", "skin": "mirror", "prefix":
                                   "tag_slidelock_safety", "tag_slidelock", "tag_trigger", "tag_mag_release"]}}
 
 
+# Off since 2026-10-27: the pieces are world entities now (skin.lua SkinRigid, 7ccef84), and these .cdf copies DID draw:
+# the script hid them once at skin apply, before a freshly pulled-out viewmodel had its attachments, so they stayed
+# visible over the skinned gun (the user's "extra grip" on the mirror skin, 10-26 and 10-27; listatt: all 10 hidden 0).
+# write() now only strips them. True puts them back.
+IN_CDF = False
+
+
 def block(repo, slug):
     g = GUNS.get(slug)
-    if not g:
+    if not g or not IN_CDF:
         return []
     game = f"objects/manmade/weapons/guns/{slug}/rigid"
     src = os.path.join(repo, "src/Objects/manmade/weapons/guns", slug, "rigid")
@@ -44,4 +51,4 @@ def write(repo, slug):
 if __name__ == "__main__":
     repo = sys.argv[1] if len(sys.argv) > 1 else "."
     for slug in GUNS:
-        print(slug, write(repo, slug), "rigid pieces")
+        print(slug, write(repo, slug), "rigid pieces (lines added; negative = removed)")
