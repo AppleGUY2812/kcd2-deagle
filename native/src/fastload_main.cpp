@@ -22,6 +22,7 @@ void Perkcopy_Install(uintptr_t base, HMODULE self);   // perkcopy.cpp
 void Perkcopy_Command(const char* args);
 void Gfxlist_Install(uintptr_t base, HMODULE self);   // gfxlist.cpp
 void Menutime_Install(uintptr_t base, HMODULE self);  // menutime.cpp
+#include "framelog.h"
 void Keepload_Install(uintptr_t base, HMODULE self);  // keepload.cpp
 void Keepload_Command(const char* args);
 void Keepload_Frame();   // quest log events from other threads, run on the main thread
@@ -143,7 +144,7 @@ uintptr_t __fastcall HkUpdate(void* sys, unsigned flags, int pause) {
 	DWORD want = 0;
 	const DWORD me = GetCurrentThreadId();
 	if (g_mainTid.compare_exchange_strong(want, me)) Log("fastload: frame tick on thread %lu", me);
-	if (want == 0 || want == me) { g_ticks++; Tick(); }
+	if (want == 0 || want == me) { g_ticks++; const long long ft = Framelog_TickStart(); Tick(); Framelog_TickEnd(ft, Readiness_LevelState()); }
 	return r;
 }
 
@@ -304,6 +305,13 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Mapvd_Install(g_game.base, g_self));      // map / inventory: no octree rebuild (mapvd.cpp)
 	STEP(Perkcopy_Install(g_game.base, g_self));   // map / inventory: the perk copy without per-perk re-checks (perkcopy.cpp)
 	STEP(Gfxlist_Install(g_game.base, g_self));    // map / inventory: Scaleform clip stops without the list walk (gfxlist.cpp)
+	{   // frame rate in play (framelog.cpp)
+		char p[MAX_PATH] = {};
+		GetModuleFileNameA(g_self, p, MAX_PATH);
+		std::string d = p;
+		d = d.substr(0, d.find_last_of('\\') + 1);
+		STEP(Framelog_Install(d.c_str()));
+	}
 	STEP(Menutime_Install(g_game.base, g_self));   // map / inventory: each open's steps timed, log only (menutime.cpp)
 	STEP(Keepload_Install(g_game.base, g_self));   // map: stays loaded after the menu closes (keepload.cpp)
 	bool dbprofOn = false;
