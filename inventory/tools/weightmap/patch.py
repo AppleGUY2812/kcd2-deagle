@@ -31,7 +31,9 @@ if kind == "inv":
         # a reopen that sends the same items again keeps the list (INV_SetSkip in inv.as)
         ("function fc_setItems(idx)\n{\n   DebugTrace.log(\"g_ItemsA: \" + g_ItemsA.join(\",\"),DebugTrace.C_DEBUG,\"fc_setItems\");\n   g_Data.SetDataFromArray(g_ItemsA);\n",
          "function fc_setItems(idx)\n{\n   var _st0 = getTimer();\n   var _stN = g_ItemsA.length;\n"
-         "   var _stS = idx + \"|\" + g_ItemsA.join(\",\");\n"
+         # the key holds the screen's context too (mode, whose inventory, horse): a kept-loaded screen reused for a
+         # pickpocket / trade / loot never keeps the previous list (2026-10-26: blank list after a pickpocket)
+         "   var _stS = idx + \"|\" + g_Mode + \"|\" + g_PlayerId + \"|\" + g_HorseId + \"|\" + g_ItemsA.join(\",\");\n"
          "   DebugTrace.log(\"g_ItemsA: \" + _stS,DebugTrace.C_DEBUG,\"fc_setItems\");\n   var _st1 = getTimer();\n"
          "   if(INV_SetSkip(_stS))\n   {\n      WM_StatSet(_st0,_st1,getTimer(),_stN,true);\n   }\n"
          "   else\n   {\n      g_Data.SetDataFromArray(g_ItemsA);\n      WM_StatSet(_st0,_st1,getTimer(),_stN,false);\n   }\n"),
