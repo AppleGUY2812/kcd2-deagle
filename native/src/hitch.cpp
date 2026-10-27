@@ -662,6 +662,7 @@ void Hitch_Install(uintptr_t gameBase, size_t gameSize, HMODULE self) {
 // The 3D engine rebuilds every object's octree entry (WHGame 1.5.6 FUN_180a3bf48 -> FUN_18349e058 + FUN_18076a7fc; the
 // 650 ms gameplay freezes of 2026-10-25 23:46 / 23:49) when the sum of these 23 e_ settings changes. Which one changed,
 // logged once a frame (the engine's CVars block at DAT_185496fd0; int slots, names from its registration).
+bool (*Hitch_MapvdMasking)() = nullptr;   // set by mapvd.cpp (absent in hitch_test)
 namespace {
 const struct { int slot; const char* name; } kOct[] = {
 	{0x19, "e_ShadowsCastViewDistRatioMulInvis"}, {0x18, "e_ShadowsCastViewDistRatio"}, {0x182, "e_ObjShadowCastSpec"},
@@ -686,8 +687,9 @@ void OctWatch() {
 				float a, b;
 				memcpy(&a, &g_octLast[i], 4);
 				memcpy(&b, &v, 4);
-				Log("hitch: %s changed (as int %d -> %d, as float %g -> %g): the engine rebuilds every object's octree entry",
-				    kOct[i].name, g_octLast[i], v, a, b);
+				Log("hitch: %s changed (as int %d -> %d, as float %g -> %g): %s",
+				    kOct[i].name, g_octLast[i], v, a, b,
+				    kOct[i].slot == 0x1c1 && Hitch_MapvdMasking && Hitch_MapvdMasking() ? "masked by mapvd (no rebuild)" : "the engine rebuilds every object's octree entry");
 			}
 			g_octLast[i] = v;
 		}

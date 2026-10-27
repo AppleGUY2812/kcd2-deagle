@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -25,6 +26,21 @@ constexpr uintptr_t kRvaRoute = 0x2de27d0;
 const unsigned char kRouteBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0xf2,0x0f,0x10,0x02,0x49,0x8b,
                                       0xf9,0xf2,0x0f,0x11,0x41,0x68 };
 
+// "fttex MB JOBS" (fastload_fttex.txt; 0 0 = off, the default): the texture streamer's outstanding-request caps,
+// r_TexturesStreamingMaxRequestedMB (float, 4.0) and ...Jobs (int, 32), raised while the arrival wait runs (the
+// "AfterFastTravel" readiness observer, +0x110 +0x68, after the walk), put back when it ends. The scheduler
+// FUN_18085f70c reads both every rendered frame (wh.c 1659560-1659600: MB * 1024 * 1024 against the outstanding bytes
+// DAT_1855940e0, jobs against DAT_1855940e8), so a write takes effect the next frame. Measured 2026-10-26 (the user's
+// trips): in the wait's first second 1-2 requests out at exactly 4.0 MB while the disk reader idled 34-40 %.
+constexpr uintptr_t kRvaTexMB = 0x50dc1b8, kRvaTexJobs = 0x50dc1b4;
+// Third number "fttex MB JOBS NPC": the MonsterLOD switch budget (NPCs switched in or out of MonsterLOD a frame) raised
+// to NPC for the same wait. The arrival's "LODManager" readiness task (C_LODManager, IsReady FUN_18209c850) waits for
+// the destination's NPCs to leave MonsterLOD; the switcher = *(*(game+0xe0)+0x1a0) drains its queues (+8 enter, +0x20
+// leave) in FUN_181e7dda0 with the budget struct at +0x50 {current, min, max, up, down, u8 flush}; FUN_181e1bf50 starts
+// it at min and grows it by 1 a frame while the queue is long (wh_actor_MonsterLODSwitchBudget*). The game's loading
+// (PrecacheMode) path flushes the whole queue in one frame; min = max = NPC does the same in batches of NPC.
+constexpr size_t kNpcSwitcher = 0x1a0, kNpcBudget = 0x50;
+
 using AddPrecacheFn = void* (__fastcall*)(void* engine, void* outFuture, const float* pos, const float* dir, float timeout,
                                           float importance);
 
@@ -41,6 +57,127 @@ struct State { bool valid; uint8_t active, active2; float dest[3]; size_t route;
 State g_was{};
 DWORD g_lastAdd = 0, g_walkStart = 0;
 int g_adds = 0;
+
+// "ftinstant S" (fastload_ftinstant.txt; 0 = off, the default): S seconds after the arrival wait starts, the
+// "AfterFastTravel" observer (ft+0x110: +0x18 mask 0x3f91, +0x20 expiry, +0x68 armed) is let in through the game's own
+// timeout path (expiry 0, as wh_sys_ReadinessObserverTimeoutDuration running out; readiness.cpp LetIn does the same for
+// its "early" gates): the fade-in starts while NPC detail (LODManager) and texture mips still arrive. User 2026-10-26:
+// "why cant it be instant".
+std::string g_instFile;
+float g_instS = 0;
+DWORD g_waitStart = 0;
+bool g_instDone = false;
+
+int LetInFt(uintptr_t obs) {   // 0 done, 1 not armed, 2 layout mismatch, 3 unreadable
+	__try {
+		uint8_t* p = (uint8_t*)obs;
+		if (p[0x68] != 1) return 1;
+		if (*(uint32_t*)(p + 0x18) != 0x3f91) return 2;
+		const long long e = *(long long*)(p + 0x20);
+		if (e < 0 && e != (long long)0xfffffffffffe7960ull) return 2;
+		*(volatile long long*)(p + 0x20) = 0;
+		return 0;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) { return 3; }
+}
+
+uintptr_t FtObserver() {
+	__try {
+		uintptr_t game = *(uintptr_t*)(g_base + kRvaGame);
+		uintptr_t sub = game ? *(uintptr_t*)(game + 0x128) : 0;
+		uintptr_t m = sub ? *(uintptr_t*)(sub + 0x28) : 0;
+		return m ? *(uintptr_t*)(m + 0x110) : 0;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+std::string g_texFile;
+float g_texMB = 0;            // 0 = off
+int g_texJobs = 0;
+int g_npc = 0;                // 0 = off
+uint32_t* g_npcAt = nullptr;  // the budget struct we raised
+uint32_t g_npcOrig[2] = {}, g_npcSet = 0;
+bool g_texRaised = false;
+float g_texOrigMB = 0, g_texSetMB = 0;
+int g_texOrigJobs = 0, g_texSetJobs = 0;
+DWORD g_texSince = 0;
+
+uint32_t* NpcBudget() {
+	__try {
+		uintptr_t game = *(uintptr_t*)(g_base + kRvaGame);
+		uintptr_t mod = game ? *(uintptr_t*)(game + 0xe0) : 0;
+		uintptr_t sw = mod ? *(uintptr_t*)(mod + kNpcSwitcher) : 0;
+		if (!sw) return nullptr;
+		uint32_t* b = (uint32_t*)(sw + kNpcBudget);
+		if (b[1] > 100000 || b[2] > 100000) return nullptr;   // min / max not plausible: not this struct
+		return b;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) { return nullptr; }
+}
+
+void NpcRaise() {
+	if (g_npcAt || g_npc <= 0 || !g_base) return;
+	uint32_t* b = NpcBudget();
+	if (!b) { Log("fttex: the MonsterLOD switcher isn't there: NPC budget off"); g_npc = 0; return; }
+	__try {
+		g_npcOrig[0] = b[1]; g_npcOrig[1] = b[2];
+		g_npcSet = (uint32_t)g_npc;
+		b[1] = g_npcSet; b[2] = g_npcSet;   // FUN_181e1bf50 then sets current = max the next frame
+		g_npcAt = b;
+		Log("fttex: arrival wait: MonsterLOD switch budget min %u / max %u (current %u) -> %u", g_npcOrig[0], g_npcOrig[1],
+		    b[0], g_npcSet);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) { g_npc = 0; }
+}
+
+void NpcRestore() {
+	if (!g_npcAt) return;
+	__try {
+		if (g_npcAt[1] == g_npcSet) g_npcAt[1] = g_npcOrig[0];
+		if (g_npcAt[2] == g_npcSet) g_npcAt[2] = g_npcOrig[1];
+		Log("fttex: MonsterLOD switch budget back to min %u / max %u", g_npcAt[1], g_npcAt[2]);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {}
+	g_npcAt = nullptr;
+}
+
+void TexRaise() {
+	NpcRaise();
+	if (g_texRaised || g_texMB <= 0 || !g_base) return;
+	__try {
+		float* mb = (float*)(g_base + kRvaTexMB);
+		int* jobs = (int*)(g_base + kRvaTexJobs);
+		if (!(*mb > 0.0f && *mb <= 4096.0f) || *jobs < 1 || *jobs > 1 << 20) {
+			Log("fttex: the caps read %.2f MB / %d jobs: not the 1.5.6 variables, off", *mb, *jobs);
+			g_texMB = 0;
+			return;
+		}
+		g_texOrigMB = *mb; g_texOrigJobs = *jobs;
+		g_texSetMB = g_texMB > g_texOrigMB ? g_texMB : g_texOrigMB;
+		g_texSetJobs = g_texJobs > g_texOrigJobs ? g_texJobs : g_texOrigJobs;
+		*mb = g_texSetMB; *jobs = g_texSetJobs;
+		g_texRaised = true;
+		g_texSince = GetTickCount();
+		Log("fttex: arrival wait: texture caps %.1f MB / %d jobs -> %.1f MB / %d jobs", g_texOrigMB, g_texOrigJobs,
+		    g_texSetMB, g_texSetJobs);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) { g_texMB = 0; }
+}
+
+void TexRestore(const char* why) {
+	NpcRestore();
+	if (!g_texRaised) return;
+	g_texRaised = false;
+	__try {
+		float* mb = (float*)(g_base + kRvaTexMB);
+		int* jobs = (int*)(g_base + kRvaTexJobs);
+		// only what we wrote (someone may have set the cvar meanwhile: theirs stays)
+		if (*mb == g_texSetMB) *mb = g_texOrigMB;
+		if (*jobs == g_texSetJobs) *jobs = g_texOrigJobs;
+		Log("fttex: caps back to %.1f MB / %d jobs after %.1f s (%s)", *mb, *jobs, (GetTickCount() - g_texSince) / 1000.0, why);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {}
+}
 
 bool InImage(uintptr_t p) { return p >= g_base && p < g_end; }
 
@@ -112,6 +249,59 @@ bool Setup() {
 
 void Ftpre_Install(uintptr_t env, uintptr_t) { g_env = env; }   // Setup waits for the first drawn frame (the 3D engine is up)
 
+void Fttex_Install(HMODULE self) {
+	char path[MAX_PATH] = {};
+	GetModuleFileNameA(self, path, MAX_PATH);
+	std::string p(path);
+	g_texFile = p.substr(0, p.find_last_of('\\') + 1) + "fastload_fttex.txt";
+	if (FILE* f = fopen(g_texFile.c_str(), "r")) {
+		float mb = 0; int jobs = 0, npc = 0;
+		if (fscanf(f, "%f %d %d", &mb, &jobs, &npc) >= 1 && mb >= 0 && mb <= 1024) {
+			g_texMB = mb; g_texJobs = jobs < 0 ? 0 : jobs; g_npc = npc < 0 ? 0 : npc > 10000 ? 10000 : npc;
+		}
+		fclose(f);
+	}
+	if (g_texMB > 0 || g_npc > 0)
+		Log("fttex: arrival wait texture caps %.1f MB / %d jobs, NPC switch budget %d (fastload_fttex.txt)", g_texMB, g_texJobs, g_npc);
+}
+
+void Ftinstant_Install(HMODULE self) {
+	char path[MAX_PATH] = {};
+	GetModuleFileNameA(self, path, MAX_PATH);
+	std::string p(path);
+	g_instFile = p.substr(0, p.find_last_of('\\') + 1) + "fastload_ftinstant.txt";
+	if (FILE* f = fopen(g_instFile.c_str(), "r")) {
+		float v = 0;
+		if (fscanf(f, "%f", &v) == 1 && v >= 0 && v <= 30) g_instS = v;
+		fclose(f);
+	}
+	if (g_instS > 0) Log("ftinstant: the fast-travel arrival wait is let in after %.2f s (fastload_ftinstant.txt)", g_instS);
+}
+
+void Ftinstant_Command(const char* args) {
+	float v = 0;
+	if (args && sscanf_s(args, "%f", &v) == 1 && v >= 0 && v <= 30) {
+		g_instS = v;
+		if (!g_instFile.empty()) {
+			if (v <= 0) remove(g_instFile.c_str());
+			else if (FILE* f = fopen(g_instFile.c_str(), "w")) { fprintf(f, "%g\n", v); fclose(f); }
+		}
+	}
+	Log("ftinstant: %s  (ftinstant S: let the fast-travel arrival in S seconds after it starts waiting; 0 = off)",
+	    g_instS > 0 ? "on" : "off");
+}
+
+void Fttex_Command(const char* args) {
+	float mb = 0; int jobs = 0, npc = 0;
+	if (args && sscanf_s(args, "%f %d %d", &mb, &jobs, &npc) >= 1 && mb >= 0 && mb <= 1024) {
+		g_texMB = mb; g_texJobs = jobs < 0 ? 0 : jobs; g_npc = npc < 0 ? 0 : npc > 10000 ? 10000 : npc;
+		if (!g_texFile.empty()) if (FILE* f = fopen(g_texFile.c_str(), "w")) { fprintf(f, "%g %d %d\n", g_texMB, g_texJobs, g_npc); fclose(f); }
+		if (g_texMB <= 0 && g_npc <= 0) TexRestore("turned off");
+	}
+	Log("fttex: texture caps %.1f MB / %d jobs, NPC switch budget %d while the fast-travel arrival waits  "
+	    "(fttex MB JOBS NPC; fttex 0 = off)", g_texMB, g_texJobs, g_npc);
+}
+
 void Ftpre_Command(const char* args) {
 	g_mode = args ? atoi(args) : 0;
 	Log("ftpre mode %d (%s)%s", g_mode, g_mode == 0 ? "off" : g_mode == 1 ? "log only" : "log + precache the destination",
@@ -123,7 +313,12 @@ void Ftpre_Frame() {
 	if (!g_tried) { g_tried = true; g_ok = Setup(); }
 	if (!g_ok) return;
 	State s;
-	if (!ReadState(s)) { if (g_was.valid) Log("ftpre: the fast-travel manager went away"); g_was = State{}; return; }
+	if (!ReadState(s)) {
+		if (g_was.valid) Log("ftpre: the fast-travel manager went away");
+		g_was = State{};
+		TexRestore("the fast-travel manager went away");
+		return;
+	}
 	DWORD now = GetTickCount();
 	bool walking = s.active || s.active2;
 	bool wasWalking = g_was.active || g_was.active2;
@@ -136,6 +331,19 @@ void Ftpre_Frame() {
 			Log("ftpre: walk ended after %.1f s, %d precache requests", (now - g_walkStart) / 1000.0, g_adds);
 	}
 	g_was = s;
+	if (s.active2 && !s.active) {   // the arrival wait: the walk is over, the readiness observer is armed
+		TexRaise();
+		if (!g_waitStart) { g_waitStart = now; g_instDone = false; }
+		if (g_instS > 0 && !g_instDone && now - g_waitStart >= (DWORD)(g_instS * 1000)) {
+			g_instDone = true;
+			int r = LetInFt(FtObserver());
+			Log("ftinstant: arrival wait let in after %.2f s (%s)", (now - g_waitStart) / 1000.0,
+			    r == 0 ? "the fade-in starts on the next update" : r == 1 ? "already fired" : r == 2 ? "the observer's layout didn't match: left alone" : "unreadable");
+		}
+	} else {
+		TexRestore(s.active ? "a new walk" : "the wait ended");
+		g_waitStart = 0;
+	}
 	// only on the confirmed travel flag: the second state (+0x110 +0x68) is logged until a trip shows what it is
 	if (g_mode < 2 || !s.active || !g_add || !Plausible(s.dest)) return;
 	if (g_lastAdd && now - g_lastAdd < kRefreshMs) return;

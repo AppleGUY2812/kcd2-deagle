@@ -248,9 +248,32 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
 - Load-time plugin: `fastload.asi` in the same folder, a mod of its own (works without the Deagle mod). Its log is
   `fastload.log` there, its settings and records `fastload_*.txt` / `.bin` (they were `deagle_*` before 2026-10-24;
   `native/install.ps1` copies the old ones over once). Its commands (`ftpre`, `fastzip`, `streamio`, `readiness`,
-  `hitch`, `ftplaces`, `pakahead`, `cvars`, `xmlahead`, `questbench`, `streamahead`, `terrainfast`) still go in as
+  `hitch`, `ftplaces`, `pakahead`, `cvars`, `xmlahead`, `questbench`, `streamahead`, `terrainfast`, `fttex`, `ftinstant`,
+  `mapvd`, `perkcopy`) still go in as
   `deagle_lua Deagle:Native([[...]])` and the Deagle plugin hands them over; without the Deagle mod only the files work.
 - `deagle_log_actions` logs every key action the mod receives; `deagle_native_test` pings the plugin with a shot sound.
+
+### Fast travel, map and inventory (fastload.asi, 2026-10-26)
+All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<name>.txt` next to the plugin.
+- `ftinstant S`: the fast-travel arrival fades in S seconds after the walk ends instead of waiting for every NPC and
+  texture (0.3 in use; `ftinstant 0` = the game's wait, 2.5-3.8 s of black). NPC detail and sharp textures arrive in
+  the first seconds of play.
+- `fttex MB JOBS NPC`: raises the texture streaming caps and the NPC detail-switch budget during the arrival wait
+  (`fttex 0` = off, the default; measured no gain, kept for tests).
+- `mapvd 1|0`: the map and inventory lower the view distance (140 -> 100) on open and raise it on close, and each change
+  made the engine re-file every object (0.3-0.5 s freezes). `1` (default) keeps the engine on the higher value while a
+  menu has it lowered; `0` = the game's behaviour. A view distance lowered in the options applies after a restart.
+- `perkcopy 1|0`: opening the inventory or map copies the perk list and rechecked every perk after each perk copied
+  (cubic). `1` (default) rechecks once at the end; `0` = the game's loop.
+- `fastload_gfxlist.txt` `0`: turns off the Scaleform fix (default on, read at start): a UI clip that stops no longer walks
+  the movie's whole advance list (quadratic in map markers); the list is rebuilt once instead.
+- `hitch <ms>`: the freeze sampler's threshold (250 by default, 50 to see every menu-open frame).
+- `fastload_menutime.txt` `0`: turns off the menu-open timer (default on, log only): every inventory / map open logs
+  `menutime: open #N:` with the time of each step (fader, setup, map fill, SetItems, calls to Flash, GFx advance).
+- The map movie `Libs/UI/ApseMap.gfx` (built by `tools/ui/mapfast/build.sh`): its marker search tree sorts with the
+  engine's native sort instead of a script compare.
+- `krender 1|0` (sent by the Deagle scripts, not by hand): the gun mirror plugin (KCD2 Render) runs only with the
+  mirror skin on and the gun out, and takes new photos only at a new place (20 m+) or after a fast travel.
 
 ## Developer only
 `deagle_lua Deagle:Native([[rounds stats]])` logs the round sim's ray counts (full / static / dynamic);
