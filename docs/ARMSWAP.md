@@ -12,8 +12,9 @@ If a step ever needs per-item or per-gun hand work, it is the wrong step: fix th
 | retarget every clip of a gun onto Henry's skeleton | gun (automatic, part of the gun build) | machine time |
 | clothing on the arms | nothing: the game's own worn skins + materials are copied at run time | 0 |
 
-Status (2026-10-26): proven offline in Blender on two games' arms (RoN Grizzly, CoD Glock). The in-game parts
-(native clothing copy, Henry-skeleton viewmodel) are **not built yet**; see "Not proven yet". Videos:
+Status (2026-10-26): proven offline in Blender on two games' arms (RoN Grizzly, CoD Glock). In game: the clothing
+copy test is built (`deagle_clothcopy npc|vm|off`, `native/src/gore.cpp`, 4c508cb), not run yet; the Henry-skeleton
+viewmodel is **not built yet**; see "Not proven yet". Videos:
 Desktop\Deagle Progress\ARM SWAP DEMO 3 - *.mp4 (both reloads, same fit code, only the bone table differs).
 
 ## How it works
@@ -140,4 +141,4 @@ Arm lengths (upper arm / forearm / hand): Henry 26.6 / 26.2 / 8.3 cm; RoN 28.1 /
 | `tools/armswap/proof_swap.py` | first single-frame demo (superseded by proof_anim.py) |
 | `tools/armswap/ddsjoin.py`, `tex_prep.py` | demo textures from KCD2's split DDS + stand-in colours |
 | `tools/henry_rig.py` | Henry's skeleton with the game's joint frames |
-| `native/src/gore.cpp` | `listatt` / `hideatt`: the attachment calls the clothing copy will extend |
+| `native/src/gore.cpp` | `listatt` / `hideatt`, and `clothcopy` (`CopySkin`): Henry's worn skins + LOD materials bound onto another character |
