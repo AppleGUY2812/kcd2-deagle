@@ -125,7 +125,7 @@ void NpcRaise() {
 		g_npcSet = (uint32_t)g_npc;
 		b[1] = g_npcSet; b[2] = g_npcSet;   // FUN_181e1bf50 then sets current = max the next frame
 		g_npcAt = b;
-		Log("fttex: arrival wait: MonsterLOD switch budget min %u / max %u (current %u) -> %u", g_npcOrig[0], g_npcOrig[1],
+		Log("fttex: MonsterLOD switch budget min %u / max %u (current %u) -> %u", g_npcOrig[0], g_npcOrig[1],
 		    b[0], g_npcSet);
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) { g_npc = 0; }
@@ -188,7 +188,7 @@ void NpcGate(bool on) {
 }
 
 void TexRestore(const char* why) {
-	NpcRestore();
+	if (!g_gateBoost) NpcRestore();   // a gate in play owns the raise (NpcGate): it puts it back itself (212 lost it a frame later)
 	if (!g_texRaised) return;
 	g_texRaised = false;
 	__try {
