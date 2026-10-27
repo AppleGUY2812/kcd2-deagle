@@ -23,6 +23,21 @@
   direction; crouch vs run accuracy; flash snappiness; deagle_mparam test_roll 10 (top tilts left?); sprint / jump;
   head pop on a Deagle head kill; kill shove; impact sound levels; guards hearing shots.
 
+## Inventory mod (user's plan 2026-10-26, in this order)
+1. Split: move the inventory features out of the Deagle mod into their own mod, then clean up. Today they are
+   `tools/ui/weightmap/` (build) -> `src/Libs/UI/{ApseInventoryList,ItemTransfer,ApseModalDialog}.gfx` + `UIElements/*.xml`,
+   `src/Scripts/Deagle/fastmove.lua`, plugin `fastkey` / `mods` (native/src/main.cpp) and `invtime` (native/src/invtime.cpp),
+   the `ui_tip_deagle_weightmap` strings in `loc/english/text__deagle.xml`, docs `inventory_load.md`,
+   `whgame_re/inventory_multiselect.md`, DEBUG.md rows.
+2. Search box with fuzzy search (port a small scorer such as fzy's to ActionScript 2; first check the inventory screen
+   lets a text field receive typed keys).
+3. More filters.
+4. Sort by stat (charisma, armour, ...): the list's item entries carry no stats today (Id, Name, Category, Weight,
+   Stolen...), so the values need a source first.
+5. Equip best for a stat (user 2026-10-26): one click wears the carried set with the most charisma / armour / ...
+   Needs step 4's stat source plus which slots / layers each piece takes, so pieces that can't be worn together are
+   never picked together. Then equip through the game's own path, or build it as one of the game's outfits.
+
 ## Next (user's list 2026-10-12, ordered: each builds on the one before)
 1. Bullet system v1 (BALLISTICS.md): a real projectile (speed, drop, drag), tracer, impacts per surface (holes / decals,
    sparks, dirt, water), armor vs flesh vs clothes (plate deflects small rounds), knockback from momentum.
