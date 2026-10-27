@@ -12,6 +12,10 @@
 #include <string>
 #include "MinHook.h"
 #include "log.h"
+#include "early.h"
+#include <atomic>
+#include <mutex>
+#include <vector>
 
 namespace {
 constexpr uintptr_t kRva = 0x56259c;
@@ -78,7 +82,118 @@ void __fastcall HkUntrack(uintptr_t tracker, uintptr_t item, uintptr_t inv) {
 	}
 	o_untrack(tracker, item, inv);
 }
+// The quest log hears item and container events from whichever thread makes them. NPCs change their items on the
+// game's AI thread (the thread that loads the Scheduler table at start-up), so with the map kept loaded the quest log's
+// tracking maps and the map marker list (FUN_180a193c0) were edited off the main thread while the main thread used
+// them: three crashes 2026-10-27 00:22 / 00:50 / 00:55, all in FUN_180c4ded4 on a non-main thread, the last one at the
+// same tower stairs twice. Here those callbacks run on the main thread: an event from another thread takes its own
+// reference on the item / container (16-bit count at +0xc: add FUN_181e38f20, release FUN_181e39320) and waits in a
+// queue that the frame tick plays in order. An object with count 0 can't be held (adding then releasing would delete
+// it), so such an event runs where it came from, as before, and is counted.
+constexpr uintptr_t kRvaItemEv = 0xdc7068;    // (questlog, type, item, container): item events
+constexpr uintptr_t kRvaInvLoad = 0xdc8dc8;   // (questlog, type, container): type 1 subscribes a tracked container
+constexpr uintptr_t kRvaInvDrop = 0x2b005b4;  // (questlog, type, container): types 0/2/3 unsubscribe it
+constexpr uintptr_t kRvaAddRef = 0x1e38f20, kRvaRelease = 0x1e39320;
+constexpr uint8_t kItemEvBytes[] = { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x74, 0x24, 0x10, 0x57, 0x48, 0x83, 0xec, 0x20 };
+constexpr uint8_t kInvLoadBytes[] = { 0x83, 0xfa, 0x01, 0x74, 0x01, 0xc3, 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57 };
+constexpr uint8_t kInvDropBytes[] = { 0x48, 0x83, 0xec, 0x28, 0xf7, 0xc2, 0xfc, 0xff, 0xff, 0xff, 0x75, 0x0d };
+constexpr uint8_t kAddRefBytes[] = { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x20, 0x0f, 0xb7, 0x41, 0x0c };
+constexpr uint8_t kReleaseBytes[] = { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9, 0xb8, 0xff, 0xff, 0xff, 0xff };
+typedef void(__fastcall* ItemEvFn)(uintptr_t ql, int type, uintptr_t item, uintptr_t inv);
+typedef void(__fastcall* InvEvFn)(uintptr_t ql, int type, uintptr_t inv);
+typedef void(__fastcall* RefFn)(uintptr_t obj);
+ItemEvFn o_itemEv = nullptr;
+InvEvFn o_invLoad = nullptr, o_invDrop = nullptr;
+RefFn g_addRef = nullptr, g_release = nullptr;
+DWORD g_mainTid = 0;
+bool g_qlOn = false;
+
+struct QlEvent { int kind; uintptr_t ql; int type; uintptr_t item, inv; DWORD tid; };   // kind 0 item, 1 load, 2 drop
+std::mutex g_qlMu;
+std::vector<QlEvent> g_qlQueue;
+std::atomic<unsigned> g_qlQueued{0}, g_qlInline{0}, g_qlMaxBatch{0};
+
+// A reference for the queued call; false when the object has none (count 0) or can't be read.
+bool Hold(uintptr_t obj) {
+	if (!obj) return true;
+	short n = 0;
+	__try { n = *(volatile const short*)(obj + 0xc); } __except (1) { return false; }
+	if (n <= 0) return false;
+	g_addRef(obj);
+	return true;
+}
+
+void Drain() {
+	std::vector<QlEvent> batch;
+	{ std::lock_guard<std::mutex> l(g_qlMu); batch.swap(g_qlQueue); }
+	if (batch.empty()) return;
+	if (batch.size() > g_qlMaxBatch) g_qlMaxBatch = (unsigned)batch.size();
+	for (const QlEvent& e : batch) {
+		if (e.kind == 0) o_itemEv(e.ql, e.type, e.item, e.inv);
+		else if (e.kind == 1) o_invLoad(e.ql, e.type, e.inv);
+		else o_invDrop(e.ql, e.type, e.inv);
+		if (e.item) g_release(e.item);
+		if (e.inv) g_release(e.inv);
+	}
+}
+
+// Queue the call for the main thread; false = it has to run here (an object without a reference).
+bool Defer(int kind, uintptr_t ql, int type, uintptr_t item, uintptr_t inv) {
+	if (!Hold(item)) { g_qlInline++; return false; }
+	if (!Hold(inv)) { if (item) g_release(item); g_qlInline++; return false; }
+	const unsigned n = ++g_qlQueued;
+	if (n <= 5 || n % 500 == 0)
+		Log("keepload: quest log: %s event (type %d) from thread %lu runs on the main thread (%u so far, %u ran in place: no reference to hold)",
+		    kind == 0 ? "item" : "container", type, GetCurrentThreadId(), n, g_qlInline.load());
+	std::lock_guard<std::mutex> l(g_qlMu);
+	g_qlQueue.push_back({ kind, ql, type, item, inv, GetCurrentThreadId() });
+	return true;
+}
+
+void __fastcall HkItemEv(uintptr_t ql, int type, uintptr_t item, uintptr_t inv) {
+	if (GetCurrentThreadId() == g_mainTid) { Drain(); o_itemEv(ql, type, item, inv); return; }
+	if (type != 2 && (type < 0 || type >= 5)) return;   // the game's function does nothing for these
+	if (!Defer(0, ql, type, type == 2 ? item : 0, inv)) o_itemEv(ql, type, item, inv);
+}
+void __fastcall HkInvLoad(uintptr_t ql, int type, uintptr_t inv) {
+	if (GetCurrentThreadId() == g_mainTid) { Drain(); o_invLoad(ql, type, inv); return; }
+	if (type != 1) return;
+	if (!Defer(1, ql, type, 0, inv)) o_invLoad(ql, type, inv);
+}
+void __fastcall HkInvDrop(uintptr_t ql, int type, uintptr_t inv) {
+	if (GetCurrentThreadId() == g_mainTid) { Drain(); o_invDrop(ql, type, inv); return; }
+	if ((type & ~3u) || type == 1) return;
+	if (!Defer(2, ql, type, 0, inv)) o_invDrop(ql, type, inv);
+}
+
+bool HookAt(uintptr_t base, uintptr_t rva, const uint8_t* bytes, size_t n, void* hk, void** orig) {
+	void* p = (void*)(base + rva);
+	if (memcmp(p, bytes, n)) return false;
+	return MH_CreateHook(p, hk, orig) == MH_OK && MH_EnableHook(p) == MH_OK;
+}
+
+void InstallQuestLogThreads(uintptr_t base) {
+	g_mainTid = Early_MainThread();
+	if (!g_mainTid || memcmp((void*)(base + kRvaAddRef), kAddRefBytes, sizeof kAddRefBytes) ||
+	    memcmp((void*)(base + kRvaRelease), kReleaseBytes, sizeof kReleaseBytes)) {
+		Log("keepload: quest log on the main thread: code check failed (main thread %lu) - not installed", g_mainTid);
+		return;
+	}
+	g_addRef = (RefFn)(base + kRvaAddRef);
+	g_release = (RefFn)(base + kRvaRelease);
+	const bool a = HookAt(base, kRvaItemEv, kItemEvBytes, sizeof kItemEvBytes, (void*)&HkItemEv, (void**)&o_itemEv);
+	const bool b = HookAt(base, kRvaInvLoad, kInvLoadBytes, sizeof kInvLoadBytes, (void*)&HkInvLoad, (void**)&o_invLoad);
+	const bool c = HookAt(base, kRvaInvDrop, kInvDropBytes, sizeof kInvDropBytes, (void*)&HkInvDrop, (void**)&o_invDrop);
+	g_qlOn = a && b && c;
+	Log("keepload: quest log events from other threads run on the main thread (%lu): %s (item %d, container load %d, drop %d)",
+	    g_mainTid, g_qlOn ? "on" : "NOT all hooked", a, b, c);
+}
 }  // namespace
+
+// The frame tick (main thread): the quest log events other threads queued, in order.
+void Keepload_Frame() {
+	if (g_qlOn) Drain();
+}
 
 void Keepload_Install(uintptr_t base, HMODULE self) {
 	char path[MAX_PATH] = {};
@@ -98,6 +213,7 @@ void Keepload_Install(uintptr_t base, HMODULE self) {
 	if (memcmp(u, kUntrackBytes, sizeof kUntrackBytes)) { Log("keepload: map quest tracker guard: code check failed - not installed"); return; }
 	const bool g = MH_CreateHook(u, (void*)&HkUntrack, (void**)&o_untrack) == MH_OK && MH_EnableHook(u) == MH_OK;
 	Log("keepload: map quest tracker guard %s (an item event for an untracked inventory no longer reads garbage)", g ? "on" : "hook FAILED");
+	InstallQuestLogThreads(base);
 }
 
 void Keepload_Command(const char* args) {

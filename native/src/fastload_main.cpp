@@ -24,6 +24,7 @@ void Gfxlist_Install(uintptr_t base, HMODULE self);   // gfxlist.cpp
 void Menutime_Install(uintptr_t base, HMODULE self);  // menutime.cpp
 void Keepload_Install(uintptr_t base, HMODULE self);  // keepload.cpp
 void Keepload_Command(const char* args);
+void Keepload_Frame();   // quest log events from other threads, run on the main thread
 #include "fastzip.h"
 #include "streamio.h"
 #include "streamahead.h"
@@ -129,6 +130,7 @@ void Tick() {
 	Audiofast_Frame();   // the sound system's start-up requests finished before the game runs on (audiofast.cpp)
 	Early_Frame(g_game.base, g_game.size);   // Main from DllMain to the first frame (early.cpp)
 	Streamahead_FirstFrame();   // held read-ahead readers start at the first frame (streamahead.cpp)
+	Keepload_Frame();   // quest log events NPCs made on the AI thread, played on the main thread (keepload.cpp)
 	if (!g_world) return;
 	Hitch_Frame();      // a frame: the long-frame sampler measures from here (hitch.cpp)
 	Ftplaces_Frame();   // the fast-travel arrival's random-event places, loaded ahead (ftplaces.cpp)
