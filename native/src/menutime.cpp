@@ -16,6 +16,7 @@
 #include "log.h"
 #include "hitch.h"
 #include "readiness.h"
+#include "scan.h"
 
 extern bool (*Hitch_MapvdMasking)();   // hitch.cpp, set by mapvd.cpp: true while a menu has the view distance lowered
 
@@ -74,8 +75,53 @@ unsigned g_fBlackFrames = 0;
 V1 o_fStart, o_fIn, o_fEnd, o_fUpd;
 void __fastcall HkfStart(void* a) { o_fStart(a); g_fOut = Now(); g_fadeT = g_fOut; g_fCb = g_fIn = 0; g_fBlackFrames = 0; g_fDur = *(float*)((char*)a + 0x170); if (g_menuWinOn && g_fDur < 0.05f && Readiness_LevelState() == 0) { Hitch_MenuWindow(true); g_menuWinT0 = g_fOut; } }
 void __fastcall HkfIn(void* a) { g_fIn = Now(); o_fIn(a); }
+// Who holds the screen black: the fader leaves state 2 when +0x58 goes 0 or +0xd8 is set (FUN_18085d9d8). Logged at
+// the black's start and end: each field near them, and the RTTI type of what it points at (one and two levels down).
+Module g_whg;
+// vt[0] = the object's own vtable slot, vt[1..4] = the vtables of its first 4 pointers (a container's elements)
+static void ReadVts(uintptr_t v, uintptr_t* vt) {
+	for (int k = 0; k < 5; k++) vt[k] = 0;
+	if (v < 0x10000 || (v & 7)) return;
+	__try {
+		vt[0] = *(uintptr_t*)v;
+		for (int k = 0; k < 4; k++) {
+			uintptr_t p = *(uintptr_t*)(v + 8 * k);
+			if (p >= 0x10000 && !(p & 7)) vt[k + 1] = *(uintptr_t*)p;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+std::string HolderType(uintptr_t v) {
+	uintptr_t vt[5];
+	ReadVts(v, vt);
+	std::string n = RttiName(g_whg, vt[0]);
+	if (!n.empty()) return n;
+	for (int k = 0; k < 4; k++) {
+		n = RttiName(g_whg, vt[k + 1]);
+		if (!n.empty()) return "[" + std::to_string(k) + "]->" + n;
+	}
+	return n;
+}
+void DumpHolders(void* a, const char* when) {
+	char line[1600]; int n = snprintf(line, sizeof line, "menutime: fader %s (state %d):", when, *(char*)((char*)a + 0x38));
+	static const int offs[] = { 0x48, 0x50, 0x58, 0x60, 0x68, 0xc8, 0xd0, 0xd8, 0xe0, 0x108, 0x110 };
+	for (int o : offs) {
+		uintptr_t v = *(uintptr_t*)((char*)a + o);
+		std::string t = HolderType(v);
+		n += snprintf(line + n, sizeof line - n, " +%x=%llx%s%s", o, (unsigned long long)v, t.empty() ? "" : " ", t.c_str());
+		if (n >= (int)sizeof line - 80) break;
+	}
+	Log("%s", line);
+}
+char g_fPrevState = 0;
+int g_holderLogs = 0;
 void __fastcall HkfUpd(void* a) {
-	if (*(char*)((char*)a + 0x38) == 2) g_fBlackFrames++;
+	const char st = *(char*)((char*)a + 0x38);
+	if (st != g_fPrevState && (st == 2 || g_fPrevState == 2) && g_holderLogs < 200) {
+		g_holderLogs++;
+		DumpHolders(a, st == 2 ? "black start" : "black end");
+	}
+	g_fPrevState = st;
+	if (st == 2) g_fBlackFrames++;
 	if (g_menuWinT0 && (Now() - g_menuWinT0 > 3000 || Readiness_LevelState() != 0)) { Hitch_MenuWindow(false); g_menuWinT0 = 0; }
 	o_fUpd(a);
 }
@@ -219,6 +265,7 @@ struct Hook { uintptr_t rva; uint8_t bytes[10]; void* hk; void** orig; };
 }  // namespace
 
 void Menutime_Install(uintptr_t base, HMODULE self) {
+	g_whg = GetModule("WHGame.dll");
 	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_freq = (double)f.QuadPart;
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA(self, path, MAX_PATH);
