@@ -97,6 +97,7 @@ int g_texJobs = 0;
 int g_npc = 0;                // 0 = off
 uint32_t* g_npcAt = nullptr;  // the budget struct we raised
 uint32_t g_npcOrig[2] = {}, g_npcSet = 0;
+bool g_gateBoost = false;   // raised for a gate in play (NpcGate), not the arrival
 bool g_texRaised = false;
 float g_texOrigMB = 0, g_texSetMB = 0;
 int g_texOrigJobs = 0, g_texSetJobs = 0;
@@ -142,6 +143,7 @@ void NpcRestore() {
 }
 
 void TexRaise() {
+	if (g_gateBoost) { NpcRestore(); g_gateBoost = false; }   // the arrival's own numbers take over
 	NpcRaise();
 	if (g_texRaised || g_texMB <= 0 || !g_base) return;
 	__try {
@@ -162,6 +164,27 @@ void TexRaise() {
 		    g_texSetMB, g_texSetJobs);
 	}
 	__except (EXCEPTION_EXECUTE_HANDLER) { g_texMB = 0; }
+}
+
+// The same MonsterLOD switch budget while any 0x3f91 gate holds the screen in play (readiness.cpp): sleep / wait
+// (+fc367f) held 1.3-1.9 s for "LODManager" alone at 70-90 fps (2026-10-27 14:42, the user: "when the clock stops
+// spinning, it then does the loading circle and its a brief wait"); the NPCs moved by the time skip leave MonsterLOD
+// a few a frame. kGateNpc a frame, or the "fttex" NPC number if that is higher; only what we wrote is put back.
+constexpr int kGateNpc = 64;
+void NpcGate(bool on) {
+	if (on == g_gateBoost) return;
+	if (on) {
+		if (g_npcAt) return;   // the arrival wait already raised it
+		const int keep = g_npc;
+		g_npc = keep > kGateNpc ? keep : kGateNpc;
+		NpcRaise();
+		g_npc = keep;
+		g_gateBoost = g_npcAt != nullptr;
+		if (g_gateBoost) Log("fttex: (a gate in play holds the screen)");
+	} else {
+		NpcRestore();
+		g_gateBoost = false;
+	}
 }
 
 void TexRestore(const char* why) {
@@ -359,3 +382,5 @@ void Ftpre_Frame() {
 	if (g_adds <= 2 || !ok) Log("ftpre: precache point %s at %.1f %.1f %.1f (request %d)", ok ? "added" : "FAILED", pos[0], pos[1], pos[2], g_adds);
 	if (!ok) g_add = nullptr;   // never again this session
 }
+
+void Ftpre_GateNpc(bool on) { NpcGate(on); }

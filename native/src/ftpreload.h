@@ -17,3 +17,5 @@ void Fttex_Command(const char* args);
 // "ftinstant S": the fast-travel arrival's readiness wait let in S seconds after it starts (fastload_ftinstant.txt, off by default)
 void Ftinstant_Install(HMODULE self);
 void Ftinstant_Command(const char* args);
+// NPC detail switch budget raised while a readiness gate (0x3f91) holds the screen in play (readiness.cpp)
+void Ftpre_GateNpc(bool on);

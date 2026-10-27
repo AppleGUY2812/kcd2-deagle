@@ -8,6 +8,7 @@
 #include "streamahead.h"
 #include "morphpool.h"
 #include "early.h"
+#include "ftpreload.h"
 #include <windows.h>
 #include <intrin.h>
 #include <algorithm>
@@ -772,6 +773,11 @@ void Readiness_Frame() {
 		std::lock_guard<std::mutex> l(g_newMu);
 		for (auto& g : g_new) { g.ai0 = g_ai; g.ph0 = Snap(); g_gates.push_back(g); }
 		g_new.clear();
+	}
+	{
+		bool hold = false;
+		for (const Gate& g : g_gates) hold |= g.mask == 0x3f91;
+		Ftpre_GateNpc(hold);
 	}
 	if (g_playT0 && now - g_playT0 >= 10 * g_freq) {   // the same numbers in play, for comparison
 		Log("readiness: AI update in the first 10 s of play after the gate: %s%s%s", AiLine(g_playAi, g_ai, Secs(now - g_playT0)).c_str(),
