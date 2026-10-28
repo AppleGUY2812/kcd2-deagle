@@ -93,8 +93,21 @@ function DiceAdvisor:Busy(line)
 	self:Render()
 end
 
+-- The plugin sends the advice in short dice_part lines (the console drops a long one), the first carrying gen=;
+-- dice_show gen=N then applies the collected fields.
+function DiceAdvisor:Part(line)
+	local t = parse(line)
+	if t.gen then self.part = {} end
+	self.part = self.part or {}
+	for k, v in pairs(t) do self.part[k] = v end
+end
+
 function DiceAdvisor:Show(line)
 	local t = parse(line)
+	if self.part and self.part.gen == t.gen then
+		for k, v in pairs(self.part) do if t[k] == nil then t[k] = v end end
+	end
+	self.part = nil
 	local generation = tonumber(t.gen)
 	if not generation or not self.enabled or generation < self.generation then return end
 	self.generation = generation
@@ -245,6 +258,7 @@ System.AddCCommand("dice_advisor_detail", "DiceAdvisor:SetDetail([[%line]])", "d
 System.AddCCommand("dice_native_ok", "DiceAdvisor:NativeOk()", "internal: native plugin handshake")
 System.AddCCommand("dice_set", "DiceAdvisor:Set([[%line]])", "internal: replay a saved setting")
 System.AddCCommand("dice_busy", "DiceAdvisor:Busy([[%line]])", "internal: solver busy")
+System.AddCCommand("dice_part", "DiceAdvisor:Part([[%line]])", "internal: advice fields")
 System.AddCCommand("dice_show", "DiceAdvisor:Show([[%line]])", "internal: show advice")
 System.AddCCommand("dice_hide", "DiceAdvisor:Hide([[%line]])", "internal: hide advice")
 

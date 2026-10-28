@@ -381,7 +381,20 @@ void Worker() {
 				std::snprintf(one, sizeof one, " d%d=%.2f,%.2f,%d,%d", i, d.x, d.y, d.value, d.joker ? 1 : 0);
 				cmd += one;
 			}
-			Queue(cmd);
+			// One ~700-character console line never reached Lua in game (2026-10-27: "Calculating..." stayed; the short
+			// dice_busy line worked), so the fields go over in short dice_part lines and dice_show <gen> applies them.
+			std::string fields = cmd.substr(strlen("dice_show ")), part;
+			size_t at = 0;
+			while (at < fields.size()) {
+				size_t sp = fields.find(' ', at);
+				if (sp == std::string::npos) sp = fields.size();
+				const std::string tok = fields.substr(at, sp - at);
+				if (!part.empty() && part.size() + 1 + tok.size() > 180) { Queue("dice_part " + part); part.clear(); }
+				part += (part.empty() ? "" : " ") + tok;
+				at = sp + 1;
+			}
+			if (!part.empty()) Queue("dice_part " + part);
+			Queue("dice_show gen=" + std::to_string(w.generation));
 		} catch (const std::exception& e) {
 			Log("dice: solver failed: %s; advisor off for this game", e.what());
 			g_badGame.store(w.game);
