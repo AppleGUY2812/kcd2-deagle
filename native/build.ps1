@@ -5,9 +5,13 @@
 $ErrorActionPreference = "Stop"
 $src = $args[0]; $out = $args[1]
 $work = if ($args.Count -ge 3) { $args[2] } else { "E:\Tools\deagle-work\native-build" }
+New-Item -ItemType Directory -Force (Split-Path $out) | Out-Null
 if (Test-Path $work) { Remove-Item -Recurse -Force "$work\src","$work\CMakeLists.txt" -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force $work | Out-Null
 robocopy $src $work /E /XD build .git /NFL /NDL /NJH /NJS /NP | Out-Null
+# dice.asi includes tools/farkle/advisor.h from the repository, which sits outside $src: CMakeLists.txt points at
+# ..\tools\farkle, so the work folder's parent gets the same copy.
+robocopy (Join-Path $src "..\tools\farkle") (Join-Path (Split-Path $work) "tools\farkle") /E /NFL /NDL /NJH /NJS /NP | Out-Null
 $vs = & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
 $cmake = Join-Path $vs "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
 # a failed compile left the previous build's .asi in Release\ and printed BUILT over it (the other session's catch,
@@ -15,16 +19,19 @@ $cmake = Join-Path $vs "Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\c
 $asi = "$work\build\Release\deagle_native.asi"
 $fl = "$work\build\Release\fastload.asi"
 $inv = "$work\build\Release\inventory.asi"
-Remove-Item $asi,$fl,$inv -Force -ErrorAction SilentlyContinue
+$dice = "$work\build\Release\dice.asi"
+Remove-Item $asi,$fl,$inv,$dice -Force -ErrorAction SilentlyContinue
 & $cmake -S $work -B "$work\build" -G "Visual Studio 17 2022" -A x64 | Select-String -Pattern "error|Error|Generating done" | % Line
 if ($LASTEXITCODE -ne 0) { "BUILD FAILED (configure, exit $LASTEXITCODE)"; exit 1 }
 # --clean-first: robocopy keeps the sources' own (older) timestamps, so an incremental build linked the previous
 # build's objects for every file not touched since (2026-10-23: a working-tree build silently missed rounds.cpp's split)
-& $cmake --build "$work\build" --config Release --clean-first 2>&1 | Select-String -Pattern "error|warning C4|deagle_native.vcxproj ->|fastload.vcxproj ->|inventory.vcxproj ->" | % Line
-if ($LASTEXITCODE -ne 0 -or -not (Test-Path $asi) -or -not (Test-Path $fl) -or -not (Test-Path $inv)) { "BUILD FAILED (compile, exit $LASTEXITCODE)"; exit 1 }
+& $cmake --build "$work\build" --config Release --clean-first 2>&1 | Select-String -Pattern "error|warning C4|deagle_native.vcxproj ->|fastload.vcxproj ->|inventory.vcxproj ->|dice.vcxproj ->" | % Line
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $asi) -or -not (Test-Path $fl) -or -not (Test-Path $inv) -or -not (Test-Path $dice)) { "BUILD FAILED (compile, exit $LASTEXITCODE)"; exit 1 }
 Copy-Item $asi $out -Force
 $flOut = Join-Path (Split-Path $out) "fastload.asi"
 Copy-Item $fl $flOut -Force
 $invOut = Join-Path (Split-Path $out) "inventory.asi"
 Copy-Item $inv $invOut -Force
-"BUILT " + (Get-Item $out).Length + " + fastload.asi " + (Get-Item $flOut).Length + " + inventory.asi " + (Get-Item $invOut).Length
+$diceOut = Join-Path (Split-Path $out) "dice.asi"   # dice/build.sh packs it into the mod's dist folder
+Copy-Item $dice $diceOut -Force
+"BUILT " + (Get-Item $out).Length + " + fastload.asi " + (Get-Item $flOut).Length + " + inventory.asi " + (Get-Item $invOut).Length + " + dice.asi " + (Get-Item $diceOut).Length
