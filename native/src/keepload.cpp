@@ -37,13 +37,15 @@ uint64_t __fastcall HkUnload(void* panel, char next, uint8_t own) {
 		if (++g_passed <= 10 || g_passed % 50 == 0) Log("keepload: screen %u reloads for screen %d (the game's choice), %u times so far", own, next, g_passed);
 		return r;
 	}
-	// The map after a fast travel reloads: kept, it kept the trip's look (dark map, the piece in a circle) through a
-	// travel encounter, a death and the save load after it (2026-10-27 19:03-19:06, the user's screenshot). A map
-	// session that started a walk is closed the game's way; the next one is kept again.
+	// The map after a fast travel reloads once: kept, it kept the trip's look (dark map, the piece in a circle) through
+	// a travel encounter, a death and the save load after it (2026-10-27 19:03-19:06, the user's screenshot).
+	// Never at the close that ends the trip: 214 unloaded the map the moment the walk ended and the arrival never
+	// started (2026-10-28 15:04, a quest fast travel: black screen for good, the save load after it hung too). So the
+	// reload waits for a later close, 10 s or more after the walk and the arrival wait are over.
 	static unsigned seenTrips = 0;
 	if (own == 6) {
 		const unsigned trips = Ftpre_TripSeq();
-		if (trips != seenTrips) {
+		if (trips != seenTrips && Ftpre_TripQuietMs() >= 10000) {
 			seenTrips = trips;
 			Log("keepload: screen 6 reloads after a fast travel (the game's choice)");
 			return r;

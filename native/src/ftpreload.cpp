@@ -98,7 +98,8 @@ int g_npc = 0;                // 0 = off
 uint32_t* g_npcAt = nullptr;  // the budget struct we raised
 uint32_t g_npcOrig[2] = {}, g_npcSet = 0;
 bool g_gateBoost = false;
-unsigned g_tripSeq = 0;   // fast-travel walks started (keepload: a map that saw one reloads)   // raised for a gate in play (NpcGate), not the arrival
+unsigned g_tripSeq = 0;
+DWORD g_tripBusyAt = 0;     // last frame a walk or arrival wait was on (keepload waits for the trip to be long over)   // fast-travel walks started (keepload: a map that saw one reloads)   // raised for a gate in play (NpcGate), not the arrival
 bool g_texRaised = false;
 float g_texOrigMB = 0, g_texSetMB = 0;
 int g_texOrigJobs = 0, g_texSetJobs = 0;
@@ -355,6 +356,7 @@ void Ftpre_Frame() {
 			Log("ftpre: walk ended after %.1f s, %d precache requests", (now - g_walkStart) / 1000.0, g_adds);
 	}
 	g_was = s;
+	if (s.active || s.active2) g_tripBusyAt = now;
 	if (s.active2 && !s.active) {   // the arrival wait: the walk is over, the readiness observer is armed
 		TexRaise();
 		if (!g_waitStart) { g_waitStart = now; g_instDone = false; }
@@ -386,3 +388,4 @@ void Ftpre_Frame() {
 
 void Ftpre_GateNpc(bool on) { NpcGate(on); }
 unsigned Ftpre_TripSeq() { return g_tripSeq; }
+DWORD Ftpre_TripQuietMs() { return g_tripBusyAt ? GetTickCount() - g_tripBusyAt : 0xffffffffu; }

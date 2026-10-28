@@ -21,3 +21,5 @@ void Ftinstant_Command(const char* args);
 void Ftpre_GateNpc(bool on);
 // fast-travel walks started so far (main thread)
 unsigned Ftpre_TripSeq();
+// ms since a fast-travel walk or arrival wait was last on (0xffffffff: none this run; main thread)
+DWORD Ftpre_TripQuietMs();
