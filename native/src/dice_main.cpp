@@ -411,7 +411,7 @@ bool IsRolling(uintptr_t state) {
 	return rva == 0x3f71a00 || rva == 0x3f702a8 || rva == 0x3f70ac8;
 }
 uintptr_t __fastcall HkState(uintptr_t controller, uintptr_t arg2, uintptr_t oldState, uintptr_t newState) {
-	const bool afterRoll = IsRolling(oldState);   // before the original: the transition may free the old state
+	bool afterRoll = IsRolling(oldState);   // before the original: the transition may free the old state
 	const uintptr_t result = g_origState(controller, arg2, oldState, newState);
 	++g_generation;
 	if (!newState) {   // the minigame is over: hide, and don't blame the next game on a read
@@ -436,10 +436,16 @@ uintptr_t __fastcall HkState(uintptr_t controller, uintptr_t arg2, uintptr_t old
 	const bool holding = name.find("Holding") != std::string::npos;
 	const bool scoring = name.find("Scoring") != std::string::npos;
 	const bool passing = name.find("Passing") != std::string::npos;
+	// PlayerTurn is where the player chooses after a throw (Rolling -> PlayerTurn) and returns to after each die click
+	// (PlayerTurn -> Holding -> PlayerTurn): the panel's main state (in game 2026-10-27: v1 showed nothing without it)
+	const bool turnState = name.find("PlayerTurn") != std::string::npos;
+	static std::string lastName;   // main thread only; backs up the vtable check with the name logged for the old state
+	afterRoll = afterRoll || lastName.find("Rolling") != std::string::npos;
+	lastName = name;
 	// Show while the human is choosing: the result of a throw (Holding) and the committed selection (Scoring). Hide
 	// during throws, the opponent's turn, the bank transition and any other phase. A Holding state reached without a
 	// throw is the start of a turn, where the dice values are stale, so it only gets a panel once the player has picks.
-	if (!raw.human || IsRolling(newState) || passing || (!holding && !scoring) || !raw.rolledMask ||
+	if (!raw.human || IsRolling(newState) || passing || (!holding && !scoring && !turnState) || !raw.rolledMask ||
 	    (!scoring && !afterRoll && raw.heldMask == 0 && !g_liveShowable.load())) {
 		g_liveShowable.store(false);
 		g_liveState.store(0);
