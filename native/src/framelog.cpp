@@ -7,6 +7,7 @@
 #include "framelog.h"
 #include "log.h"
 #include <windows.h>
+#include <psapi.h>
 #include <algorithm>
 #include <cstdio>
 #include <string>
@@ -62,9 +63,13 @@ void EndMinute(long long now) {
 		for (float x : f) { sum += x; over50 += x > 50; }
 		std::sort(f.begin(), f.end());
 		const float p99 = f[(std::min)(n - 1, (size_t)(n * 0.99))];
+		// memory a minute too: a leak shows as private bytes climbing while the fps falls over a session
+		PROCESS_MEMORY_COUNTERS_EX pm{};
+		GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pm, sizeof pm);
 		Log("framelog: last %.0f s in play: %.0f fps average, 1%% low %.0f fps (99th-percentile frame %.1f ms), worst frame %.0f ms, "
-		    "%d frames over 50 ms; our tick %.2f ms a second%s",
+		    "%d frames over 50 ms; our tick %.2f ms a second; memory %.0f MB private, %.0f MB in RAM%s",
 		    sum / 1000.0, n * 1000.0 / sum, 1000.0 / p99, p99, f.back(), over50, g_minTick * 1000.0 / (std::max)(sum, 1.0),
+		    pm.PrivateUsage / 1048576.0, pm.WorkingSetSize / 1048576.0,
 		    g_minSkipped ? " (seconds in the background left out)" : "");
 	}
 	g_minFrames.clear();

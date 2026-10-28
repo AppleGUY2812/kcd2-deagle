@@ -13,6 +13,17 @@ void LogInit(void* module) {
 	GetModuleFileNameA((HMODULE)module, path, MAX_PATH);
 	char* dot = strrchr(path, '.');
 	if (dot) strcpy_s(dot, path + MAX_PATH - dot, ".log");
+	// the last runs stay readable: X.log -> X.1.log -> X.2.log (the next start used to overwrite the only copy:
+	// "more fps after a restart, is something leaking?" had no earlier session to compare with, 2026-10-27)
+	if (dot) {
+		char older[MAX_PATH], newer[MAX_PATH];
+		const size_t stem = (size_t)(dot - path);
+		for (int i = 2; i >= 1; i--) {
+			snprintf(older, sizeof older, "%.*s.%d.log", (int)stem, path, i);
+			if (i == 1) strcpy_s(newer, path); else snprintf(newer, sizeof newer, "%.*s.%d.log", (int)stem, path, i - 1);
+			MoveFileExA(newer, older, MOVEFILE_REPLACE_EXISTING);
+		}
+	}
 	g_file = _fsopen(path, "w", _SH_DENYWR);   // others may read it while the game runs (fopen_s locks it)
 }
 
