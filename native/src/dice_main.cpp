@@ -369,12 +369,12 @@ void Worker() {
 			std::snprintf(head, sizeof head,
 				"dice_show gen:%llu keep:%d score:%d bank:%d roll:%.6f bankwin:%.6f held:%d pick:%d pscore:%d "
 				"pleft:%d pbust:%.6f proll:%.6f pbank:%.6f finish:%.6f hot:%.6f opp:%.6f tpts:%.1f bpts:%.1f "
-				"tf:%d tfkeep:%d tfscore:%d tfwin:%.6f tallkeep:%d tallscore:%d tallwin:%.6f mist:%.2f rolled:%d pfin:%.6f phot:%.6f ptpts:%.1f pbpts:%.1f",
+				"tf:%d tfkeep:%d tfscore:%d tfwin:%.6f tallkeep:%d tallscore:%d tallwin:%.6f mist:%.2f rolled:%d pfin:%.6f phot:%.6f ptpts:%.1f pbpts:%.1f abust:%.6f",
 				(unsigned long long)w.generation, a.keep, p.score, a.bank ? 1 : 0, a.winRoll, a.winBank,
 				w.snapshot.heldMask, p.hasPick ? 1 : 0, p.pickScore, p.pickDiceLeft, p.pickBust, p.pickWinRoll,
 				p.pickWinBank, p.finish, p.hot, p.opponentFinish, p.throwPoints, p.bankPoints,
 				p.hasTakeFewer ? 1 : 0, p.tfKeep, p.tfScore, p.tfWin, p.tfAllKeep, p.tfAllScore, p.tfAllWin,
-				p.mistake, w.snapshot.rolledMask, p.pickFinish, p.pickHot, p.pickThrowPoints, p.pickBankPoints);
+				p.mistake, w.snapshot.rolledMask, p.pickFinish, p.pickHot, p.pickThrowPoints, p.pickBankPoints, p.bust);
 			std::string cmd = head;
 			for (int i = 0; i < 6; i++) {
 				const auto& d = w.snapshot.dice[w.snapshot.me][i];

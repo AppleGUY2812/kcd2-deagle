@@ -40,6 +40,7 @@ struct Presentation {
 	std::vector<int> selectorIds;   // 100 + die index, for dice to set aside that are not held yet
 	double finish = 0, hot = 0, opponentFinish = 0;   // probabilities
 	double throwPoints = 0, bankPoints = 0;           // average points of the next throw / points banked now
+	double bust = 0;                                  // chance the next throw scores nothing, after the advised take
 	// the player's own held selection (die state 1)
 	bool hasPick = false;
 	int pickScore = 0, pickDiceLeft = 0;
@@ -115,6 +116,7 @@ inline Presentation Present(const farkle::Game& g, const Snapshot& s, const fark
 		p.bankPoints = s.turn[h] + p.score;
 		p.throwPoints = farkle::ExpectedThrowPoints(md, leftState);
 		p.hot = farkle::HotDice(md, leftState);
+		p.bust = md.bust[leftState];
 		p.finish = farkle::FinishFromSelection(tt, g, 0, s.turn[h], p.score, leftState, a.bank);
 		// the largest scoring keep the roll allows; only mention it when the advice deliberately keeps fewer dice
 		int allKeep = 0, allCount = 0, allScore = 0;

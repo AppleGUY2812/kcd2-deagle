@@ -130,6 +130,7 @@ function DiceAdvisor:Show(line)
 	local function list(mask)
 		local out = {}
 		for i = 0, 5 do if bit(mask, i) then out[#out + 1] = face(i) end end
+		table.sort(out)
 		return #out > 0 and table.concat(out, " ") or "nothing"
 	end
 
@@ -137,34 +138,27 @@ function DiceAdvisor:Show(line)
 	local held = num(t, "held")
 	-- No dice markers: the game's selector drew blue arcs away from the dice (in game 2026-10-28). The text names the dice.
 
+	-- What the player can't see: which dice to take, bank or throw, and what throwing on risks. The game already shows
+	-- the points, the turn total and a bust, so none of that is repeated (user, 2026-10-28).
 	local lines = {}
-	local function choice(bankBest, bankWin, throwWin)
-		lines[#lines + 1] = highlight(bankBest and "Then BANK" or "Then THROW AGAIN")
-		lines[#lines + 1] = string.format("Win chance if you bank %.0f %%, if you throw %.0f %%", bankWin, throwWin)
-	end
-	local hasPick = num(t, "pick") == 1 and held ~= 0
-	if hasPick then
-		local left = num(t, "pleft")
-		lines[#lines + 1] = string.format("Your pick: %s = %d points", list(held), num(t, "pscore"))
-		local throwWin, bankWin = num(t, "proll") * 100, num(t, "pbank") * 100
-		choice(bankWin >= throwWin, bankWin, throwWin)
-		lines[#lines + 1] = string.format("Chance to score nothing with the %d %s left: %.0f %%",
-			left, left == 1 and "die" or "dice", num(t, "pbust") * 100)
-	elseif keep == 0 then
-		lines[#lines + 1] = "No scoring dice: this turn is lost"
-	else
-		lines[#lines + 1] = string.format("Take %s = %d points", list(keep), num(t, "score"))
-		if held ~= 0 and num(t, "pick") == 0 then
-			lines[#lines + 1] = "Your current pick does not score"
+	local action = num(t, "bank") == 1 and "BANK" or "THROW AGAIN"
+	if keep ~= 0 then
+		local pickScores = num(t, "pick") == 1 and held ~= 0
+		if held ~= 0 and held == keep then
+			lines[1] = highlight("Now " .. action)
+		elseif pickScores then
+			lines[1] = highlight("Better: take " .. list(keep) .. ", then " .. action)
+		else
+			lines[1] = highlight("Take " .. list(keep) .. ", then " .. action)
 		end
-		choice(num(t, "bank") == 1, num(t, "bankwin") * 100, num(t, "roll") * 100)
-	end
-	if self.detail == 1 then
-		lines[#lines + 1] = string.format("Win this turn %.0f %%   Opponent wins next turn %.0f %%",
-			num(t, hasPick and "pfin" or "finish") * 100, num(t, "opp") * 100)
+		lines[2] = string.format("Throwing on: %.0f %% chance to lose %d points", num(t, "abust") * 100, num(t, "bpts"))
+		if self.detail == 1 then
+			lines[3] = string.format("Win chance: bank %.0f %%, throw %.0f %%   Opponent wins next turn %.0f %%",
+				num(t, "bankwin") * 100, num(t, "roll") * 100, num(t, "opp") * 100)
+		end
 	end
 	local mistake = num(t, "mist")
-	self.mistakeLine = mistake >= 0.05 and string.format("Your last choice cost %.1f %% win chance", mistake) or nil
+	self.mistakeLine = self.detail == 1 and mistake >= 0.05 and string.format("Your last choice cost %.1f %% win chance", mistake) or nil
 	self.lines = lines
 	self:Render()
 end
@@ -227,13 +221,13 @@ function DiceAdvisor:Best(line)
 		for c in counts:gmatch("%d+") do
 			i = i + 1
 			local d = self.owned[i]
-			if d and tonumber(c) > 0 then picks[#picks + 1] = string.format("%sx %s", c, d.n) end
+			if d and tonumber(c) > 0 then
+				local name = d.n:gsub(" die$", "")
+				picks[#picks + 1] = tonumber(c) > 1 and string.format("%s x%s", name, c) or name
+			end
 		end
-		lines[1] = highlight("Best dice to bring")
-		for k = 1, #picks, 3 do
-			lines[#lines + 1] = table.concat({ picks[k], picks[k + 1], picks[k + 2] }, ",  ")
-		end
-		lines[#lines + 1] = string.format("About %d points per turn on average", tonumber(points) or 0)
+		lines[1] = highlight("Bring: " .. table.concat(picks, ", ", 1, math.min(3, #picks)))
+		if #picks > 3 then lines[2] = table.concat(picks, ", ", 4) end
 	end
 	self.lines = lines
 	self:Render()
