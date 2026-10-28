@@ -265,9 +265,54 @@ bool ClothMtl(const char* rest, uintptr_t env) {
 	return true;
 }
 
+// clothinst <dst entityHex> <dstAtt>:<part>[,...] [src entityHex, default 7777]: dst's attachment <dstAtt> draws with
+// Henry's live clothing data for clothing_<part>. The colours, dirt, scratches and blood of a KCD2 clothing part are
+// not in its material: the item's runtime data fills a wh::engine3d::C_MaterialInstance (feature + instance ids into
+// the shader's FeatureBuffer / MaterialInstanceBuffer), held per attachment at CAttachmentSKIN +0x38 (smart pointer,
+// assigned through the skin interface att+8 vt +0x60 = 0x180ab965c, which takes over one reference). RE: ProLiant
+// ~/re/work/clothing_colour/report.md; the NPC diff (+0x38 set on his clothing, 0 on the copy) agrees.
+constexpr uintptr_t kRvaVtMatInst = 0x3B2DCD8;   // wh::engine3d::C_MaterialInstance vtable
+using SetInstFn = void(__fastcall*)(uintptr_t iface, uintptr_t* inst);   // skin iface vt +0x60
+bool ClothInst(const char* rest, uintptr_t env) {
+	char dstTok[24] = {}, pairs[160] = {}, srcTok[24] = {};
+	int n = sscanf_s(rest, "%23s %159s %23s", dstTok, (unsigned)sizeof(dstTok), pairs, (unsigned)sizeof(pairs), srcTok, (unsigned)sizeof(srcTok));
+	if (n < 2) { Log("clothinst: usage clothinst <dst entityHex> <dstAtt>:<part>[,...] [src entityHex]"); return true; }
+	if (!WhOk()) { Log("clothinst: not WHGame 1.5.6 (signature mismatch), refusing"); return true; }
+	uint32_t dst = ParseId(dstTok), src = n >= 3 ? ParseId(srcTok) : 0x7777;
+	uintptr_t dmgr = env ? AttachmentManager(env, dst) : 0, smgr = env ? AttachmentManager(env, src) : 0;
+	if (!dmgr || !smgr) { Log("clothinst %08X <- %08X: no attachment manager", dst, src); return true; }
+	char buf[160]; strcpy_s(buf, pairs); char* ctx = nullptr;
+	for (char* p = strtok_s(buf, ",", &ctx); p; p = strtok_s(nullptr, ",", &ctx)) {
+		char* colon = strchr(p, ':'); if (!colon) { Log("clothinst: '%s' is not <dstAtt>:<part>", p); continue; }
+		*colon = 0; const char* part = colon + 1;
+		char sname[64]; sprintf_s(sname, "clothing_%s", part);
+		uintptr_t sa = FindAtt(smgr, sname), da = FindAtt(dmgr, p);
+		if (!sa || !da) { Log("clothinst %s <- %s: %s", p, sname, !sa ? "Henry has no such attachment" : "no such attachment on dst"); continue; }
+		uintptr_t vs = 0, vd = 0, mi = 0, mvt = 0, before = 0, after = 0;
+		Rd(sa, vs); Rd(da, vd);
+		if (vs != g_wh + kRvaVtAttSkin || vd != g_wh + kRvaVtAttSkin) { Log("clothinst %s: not skin attachments (vt %llX / %llX)", p, (unsigned long long)vs, (unsigned long long)vd); continue; }
+		if (!Rd(sa + 0x38, mi) || !mi || !Rd(mi, mvt) || mvt != g_wh + kRvaVtMatInst) {
+			Log("clothinst %s: Henry's %s has no material instance at +0x38 (%llX, vt %llX)", p, sname, (unsigned long long)mi, (unsigned long long)mvt); continue;
+		}
+		Rd(da + 0x38, before);
+		__try {
+			uintptr_t iface = ((PtrFn)Vf(da, 0xE8))(da);
+			if (iface != da + 8) { Log("clothinst %s: skin interface not at att+8 (%llX)", p, (unsigned long long)(iface - da)); continue; }
+			((PtrFn)Vf(mi, 0x08))(mi);                  // AddRef: the setter takes over this reference
+			uintptr_t sp = mi;
+			((SetInstFn)Vf(iface, 0x60))(iface, &sp);
+		} __except (EXCEPTION_EXECUTE_HANDLER) { Log("clothinst %s: engine call faulted (caught)", p); continue; }
+		Rd(da + 0x38, after);
+		Log("clothinst %08X %s <- %08X %s: instance %llX (was %llX, now %llX)%s", dst, p, src, sname, (unsigned long long)mi,
+			(unsigned long long)before, (unsigned long long)after, after == mi ? "" : " NOT SET");
+	}
+	return true;
+}
+
 }  // namespace
 
 bool GoreCommand(const char* cmd, const char* rest, uintptr_t env) {
+	if (!strcmp(cmd, "clothinst")) return ClothInst(rest, env);
 	if (!strcmp(cmd, "clothcopy")) return ClothCopy(rest, env);
 	if (!strcmp(cmd, "clothmtl")) return ClothMtl(rest, env);
 	bool list = !strcmp(cmd, "listatt"), hide = !strcmp(cmd, "hideatt");
