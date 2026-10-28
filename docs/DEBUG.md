@@ -276,6 +276,8 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
   rebuilds the screen). `64` (default) = the map; `4` inventory, `16` character; add them up; `0` = the game's choice.
   The installed value is `84` (all three, in `fastload_keepload.txt`). Opening a screen in another mode (trade, loot,
   pickpocket) still reloads it. The quest log's item events from the game's AI thread run on the main thread.
+  After a fast travel the map reloads once, at the first map close 10 s or more after the trip (never the close that
+  ends the trip: that one left the screen black for good, 2026-10-28).
 - `fastload_mvpause.txt` `0`: hidden menu screens advance every frame as the game does. Default on: a kept screen's
   movie (`Apse*.gfx`) that isn't drawn skips its update until it is drawn again (not for 2 s after a menu opens).
 - `fastload_menuwin.txt` `1`: samples each menu open every 1 ms (`hitch: #N menu-open window`). Off by default: it
