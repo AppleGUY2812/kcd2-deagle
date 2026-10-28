@@ -132,70 +132,36 @@ function DiceAdvisor:Show(line)
 
 	local keep = num(t, "keep")
 	local held = num(t, "held")
-	for i = 0, 5 do
-		if bit(keep, i) and not bit(held, i) and dice[i].x and dice[i].y and math.abs(dice[i].x) < 5000 then
-			hud("AddDiceSelector", 100 + i, dice[i].x, dice[i].y, true)
-			self.marked[#self.marked + 1] = 100 + i
-		end
-	end
+	-- No dice markers: the game's selector drew blue arcs away from the dice (in game 2026-10-28). The text names the dice.
 
 	local lines = {}
+	local function choice(bankBest, bankWin, throwWin)
+		lines[#lines + 1] = highlight(bankBest and "Then BANK" or "Then THROW AGAIN")
+		lines[#lines + 1] = string.format("Win chance if you bank %.0f %%, if you throw %.0f %%", bankWin, throwWin)
+	end
 	local hasPick = num(t, "pick") == 1 and held ~= 0
 	if hasPick then
-		lines[#lines + 1] = string.format("Your pick: %s = %d", list(held), num(t, "pscore"))
 		local left = num(t, "pleft")
-		if left >= 6 then
-			lines[#lines + 1] = string.format("All six again: bust %.1f %%", num(t, "pbust") * 100)
-		else
-			lines[#lines + 1] = string.format("Throw %d %s: bust %.1f %%", left, left == 1 and "die" or "dice",
-				num(t, "pbust") * 100)
-		end
+		lines[#lines + 1] = string.format("Your pick: %s = %d points", list(held), num(t, "pscore"))
 		local throwWin, bankWin = num(t, "proll") * 100, num(t, "pbank") * 100
-		local throwText = string.format("throw again %.0f %%", throwWin)
-		local bankText = string.format("bank %.0f %%", bankWin)
-		if bankWin >= throwWin then
-			lines[#lines + 1] = highlight(bankText) .. "       " .. throwText
-		else
-			lines[#lines + 1] = highlight(throwText) .. "       " .. bankText
-		end
-		lines[#lines + 1] = string.format("Finish this turn %.0f %%       Hot dice %.1f %%",
-			num(t, "pfin") * 100, num(t, "phot") * 100)
-		if self.detail == 1 then
-			lines[#lines + 1] = string.format("Opponent finishes next turn %.0f %%       Avg points: throw %.0f / bank %.0f",
-				num(t, "opp") * 100, num(t, "ptpts"), num(t, "pbpts"))
-		end
+		choice(bankWin >= throwWin, bankWin, throwWin)
+		lines[#lines + 1] = string.format("Chance to score nothing with the %d %s left: %.0f %%",
+			left, left == 1 and "die" or "dice", num(t, "pbust") * 100)
 	elseif keep == 0 then
-		lines[#lines + 1] = "No scoring dice: turn lost"
-		lines[#lines + 1] = string.format("Win chance after bust %.0f %%", num(t, "roll") * 100)
+		lines[#lines + 1] = "No scoring dice: this turn is lost"
 	else
-		lines[#lines + 1] = string.format("Set aside: %s = %d", list(keep), num(t, "score"))
+		lines[#lines + 1] = string.format("Take %s = %d points", list(keep), num(t, "score"))
 		if held ~= 0 and num(t, "pick") == 0 then
-			lines[#lines + 1] = "Your pick does not score yet"
+			lines[#lines + 1] = "Your current pick does not score"
 		end
-		local throwWin, bankWin = num(t, "roll") * 100, num(t, "bankwin") * 100
-		local throwText = string.format("throw again %.0f %%", throwWin)
-		local bankText = string.format("bank %.0f %%", bankWin)
-		if num(t, "bank") == 1 then
-			lines[#lines + 1] = highlight(bankText) .. "       " .. throwText
-		else
-			lines[#lines + 1] = highlight(throwText) .. "       " .. bankText
-		end
-		lines[#lines + 1] = string.format("Finish this turn %.0f %%       Hot dice %.1f %%",
-			num(t, "finish") * 100, num(t, "hot") * 100)
-		if self.detail == 1 then
-			if num(t, "tf") == 1 then
-				local rolled = num(t, "rolled", 6)
-				lines[#lines + 1] = string.format(
-					"Keep %s, throw %d (%.0f %%) beats %s, throw %d (%.0f %%)",
-					list(num(t, "tfkeep")), rolled - count(num(t, "tfkeep")), num(t, "tfwin") * 100,
-					list(num(t, "tallkeep")), rolled - count(num(t, "tallkeep")), num(t, "tallwin") * 100)
-			end
-			lines[#lines + 1] = string.format("Opponent finishes next turn %.0f %%       Avg points: throw %.0f / bank %.0f",
-				num(t, "opp") * 100, num(t, "tpts"), num(t, "bpts"))
-		end
+		choice(num(t, "bank") == 1, num(t, "bankwin") * 100, num(t, "roll") * 100)
+	end
+	if self.detail == 1 then
+		lines[#lines + 1] = string.format("Win this turn %.0f %%   Opponent wins next turn %.0f %%",
+			num(t, hasPick and "pfin" or "finish") * 100, num(t, "opp") * 100)
 	end
 	local mistake = num(t, "mist")
-	self.mistakeLine = mistake >= 0.05 and string.format("Last choice cost %.1f %% win", mistake) or nil
+	self.mistakeLine = mistake >= 0.05 and string.format("Your last choice cost %.1f %% win chance", mistake) or nil
 	self.lines = lines
 	self:Render()
 end
