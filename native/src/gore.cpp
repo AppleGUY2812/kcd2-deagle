@@ -6,8 +6,10 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
 #include "gore.h"
 #include "log.h"
+#include "MinHook.h"
 
 namespace {
 
@@ -309,9 +311,61 @@ bool ClothInst(const char* rest, uintptr_t env) {
 	return true;
 }
 
+constexpr uintptr_t kRvaGetPackedIds = 0x1A74250;
+const uint8_t kSigGetPackedIds[] = { 0x48, 0x8B, 0x41, 0x18, 0x48, 0x89, 0x02, 0x48, 0x8B, 0xC2, 0xC3 };
+using GetPackedIdsFn = uintptr_t(__fastcall*)(uintptr_t self, uintptr_t out);
+GetPackedIdsFn g_getPackedIds = nullptr;
+LONG g_clothTraceLeft = 0;
+bool g_clothTraceOn = false;
+
+uintptr_t __fastcall HkGetPackedIds(uintptr_t self, uintptr_t out) {
+	uintptr_t caller = (uintptr_t)_ReturnAddress();
+	uintptr_t ret = g_getPackedIds(self, out);
+	if (InterlockedCompareExchange(&g_clothTraceLeft, 0, 0) > 0) {
+		uintptr_t ids = 0; Rd(out, ids);
+		InterlockedDecrement(&g_clothTraceLeft);
+		Log("clothtrace instance %llX ids %016llX caller %llX WHGame+%llX thread %lu", (unsigned long long)self,
+			(unsigned long long)ids, (unsigned long long)caller, (unsigned long long)(caller - g_wh), GetCurrentThreadId());
+	}
+	return ret;
+}
+
+bool ClothTrace(const char* rest) {
+	int on = -1;
+	if (sscanf_s(rest, "%d", &on) != 1 || (on != 0 && on != 1)) {
+		Log("clothtrace: usage clothtrace 1|0 (logs up to 256 GetPackedIds calls)"); return true;
+	}
+	if (!WhOk()) { Log("clothtrace: not WHGame 1.5.6 (signature mismatch), refusing"); return true; }
+	uintptr_t target = g_wh + kRvaGetPackedIds;
+	__try {
+		if (memcmp((void*)target, kSigGetPackedIds, sizeof(kSigGetPackedIds))) {
+			Log("clothtrace: GetPackedIds signature mismatch, refusing"); return true;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) { Log("clothtrace: GetPackedIds unreadable, refusing"); return true; }
+	if (!on) {
+		InterlockedExchange(&g_clothTraceLeft, 0);
+		MH_STATUS st = g_clothTraceOn ? MH_DisableHook((void*)target) : MH_OK;
+		g_clothTraceOn = false;
+		Log("clothtrace off (MinHook %d)", (int)st); return true;
+	}
+	if (!g_getPackedIds) {
+		MH_STATUS st = MH_CreateHook((void*)target, (void*)&HkGetPackedIds, (void**)&g_getPackedIds);
+		if (st != MH_OK) { Log("clothtrace: CreateHook failed (MinHook %d)", (int)st); return true; }
+	}
+	if (!g_clothTraceOn) {
+		MH_STATUS st = MH_EnableHook((void*)target);
+		if (st != MH_OK) { Log("clothtrace: EnableHook failed (MinHook %d)", (int)st); return true; }
+		g_clothTraceOn = true;
+	}
+	InterlockedExchange(&g_clothTraceLeft, 256);
+	Log("clothtrace on: logging up to 256 GetPackedIds calls");
+	return true;
+}
+
 }  // namespace
 
 bool GoreCommand(const char* cmd, const char* rest, uintptr_t env) {
+	if (!strcmp(cmd, "clothtrace")) return ClothTrace(rest);
 	if (!strcmp(cmd, "clothinst")) return ClothInst(rest, env);
 	if (!strcmp(cmd, "clothcopy")) return ClothCopy(rest, env);
 	if (!strcmp(cmd, "clothmtl")) return ClothMtl(rest, env);

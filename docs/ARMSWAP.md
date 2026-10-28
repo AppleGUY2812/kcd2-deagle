@@ -12,10 +12,13 @@ If a step ever needs per-item or per-gun hand work, it is the wrong step: fix th
 | retarget every clip of a gun onto Henry's skeleton | gun (automatic, part of the gun build) | machine time |
 | clothing on the arms | nothing: the game's own worn skins + materials are copied at run time | 0 |
 
-Status (2026-10-26): proven offline in Blender on two games' arms (RoN Grizzly, CoD Glock). In game: the clothing
-copy test is built (`deagle_clothcopy npc|vm|off`, `native/src/gore.cpp`, 4c508cb), not run yet; the Henry-skeleton
-viewmodel is **not built yet**; see "Not proven yet". Videos:
-Desktop\Deagle Progress\ARM SWAP DEMO 3 - *.mp4 (both reloads, same fit code, only the bone table differs).
+Status (2026-10-28): proven offline in Blender on two games' arms (RoN Grizzly, CoD Glock). In game, a CDF-loaded
+`CA_SKIN` attachment made from Henry's clothing `.skin` files draws, but its exact colours and wear do not. Copying
+Henry's live replacement material gives pale lilac; sharing his `C_MaterialInstance` gives grey. On 2026-10-28 both
+were applied together to the same CDF arm attachment (all 6 LODs, instance pointer confirmed); the visual result is
+pending. The draw-time consumer of the instance's packed IDs is still unknown, so this is **not a colour fix**. The
+Henry-skeleton viewmodel is **not built yet**. Videos: Desktop\Deagle Progress\ARM SWAP DEMO 3 - *.mp4 (both reloads,
+same fit code, only the bone table differs).
 
 ## How it works
 
@@ -103,7 +106,17 @@ fills ~7.4 of the 8 GB video memory).
   0x1805ada88(obj+8, GetIAttachmentSkin()). Object +0x80 / +0x78: get / set the material per LOD (6 LODs).
 - One skin per body part (`clothing_arms` = the top layer's arms skin); skins and materials are reference counted, so a
   copy outlives Henry re-dressing (it goes stale: rebind). VCLOTH pieces (type 5) bind differently: skip them.
-- Full notes: MODLOG 2026-10-26 "arm swap, step 2"; ProLiant `~/re/work/clothing_attach/report.md`.
+- `CAttachmentSKIN +0x38` holds the clothing `C_MaterialInstance` (set through the skin interface at attachment +8,
+  vt +0x60). Its vt +0x28 (`0x181a74250`) returns the packed instance ID, hide-mask bytes and feature offset from
+  instance +0x18. Those IDs index the shader's global material-instance and feature buffers; the item runtime fills
+  their colours, brass/red-strap features, grime, scratches and blood. Static structure verified; the draw consumer
+  is not yet found.
+- The earlier render-proxy theory is wrong: `0x180708ea8` is an entity-material path, and the manager vt +0xb0 it
+  calls (`0x181a72ca0`) only returns manager +0x70. Do not write Henry's instance through proxy vt +0xb0.
+- `clothtrace 1|0` (native command, diagnostic only) hooks `GetPackedIds` and logs its caller, instance and packed
+  IDs. It is intended to establish whether Henry and the CDF armour use this getter at draw time; no fix is implied.
+- Full notes: MODLOG 2026-10-26 "arm swap, step 2"; ProLiant `~/re/work/clothing_attach/report.md` and
+  `~/re/work/clothing_colour/report.md`.
 
 ## Measured (reload clips, mean / max over the clip)
 
@@ -119,24 +132,23 @@ Arm lengths (upper arm / forearm / hand): Henry 26.6 / 26.2 / 8.3 cm; RoN 28.1 /
 
 ## Not proven yet (in order of risk)
 
-1. Binding Henry's clothing skins on the viewmodel in game. Test order: a male NPC first (same skeleton), then the
-   viewmodel. Watch kcd.log for "Skin root joint ... was not found". First NPC test (2026-10-26, plugin 193): every
-   call succeeded ("bound") but the copy didn't draw, even with every hide flag cleared from Lua. Second test (197,
-   3f53402, stream state forced to 7): still nothing. The log showed why the live skin can't be shared: worn clothing
-   sits at stream state 5 (+0x50; vt +0x120 / +0x128) and its attachment holds per-LOD stream entries (+0x160..+0x190)
-   and two pointers (+0x38, +0x40) that a hand-made binding never gets. Fix under test (33664fd): load the same .skin
-   file fresh (CSkin vt +0x20 = path, CharacterManager 0x185189be0 vt +0x30 LoadModelSKIN), as the CDF loader does
-   for the viewmodel's own skins, and bind that.
-2. Skeleton extension: a skin with a joint the viewmodel lacks makes the engine extend and rebuild the skeleton (in
+1. Exact clothing colours and wear on the second character. The CDF route draws the mesh, but `clothmtl` alone is
+   lilac and `clothinst` alone is grey; their combination is awaiting visual confirmation. The draw consumer must be
+   identified before changing more state.
+2. Runtime `CreateAttachment` + `AddBinding` copies do not draw (four tries; stream state remains 2 while real
+   clothing is 5, and forcing ready did not help). Do not repeat that route. A CDF `LoadCharacter` attachment draws,
+   but only from a pak after restart; loose files are not read. Binding this onto the animated Henry-skeleton
+   viewmodel remains unproven.
+3. Skeleton extension: a skin with a joint the viewmodel lacks makes the engine extend and rebuild the skeleton (in
    public CryEngine that resets the character: a pop mid-clip). Henry's full skeleton on the viewmodel avoids it.
-3. Per-character clothing looks (blood / dirt zones) may live on Henry's character, not the material: missing on the
-   copy.
-4. Mail shirts: sleeves are in `clothing_torso`, which also has the chest. Needs a decision (show the torso piece
+4. Sharing Henry's instance should carry his current grime, scratches and blood if the draw really consumes it, but
+   that remains a hypothesis until the caller and visual result are known.
+5. Mail shirts: sleeves are in `clothing_torso`, which also has the chest. Needs a decision (show the torso piece
    clipped by the camera, or hide).
-5. Gauntlet thumb plates are bulkier than a bare thumb; the grip can look thicker than the source.
-6. Viewmodel scale in game: the plugin places the viewmodel every frame; a scaled character must draw right, and
+6. Gauntlet thumb plates are bulkier than a bare thumb; the grip can look thicker than the source.
+7. Viewmodel scale in game: the plugin places the viewmodel every frame; a scaled character must draw right, and
    everything measured on its bones (muzzle, ejection port, rigid pieces, flash) must scale with it.
-7. Animation audit: retargeted clips must pass `tools/build_vm.sh --audit` like any clip.
+8. Animation audit: retargeted clips must pass `tools/build_vm.sh --audit` like any clip.
 
 ## Files
 
