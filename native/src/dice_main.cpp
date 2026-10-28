@@ -21,6 +21,7 @@
 #include "scan.h"
 #include "settings.h"
 #include "dice_logic.h"
+#include "bestset.h"
 
 namespace {
 
@@ -411,6 +412,86 @@ void Submit(uintptr_t game, const diceadvisor::Snapshot& s, Action action = Acti
 	g_workCv.notify_one();
 }
 
+// ---- the dice picker: which 6 of the player's dice to bring (tools/farkle/bestset.h). Lua lists the inventory's dice
+// ("own <seq> c,w1..w6,j;..."), this worker ranks them at the lowest thread priority (about 10 s for 14 dice) and
+// answers "dice_best <seq> <count per entry> <points>"; results are kept per collection for the session.
+struct BestJob { unsigned long long seq = 0; std::vector<bestset::Owned> own; std::string key; };
+std::mutex g_bestMu;
+std::condition_variable g_bestCv;
+BestJob g_bestJob;
+bool g_bestPending = false;
+std::unordered_map<std::string, std::string> g_bestDone;   // collection key -> "counts points"
+
+void QueueBest(unsigned long long seq, const std::string& answer) { Queue("dice_best " + std::to_string(seq) + " " + answer); }
+
+void BestWorker() {
+	SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
+	for (;;) {
+		BestJob job;
+		{
+			std::unique_lock<std::mutex> lk(g_bestMu);
+			g_bestCv.wait(lk, [] { return g_bestPending; });
+			job = g_bestJob;
+			g_bestPending = false;
+		}
+		std::string answer;
+		try {
+			const auto t0 = GetTickCount64();
+			auto picks = bestset::BestSets(job.own, 4000, 1);
+			if (picks.empty()) answer = "none 0";
+			else {
+				for (size_t i = 0; i < picks[0].count.size(); i++) answer += (i ? "," : "") + std::to_string(picks[0].count[i]);
+				answer += " " + std::to_string((int)std::lround(picks[0].oneTurn));
+			}
+			Log("dice: best set for %zu kinds in %llu ms: %s", job.own.size(), (unsigned long long)(GetTickCount64() - t0), answer.c_str());
+		} catch (const std::exception& e) {
+			Log("dice: best set failed: %s", e.what());
+			answer = "none 0";
+		}
+		{ std::lock_guard<std::mutex> lk(g_bestMu); g_bestDone[job.key] = answer; }
+		QueueBest(job.seq, answer);
+	}
+}
+
+// "own <seq> c,w1,w2,w3,w4,w5,w6,j;..." from Lua (main thread)
+void OwnCommand(const char* rest) {
+	BestJob job;
+	char* end = nullptr;
+	job.seq = strtoull(rest, &end, 10);
+	if (!end || end == rest) return;
+	while (*end == ' ') end++;
+	job.key = end;
+	std::string all = end, one;
+	size_t at = 0;
+	while (at < all.size()) {
+		size_t semi = all.find(';', at);
+		if (semi == std::string::npos) semi = all.size();
+		one = all.substr(at, semi - at);
+		at = semi + 1;
+		double v[8] = {};
+		int n = 0;
+		const char* s = one.c_str();
+		while (n < 8 && *s) { char* e = nullptr; v[n] = strtod(s, &e); if (e == s) break; n++; s = *e == ',' ? e + 1 : e; }
+		if (n != 8 || v[0] < 1) continue;
+		double sum = 0; for (int f = 0; f < 6; f++) sum += v[1 + f];
+		if (!(sum > 0)) continue;
+		bestset::Owned o;
+		o.name = std::to_string(job.own.size());
+		for (int f = 0; f < 6; f++) o.p[f] = v[1 + f] / sum;
+		o.devil = v[7] != 0;
+		o.count = (int)v[0];
+		job.own.push_back(o);
+	}
+	{
+		std::lock_guard<std::mutex> lk(g_bestMu);
+		auto it = g_bestDone.find(job.key);
+		if (it != g_bestDone.end()) { QueueBest(job.seq, it->second); return; }
+		g_bestJob = job;
+		g_bestPending = true;
+	}
+	g_bestCv.notify_one();
+}
+
 using StateChangeFn = uintptr_t(__fastcall*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 StateChangeFn g_origState = nullptr;
 std::atomic<uintptr_t> g_liveCurrent{ 0 };
@@ -433,6 +514,12 @@ uintptr_t __fastcall HkState(uintptr_t controller, uintptr_t arg2, uintptr_t old
 		Queue("dice_hide " + std::to_string(g_generation));
 		return result;
 	}
+	// The dice-picking screen is the Null state before a game starts (in game 2026-10-27/28: "state Null" when the
+	// player opened the dice selection, Null + Initial when the game began). Queued last, after this transition's hide.
+	struct PickerSignal {
+		bool on;
+		~PickerSignal() { if (on) Queue("dice_picker " + std::to_string(g_generation)); }
+	} picker{ StateName(newState).find("Null") != std::string::npos };
 	RawSnapshot raw;
 	const char* where = "unknown";
 	if (!ReadLive(controller, newState, raw, where)) {
@@ -603,6 +690,7 @@ void Command(const char* line) {
 	if (!strcmp(cmd, "hello")) Hello();
 	else if (!strcmp(cmd, "advisor")) g_enabled.store(atoi(rest) != 0);
 	else if (!strcmp(cmd, "log")) g_logStates.store(atoi(rest) != 0);
+	else if (!strcmp(cmd, "own")) OwnCommand(rest);
 	else if (!strcmp(cmd, "set")) {
 		char key[96] = {};
 		if (sscanf_s(rest, "%95s", key, (unsigned)sizeof key) == 1) {
@@ -659,6 +747,7 @@ DWORD WINAPI Init(LPVOID) {
 	std::filesystem::path plugin(path);
 	g_cacheDir = (plugin.parent_path() / "dice_cache").string();
 	std::thread(Worker).detach();
+	std::thread(BestWorker).detach();
 	return 0;
 }
 }

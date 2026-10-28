@@ -78,6 +78,7 @@ function DiceAdvisor:Hide(line)
 		self.generation = 0
 	end
 	self:Clear()
+	self.pickerOpen = false
 	self.lines = nil
 	self.mistakeLine = nil
 	self:Render()
@@ -88,6 +89,7 @@ function DiceAdvisor:Busy(line)
 	if not generation or not self.enabled or generation < self.generation then return end
 	self.generation = generation
 	self:Clear()
+	self.pickerOpen = false
 	self.lines = { "Calculating..." }
 	self.mistakeLine = nil
 	self:Render()
@@ -112,6 +114,7 @@ function DiceAdvisor:Show(line)
 	if not generation or not self.enabled or generation < self.generation then return end
 	self.generation = generation
 	self:Clear()
+	self.pickerOpen = false
 
 	local dice = {}
 	for i = 0, 5 do
@@ -166,6 +169,76 @@ function DiceAdvisor:Show(line)
 	self:Render()
 end
 
+-- ---- Dice picker: the best 6 of the player's dice, shown on the dice-picking screen (the plugin ranks them with
+-- tools/farkle/bestset.h). Dice are inventory items; dice_items.lua maps item classes to their side weights.
+function DiceAdvisor:OwnedDice()
+	local byKey, list, ordinary = {}, {}, false
+	pcall(function()
+		local inv = player and player.inventory
+		for _, id in pairs(inv and inv:GetInventoryTable() or {}) do
+			local it = ItemManager.GetItem(id)
+			local d = it and DiceAdvisorItems and DiceAdvisorItems[string.lower(tostring(it.class))]
+			if d then
+				local key = d.n .. "|" .. d.w .. "|" .. d.j
+				local e = byKey[key]
+				if not e then e = { n = d.n, w = d.w, j = d.j, c = 0 }; byKey[key] = e; list[#list + 1] = e end
+				e.c = e.c + math.max(1, math.floor(tonumber(it.amount) or 1))
+				if d.n == "Ordinary die" then ordinary = true end
+			end
+		end
+	end)
+	-- Assumed: a set is filled up with ordinary dice, so six of them are always available.
+	if not ordinary then list[#list + 1] = { n = "Ordinary die", w = "1 1 1 1 1 1", j = 0, c = 6 } end
+	table.sort(list, function(a, b) return a.n < b.n end)
+	return list
+end
+
+-- Sends the collection to the plugin; it answers with dice_best <seq> (at once when this collection was ranked before).
+function DiceAdvisor:SendOwned()
+	self.owned = self:OwnedDice()
+	self.ownSeq = (self.ownSeq or 0) + 1
+	local parts = {}
+	for i, d in ipairs(self.owned) do
+		parts[i] = string.format("%d,%s,%d", d.c, (d.w:gsub(" ", ",")), d.j)
+	end
+	native("own " .. self.ownSeq .. " " .. table.concat(parts, ";"))
+end
+
+function DiceAdvisor:Picker(line)
+	local generation = tonumber(arg(line))
+	if not self.enabled or (generation and generation < self.generation) then return end
+	if generation then self.generation = generation end
+	self:Clear()
+	self.pickerOpen = true
+	self.mistakeLine = nil
+	self.lines = { "Finding your best 6 dice..." }
+	self:Render()
+	self:SendOwned()
+end
+
+function DiceAdvisor:Best(line)
+	local seq, counts, points = arg(line):match("^(%d+)%s+(%S+)%s+(%-?%d+)")
+	if tonumber(seq) ~= self.ownSeq or not self.pickerOpen or not self.owned then return end
+	local lines = {}
+	if counts == "none" then
+		lines[1] = "Could not rank your dice"
+	else
+		local picks, i = {}, 0
+		for c in counts:gmatch("%d+") do
+			i = i + 1
+			local d = self.owned[i]
+			if d and tonumber(c) > 0 then picks[#picks + 1] = string.format("%sx %s", c, d.n) end
+		end
+		lines[1] = highlight("Best dice to bring")
+		for k = 1, #picks, 3 do
+			lines[#lines + 1] = table.concat({ picks[k], picks[k + 1], picks[k + 2] }, ",  ")
+		end
+		lines[#lines + 1] = string.format("About %d points per turn on average", tonumber(points) or 0)
+	end
+	self.lines = lines
+	self:Render()
+end
+
 function DiceAdvisor:NativeOk()
 	native("advisor " .. tostring(self.enabled))
 	native("log " .. tostring(self.logging))
@@ -212,6 +285,7 @@ function DiceAdvisor:Hello()
 	self:Hide()
 	native("hello")
 	self:NativeOk()
+	self:SendOwned()   -- rank the collection in the background, so the picker has the answer at once
 end
 
 function DiceAdvisor:OnGameplayStarted()
@@ -225,6 +299,8 @@ System.AddCCommand("dice_native_ok", "DiceAdvisor:NativeOk()", "internal: native
 System.AddCCommand("dice_set", "DiceAdvisor:Set([[%line]])", "internal: replay a saved setting")
 System.AddCCommand("dice_busy", "DiceAdvisor:Busy([[%line]])", "internal: solver busy")
 System.AddCCommand("dice_part", "DiceAdvisor:Part([[%line]])", "internal: advice fields")
+System.AddCCommand("dice_picker", "DiceAdvisor:Picker([[%line]])", "internal: dice-picking screen opened")
+System.AddCCommand("dice_best", "DiceAdvisor:Best([[%line]])", "internal: best dice to bring")
 System.AddCCommand("dice_show", "DiceAdvisor:Show([[%line]])", "internal: show advice")
 System.AddCCommand("dice_hide", "DiceAdvisor:Hide([[%line]])", "internal: hide advice")
 
