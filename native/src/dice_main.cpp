@@ -366,9 +366,9 @@ void Worker() {
 			    p.pickWinBank, p.finish, p.hot, p.opponentFinish, p.hasTakeFewer ? 1 : 0, p.mistake);
 			char head[1024];
 			std::snprintf(head, sizeof head,
-				"dice_show gen=%llu keep=%d score=%d bank=%d roll=%.6f bankwin=%.6f held=%d pick=%d pscore=%d "
-				"pleft=%d pbust=%.6f proll=%.6f pbank=%.6f finish=%.6f hot=%.6f opp=%.6f tpts=%.1f bpts=%.1f "
-				"tf=%d tfkeep=%d tfscore=%d tfwin=%.6f tallkeep=%d tallscore=%d tallwin=%.6f mist=%.2f rolled=%d pfin=%.6f phot=%.6f ptpts=%.1f pbpts=%.1f",
+				"dice_show gen:%llu keep:%d score:%d bank:%d roll:%.6f bankwin:%.6f held:%d pick:%d pscore:%d "
+				"pleft:%d pbust:%.6f proll:%.6f pbank:%.6f finish:%.6f hot:%.6f opp:%.6f tpts:%.1f bpts:%.1f "
+				"tf:%d tfkeep:%d tfscore:%d tfwin:%.6f tallkeep:%d tallscore:%d tallwin:%.6f mist:%.2f rolled:%d pfin:%.6f phot:%.6f ptpts:%.1f pbpts:%.1f",
 				(unsigned long long)w.generation, a.keep, p.score, a.bank ? 1 : 0, a.winRoll, a.winBank,
 				w.snapshot.heldMask, p.hasPick ? 1 : 0, p.pickScore, p.pickDiceLeft, p.pickBust, p.pickWinRoll,
 				p.pickWinBank, p.finish, p.hot, p.opponentFinish, p.throwPoints, p.bankPoints,
@@ -378,11 +378,11 @@ void Worker() {
 			for (int i = 0; i < 6; i++) {
 				const auto& d = w.snapshot.dice[w.snapshot.me][i];
 				char one[64];
-				std::snprintf(one, sizeof one, " d%d=%.2f,%.2f,%d,%d", i, d.x, d.y, d.value, d.joker ? 1 : 0);
+				std::snprintf(one, sizeof one, " d%d:%.2f,%.2f,%d,%d", i, d.x, d.y, d.value, d.joker ? 1 : 0);
 				cmd += one;
 			}
-			// One ~700-character console line never reached Lua in game (2026-10-27: "Calculating..." stayed; the short
-			// dice_busy line worked), so the fields go over in short dice_part lines and dice_show <gen> applies them.
+			// The console reads "a=b" as a cvar assignment (MODLOG), so every field is key:value. The fields go over in
+			// short dice_part lines and dice_show gen:<n> applies them.
 			std::string fields = cmd.substr(strlen("dice_show ")), part;
 			size_t at = 0;
 			while (at < fields.size()) {
@@ -394,7 +394,7 @@ void Worker() {
 				at = sp + 1;
 			}
 			if (!part.empty()) Queue("dice_part " + part);
-			Queue("dice_show gen=" + std::to_string(w.generation));
+			Queue("dice_show gen:" + std::to_string(w.generation));
 		} catch (const std::exception& e) {
 			Log("dice: solver failed: %s; advisor off for this game", e.what());
 			g_badGame.store(w.game);

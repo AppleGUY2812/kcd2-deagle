@@ -25,7 +25,7 @@ end
 
 local function parse(line)
 	local t = {}
-	for key, value in arg(line):gmatch("([%w_]+)=([^%s]+)") do t[key] = value end
+	for key, value in arg(line):gmatch("([%w_]+):([^%s]+)") do t[key] = value end
 	return t
 end
 
@@ -93,8 +93,8 @@ function DiceAdvisor:Busy(line)
 	self:Render()
 end
 
--- The plugin sends the advice in short dice_part lines (the console drops a long one), the first carrying gen=;
--- dice_show gen=N then applies the collected fields.
+-- The plugin sends the advice in short dice_part lines as key:value (the console reads "a=b" as a
+-- cvar assignment), the first carrying gen:; dice_show gen:N then applies the collected fields.
 function DiceAdvisor:Part(line)
 	local t = parse(line)
 	if t.gen then self.part = {} end
