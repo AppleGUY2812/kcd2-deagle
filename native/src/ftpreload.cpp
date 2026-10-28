@@ -97,7 +97,8 @@ int g_texJobs = 0;
 int g_npc = 0;                // 0 = off
 uint32_t* g_npcAt = nullptr;  // the budget struct we raised
 uint32_t g_npcOrig[2] = {}, g_npcSet = 0;
-bool g_gateBoost = false;   // raised for a gate in play (NpcGate), not the arrival
+bool g_gateBoost = false;
+unsigned g_tripSeq = 0;   // fast-travel walks started (keepload: a map that saw one reloads)   // raised for a gate in play (NpcGate), not the arrival
 bool g_texRaised = false;
 float g_texOrigMB = 0, g_texSetMB = 0;
 int g_texOrigJobs = 0, g_texSetJobs = 0;
@@ -349,7 +350,7 @@ void Ftpre_Frame() {
 		Log("ftpre: travelling %d/%d (was %d/%d) dest %.1f %.1f %.1f route %zu points, last %.1f %.1f %.1f%s",
 			s.active, s.active2, g_was.active, g_was.active2, s.dest[0], s.dest[1], s.dest[2], s.route,
 			s.last[0], s.last[1], s.last[2], walking && !wasWalking ? "  << walk starts" : "");
-		if (walking && !wasWalking) { g_walkStart = now; g_adds = 0; g_lastAdd = 0; }
+		if (walking && !wasWalking) { g_walkStart = now; g_adds = 0; g_lastAdd = 0; g_tripSeq++; }
 		if (!walking && wasWalking)
 			Log("ftpre: walk ended after %.1f s, %d precache requests", (now - g_walkStart) / 1000.0, g_adds);
 	}
@@ -384,3 +385,4 @@ void Ftpre_Frame() {
 }
 
 void Ftpre_GateNpc(bool on) { NpcGate(on); }
+unsigned Ftpre_TripSeq() { return g_tripSeq; }

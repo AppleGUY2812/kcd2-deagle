@@ -19,3 +19,5 @@ void Ftinstant_Install(HMODULE self);
 void Ftinstant_Command(const char* args);
 // NPC detail switch budget raised while a readiness gate (0x3f91) holds the screen in play (readiness.cpp)
 void Ftpre_GateNpc(bool on);
+// fast-travel walks started so far (main thread)
+unsigned Ftpre_TripSeq();
