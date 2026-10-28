@@ -234,10 +234,42 @@ bool ClothCopy(const char* rest, uintptr_t env) {
 	return true;
 }
 
+// clothmtl <dst entityHex> <dstAtt>:<part>[,...] [src entityHex, default 7777]: puts the material of Henry's worn
+// clothing_<part> (all 6 LODs) on dst's attachment <dstAtt>. KCD2 clothing materials use the CLOTHING_SYSTEM shader:
+// the .mtl file alone has empty feature slots and draws grey; the clothing system fills the slots (colours, leather,
+// metal) on the live material of the worn item, so that live material is the one to share. dstAtt is an attachment a
+// CDF made (the CDF loader draws KCD2 clothing skins: MVP 2026-10-27), not a clothcopy copy.
+bool ClothMtl(const char* rest, uintptr_t env) {
+	char dstTok[24] = {}, pairs[160] = {}, srcTok[24] = {};
+	int n = sscanf_s(rest, "%23s %159s %23s", dstTok, (unsigned)sizeof(dstTok), pairs, (unsigned)sizeof(pairs), srcTok, (unsigned)sizeof(srcTok));
+	if (n < 2) { Log("clothmtl: usage clothmtl <dst entityHex> <dstAtt>:<part>[,...] [src entityHex]"); return true; }
+	uint32_t dst = ParseId(dstTok), src = n >= 3 ? ParseId(srcTok) : 0x7777;
+	uintptr_t dmgr = env ? AttachmentManager(env, dst) : 0, smgr = env ? AttachmentManager(env, src) : 0;
+	if (!dmgr || !smgr) { Log("clothmtl %08X <- %08X: no attachment manager", dst, src); return true; }
+	char buf[160]; strcpy_s(buf, pairs); char* ctx = nullptr;
+	for (char* p = strtok_s(buf, ",", &ctx); p; p = strtok_s(nullptr, ",", &ctx)) {
+		char* colon = strchr(p, ':'); if (!colon) { Log("clothmtl: '%s' is not <dstAtt>:<part>", p); continue; }
+		*colon = 0; const char* part = colon + 1;
+		char sname[64]; sprintf_s(sname, "clothing_%s", part);
+		uintptr_t sa = FindAtt(smgr, sname), da = FindAtt(dmgr, p);
+		if (!sa || !da) { Log("clothmtl %s <- %s: %s", p, sname, !sa ? "Henry has no such attachment" : "no such attachment on dst"); continue; }
+		int set = 0;
+		__try {
+			uintptr_t so = ((PtrFn)Vf(sa, 0xE0))(sa), dobj = ((PtrFn)Vf(da, 0xE0))(da);
+			if (!so || !dobj) { Log("clothmtl %s: no attachment object (src %p, dst %p)", p, (void*)so, (void*)dobj); continue; }
+			for (uint32_t l = 0; l < 6; l++)
+				if (uintptr_t m = ((GetMtlFn)Vf(so, 0x80))(so, l)) { ((SetMtlFn)Vf(dobj, 0x78))(dobj, m, l); set++; }
+		} __except (EXCEPTION_EXECUTE_HANDLER) { Log("clothmtl %s: engine call faulted (caught)", p); continue; }
+		Log("clothmtl %08X %s <- %08X %s: %d LOD materials", dst, p, src, sname, set);
+	}
+	return true;
+}
+
 }  // namespace
 
 bool GoreCommand(const char* cmd, const char* rest, uintptr_t env) {
 	if (!strcmp(cmd, "clothcopy")) return ClothCopy(rest, env);
+	if (!strcmp(cmd, "clothmtl")) return ClothMtl(rest, env);
 	bool list = !strcmp(cmd, "listatt"), hide = !strcmp(cmd, "hideatt");
 	if (!list && !hide) return false;
 	char idTok[24] = {}, match[96] = {}; int on = 1;
