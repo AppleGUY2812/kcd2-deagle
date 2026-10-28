@@ -76,9 +76,8 @@ def iter_paks(root, data_name):
     if not root.is_dir():
         print(f"warning: mod root not found: {root}", file=sys.stderr)
         return
-    for data_dir in sorted(root.glob(f"*/{data_name}")):
-        if not data_dir.is_dir():
-            continue
+    # the folder is "Data" or "data" (Mods/deagle: data, Workshop: Data); WSL paths are case-sensitive
+    for data_dir in sorted(d for d in root.glob("*/*") if d.is_dir() and d.name.casefold() == data_name.casefold()):
         for pak in sorted(data_dir.iterdir()):
             if pak.is_file() and pak.suffix.casefold() == ".pak":
                 yield pak
