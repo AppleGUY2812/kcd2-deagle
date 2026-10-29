@@ -227,6 +227,13 @@ struct Matchup {
 };
 enum class Action { None, Scoring, Passing };
 struct Work { uint64_t generation = 0; uintptr_t game = 0; Action action = Action::None; diceadvisor::Snapshot snapshot; };
+
+// Glow markers on the dice to set aside: the worker publishes which dice (by index) for which advice generation; the
+// frame tick (DiceMarks) projects them and sends AddDiceSelector ids 100 + index. Off until Lua says "marks 1": only the
+// mod's patched hud.gfx draws ids >= 100 as a glow (the stock movie would draw its own ring, in the wrong colour).
+std::atomic<bool> g_marks{ false };
+std::atomic<int> g_markMask{ 0 }, g_markSide{ 0 };
+std::atomic<uint64_t> g_markGen{ 0 };
 std::mutex g_workMu;
 std::condition_variable g_workCv;
 Work g_work;
@@ -361,6 +368,9 @@ void Worker() {
 					g_throw.faces[i] = w.snapshot.dice[w.snapshot.me][i].value == 6 ? 0 : w.snapshot.dice[w.snapshot.me][i].value;
 				g_throw.advice = a;
 			}
+			g_markSide.store(w.snapshot.me);
+			g_markMask.store(a.keep & ~w.snapshot.heldMask & 0x3f);
+			g_markGen.store(w.generation);
 			Log("dice: advice gen=%llu keep=0x%x score=%d bank=%d roll=%.6f bankWin=%.6f held=0x%x pick=%d pscore=%d left=%d bust=%.6f proll=%.6f pbank=%.6f finish=%.6f hot=%.6f opp=%.6f tf=%d mistake=%.2f",
 			    (unsigned long long)w.generation, a.keep, p.score, a.bank ? 1 : 0, a.winRoll, a.winBank,
 			    w.snapshot.heldMask, p.hasPick ? 1 : 0, p.pickScore, p.pickDiceLeft, p.pickBust, p.pickWinRoll,
@@ -658,6 +668,99 @@ bool SafeConsole(const char* cmd) {
 
 constexpr uintptr_t kRvaSystemVt = 0x3dc2858, kSlotUpdate = 0x28, kRvaUpdate = 0x6678c4;
 const unsigned char kUpdateBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x10,0x48,0x89,0x70,0x18,0x48,0x89,0x78,0x20,0x55 };
+// The game's own path for its die selector (C_DieView::SetSelectorVisible, FUN_182e96ce4): the die entity's centre
+// (FUN_182e8b9c4), projected to centred 1080-high UI space (FUN_182e8a790), sent through the dice UI object
+// (FUN_182e8afb4()->+0x598, vt+0x10 add / +0x18 remove). Called on the main thread only, every frame while marks
+// are wanted; a marker is re-sent only when it moves more than 0.5, like the game's.
+constexpr uintptr_t kRvaDiePos = 0x2e8b9c4, kRvaProject = 0x2e8a790, kRvaDiceUi = 0x2e8afb4;
+const unsigned char kDiePosBytes[] = { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x60,0x48,0x8b,0xda,0x0f,0x29,0x74 };
+const unsigned char kProjectBytes[] = { 0x48,0x8b,0xc4,0x48,0x89,0x58,0x10,0x48,0x89,0x70,0x18,0x48,0x89,0x48,0x08,0x57 };
+const unsigned char kDiceUiBytes[] = { 0x40,0x53,0x48,0x83,0xec,0x30,0xe8,0x09,0xa6,0xa8,0xfd,0x48,0x8b,0x48,0x08,0x48 };
+using DiePosFn = void*(__fastcall*)(uintptr_t view, float* out3);
+using ProjectFn = void*(__fastcall*)(uintptr_t unused, float* out2, float* inout6);
+using DiceUiFn = uintptr_t(__fastcall*)();
+int g_marksOk = -1;   // -1 unchecked, 0 bytes differ (marks off), 1 ready
+int g_shown = 0;      // dice indices with a marker on screen
+float g_shownAt[6][2] = {};
+bool MarksReady() {
+	if (g_marksOk >= 0) return g_marksOk == 1;
+	auto same = [](uintptr_t rva, const unsigned char* b, size_t n) {
+		__try { return memcmp((const void*)(g_game.base + rva), b, n) == 0; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+	};
+	g_marksOk = same(kRvaDiePos, kDiePosBytes, sizeof kDiePosBytes) && same(kRvaProject, kProjectBytes, sizeof kProjectBytes) &&
+	            same(kRvaDiceUi, kDiceUiBytes, sizeof kDiceUiBytes) ? 1 : 0;
+	Log(g_marksOk ? "dice: glow markers ready" : "dice: marker functions differ from WHGame 1.5.6; no glow markers");
+	return g_marksOk == 1;
+}
+// one die's marker: add / move (pos != nullptr) or remove; false on a fault
+bool MarkCall(int index, const float* pos) {
+	__try {
+		const uintptr_t ui = ((DiceUiFn)(g_game.base + kRvaDiceUi))();
+		if (!ui) return false;
+		const uintptr_t dice = *(uintptr_t*)(ui + 0x598);
+		if (!dice) return false;
+		const uintptr_t vt = *(uintptr_t*)dice;
+		if (pos) {
+			float v[2] = { pos[0], pos[1] };
+			((void(__fastcall*)(uintptr_t, int, float*))(*(uintptr_t*)(vt + 0x10)))(dice, 100 + index, v);
+		} else {
+			((void(__fastcall*)(uintptr_t, int))(*(uintptr_t*)(vt + 0x18)))(dice, 100 + index);
+		}
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+// the screen position of die `index` of `side` (centred UI space); false when its view or entity is gone
+bool MarkPos(uintptr_t controller, int side, int index, float out[2]) {
+	__try {
+		const uintptr_t game = *(uintptr_t*)(controller + 0x4a0);
+		if (!game) return false;
+		const uintptr_t player = *(uintptr_t*)(game + (side ? 0x30 : 0x20));
+		if (!player) return false;
+		const uintptr_t db = *(uintptr_t*)(player + 0xd8), de = *(uintptr_t*)(player + 0xe0);
+		if (de < db || (uintptr_t)(index + 1) * 16 > de - db) return false;
+		const uintptr_t model = *(uintptr_t*)(db + index * 16);
+		const uintptr_t views = *(uintptr_t*)(controller + 0x4b0 + side * 0x10);
+		if (!views) return false;
+		const uintptr_t vb = *(uintptr_t*)(views + 0xf0), ve = *(uintptr_t*)(views + 0xf8);
+		if (ve < vb || ((ve - vb) & 15) || ve - vb > 16 * 16) return false;
+		for (uintptr_t v = vb; v < ve; v += 16) {
+			const uintptr_t view = *(uintptr_t*)v;
+			if (!view || *(uintptr_t*)(view + 0x48) != model) continue;
+			float world[6] = {};
+			((DiePosFn)(g_game.base + kRvaDiePos))(view, world);
+			if (world[0] == 0 && world[1] == 0 && world[2] == 0) return false;   // no entity
+			((ProjectFn)(g_game.base + kRvaProject))(0, out, world);
+			return std::isfinite(out[0]) && std::isfinite(out[1]);
+		}
+		return false;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+void DiceMarks() {
+	const uintptr_t controller = g_liveController.load();
+	int want = 0;
+	if (g_marks.load() && g_enabled.load() && g_liveShowable.load() && controller && g_markGen.load() == g_generation &&
+	    MarksReady())
+		want = g_markMask.load();
+	if (!want && !g_shown) return;
+	const int side = g_markSide.load();
+	for (int i = 0; i < 6; i++) {
+		const bool on = want >> i & 1;
+		float pos[2];
+		if (on && MarkPos(controller, side, i, pos)) {
+			const bool moved = !(g_shown >> i & 1) || std::fabs(pos[0] - g_shownAt[i][0]) > 0.5f ||
+			                   std::fabs(pos[1] - g_shownAt[i][1]) > 0.5f;
+			if (moved && MarkCall(i, pos)) {
+				g_shown |= 1 << i;
+				g_shownAt[i][0] = pos[0];
+				g_shownAt[i][1] = pos[1];
+			}
+		} else if (g_shown >> i & 1) {
+			MarkCall(i, nullptr);
+			g_shown &= ~(1 << i);
+		}
+	}
+}
+
 using UpdateFn = uintptr_t(__fastcall*)(void*, unsigned, int);
 UpdateFn g_origUpdate = nullptr;
 std::atomic<DWORD> g_mainTid{ 0 };
@@ -670,6 +773,7 @@ uintptr_t __fastcall HkUpdate(void* sys, unsigned flags, int pause) {
 		std::deque<std::string> run;
 		{ std::lock_guard<std::mutex> lk(g_consoleMu); run.swap(g_console); }
 		for (const auto& c : run) SafeConsole(c.c_str());
+		DiceMarks();
 		static unsigned tick = 0;
 		if (g_liveShowable.load() && ++tick % 12 == 0) {
 			try { PollLive(); }
@@ -721,6 +825,7 @@ void Command(const char* line) {
 	if (!strcmp(cmd, "hello")) Hello();
 	else if (!strcmp(cmd, "advisor")) g_enabled.store(atoi(rest) != 0);
 	else if (!strcmp(cmd, "log")) g_logStates.store(atoi(rest) != 0);
+	else if (!strcmp(cmd, "marks")) g_marks.store(atoi(rest) != 0);   // the panel's hud.gfx draws ids >= 100
 	else if (!strcmp(cmd, "own")) OwnCommand(rest);
 	else if (!strcmp(cmd, "set")) {
 		char key[96] = {};
