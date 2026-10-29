@@ -32,6 +32,8 @@ bpy.ops.wm.open_mainfile(filepath=BLEND)
 addon_utils.enable("io_KCD2_Blender_Toolkit", default_set=True)
 from io_KCD2_Blender_Toolkit.bcry_exporter.configuration import Configuration
 Configuration.rc_path = RC; Configuration.texture_rc_path = RC
+import multiprocessing
+multiprocessing.cpu_count = lambda: 3     # rc's /threads: keep the user's game smooth during a card rebuild
 scene = bpy.context.scene
 if bpy.context.mode != "OBJECT":
     bpy.ops.object.mode_set(mode="OBJECT")

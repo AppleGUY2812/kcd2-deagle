@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 import henry_rig
 import retarget
+import check_binds
 
 def arg(i, default):
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -25,6 +26,7 @@ OUT_BLEND = arg(0, r"E:\Tools\deagle-work\guns\ron_grizzly_henry\ron_grizzly_hen
 SHEET_DIR = arg(1, r"E:\Tools\deagle-work\guns\ron_grizzly_henry\sheet")
 PROFILE = os.environ.get("HENRYVM_PROFILE") or os.path.join(os.path.dirname(OUT_BLEND), "profile.json")
 BODY = r"E:\Tools\deagle-work\henry\Objects\characters\humans\male\body"
+check_binds.GAME_BODY = BODY
 HENRY_MESH_NAMES = {"arms", "hands"}
 VERIFY_BONES = ["RightHand", "LeftHand", "RightForeArm", "LeftForeArm", "RightHandIndex3"]
 FINGER_TIPS = {"HandThumb4", "HandIndex4", "HandMiddle4", "HandRing4", "HandPinky4"}
@@ -239,6 +241,44 @@ dupes = casefold_dupes([b.name for b in merged.data.bones])
 if dupes:
     raise RuntimeError("duplicate joint CRC32 in SKEL (case-insensitive), joint names: %r" % dupes)
 print("HENRYVM case-insensitive bone names OK (%d bones)" % len(merged.data.bones), flush=True)
+
+# --- 2. Henry's rest = the game's bind, pre-R and pre-scale -------------------
+# gb_build rotates the armature by R = 90 deg Z and applies its scale S; the exporter then writes joint X = bone.y,
+# joint Y = bone.x, joint Z = -bone.z (transform_bone_matrix). Solve backwards from the game's bind so the exported
+# default pose is the game's male_body bind. Translation is native size: the merged rig already carries S, gb_build
+# applies S, so the pre-transform translation is divided by S.
+if INPLACE:
+    R = Matrix.Rotation(math.radians(90), 4, "Z")
+    Rinv = R.inverted()
+    S = M.to_scale().x
+    G = check_binds.game_binds()
+    bpy.context.view_layer.objects.active = merged
+    bpy.ops.object.mode_set(mode="EDIT")
+    dets = []
+    for name, g in G.items():
+        eb = merged.data.edit_bones.get(name)
+        if eb is None:
+            continue
+        # desired bone frame after R: x=joint Y, y=joint X, z=-joint Z; translation = game translation
+        bpost = Matrix(((g[0][1], g[0][0], -g[0][2], g[0][3]),
+                        (g[1][1], g[1][0], -g[1][2], g[1][3]),
+                        (g[2][1], g[2][0], -g[2][2], g[2][3]),
+                        (0, 0, 0, 1)))
+        rot = Rinv.to_3x3() @ bpost.to_3x3()
+        dets.append(rot.determinant())
+        bpre = Matrix.Identity(4)
+        for r in range(3):
+            for c in range(3):
+                bpre[r][c] = rot[r][c]
+        bpre.translation = (Rinv @ bpost.translation) / S
+        eb.use_connect = False
+        eb.head = bpre.translation
+        eb.tail = eb.head + bpre.col[1].xyz.normalized() * 0.03
+        eb.align_roll(bpre.col[2].xyz)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.update()
+    print("HENRYVM rest set from game binds: %d Henry bones, frame det %.6f..%.6f (target +1)" % (
+        len(dets), min(dets), max(dets)), flush=True)
 
 # Henry's meshes: parent to the merged armature; keep vertices in Henry space, place them in the gun's scaled space
 for o in henry_meshes:

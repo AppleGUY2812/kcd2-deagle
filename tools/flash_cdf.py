@@ -16,8 +16,9 @@ import os, re, struct, sys
 FLASH_MTL = "objects/manmade/weapons/deagle/vm"   # the flash materials, shared by every gun
 GUNS = {"src/Objects/manmade/weapons/deagle/vm": "deagle_vm",              # gun dir -> its .chr / .cdf
         "src/Objects/manmade/weapons/guns/glock_17": "glock_17_vm",
-        "src/Objects/manmade/weapons/guns/ron_grizzly": "ron_grizzly_vm"}
-MUZZLES = {"ron_grizzly_vm": "tag_muzzle"}   # the muzzle bone where it isn't tag_flash (Ready or Not guns)
+        "src/Objects/manmade/weapons/guns/ron_grizzly": "ron_grizzly_vm",
+        "src/Objects/manmade/weapons/guns/ron_grizzly_henry": "ron_grizzly_henry_vm"}
+MUZZLES = {"ron_grizzly_vm": "tag_muzzle", "ron_grizzly_henry_vm": "tag_muzzle"}   # the muzzle bone where it isn't tag_flash (Ready or Not guns)
 MUZZLE = "tag_flash"
 
 

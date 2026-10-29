@@ -119,7 +119,8 @@ rounds = "".join(f'\n    <Attachment Type="CA_SKIN" AName="vm_round_{i}" Binding
                  f'Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" Flags="0" />' for i in range(1, build.get("rounds", 0) + 1))
 # body skins from the game's own character paks (e.g. Henry's bare arms on the merged skeleton): the skin's own material
 # is used, so no Material attribute here
-body = "".join(f'\n    <Attachment Type="CA_SKIN" AName="{s["name"]}" Binding="{s["skin"]}" Flags="0" />'
+body = "".join(f'\n    <Attachment Type="CA_SKIN" AName="{s["name"]}" Binding="{s["skin"]}"'
+               f'{" Material=\"" + s["material"] + "\"" if s.get("material") else ""} Flags="0" />'
                for s in prof.get("bodySkins", []))
 # the mesh muzzle flash cards: skins of this gun on its muzzle bone (tools/flash_skin.sh builds them, tools/flash_cdf.py
 # lists them; bone attachments drew the first card's model in KCD2)

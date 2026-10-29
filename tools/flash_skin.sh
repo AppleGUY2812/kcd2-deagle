@@ -12,7 +12,7 @@ ps() { powershell.exe -NoProfile -Command "$1" | tr -d '\r'; }
 
 build() {   # <gun blend> <gun dir in the repo> <.chr> <idle clip> <work name> [muzzle bone]
   local out="$W\\flash_skin\\$5"
-  ps "Remove-Item -Recurse -Force '$out' -ErrorAction SilentlyContinue; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -P '$(win "$here/tools/flash_skin.py")' -- '$1' '$(win "$here/$2/$3")' '$4' '$W\\flash_ron\\cards.json' '$out' '$RC' ${6:+'$6'} 2>&1 | Select-String -CaseSensitive 'FLASH|Traceback|Error' | % Line"
+  ps "Remove-Item -Recurse -Force '$out' -ErrorAction SilentlyContinue; (Get-Process -Id \$PID).PriorityClass = 'Idle'; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -t 3 -P '$(win "$here/tools/flash_skin.py")' -- '$1' '$(win "$here/$2/$3")' '$4' '$W\\flash_ron\\cards.json' '$out' '$RC' ${6:+'$6'} 2>&1 | Select-String -CaseSensitive 'FLASH|Traceback|Error' | % Line"
   # the toolkit's second rc pass (one rc per skin) runs on after Blender quits
   for _ in $(seq 1 120); do [[ $(tasklist.exe | grep -ci '^rc\.exe') -eq 0 ]] && break; sleep 2; done
   local n; n=$(find "$(wslpath "$out")" -maxdepth 1 -name '*.skin' | wc -l)
@@ -25,4 +25,5 @@ build() {   # <gun blend> <gun dir in the repo> <.chr> <idle clip> <work name> [
 build "$W\\blend\\mwii_vm_extra.blend" src/Objects/manmade/weapons/deagle/vm deagle_vm.chr @idle1 deagle
 build "$W\\guns\\glock_17\\glock_17_vm_roles.blend" src/Objects/manmade/weapons/guns/glock_17 glock_17_vm.chr @idle glock_17
 build "$W\\guns\\ron_grizzly\\ron_grizzly_vm_roles.blend" src/Objects/manmade/weapons/guns/ron_grizzly ron_grizzly_vm.chr @idle ron_grizzly tag_muzzle
+build "$W\\guns\\ron_grizzly_henry\\ron_grizzly_henry_vm_roles.blend" src/Objects/manmade/weapons/guns/ron_grizzly_henry ron_grizzly_henry_vm.chr @idle ron_grizzly_henry tag_muzzle
 python3 "$here/tools/flash_cdf.py" "$here"
