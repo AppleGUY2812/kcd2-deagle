@@ -9,6 +9,7 @@
 #
 # Debug switches (environment): HENRYVM_ONLY=name1,name2 limits the actions, HENRYVM_NO_RENDER=1 skips rendering.
 import bpy, sys, os, math, json
+import numpy as np
 from mathutils import Matrix, Vector
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -17,6 +18,7 @@ sys.path.insert(0, HERE)
 import henry_rig
 import retarget
 import check_binds
+import check_chr
 
 def arg(i, default):
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
@@ -27,6 +29,8 @@ SHEET_DIR = arg(1, r"E:\Tools\deagle-work\guns\ron_grizzly_henry\sheet")
 PROFILE = os.environ.get("HENRYVM_PROFILE") or os.path.join(os.path.dirname(OUT_BLEND), "profile.json")
 BODY = r"E:\Tools\deagle-work\henry\Objects\characters\humans\male\body"
 check_binds.GAME_BODY = BODY
+check_chr.GAME_DIRS = [r"D:\steam_bruh\steamapps\common\KingdomComeDeliverance2\Data",
+                       r"E:\SteamLibrary\steamapps\common\KingdomComeDeliverance2\Data"]
 HENRY_MESH_NAMES = {"arms", "hands"}
 VERIFY_BONES = ["RightHand", "LeftHand", "RightForeArm", "LeftForeArm", "RightHandIndex3"]
 FINGER_TIPS = {"HandThumb4", "HandIndex4", "HandMiddle4", "HandRing4", "HandPinky4"}
@@ -251,13 +255,23 @@ if INPLACE:
     R = Matrix.Rotation(math.radians(90), 4, "Z")
     Rinv = R.inverted()
     S = M.to_scale().x
-    G = check_binds.game_binds()
+    # The reference is the game's compiled male.chr (the skin binds to it). The glb+YGY fallback covers a Henry helper
+    # the compiled skeleton lacks. The pose world matrices below stay exactly the Fit's.
+    Y = np.diag([-1.0, -1.0, 1.0, 1.0])
+    glb = {n: Y @ g @ Y for n, g in check_binds.game_binds().items()}
+    G = check_chr.game_chr() or {}
+    missing = [n for n in HENRY_BONES if n not in G and n not in glb]
+    if missing:
+        raise RuntimeError("no game bind for Henry joints: %r" % missing[:8])
+    print("HENRYVM game male.chr binds: %d Henry joints from male.chr, %d from glb fallback" % (
+        sum(1 for n in HENRY_BONES if n in G), sum(1 for n in HENRY_BONES if n not in G)), flush=True)
     bpy.context.view_layer.objects.active = merged
     bpy.ops.object.mode_set(mode="EDIT")
     dets = []
-    for name, g in G.items():
+    for name in HENRY_BONES:
+        g = G.get(name, glb.get(name))
         eb = merged.data.edit_bones.get(name)
-        if eb is None:
+        if eb is None or g is None:
             continue
         # desired bone frame after R: x=joint Y, y=joint X, z=-joint Z; translation = game translation
         bpost = Matrix(((g[0][1], g[0][0], -g[0][2], g[0][3]),
