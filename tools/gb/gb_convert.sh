@@ -12,7 +12,7 @@ RC='E:\SteamLibrary\steamapps\common\KCD2Mod\Tools\rc\rc.exe'
 G="E:\\Tools\\deagle-work\\guns\\$slug"
 win() { wslpath -w "$1"; }
 ps() { powershell.exe -NoProfile -Command "$1" | tr -d '\r'; }
-blend() { ps "\$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -P '$(win "$1")' -- $2 2>&1 | Select-String '$3' | % Line; exit 0"; }
+blend() { ps "(Get-Process -Id \$PID).PriorityClass = 'Idle'; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -t 3 -P '$(win "$1")' -- $2 2>&1 | Select-String '$3' | % Line; exit 0"; }
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 [ -f "$here/guns/$slug.json" ] || { echo "no profile guns/$slug.json (run tools/gb/gb_import.sh first)" >&2; exit 1; }
@@ -36,7 +36,7 @@ echo "$n of $want clips"
 [ "$n" = "$want" ] || { echo "rc failed on some clips (see KCD2Mod/Tools/rc/rc_log_errors.log)" >&2; exit 1; }
 
 echo "== clip timings (cancel / mag seated / ready / settled, from the clip tracks)"
-out="$(ps "& '$BLENDER' -b '$G\\${slug}_vm_roles.blend' -P '$(win "$here/tools/gb/gb_tracks_dump.py")' -- '$G\\tracks.json' '$G\\profile.json' 2>&1 | Select-String 'DUMP DONE|Traceback|Error' | % Line; exit 0")"
+out="$(ps "(Get-Process -Id \$PID).PriorityClass = 'Idle'; & '$BLENDER' -b '$G\\${slug}_vm_roles.blend' -t 3 -P '$(win "$here/tools/gb/gb_tracks_dump.py")' -- '$G\\tracks.json' '$G\\profile.json' 2>&1 | Select-String 'DUMP DONE|Traceback|Error' | % Line; exit 0")"
 grep -q "DONE" <<<"$out" || { echo "tracks dump failed: $out" >&2; exit 1; }
 ps "Copy-Item '$G\\tracks.json' '$(win "$tmp")\\tracks.json' -Force"
 swap="$(python3 -I -c 'import json,sys; print(",".join(json.load(open(sys.argv[1])).get("timing", {}).get("swapTail", {})))' "$tmp/build.json")"

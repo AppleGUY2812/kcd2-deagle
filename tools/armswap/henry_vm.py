@@ -23,6 +23,7 @@ def arg(i, default):
 
 OUT_BLEND = arg(0, r"E:\Tools\deagle-work\guns\ron_grizzly_henry\ron_grizzly_henry_vm.blend")
 SHEET_DIR = arg(1, r"E:\Tools\deagle-work\guns\ron_grizzly_henry\sheet")
+PROFILE = os.environ.get("HENRYVM_PROFILE") or os.path.join(os.path.dirname(OUT_BLEND), "profile.json")
 BODY = r"E:\Tools\deagle-work\henry\Objects\characters\humans\male\body"
 HENRY_MESH_NAMES = {"arms", "hands"}
 VERIFY_BONES = ["RightHand", "LeftHand", "RightForeArm", "LeftForeArm", "RightHandIndex3"]
@@ -151,6 +152,94 @@ for name, m in henry_rest_before.items():
 ron_err = max((merged.data.bones[n].matrix_local.translation - m.translation).length for n, m in ron_rest_before.items())
 print("HENRYVM merge rest max error: Henry %.6f m, Ron %.6f m" % (rest_err, ron_err))
 
+# Step 6 first: the source arm mesh goes away before the bone scan, so its vertex groups cannot keep RoN's arms.
+for n in retarget.PROFILES[fit.profile][3]:
+    o = bpy.data.objects.get(n)
+    if o:
+        print("HENRYVM remove source arm mesh", n)
+        bpy.data.objects.remove(o, do_unlink=True)
+
+# --- 1. drop RoN body bones the viewmodel no longer needs ---------------------
+# Keep the profile's gun/camera bones, the whole gun hierarchy, IK/adik/camera bones, every bone a remaining mesh
+# weights, and all their ancestors. Everything else (RoN arms, hands, fingers, legs, unused sockets) goes, and its
+# curves go with it.
+from collections import defaultdict
+profile = json.load(open(PROFILE)) if os.path.exists(PROFILE) else {}
+if INPLACE and not profile:
+    raise RuntimeError("in-place build needs a profile next to the blend: %s" % PROFILE)
+profile_bones = {v.get("bone") for v in profile.get("bones", {}).values() if v.get("bone") in merged.data.bones}
+gun_root = (profile.get("bones", {}).get("gun") or {}).get("bone")
+keep = set(HENRY_BONES) | set(IK_TARGETS) | profile_bones
+if gun_root and gun_root in merged.data.bones:
+    keep.add(gun_root)
+    keep.update(b.name for b in merged.data.bones[gun_root].children_recursive)
+for b in merged.data.bones:
+    low = b.name.casefold()
+    if low.startswith("ik_") or low.startswith("adik_") or "camera" in low:
+        keep.add(b.name)
+for o in [o for o in bpy.data.objects if o.type == "MESH" and o not in henry_meshes]:
+    for vg in o.vertex_groups:
+        if any(g.group == vg.index and g.weight > 0 for v in o.data.vertices for g in v.groups):
+            keep.add(vg.name)
+for n in list(keep):
+    b = merged.data.bones.get(n)
+    while b and b.parent:
+        keep.add(b.parent.name); b = b.parent
+
+ron_bones = [b.name for b in merged.data.bones if b.name not in henry_rest_before and b.name not in IK_TARGETS]
+kept_ron = [n for n in ron_bones if n in keep]
+deleted = [n for n in ron_bones if n not in keep]
+print("HENRYVM kept RoN bones (%d): %s" % (len(kept_ron), ", ".join(sorted(kept_ron))), flush=True)
+print("HENRYVM deleted RoN bones (%d): %s" % (len(deleted), ", ".join(sorted(deleted))), flush=True)
+prefixes = tuple('pose.bones["%s"].' % n for n in deleted)
+for act in bpy.data.actions:
+    for fc in [fc for fc in act.fcurves if fc.data_path.startswith(prefixes)]:
+        act.fcurves.remove(fc)
+bpy.context.view_layer.objects.active = merged
+bpy.ops.object.mode_set(mode="EDIT")
+for n in deleted:
+    if n in merged.data.edit_bones:
+        merged.data.edit_bones.remove(merged.data.edit_bones[n])
+bpy.ops.object.mode_set(mode="OBJECT")
+bpy.context.view_layer.update()
+
+
+def casefold_dupes(names):
+    d = defaultdict(list)
+    for n in names:
+        d[n.casefold()].append(n)
+    return {k: v for k, v in d.items() if len(v) > 1}
+
+
+# A KEPT RoN bone that collides case-insensitively with Henry gets the ron_ prefix (and its curves/vertex groups move).
+for key, names in sorted(casefold_dupes([b.name for b in merged.data.bones]).items()):
+    henry_hit = [n for n in names if n in henry_rest_before]
+    ron_hit = [n for n in names if n not in henry_rest_before and n not in IK_TARGETS]
+    if not (henry_hit and ron_hit and len(names) == len(henry_hit) + len(ron_hit)):
+        raise RuntimeError("duplicate joint CRC32 in SKEL, joint names: %r" % names)
+    for old in ron_hit:
+        new = "ron_" + old
+        folded = {b.name.casefold() for b in merged.data.bones}
+        while new.casefold() in folded:
+            new = "ron_" + new
+        bpy.ops.object.mode_set(mode="EDIT")
+        merged.data.edit_bones[old].name = new
+        bpy.ops.object.mode_set(mode="OBJECT")
+        for act in bpy.data.actions:
+            for fc in act.fcurves:
+                if fc.data_path.startswith('pose.bones["%s"]' % old):
+                    fc.data_path = fc.data_path.replace('pose.bones["%s"]' % old, 'pose.bones["%s"]' % new, 1)
+        for o in bpy.data.objects:
+            vg = o.vertex_groups.get(old)
+            if vg:
+                vg.name = new
+        print("HENRYVM renamed kept RoN bone %r -> %r" % (old, new), flush=True)
+
+dupes = casefold_dupes([b.name for b in merged.data.bones])
+if dupes:
+    raise RuntimeError("duplicate joint CRC32 in SKEL (case-insensitive), joint names: %r" % dupes)
+print("HENRYVM case-insensitive bone names OK (%d bones)" % len(merged.data.bones), flush=True)
+
 # Henry's meshes: parent to the merged armature; keep vertices in Henry space, place them in the gun's scaled space
 for o in henry_meshes:
     o.parent = merged
@@ -239,13 +328,6 @@ if reload_name in records:
 # --- 6/8 report + save -------------------------------------------------------
 misses = [a.name for a in SOURCE_ACTIONS if diags[a.name]["fore_mean"] > 3.0 or diags[a.name]["tip_max"] > 2.5]
 print("HENRYVM targets: forearm mean <= 3 deg, fingertip max <= 2.5 cm; miss:", misses or "none")
-
-# Step 6: the source arms go away; only the gun and Henry's meshes remain.
-for n in retarget.PROFILES[fit.profile][3]:
-    o = bpy.data.objects.get(n)
-    if o:
-        print("HENRYVM remove source arm mesh", n)
-        bpy.data.objects.remove(o, do_unlink=True)
 
 # In-place: the baked actions REPLACE the source names for gb_build, and Henry's meshes are not exported.
 if INPLACE:

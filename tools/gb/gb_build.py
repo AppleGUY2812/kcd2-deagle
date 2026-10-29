@@ -428,6 +428,15 @@ _adik = prof.get("adik") or (("hand_RI", "upperarm_RI", "ik_hand_weapon_static_R
                               ("hand_LE", "upperarm_LE", "ik_hand_weapon_static_LE", "adik_weight_LE"))
 info["adik"] = [list(c) for c in _adik if all(n in arm.data.bones for n in c)]
 arm.name = NAME
+# CryEngine hashes joint names case-insensitively: a build that reaches the game with Head/head crashes at load
+fold = {}
+for b in arm.data.bones:
+    k = b.name.casefold()
+    if k in fold:
+        raise SystemExit("duplicate joint CRC32 in SKEL, joint names: %r" % sorted((fold[k], b.name)))
+    fold[k] = b.name
+print("BONE NAMES CASE-INSENSITIVE OK", len(fold))
+
 mats, slot = [], {}
 for o in meshes:
     for s in o.material_slots:
@@ -522,6 +531,23 @@ arm.animation_data.action = A["@idle"]; scene.frame_set(rng(A["@idle"])[0])
 bpy.ops.bcry.export_to_game("EXEC_DEFAULT", filepath=os.path.join(out_model, f"{NAME}.dae"), apply_modifiers=False,
                             generate_materials=False, convert_textures=False, save_dae=True, disable_rc=False)
 print("MODEL EXPORTED", sorted(os.listdir(out_model)))
+# The exported skeleton DAE carries the names rc compiles into the .chr; check those too (the .chr is still being
+# written by rc when export_to_game returns).
+dae_path = os.path.join(out_model, f"{NAME}.dae")
+text = open(dae_path, encoding="utf-8", errors="replace").read()
+pat = re.compile(r'<node[^>]*name="([^%"]+)%[^"]*--PRprops_name=')
+arm_names = {b.name for b in arm.data.bones}
+names = sorted(n for n in set(pat.findall(text)) if n in arm_names)
+if len(names) != len(arm_names):
+    raise SystemExit("exported DAE has %d of %d bones (missing %r)" % (
+        len(names), len(arm_names), sorted(arm_names - set(names))[:8]))
+seen = {}
+for n in names:
+    k = n.casefold()
+    if k in seen:
+        raise SystemExit("duplicate joint CRC32 in exported DAE, joint names: %r" % sorted((seen[k], n)))
+    seen[k] = n
+print("EXPORTED BONE NAMES CASE-INSENSITIVE OK", len(seen), dae_path)
 for act in sorted(roles(), key=lambda a: a.name):
     clip = f"{NAME}_{act.name[1:]}"
     for c in [c for c in bpy.data.collections if c.name.endswith(".i_caf")]:
