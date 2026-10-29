@@ -1003,6 +1003,7 @@ System.AddCCommand("deagle_gunfx", "Deagle:SetOnOff('gunFx', [[%1]])", "deagle_g
 System.AddCCommand("deagle_sounds", "Deagle:Set('sounds ' .. (Deagle.Arg([[%1]]):find('orig') and 'original' or 'ron'))", "deagle_sounds ron|original: Ready or Not's sound engine, or the gun mods' own shot and animation sounds")
 System.AddCCommand("deagle_tracers", "Deagle:SetOnOff('tracers', [[%1]])", "deagle_tracers 1|0: a glowing tracer on every round")
 System.AddCCommand("deagle_hud", "Deagle:SetOnOff('hud.enabled', [[%1]])", "deagle_hud 1|0: ammo HUD on/off")
+System.AddCCommand("deagle_overlay", "Deagle:Native('overlay ' .. Deagle.Arg([[%line]]))", "deagle_overlay test 1|0 | stats: the plugin's own 2D drawing layer (a test panel; stats in deagle_native.log); the first use installs it")
 System.AddCCommand("deagle_invn", "Deagle:InvnCmd(Deagle.Arg([[%line]]))", "deagle_invn [on|off|toggle|scroll <n>]: the native (no Flash) inventory list; no argument toggles it, scroll <n> moves it n rows")
 System.AddCCommand("deagle_set", "Deagle:Set([[%line]])", "deagle_set <key> <value>: change a setting; kept across game starts (deagle_reset)")
 System.AddCCommand("deagle_reset", "Deagle:ResetSettings()", "deagle_reset: every Deagle setting back as shipped (forgets the kept ones)")

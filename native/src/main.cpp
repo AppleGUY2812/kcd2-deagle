@@ -19,6 +19,7 @@
 #include "probe.h"
 #include "rounds.h"
 #include "perkpoints.h"
+#include "overlay.h"
 #include "fx.h"
 #include "keys.h"
 #include <deque>
@@ -1407,6 +1408,7 @@ static void Command(const char* line) {
 	}
 	else if (!strcmp(cmd, "probe")) Probe_Command(rest);   // probe <name> ...: architecture step 1 checks (probe.cpp, Claude 5)
 	else if (!strcmp(cmd, "rounds")) Rounds_Command(rest);   // rounds bind | stats: the native round sim (rounds.cpp, Claude 5)
+	else if (!strcmp(cmd, "overlay")) { Overlay_Install(g_self); Overlay_Command(rest); }   // installed at the first use, never at start-up: its probe makes a throw-away D3D12 device + swap chain, which must not meet the game's or OptiScaler's start-up (overlay.cpp)
 	else if (!strcmp(cmd, "points_soul")) Points_Soul(rest);   // Henry's soul handle, sent before points / respec
 	else if (!strcmp(cmd, "points")) {   // deagle_points: Henry's unspent perk points (perkpoints.cpp)
 		std::string said = Points_Command(rest);

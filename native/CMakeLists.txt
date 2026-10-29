@@ -14,10 +14,13 @@ set(MINHOOK_INC third_party/minhook/include third_party/minhook/src)
 # libdeflate v1.26 (MIT): unpack + crc32 only, for src/fastzip.cpp
 set(LIBDEFLATE_SRC third_party/libdeflate/lib/deflate_decompress.c third_party/libdeflate/lib/crc32.c
     third_party/libdeflate/lib/utils.c third_party/libdeflate/lib/x86/cpu_features.c)
+# Dear ImGui v1.91.5 (MIT, third_party/imgui/VERSION.txt): the DX12 renderer backend only, for src/overlay.cpp
+set(IMGUI_SRC third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_dx12.cpp)
 add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp
-    src/ronvm.cpp src/lean.cpp src/keys.cpp sim/sim.cpp ${MINHOOK_SRC})
+    src/ronvm.cpp src/lean.cpp src/keys.cpp src/overlay.cpp sim/sim.cpp ${MINHOOK_SRC} ${IMGUI_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
-target_include_directories(deagle_native PRIVATE ${MINHOOK_INC} src)
+target_include_directories(deagle_native PRIVATE ${MINHOOK_INC} src third_party/imgui third_party/imgui/backends third_party/stb)
 target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)
 set_target_properties(deagle_native PROPERTIES SUFFIX ".asi" OUTPUT_NAME "deagle_native")
 # fastload.asi: the load-time work as a plugin of its own (src/fastload_main.cpp; docs/LOADTIME.md)
