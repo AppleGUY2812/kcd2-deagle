@@ -12,7 +12,10 @@ RC='E:\SteamLibrary\steamapps\common\KCD2Mod\Tools\rc\rc.exe'
 G="E:\\Tools\\deagle-work\\guns\\$slug"
 win() { wslpath -w "$1"; }
 ps() { powershell.exe -NoProfile -Command "$1" | tr -d '\r'; }
-blend() { ps "(Get-Process -Id \$PID).PriorityClass = 'Idle'; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -t 3 -P '$(win "$1")' -- $2 2>&1 | Select-String '$3' | % Line; exit 0"; }
+# don't load the CPU while KCD2 is starting or loading a save (its first 4 minutes): a parallel Blender doubled a
+# save load (19 s -> 50 s, 2026-10-29). Set GB_NO_GAME_WAIT=1 to skip.
+game_wait() { [ "${GB_NO_GAME_WAIT:-}" = 1 ] && return; local up; while up="$(ps "\$p = Get-Process KingdomCome -EA 0; if (\$p) { [int]((Get-Date) - \$p.StartTime).TotalSeconds }")"; [ -n "$up" ] && [ "$up" -lt 240 ]; do echo "   waiting: KCD2 started ${up} s ago"; sleep 30; done; }
+blend() { game_wait; ps "(Get-Process -Id \$PID).PriorityClass = 'Idle'; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -t 3 -P '$(win "$1")' -- $2 2>&1 | Select-String '$3' | % Line; exit 0"; }
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 [ -f "$here/guns/$slug.json" ] || { echo "no profile guns/$slug.json (run tools/gb/gb_import.sh first)" >&2; exit 1; }
