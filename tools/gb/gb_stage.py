@@ -117,6 +117,10 @@ mags = "".join(f'\n    <Attachment Type="CA_SKIN" AName="vm_{m}" Binding="object
 # one attachment per modelled round in the magazine (vm_round_1 = the top one)
 rounds = "".join(f'\n    <Attachment Type="CA_SKIN" AName="vm_round_{i}" Binding="objects/manmade/weapons/guns/{SLUG}/{NAME}_round_{i}.skin" '
                  f'Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" Flags="0" />' for i in range(1, build.get("rounds", 0) + 1))
+# body skins from the game's own character paks (e.g. Henry's bare arms on the merged skeleton): the skin's own material
+# is used, so no Material attribute here
+body = "".join(f'\n    <Attachment Type="CA_SKIN" AName="{s["name"]}" Binding="{s["skin"]}" Flags="0" />'
+               for s in prof.get("bodySkins", []))
 # the mesh muzzle flash cards: skins of this gun on its muzzle bone (tools/flash_skin.sh builds them, tools/flash_cdf.py
 # lists them; bone attachments drew the first card's model in KCD2)
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
@@ -129,7 +133,7 @@ flash += "".join("\n" + l for l in rigid_block(REPO, SLUG))
 open(os.path.join(odir, f"{NAME}.cdf"), "w").write(f'''<CharacterDefinition>
   <Model File="objects/manmade/weapons/guns/{SLUG}/{NAME}.chr" Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" />
   <AttachmentList>
-    <Attachment Type="CA_SKIN" AName="vm_mesh" Binding="objects/manmade/weapons/guns/{SLUG}/{NAME}_skin.skin" Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" Flags="0" />{mags}{rounds}{flash}
+    <Attachment Type="CA_SKIN" AName="vm_mesh" Binding="objects/manmade/weapons/guns/{SLUG}/{NAME}_skin.skin" Material="objects/manmade/weapons/guns/{SLUG}/{NAME}" Flags="0" />{mags}{rounds}{body}{flash}
   </AttachmentList>
 </CharacterDefinition>
 ''')

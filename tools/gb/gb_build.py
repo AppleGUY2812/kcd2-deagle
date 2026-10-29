@@ -422,9 +422,10 @@ for b in arm.data.bones:
     if "." in b.name or " " in b.name:
         new = re.sub(r"[^A-Za-z0-9_]", "_", b.name); renamed[b.name] = new; b.name = new
 info["bones"] = {r: renamed.get(n, n) for r, n in B.items()}
-# Ready or Not's hand IK (ron_import.py ADIK): hand, limb root, target and weight joint per hand, for gb_stage's chrparams
-_adik = (("hand_RI", "upperarm_RI", "ik_hand_weapon_static_RI", "adik_weight_RI"),
-         ("hand_LE", "upperarm_LE", "ik_hand_weapon_static_LE", "adik_weight_LE"))
+# Ready or Not's hand IK (ron_import.py ADIK): hand, limb root, target and weight joint per hand, for gb_stage's chrparams.
+# A profile may override the hard-coded RoN limbs (the Henry arms build does); entries naming missing bones are dropped.
+_adik = prof.get("adik") or (("hand_RI", "upperarm_RI", "ik_hand_weapon_static_RI", "adik_weight_RI"),
+                              ("hand_LE", "upperarm_LE", "ik_hand_weapon_static_LE", "adik_weight_LE"))
 info["adik"] = [list(c) for c in _adik if all(n in arm.data.bones for n in c)]
 arm.name = NAME
 mats, slot = [], {}
