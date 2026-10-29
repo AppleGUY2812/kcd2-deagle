@@ -14,7 +14,8 @@ win() { wslpath -w "$1"; }
 ps() { powershell.exe -NoProfile -Command "$1" | tr -d '\r'; }
 # no Blender while KCD2 runs at all: every save load and fast travel is CPU-bound (a parallel Blender doubled a save
 # load, 19 s -> 50 s, 2026-10-29; memory rule: no big renders while the user plays). GB_NO_GAME_WAIT=1 skips.
-game_wait() { [ "${GB_NO_GAME_WAIT:-}" = 1 ] && return; if tasklist.exe | grep -qi kingdomcome; then echo "   waiting for KCD2 to close"; ps "Wait-Process -Name KingdomCome -EA 0"; fi; }
+# No grep -q here: it exits early, tasklist gets SIGPIPE and pipefail turns a match into "not running".
+game_wait() { [ "${GB_NO_GAME_WAIT:-}" = 1 ] && return; if tasklist.exe 2>/dev/null | grep -i kingdomcome >/dev/null; then echo "   waiting for KCD2 to close"; ps "Wait-Process -Name KingdomCome -EA 0"; fi; }
 blend() { game_wait; ps "(Get-Process -Id \$PID).PriorityClass = 'Idle'; \$env:BLENDER_USER_SCRIPTS='E:\\Tools\\blender-user'; & '$BLENDER' -b --factory-startup -t 3 -P '$(win "$1")' -- $2 2>&1 | Select-String '$3' | % Line; exit 0"; }
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
