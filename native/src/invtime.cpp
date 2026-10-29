@@ -36,7 +36,7 @@ using Fn4 = uintptr_t(__fastcall*)(uintptr_t, uintptr_t, uintptr_t, uintptr_t);
 
 struct Site { uint32_t rva; unsigned char bytes[16]; const char* name; void* hook; Fn4* orig; uintptr_t at; };
 
-Fn4 g_open = nullptr, g_gate = nullptr, g_wait = nullptr, g_done = nullptr, g_ready = nullptr;
+Fn4 g_open = nullptr, g_gate = nullptr, g_wait = nullptr, g_done = nullptr, g_ready = nullptr, g_armor = nullptr;
 LARGE_INTEGER g_t0 = {}, g_freq = {};
 bool g_created = false, g_on = false;
 int g_lastGate = -1;   // the gate's last answer this open (-1: none yet)
@@ -143,12 +143,35 @@ uintptr_t __fastcall HkDone(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) 
 	return g_done(a, b, c, d);
 }
 
+// The armour stats guard (2026-10-28 crash: the inventory opened as the game switched Henry -> Godwin). 0x8f5b38 fills the
+// character panel's "ArmorStats" for a character (RDX); each stat's constructor (0x8f61b4) asks that character's vfunc
+// +0x400(0) for its actor and reads actor +0x668 (0x8f7d8c), then 0x181f59780 reads the answer's +0x40: no actor = a null
+// read (WHGame+8f7d90, read of 0x668). The game's own clothes-ready wait holds the screen until the character is set up;
+// the skip (invtime 2-4) does not, so the panel is built only when the actor and its +0x668 exist, else skipped once
+// (the next equip change updates it)
+bool ArmorReady(uintptr_t ch) {
+	__try {
+		if (!ch) return false;
+		using GetFn = uintptr_t(__fastcall*)(uintptr_t, uintptr_t);
+		uintptr_t actor = ((GetFn)(*(uintptr_t**)ch)[0x400 / 8])(ch, 0);
+		return actor && *(uintptr_t*)(actor + 0x668);
+	} __except (1) { return false; }
+}
+uintptr_t __fastcall HkArmor(uintptr_t a, uintptr_t b, uintptr_t c, uintptr_t d) {
+	if (!ArmorReady(b)) {
+		Log("invtime guard: the character %p has no actor yet (a character switch?): armour stats not built this time", (void*)b);
+		return 0;
+	}
+	return g_armor(a, b, c, d);
+}
+
 Site g_sites[] = {
 	{ 0xc47894,  { 0x48,0x89,0x5c,0x24,0x18,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0x01,0x48,0x8b,0xf9 }, "open", (void*)&HkOpen, &g_open, 0 },
 	{ 0x1f4a260, { 0x48,0x83,0xec,0x28,0x48,0x8b,0x49,0x20,0x48,0x85,0xc9,0x74,0x1e,0xe8,0x52,0x24 }, "gate", (void*)&HkGate, &g_gate, 0 },
 	{ 0xfc3ec0,  { 0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x10,0x49,0x89,0x73,0x20,0x57,0x48,0x83,0xec,0x70 }, "wait", (void*)&HkWait, &g_wait, 0 },
 	{ 0x1f4dc00, { 0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x20,0x48,0x8b,0x41,0x08,0x48,0x8b }, "done", (void*)&HkDone, &g_done, 0 },
 	{ 0x8baee0,  { 0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57 }, "ready", (void*)&HkReady, &g_ready, 0 },
+	{ 0x8f5b38,  { 0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x55,0x57,0x41,0x56,0x48,0x8b }, "armor", (void*)&HkArmor, &g_armor, 0 },
 };
 constexpr int kSites = sizeof(g_sites) / sizeof(g_sites[0]);
 
