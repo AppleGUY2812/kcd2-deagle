@@ -24,6 +24,7 @@ after a restart or a save load. `deagle_reset` puts everything back as shipped. 
 | `deagle_gun` | list the guns |
 | `deagle_gun glock_17` | switch to the Glock (`deagle_gun deagle` back) |
 | `deagle_gun ron_grizzly` | Ready or Not's Grizzly MK V .50 AE: its own model, SWAT arms, clips, flash (V3), casing, weapon sway, and its recoil read from its code (docs/ron/ron_recoil_code.md): the view climbs 8.7 deg a shot and doesn't spring back (x1.15 / x1.30 on quick follow-ups), a 0.2 s view jolt, the gun pushes back ~1 cm and tips up ~1.7 deg, aiming slides it 10 cm forward. The rounds stay ours (.50 AE). The gun recoil and jolt need the plugin from 2026-10-18 evening (caps `ronvm`; an older one logs it in red and gives only the climb) |
+| `deagle_gun ron_grizzly_henry` | Test build of the arm swap (docs/ARMSWAP.md): the same Grizzly, clips and recoil, held by **Henry's own bare arms** (the game's body skins on Henry's skeleton, fitted to every RoN clip). No clothing on them yet. `deagle_gun ron_grizzly` goes back to the SWAT arms |
 | `deagle_give` | give the Desert Eagle item (+ 49 cartridges) |
 | `deagle_physics` | what the current gun's cartridge does: bullet speed / energy, recoil push, flip, camera / gun kick, flash size |
 | `deagle_status` | hooks, input, ammo, plugin state |
