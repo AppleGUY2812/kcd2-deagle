@@ -284,9 +284,10 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
   movie (`Apse*.gfx`) that isn't drawn skips its update until it is drawn again (not for 2 s after a menu opens).
 - `fastload_menuwin.txt` `1`: samples each menu open every 1 ms (`hitch: #N menu-open window`). Off by default: it
   makes the open it measures ~2.7x slower.
-- `fastload_fadechain.txt` `0`: each menu fade step waits a frame, as the game does. Default on: a 0 s fade (our fade
-  cvars) runs fade out, the menu build and fade in within one frame (saves ~40 ms out + ~38 ms in per open; log line
-  `menutime: fadechain: fader state A -> B in the same frame`). Not during level loads.
+- `fastload_fadechain.txt` `1`: a 0 s menu fade runs its steps back to back in one frame (log line `menutime: fadechain:
+  fader state A -> B in the same frame`). Installed `0` (off): it saved nothing. 2026-10-29 11:55-12:06, 8 inventory
+  opens: out 0 ms but black 3 frames / 295 ms, total 330 ms (it was 320 ms). The build frame then waits for the
+  game's own holders, and the screen showed a frozen game picture instead of black. The user called it cheating.
 - The map movie `Libs/UI/ApseMap.gfx` (built by `tools/ui/mapfast/build.sh`): its marker search tree sorts with the
   engine's native sort instead of a script compare.
 - `krender 1|0` (sent by the Deagle scripts, not by hand): the gun mirror plugin (KCD2 Render) runs only with the
