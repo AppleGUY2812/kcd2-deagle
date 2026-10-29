@@ -125,6 +125,31 @@ int main(int argc, char** argv) {
 		      "take-fewer fields must describe a larger keep of the same roll");
 		std::cout << "[ok] take-fewer fields are consistent with the advice\n";
 
+		// Two 1s, one on a weighted die (a 1 half the time): setting aside the plain 1 keeps the weighted die to throw,
+		// and the panel's "why" names that die (swapDie) with the alternative's lower win chance.
+		farkle::Die weighted = ordinary;
+		weighted.name = "Weighted die";
+		weighted.p = { 0.5, 0.1, 0.1, 0.1, 0.1, 0.1 };
+		std::array<const farkle::Die*, 6> withWeighted = fair;
+		withWeighted[0] = &weighted;
+		auto weightedSolved = farkle::SolveCached(withWeighted, fair, 4000, cache.string());
+		Snapshot two = Fair();
+		two.rolledMask = 0x3f;
+		for (int j = 0; j < 6; j++) two.dice[0][0].p[j] = j == 0 ? 0.5f : 0.1f;
+		const int twoFaces[6] = { 0, 0, 1, 2, 3, 5 };
+		for (int i = 0; i < 6; i++) two.dice[0][i].value = twoFaces[i];
+		a = AdviseSnapshot(weightedSolved->game, two);
+		p = Present(weightedSolved->game, two, a, farkle::Selection{});
+		std::cout << "  two 1s: keep 0x" << std::hex << a.keep << std::dec << ", swap " << p.hasSwap << " die "
+		          << p.swapDie << " win " << std::max(a.winBank, a.winRoll) << " vs " << p.swapWin << "\n";
+		if (a.keep == 0x02) {
+			Check(p.hasSwap && p.swapDie == 0 && p.swapWin <= std::max(a.winBank, a.winRoll),
+			      "keeping the plain 1 must name the weighted die as the one kept in hand");
+		} else {
+			Check(a.keep != 0x01, "setting aside the weighted die's 1 instead of the plain 1 cannot be best");
+		}
+		std::cout << "[ok] which die stays in hand (two 1s, one weighted)\n";
+
 		// Every die is named from its probabilities + joker, so different dice sets cannot share a disk cache.
 		Snapshot other = Fair();
 		other.dice[0][0].p[0] = 0.30f;

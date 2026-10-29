@@ -50,6 +50,11 @@ struct Presentation {
 	bool hasTakeFewer = false;
 	int tfKeep = 0, tfScore = 0, tfAllKeep = 0, tfAllScore = 0;
 	double tfWin = 0, tfAllWin = 0;
+	// "keep this die in hand": the best other keep with the same faces on different dice (two 1s, one on the Weighted
+	// die); swapDie = the die the advice leaves to throw that the alternative would set aside
+	bool hasSwap = false;
+	int swapKeep = 0, swapDie = -1;
+	double swapWin = 0;
 	// committed-choice cost, percent (0 = none); set by the plugin worker
 	double mistake = 0;
 };
@@ -138,6 +143,22 @@ inline Presentation Present(const farkle::Game& g, const Snapshot& s, const fark
 				p.tfAllScore = allScore;
 				p.tfAllWin = std::max(alt.winBank, alt.winRoll);
 			}
+		}
+		// same faces, different dice: does it matter which physical die is set aside?
+		auto facesOf = [&](int keep) { std::array<int, 7> c{}; for (int i = 0; i < 6; i++) if (keep >> i & 1) c[faces[i]]++; return c; };
+		const auto want = facesOf(a.keep);
+		for (int keep = s.rolledMask; keep; keep = (keep - 1) & s.rolledMask) {
+			if (keep == a.keep || facesOf(keep) != want) continue;
+			const farkle::Selection alt = farkle::EvaluateSelection(
+				g, 0, s.banked[h], s.banked[1 - h], s.turn[h], faces, s.rolledMask, keep);
+			if (!alt.valid) continue;
+			const double w = std::max(alt.winBank, alt.winRoll);
+			if (!p.hasSwap || w > p.swapWin) { p.hasSwap = true; p.swapKeep = keep; p.swapWin = w; }
+		}
+		if (p.hasSwap) {
+			const int only = p.swapKeep & ~a.keep;
+			for (int i = 0; i < 6; i++) if (only >> i & 1) { p.swapDie = i; break; }
+			if (p.swapDie < 0) p.hasSwap = false;
 		}
 	} else {
 		p.score = 0;
