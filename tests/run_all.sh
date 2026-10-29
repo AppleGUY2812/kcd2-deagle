@@ -55,6 +55,7 @@ luajit tests/run_lean.lua >/dev/null || { echo "FAIL run_lean"; fail=1; }
 luajit tests/run_flight.lua >/dev/null || { echo "FAIL run_flight"; fail=1; }
 luajit tests/run_skin.lua >/dev/null || { echo "FAIL run_skin"; fail=1; }
 luajit tests/run_invnative.lua >/dev/null || { echo "FAIL run_invnative"; fail=1; }
+luajit tests/run_dummy.lua >/dev/null || { echo "FAIL run_dummy"; fail=1; }
 luajit tests/run_layers.lua >/dev/null || { echo "FAIL run_layers"; fail=1; }
 luajit inventory/tests/run_inventory.lua >/dev/null || { echo "FAIL run_inventory"; fail=1; }
 luajit tests/run_perf.lua >/dev/null || { echo "FAIL run_perf"; fail=1; }

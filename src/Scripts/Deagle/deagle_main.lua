@@ -577,7 +577,7 @@ function Deagle:LoadModule(path)
 	return ok
 end
 -- the systems, one file each (their helpers from Deagle.U above; a file only uses what the ones before it made)
-for _, f in ipairs({ "surfaces", "physics", "effects", "sound", "flash", "debug", "recoil", "hits", "npc", "tracers", "shells", "weapon", "viewmodel", "freecam", "flight", "skin", "invnative" }) do
+for _, f in ipairs({ "surfaces", "physics", "effects", "sound", "flash", "debug", "recoil", "hits", "npc", "tracers", "shells", "weapon", "viewmodel", "freecam", "flight", "skin", "invnative", "dummy" }) do
 	Deagle:LoadModule("Scripts/Deagle/" .. f .. ".lua")
 end
 
@@ -789,6 +789,7 @@ function Deagle:OnGameplayStarted()
 	s.heat, s.accFire, s.accT, s.burstReady = 0, 0, nil, nil
 	if self.slowOn then self:SlowMo(false) end
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
+	self:DummyLoaded()           -- Script timers are gone: the dummy loop must not survive a load
 	self:NativeHello()
 	self:Native("loaded")        -- the plugin puts its load-only game settings back (native/src/cvars.cpp)
 end
@@ -995,6 +996,7 @@ System.AddCCommand("deagle_arms", "Deagle:Set('vm.arms ' .. (Deagle.Arg([[%1]]):
 System.AddCCommand("deagle_motion", "Deagle:Set('vm.motion ' .. (tonumber(Deagle.Arg([[%1]])) or 1))", "deagle_motion <0..2>: viewmodel bob/sway strength (0 = off)")
 System.AddCCommand("deagle_ads", "Deagle:SetOnOff('vm.ads', [[%1]])", "deagle_ads 1|0: aim down sights on right click")
 System.AddCCommand("deagle_testnpc", "Deagle:TestNpc([[%line]])", "deagle_testnpc: the NPC you aim at takes no damage from your rounds | deagle_testnpc clear")
+System.AddCCommand("deagle_dummy", "Deagle:DummyCmd([[%line]])", "deagle_dummy: the NPC you aim at becomes a fully armoured sparring partner (full health/stamina): make | attack | block | idle | clear")
 System.AddCCommand("deagle_testwall", "Deagle:TestWall([[%line]])", "deagle_testwall: a row of KCD2 objects, one per surface (stone, plaster, pots, wood, wicker, metal, glass, sack, straw, hay, food, leather), 4 m ahead | clear")
 System.AddCCommand("deagle_shotsound", "Deagle:SetOnOff('shotSound', [[%1]])", "deagle_shotsound 0|1: gunshot sound off / on (impacts still play)")
 System.AddCCommand("deagle_flash", "Deagle:FlashLookCmd(Deagle.Arg([[%1]]))", "deagle_flash ron|ours: Ready or Not's own muzzle flash or ours, both on the gun's flash cards (sets flashMode mesh; kept)")
