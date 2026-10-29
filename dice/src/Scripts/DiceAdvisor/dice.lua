@@ -328,9 +328,15 @@ function DiceAdvisor:Best(line)
 			local faceText = (bestjoker == 1 and bestface == 1) and "J" or tostring(bestface)
 			local n = math.floor(1 / bestp + 0.5)
 			if n < 1 then n = 1 end
-			trait = string.format("%s rolls a %s 1 in %d; ", bestname, faceText, n)
+			if n == 1 then
+				trait = string.format("%s: a %s every throw;", bestname, faceText)
+			else
+				local ord = n == 2 and "2nd" or (n == 3 and "3rd" or (n .. "th"))
+				trait = string.format("%s: a %s every %s throw;", bestname, faceText, ord)
+			end
 		end
-		panel.line3 = string.format("Why: %s%d pts/turn vs %d with plain dice", trait or "", pts, basepts)
+		local pointsText = string.format("%d pts/turn vs %d with plain dice", pts, basepts)
+		panel.line3 = trait and ("Why: " .. trait .. "\n" .. pointsText) or ("Why: " .. pointsText)
 	end
 	self.panel = panel
 	self.lines = lines
@@ -341,6 +347,7 @@ function DiceAdvisor:NativeOk()
 	native("advisor " .. tostring(self.enabled))
 	native("log " .. tostring(self.logging))
 	native("set detail " .. tostring(self.detail))
+	native("marks " .. (self.ui == 1 and 1 or 0))
 end
 
 function DiceAdvisor:SetEnabled(line)
@@ -375,6 +382,7 @@ function DiceAdvisor:SetUi(line)
 	if n ~= 0 and n ~= 1 then System.LogAlways("[Dice Advisor] usage: dice_advisor_ui 0|1") return end
 	self.ui = n
 	self.text = nil
+	native("marks " .. n)
 	if n == 0 then
 		hud("DiceAdvice", 0, "", "", "", "")
 	else

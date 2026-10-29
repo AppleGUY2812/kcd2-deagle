@@ -12,31 +12,8 @@ if text.count(old) != 1:
     sys.exit("patch.py: HUD hideDiceScore anchor did not match exactly once")
 text = text.replace(old, new)
 
-# The plugin sends ids 100+ for its own dice: draw our glow instead of the game's ring. Ids below 100 go to the
-# original function untouched, which keeps the vanilla selectors exactly as they were.
-text += """
-var DA_ORIGINAL_ADD_DICE_SELECTOR = fc_addDiceSelector;
-var DA_ORIGINAL_REMOVE_DICE_SELECTOR = fc_removeDiceSelector;
-function fc_addDiceSelector(selectorId, xPos, yPos, isPlayer)
-{
-   if(selectorId >= 100)
-   {
-      DA_Glow(selectorId - 100, xPos, yPos);
-      return undefined;
-   }
-   return DA_ORIGINAL_ADD_DICE_SELECTOR(selectorId, xPos, yPos, isPlayer);
-}
-function fc_removeDiceSelector(selectorId)
-{
-   if(selectorId >= 100)
-   {
-      DA_GlowRemove(selectorId - 100);
-      return undefined;
-   }
-   return DA_ORIGINAL_REMOVE_DICE_SELECTOR(selectorId);
-}
-"""
 text += "\n" + (pathlib.Path(__file__).resolve().parent / "advice.as").read_text(encoding="utf-8")
+text += "\nDA_SetupSelectors();\n"
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text(text, encoding="utf-8")
 print(f"patched Dice Advisor HUD -> {dst}")

@@ -19,9 +19,9 @@ LINE = (0xBF, 0xA5, 0x8C)
 DIE_FILL = (0x1A, 0x14, 0x0C)
 GLOW = (0xFF, 0xD0, 0x7A)
 
-DIE = 22
+DIE = 26
 GAP = 5
-ROW = 24
+ROW = 26
 ADVICE_W = 430
 SS = 4  # supersampling for the panel
 
@@ -91,34 +91,37 @@ def divider(draw, left, top, height):
 
 
 def advice_panel(faces, action, line2, line3):
-    body = [line for line in (line2, line3) if line]
-    height = 68 + len(body) * 20 + 4
+    why = [line for line in str(line3 or "").split("\n") if line]
+    height = 94 + len(why) * 21 + 4
     image, left, top = panel_canvas(ADVICE_W + 10, height)
     draw = ImageDraw.Draw(image)
 
     text(draw, x=left, y=top, value="Advice", size=25, colour=GOLD, bold=True)
     dice = [f for f in str(faces).split(",") if f]
     for i, face in enumerate(dice):
-        die(draw, left + i * (DIE + GAP), top + 36, face)
+        die(draw, left + i * (DIE + GAP), top + 34, face)
     if action:
-        text(draw, x=left + len(dice) * (DIE + GAP) + 6, y=top + 33,
-             value=action, size=20, colour=BRIGHT, bold=True)
-    for i, line in enumerate(body):
-        text(draw, x=left, y=top + 68 + i * 20, value=line, size=16, colour=CREAM)
+        text(draw, x=left + len(dice) * (DIE + GAP) + 6, y=top + 32,
+             value=action, size=22, colour=BRIGHT, bold=True)
+    if line2:
+        text(draw, x=left, y=top + 68, value=line2, size=20, colour=CREAM)
+    for i, line in enumerate(why):
+        text(draw, x=left, y=top + 94 + i * 21, value=line, size=18, colour=CREAM)
     divider(draw, left, top, height)
     return image, left, top
 
 
 def picker_panel(rows, why):
-    height = 36 + len(rows) * ROW + (34 if why else 8)
+    why_lines = [line for line in str(why or "").split("\n") if line]
+    why_y = 36 + len(rows) * ROW + 10
+    height = why_y + len(why_lines) * 21 + 4
     image, left, top = panel_canvas(440, height)
     draw = ImageDraw.Draw(image)
     text(draw, x=left, y=top, value="Bring these 6", size=25, colour=GOLD, bold=True)
     for i, row in enumerate(rows):
-        text(draw, x=left, y=top + 36 + i * ROW, value=row, size=17, colour=CREAM)
-    why_y = 36 + len(rows) * ROW + 8
-    if why:
-        text(draw, x=left, y=top + why_y, value=why, size=14, colour=CREAM)
+        text(draw, x=left, y=top + 36 + i * ROW, value=row, size=20, colour=CREAM)
+    for i, line in enumerate(why_lines):
+        text(draw, x=left, y=top + why_y + i * 21, value=line, size=18, colour=CREAM)
     divider(draw, left, top, height)
     return image, left, top
 
@@ -133,15 +136,19 @@ def place(screenshot, image, left, top, x, y):
     return out
 
 
-def glow(radius=38, centre_alpha=0.65):
+def glow(radius=60, peak_alpha=0.75):
+    # [0, 75, 0] at ratios [0, 175, 255] of the radius: a ring of light with a clear centre
     size = radius * 2 + 1
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     pixels = image.load()
+    mid = radius * 175 / 255
     for y in range(size):
         for x in range(size):
             d = hypot(x - radius, y - radius)
-            if d <= radius:
-                pixels[x, y] = GLOW + (int(round(centre_alpha * 255 * (1 - d / radius))),)
+            if d > radius:
+                continue
+            a = peak_alpha * (d / mid) if d <= mid else peak_alpha * (1 - (d - mid) / (radius - mid))
+            pixels[x, y] = GLOW + (int(round(a * 255)),)
     return image
 
 
@@ -169,7 +176,7 @@ def main():
     picker = Image.open(ROOT / "ref" / "Screenshot_1.png").convert("RGBA")
     panel, left, top = picker_panel(
         ["Favourable x3", "Painted x2", "Weighted"],
-        "Why: Weighted rolls a 1 1 in 2; 2140 pts/turn vs 1925 with plain dice",
+        "Why: Weighted: a 1 every 2nd throw;\n2140 pts/turn vs 1925 with plain dice",
     )
     picker = place(picker, panel, left, top, PICKER_X, PICKER_Y)
     picker.convert("RGB").save(ROOT / "mock" / "panel_picker.png", optimize=True)
