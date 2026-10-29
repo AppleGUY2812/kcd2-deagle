@@ -14,7 +14,9 @@ funcs = {
             '<function name="InvShopClick" funcname="fc_invShopClick" />', MODS,
             '<function name="InvSearch" funcname="fc_invSearch"><param name="Text" desc="" type="string"/>'
             '<param name="Open" desc="" type="int"/></function>'],
-    "tr": ['<function name="InvFast" funcname="fc_invFast" />', MODS],
+    "tr": ['<function name="InvFast" funcname="fc_invFast" />', MODS,
+           '<function name="InvSearch" funcname="fc_invSearch"><param name="Text" desc="" type="string"/>'
+           '<param name="Open" desc="" type="int"/></function>'],
     "md": ['<function name="InvAutoMax" funcname="fc_invAutoMax" />'],
 }[kind]
 events = {
@@ -22,7 +24,7 @@ events = {
             '<event name="OnInvFastMove" fscommand="onInvFastMove" />',
             '<event name="OnInvFastShop" fscommand="onInvFastShop" />', STAT, SEARCH],
     "tr": ['<event name="OnInvActive" fscommand="onInvActive"><param name="Active" desc="" type="bool"/></event>',
-           STAT],
+           STAT, SEARCH],
     "md": [],
 }[kind]
 for tag, lines in (("</functions>", funcs), ("</events>", events)):

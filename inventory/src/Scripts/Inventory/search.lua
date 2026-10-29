@@ -13,18 +13,30 @@ InvSearch = InvSearch or { open = false, text = "" }
 
 local function log(s) System.LogAlways("[Inv] search: " .. tostring(s)) end
 
--- the movie's entry point (UIElements/ApseInventoryList.xml: InvSearch -> fc_invSearch)
+-- the screens with a search bar: the inventory (also shops) and the chest / horse / loot screen (two lists, one query)
+local SCREENS = { "ApseInventoryList", "ItemTransfer" }
+
+local function isOpen(name)
+	return FastMove ~= nil and FastMove.open ~= nil and FastMove.open[name] == true
+end
+
+-- the movies' entry point (UIElements/<screen>.xml: InvSearch -> fc_invSearch), on every open screen
 local function show(text, open)
-	UIAction.CallFunction("ApseInventoryList", -1, "InvSearch", text, open and 1 or 0)
+	for _, name in ipairs(SCREENS) do
+		if isOpen(name) then UIAction.CallFunction(name, -1, "InvSearch", text, open and 1 or 0) end
+	end
 end
 
 function InvSearch:InventoryOpen()
-	return FastMove ~= nil and FastMove.open ~= nil and FastMove.open.ApseInventoryList == true
+	for _, name in ipairs(SCREENS) do
+		if isOpen(name) then return true end
+	end
+	return false
 end
 
 function InvSearch:Toggle()
 	if not self:InventoryOpen() then
-		Inv:Native("search off")   -- the bar lives only in the inventory: keep the plugin from eating keys
+		Inv:Native("search off")   -- no screen with a bar is open: keep the plugin from eating keys
 		return
 	end
 	if self.open then
@@ -82,7 +94,8 @@ function InvSearch:OnActive(elementName, instanceId, eventName, args)
 		if self.text ~= "" or self.open then
 			self.text = ""
 			self.open = false
-			show("", false)   -- a new screen starts unfiltered
+			-- a new screen starts unfiltered (called by name: FastMove may not have marked it open yet)
+			UIAction.CallFunction(elementName, -1, "InvSearch", "", 0)
 			Inv:Native("search off")   -- and the plugin keeps nothing from the last one either
 		end
 	else
@@ -93,6 +106,8 @@ function InvSearch:OnActive(elementName, instanceId, eventName, args)
 end
 
 if type(UIAction) == "table" and UIAction.RegisterElementListener then
-	UIAction.RegisterElementListener(InvSearch, "ApseInventoryList", -1, "OnInvActive", "OnActive")
-	UIAction.RegisterElementListener(InvSearch, "ApseInventoryList", -1, "OnInvSearchClick", "OnClick")
+	for _, name in ipairs(SCREENS) do
+		UIAction.RegisterElementListener(InvSearch, name, -1, "OnInvActive", "OnActive")
+		UIAction.RegisterElementListener(InvSearch, name, -1, "OnInvSearchClick", "OnClick")
+	end
 end
