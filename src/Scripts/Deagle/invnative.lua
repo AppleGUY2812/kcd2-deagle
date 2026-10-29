@@ -98,6 +98,10 @@ function Deagle:InvnOpen()
 		invn.dataTried = true
 		local t = os.clock()
 		self:LoadModule("Scripts/Deagle/invnative_data.lua")
+		if not self.invData and self.devRoot then   -- live-reloaded but not installed yet: the dev copy has it
+			local chunk = loadfile(self.devRoot .. "Scripts/Deagle/invnative_data.lua")
+			if chunk then pcall(chunk) end
+		end
 		log(string.format("invn: item data %s in %.0f ms", self.invData and "loaded" or "MISSING", (os.clock() - t) * 1000))
 	end
 	local rows, texts, header, itemCount, readMs = self:InvnRead()
