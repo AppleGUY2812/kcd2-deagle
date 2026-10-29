@@ -6,6 +6,7 @@
 local log = (Deagle.U and Deagle.U.log) or function(msg) System.LogAlways("$5[Deagle] " .. tostring(msg)) end
 
 Deagle.invn = Deagle.invn or { open = false, token = 0, offset = 0 }
+Deagle.invn.dataTried = nil   -- a reload tries the item data again
 
 local ROWS_DRAWN = 30   -- rows on screen at once
 
