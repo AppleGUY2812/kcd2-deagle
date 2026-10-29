@@ -413,14 +413,18 @@ void Submit(uintptr_t game, const diceadvisor::Snapshot& s, Action action = Acti
 }
 
 // ---- the dice picker: which 6 of the player's dice to bring (tools/farkle/bestset.h). Lua lists the inventory's dice
-// ("own <seq> c,w1..w6,j;..."), this worker ranks them at the lowest thread priority (about 10 s for 14 dice) and
-// answers "dice_best <seq> <count per entry> <points>"; results are kept per collection for the session.
+// ("own <seq> c,w1..w6,j;..."), this worker ranks them at the lowest thread priority (2-3 s for 23 kinds on up to 4
+// threads; was 80 s in game on 2026-10-28, longer than the dice screen stays up) and answers
+// "dice_best <seq> <count per entry> <points>" with the newest seq asked for that collection; results are kept per
+// collection for the session.
 struct BestJob { unsigned long long seq = 0; std::vector<bestset::Owned> own; std::string key; };
 std::mutex g_bestMu;
 std::condition_variable g_bestCv;
 BestJob g_bestJob;
 bool g_bestPending = false;
 std::unordered_map<std::string, std::string> g_bestDone;   // collection key -> "counts points"
+std::unordered_map<std::string, unsigned long long> g_bestWant;   // collection key -> newest seq Lua is waiting on
+std::string g_bestRunning;   // the collection being ranked now
 
 void QueueBest(unsigned long long seq, const std::string& answer) { Queue("dice_best " + std::to_string(seq) + " " + answer); }
 
@@ -433,11 +437,14 @@ void BestWorker() {
 			g_bestCv.wait(lk, [] { return g_bestPending; });
 			job = g_bestJob;
 			g_bestPending = false;
+			g_bestRunning = job.key;
 		}
 		std::string answer;
 		try {
 			const auto t0 = GetTickCount64();
-			auto picks = bestset::BestSets(job.own, 4000, 1);
+			const int threads = (int)std::max(1u, std::min(4u, std::thread::hardware_concurrency() / 2));
+			bestset::g_threadStart = [] { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST); };
+			auto picks = bestset::BestSets(job.own, 4000, 1, threads);
 			if (picks.empty()) answer = "none 0";
 			else {
 				for (size_t i = 0; i < picks[0].count.size(); i++) answer += (i ? "," : "") + std::to_string(picks[0].count[i]);
@@ -448,8 +455,15 @@ void BestWorker() {
 			Log("dice: best set failed: %s", e.what());
 			answer = "none 0";
 		}
-		{ std::lock_guard<std::mutex> lk(g_bestMu); g_bestDone[job.key] = answer; }
-		QueueBest(job.seq, answer);
+		unsigned long long seq = job.seq;
+		{
+			std::lock_guard<std::mutex> lk(g_bestMu);
+			g_bestDone[job.key] = answer;
+			g_bestRunning.clear();
+			auto w = g_bestWant.find(job.key);
+			if (w != g_bestWant.end()) { seq = std::max(seq, w->second); g_bestWant.erase(w); }
+		}
+		QueueBest(seq, answer);
 	}
 }
 
@@ -486,6 +500,12 @@ void OwnCommand(const char* rest) {
 		std::lock_guard<std::mutex> lk(g_bestMu);
 		auto it = g_bestDone.find(job.key);
 		if (it != g_bestDone.end()) { QueueBest(job.seq, it->second); return; }
+		if (job.key == g_bestRunning) {   // already being ranked: answer this newer request when it is done
+			g_bestWant[job.key] = job.seq;
+			Log("dice: own %llu: %zu kinds, already ranking them", job.seq, job.own.size());
+			return;
+		}
+		Log("dice: own %llu: %zu kinds, ranking", job.seq, job.own.size());
 		g_bestJob = job;
 		g_bestPending = true;
 	}

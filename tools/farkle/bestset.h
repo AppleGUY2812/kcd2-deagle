@@ -1,6 +1,7 @@
 // Best 6 dice from a collection (shared by tools/farkle/farkle.cpp and the Dice Advisor plugin).
 // See farkle.cpp for the method: a local search over multisets of 6 dice by E[min(turn points, target)] (one turn,
-// best play for it), memoised per set. Not thread-safe: one search at a time (the scoring memo is shared).
+// best play for it), memoised per set. One search at a time (the scoring memo and templates are shared); the search
+// itself scores up to `threads` candidate sets at once.
 #pragma once
 #include <algorithm>
 #include <array>
@@ -14,6 +15,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace bestset {
@@ -24,6 +26,7 @@ struct Die { std::string name; std::array<double, 6> p; bool devil; };
 
 // ---- scoring: best score that uses every die of a multiset (faces 1..6 + jokers), or NEG if some die can't score
 inline std::vector<int> g_memo;
+inline void (*g_threadStart)() = nullptr;   // run first on every search thread (the plugin lowers their priority)
 inline int Key(const int* c, int j) { int k = j; for (int f = 0; f < 6; f++) k = k * 7 + c[f]; return k; }
 inline int Best(int* c, int j) {
 	int tot = j; for (int f = 0; f < 6; f++) tot += c[f];
@@ -95,6 +98,81 @@ inline void Build(const std::array<const Die*, 6>& dice, Model& m) {
 			for (auto& kv : best) m.opts.push_back({ (uint8_t)kv.first, (uint16_t)(kv.second / STEP) });
 			m.rolls[S].push_back(r);
 		}
+	}
+}
+
+// ---- the same model, fast: which set-aside choices a throw allows depends only on its faces and on which dice are
+// jokers, never on the odds. So the choices are built once per joker count (jokers in the first positions) and throws
+// with the same choices are grouped; a set then only needs its group odds (a sum of products). ~100x faster than Build.
+struct Tmpl {
+	std::vector<uint32_t> grp[64];                  // per throw (face code) -> group, or UINT32_MAX (farkle)
+	std::vector<std::pair<uint32_t, uint32_t>> groups[64];   // per group: first option, option count
+	std::vector<Opt> opts;
+};
+inline const Tmpl& Template(int jokers) {
+	static Tmpl cache[7];
+	static bool built[7] = {};
+	Tmpl& T = cache[jokers];
+	if (built[jokers]) return T;
+	for (int S = 1; S < 64; S++) {
+		int pos[6], n = 0;
+		for (int i = 0; i < 6; i++) if (S >> i & 1) pos[n++] = i;
+		int total = 1; for (int i = 0; i < n; i++) total *= 6;
+		T.grp[S].assign(total, UINT32_MAX);
+		std::map<std::vector<Opt>, uint32_t, bool (*)(const std::vector<Opt>&, const std::vector<Opt>&)> seen(
+			[](const std::vector<Opt>& a, const std::vector<Opt>& b) {
+				return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+					[](const Opt& x, const Opt& y) { return x.rem != y.rem ? x.rem < y.rem : x.sc < y.sc; });
+			});
+		for (int code = 0; code < total; code++) {
+			int face[6] = {}; int x = code;
+			for (int i = 0; i < n; i++) { face[pos[i]] = x % 6; x /= 6; }
+			std::map<int, int> best;
+			for (int sel = S; sel; sel = (sel - 1) & S) {
+				int c[6] = {}, j = 0;
+				for (int i = 0; i < 6; i++) if (sel >> i & 1) {
+					if (i < jokers && face[i] == 0) j++; else c[face[i]]++;
+				}
+				const int sc = Best(c, j);
+				if (sc <= 0) continue;
+				int rem = S & ~sel; if (!rem) rem = 63;
+				auto it = best.find(rem);
+				if (it == best.end() || it->second < sc) best[rem] = sc;
+			}
+			if (best.empty()) continue;
+			std::vector<Opt> o;
+			for (auto& kv : best) o.push_back({ (uint8_t)kv.first, (uint16_t)(kv.second / STEP) });
+			auto it = seen.find(o);
+			if (it == seen.end()) {
+				it = seen.emplace(o, (uint32_t)T.groups[S].size()).first;
+				T.groups[S].push_back({ (uint32_t)T.opts.size(), (uint32_t)o.size() });
+				T.opts.insert(T.opts.end(), o.begin(), o.end());
+			}
+			T.grp[S][code] = it->second;
+		}
+	}
+	built[jokers] = true;
+	return T;
+}
+// dice: the jokers first (as many as `jokers`), the order the template was built for
+inline void BuildFast(const std::array<const Die*, 6>& dice, int jokers, Model& m) {
+	const Tmpl& T = Template(jokers);
+	m.opts = T.opts;
+	std::vector<double> gp;
+	for (int S = 1; S < 64; S++) {
+		int pos[6], n = 0;
+		for (int i = 0; i < 6; i++) if (S >> i & 1) pos[n++] = i;
+		gp.assign(T.groups[S].size(), 0.0);
+		const auto& g = T.grp[S];
+		for (uint32_t code = 0; code < g.size(); code++) {
+			if (g[code] == UINT32_MAX) continue;
+			double p = 1; uint32_t x = code;
+			for (int i = 0; i < n; i++) { p *= dice[pos[i]]->p[x % 6]; x /= 6; }
+			gp[g[code]] += p;
+		}
+		m.rolls[S].clear();
+		for (size_t k = 0; k < gp.size(); k++)
+			if (gp[k] > 0) m.rolls[S].push_back({ gp[k], T.groups[S][k].first, T.groups[S][k].second });
 	}
 }
 
@@ -193,7 +271,7 @@ struct Owned { std::string name; std::array<double, 6> p; bool devil = false; in
 struct Pick { std::vector<int> count; double oneTurn = 0; };   // count per Owned index, sums to 6
 
 // The best sets, best first (at most top). Empty when fewer than 6 dice are owned.
-inline std::vector<Pick> BestSets(const std::vector<Owned>& own, int target, int top) {
+inline std::vector<Pick> BestSets(const std::vector<Owned>& own, int target, int top, int threads = 1) {
 	const int K = target / STEP;
 	if (g_memo.empty()) g_memo.assign(7 * 7 * 7 * 7 * 7 * 7 * 7, -2);
 	std::vector<Die> rep; std::vector<std::vector<int>> members; std::vector<int> cap;
@@ -215,14 +293,38 @@ inline std::vector<Pick> BestSets(const std::vector<Owned>& own, int target, int
 	if (total < 6 || rep.empty()) return {};
 	const int T = (int)rep.size();
 	std::map<std::vector<int>, double> seen;
+	// the templates every set can need, built before any thread reads them
+	int jokerCopies = 0;
+	for (int k = 0; k < T; k++) if (rep[k].devil) jokerCopies += cap[k];
+	for (int j = 0; j <= std::min(6, jokerCopies); j++) Template(j);
+	auto eval = [&](const std::vector<int>& set) {   // thread-safe: reads only the templates and rep
+		std::array<const Die*, 6> d{}; int jokers = 0;
+		for (int i = 0; i < 6; i++) if (rep[set[i]].devil) d[jokers++] = &rep[set[i]];
+		for (int i = 0, k = jokers; i < 6; i++) if (!rep[set[i]].devil) d[k++] = &rep[set[i]];
+		Model m; BuildFast(d, jokers, m);
+		return OneTurn(m, K);
+	};
 	auto score = [&](const std::vector<int>& set) {
 		auto it = seen.find(set);
 		if (it != seen.end()) return it->second;
-		std::array<const Die*, 6> d{}; for (int i = 0; i < 6; i++) d[i] = &rep[set[i]];
-		Model m; Build(d, m);
-		const double v = OneTurn(m, K);
-		seen[set] = v;
-		return v;
+		return seen[set] = eval(set);
+	};
+	// scores the unseen sets of a batch, `threads` at a time
+	const int nt = std::max(1, threads);
+	auto scoreBatch = [&](const std::vector<std::vector<int>>& sets) {
+		std::vector<const std::vector<int>*> todo;
+		for (auto& s : sets) if (!seen.count(s)) todo.push_back(&s);
+		std::vector<double> val(todo.size());
+		if (nt == 1 || todo.size() < 2) { for (size_t i = 0; i < todo.size(); i++) val[i] = eval(*todo[i]); }
+		else {
+			std::vector<std::thread> pool;
+			for (int w = 0; w < nt; w++) pool.emplace_back([&, w] {
+				if (g_threadStart) g_threadStart();
+				for (size_t i = w; i < todo.size(); i += nt) val[i] = eval(*todo[i]);
+			});
+			for (auto& th : pool) th.join();
+		}
+		for (size_t i = 0; i < todo.size(); i++) seen[*todo[i]] = val[i];
 	};
 	auto valid = [&](const std::vector<int>& set) {
 		std::map<int, int> c; for (int x : set) if (++c[x] > cap[x]) return false;
@@ -252,15 +354,24 @@ inline std::vector<Pick> BestSets(const std::vector<Owned>& own, int target, int
 	for (auto st : starts) {
 		std::sort(st.begin(), st.end());
 		double cur = score(st);
+		// first improvement, as before, but the neighbours are scored in batches of `threads`
 		for (bool improved = true; improved;) {
 			improved = false;
-			for (int i = 0; i < 6 && !improved; i++)
+			std::vector<std::vector<int>> nb;
+			for (int i = 0; i < 6; i++)
 				for (int k = 0; k < T; k++) {
 					std::vector<int> t = st; t[i] = k; std::sort(t.begin(), t.end());
 					if (t == st || !valid(t)) continue;
-					const double v = score(t);
+					nb.push_back(t);
+				}
+			for (size_t b = 0; b < nb.size() && !improved; b += nt) {
+				std::vector<std::vector<int>> batch(nb.begin() + b, nb.begin() + std::min(nb.size(), b + nt));
+				scoreBatch(batch);
+				for (auto& t : batch) {
+					const double v = seen[t];
 					if (v > cur + 1e-9) { st = t; cur = v; improved = true; break; }
 				}
+			}
 		}
 	}
 	std::vector<std::pair<double, std::vector<int>>> ranked;
