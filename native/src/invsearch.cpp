@@ -27,6 +27,12 @@ HWND g_hwnd = nullptr;       // KCD2's window
 WNDPROC g_old = nullptr;     // what it had before us (the game's own, or another mod's)
 WNDPROC g_base = nullptr;    // the first procedure we chained (the game's own): the floor of the chain
 int g_depth = 0;             // > 0 inside Proc: another mod's procedure may be chained back into ours
+// freeze watch (2026-10-28: the inventory stopped answering after a search while frames kept coming): for 60 s after
+// any search step, a line every 2 s says whether keys and the mouse still reach the game (window messages and
+// DirectInput events), so the next freeze shows which side stops
+volatile LONG g_wKeys = 0, g_wMouse = 0, g_diKbDown = 0, g_diKbUp = 0, g_diMouse = 0;
+DWORD g_watchUntil = 0;
+void Watch() { g_watchUntil = GetTickCount() + 60000; }
 bool g_active = false;       // the bar is open: capture and swallow
 bool g_keep = false;         // the bar shows a kept filter: only Backspace is taken (it edits the query)
 char g_text[80];
@@ -98,6 +104,10 @@ void EndCommit() {   // Enter / Ctrl+F: typing off, the text stays (the bar show
 LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM w, LPARAM l) {
 	Depth depth;
 	if (g_depth > 2) return DefWindowProcW(h, m, w, l);   // a chain that is not a chain: stop here
+	if (g_depth == 1) {
+		if (m >= WM_KEYFIRST && m <= WM_KEYLAST) InterlockedIncrement(&g_wKeys);
+		else if (m >= WM_MOUSEFIRST && m <= WM_MOUSELAST) InterlockedIncrement(&g_wMouse);
+	}
 	if (g_depth > 1) return CallWindowProcW(g_base ? g_base : g_old, h, m, w, l);   // see Depth
 	if (h == g_hwnd && g_keep && !g_active) {
 		// "Filtered: ..." is still on screen: Backspace must edit it, not run the game's back action. Every other key
@@ -219,6 +229,11 @@ bool Blocks(DWORD dik) { return g_active || Grace() || (g_keep && dik == DIK_BAC
 
 HRESULT GetData(int k, void* dev, DWORD cb, DIDEVICEOBJECTDATA* d, DWORD* n, DWORD flags) {
 	const HRESULT r = g_getData[k](dev, cb, d, n, flags);
+	if (SUCCEEDED(r) && d && n && *n && cb >= sizeof(DIDEVICEOBJECTDATA_DX3)) {
+		if (!IsKeyboard(dev)) InterlockedAdd(&g_diMouse, (LONG)*n);
+		else for (DWORD i = 0; i < *n; i++)
+			InterlockedIncrement(((DIDEVICEOBJECTDATA*)((char*)d + (size_t)i * cb))->dwData & 0x80 ? &g_diKbDown : &g_diKbUp);
+	}
 	if (FAILED(r) || !d || !n || !(g_active || g_keep || Grace()) || cb < sizeof(DIDEVICEOBJECTDATA_DX3) || !IsKeyboard(dev)) return r;
 	DWORD out = 0;
 	for (DWORD i = 0; i < *n; i++) {
@@ -291,6 +306,20 @@ void InvSearch_Install(InvSearchSend send) {
 
 void InvSearch_Frame() {
 	Hook();
+	static DWORD next = 0;
+	static unsigned frames = 0;
+	frames++;
+	const DWORD now = GetTickCount();
+	if ((int)(g_watchUntil - now) > 0 && (int)(now - next) >= 0) {
+		next = now + 2000;
+		Log("invsearch hb: %u frames; window keys %ld mouse %ld; DirectInput keys down %ld up %ld, mouse %ld; %s%s%s, focus %d",
+		    frames, (long)InterlockedExchange(&g_wKeys, 0), (long)InterlockedExchange(&g_wMouse, 0),
+		    (long)InterlockedExchange(&g_diKbDown, 0), (long)InterlockedExchange(&g_diKbUp, 0),
+		    (long)InterlockedExchange(&g_diMouse, 0), g_active ? "typing" : g_keep ? "kept" : "off",
+		    Grace() ? " +grace" : "", g_hwnd && GetWindowLongPtrW(g_hwnd, GWLP_WNDPROC) == (LONG_PTR)&Proc ? "" : " (not subclassed)",
+		    HasFocus() ? 1 : 0);
+		frames = 0;
+	}
 	if (!HasFocus()) {
 		g_ctrlF = false;
 		return;
@@ -298,12 +327,14 @@ void InvSearch_Frame() {
 	const bool d = (GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState('F') & 0x8000);
 	if (d && !g_ctrlF && !g_active) {
 		Send("inv_search_toggle");   // Lua decides: the bar exists only in the inventory
+		Watch();
 		Log("invsearch: Ctrl+F: asking Lua to open the search bar");
 	}
 	g_ctrlF = d;
 }
 
 void InvSearch_Command(const char* rest) {
+	Watch();
 	if (!strcmp(rest, "on")) {
 		// the buffer is kept: Lua reopens the bar with the query it already has (no jump when the first key comes)
 		g_keep = false;

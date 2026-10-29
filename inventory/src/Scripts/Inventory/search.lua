@@ -37,6 +37,7 @@ end
 function InvSearch:Toggle()
 	if not self:InventoryOpen() then
 		Inv:Native("search off")   -- no screen with a bar is open: keep the plugin from eating keys
+		log("Ctrl+F with no inventory screen open: ignored")
 		return
 	end
 	if self.open then
@@ -80,6 +81,7 @@ function InvSearch:Edit()
 end
 
 function InvSearch:Cancel()
+	log("cancelled (Escape / Alt): filter cleared")
 	self.open = false
 	self.text = ""
 	if self:InventoryOpen() then show("", false) end
@@ -90,6 +92,7 @@ end
 function InvSearch:OnActive(elementName, instanceId, eventName, args)
 	local v = type(args) == "table" and (args[0] or args[1]) or nil
 	local on = v == true or v == 1 or v == "true"
+	log(tostring(elementName) .. (on and " opened" or " closed") .. (self.open and " (bar was typing)" or ""))
 	if on then
 		if self.text ~= "" or self.open then
 			self.text = ""
