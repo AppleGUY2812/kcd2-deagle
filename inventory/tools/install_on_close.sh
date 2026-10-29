@@ -17,17 +17,17 @@ kcd_running() {
 	powershell.exe -NoProfile -Command "if (Get-Process KingdomCome -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" >/dev/null 2>&1
 }
 
-say "waiting for KCD2 to close (this script never starts or stops it): $game"
-while kcd_running; do sleep 5; done
-say "KCD2 is closed: rebuilding the movies (tools/weightmap/build.sh)"
+# build first (a minute of ffdec), then wait: the copy lands within a second of the close, before a quick relaunch
+# (2026-10-29: the user relaunched during the old build-after-close and got the previous build)
+say "rebuilding the movies (tools/weightmap/build.sh)"
 nice -n 19 bash "$here/weightmap/build.sh" >>"$log" 2>&1
 say "packing src + localization (build.sh)"
 nice -n 19 bash "$repo/inventory/build.sh" >>"$log" 2>&1
 
-# the build takes a while: if the game was started in the meantime, wait again before touching its files
+say "waiting for KCD2 to close (this script never starts or stops it): $game"
 while kcd_running; do
-	say "KCD2 was started while building: waiting for it to close again"
-	sleep 5
+	# blocks until the process exits (no 5 s polling gap)
+	powershell.exe -NoProfile -Command "Wait-Process -Name KingdomCome -ErrorAction SilentlyContinue" >/dev/null 2>&1
 done
 
 say "installing"
