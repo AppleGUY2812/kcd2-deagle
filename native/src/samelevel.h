@@ -8,4 +8,5 @@
 // level-manager update while in game (the context the game's own state 5 uses): a test of what Continue onto a level that
 // is already loaded would cost (the 10 s plan's hand-off, docs/LOADTIME.md).
 void Samelevel_Install(uintptr_t gameBase);
+unsigned Samelevel_LoadSeq();               // save loads seen so far (any thread; ++ at every load, full or same-level)
 void Samelevel_Command(const char* args);   // "samelevel [load]"

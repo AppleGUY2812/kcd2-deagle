@@ -15,6 +15,7 @@
 #include "MinHook.h"
 #include "log.h"
 #include "hitch.h"
+#include "keepload.h"
 #include "readiness.h"
 #include "scan.h"
 
@@ -113,6 +114,8 @@ void DumpHolders(void* a, const char* when) {
 	Log("%s", line);
 }
 char g_fPrevState = 0;
+bool g_fadeChain = true;   // fastload_fadechain.txt 0 = off (each fader step waits a frame, as the game does)
+int g_chainLogs = 0;
 int g_holderLogs = 0;
 void __fastcall HkfUpd(void* a) {
 	const char st = *(char*)((char*)a + 0x38);
@@ -124,6 +127,21 @@ void __fastcall HkfUpd(void* a) {
 	if (st == 2) g_fBlackFrames++;
 	if (g_menuWinT0 && (Now() - g_menuWinT0 > 3000 || Readiness_LevelState() != 0)) { Hitch_MenuWindow(false); g_menuWinT0 = 0; }
 	o_fUpd(a);
+	// fadechain: the fader (FUN_18085d9d8) makes one state change per call, one call a frame: fade out -> black (the
+	// menu build) -> fade in -> done. With the duration at 0 (our cvars) each step still waited a whole frame: ~40 ms
+	// out + ~38 ms in per inventory open (DeepSeek's report, 2026-10-29). For a 0 s fade in play the steps now run
+	// back to back in this call, as far as the game lets them (state 2 -> 3 still waits until the menu is ready).
+	if (g_fadeChain && Readiness_LevelState() == 0) {
+		for (int i = 0; i < 4; i++) {
+			const char now = *(char*)((char*)a + 0x38);
+			if (now == 0 || g_fDur >= 0.01f) break;
+			o_fUpd(a);
+			const char next = *(char*)((char*)a + 0x38);
+			if (next == now) break;
+			if (next == 2) g_fBlackFrames++;
+			if (g_chainLogs < 20) { g_chainLogs++; Log("menutime: fadechain: fader state %d -> %d in the same frame", now, next); }
+		}
+	}
 }
 void __fastcall HkfEnd(void* a) {
 	o_fEnd(a);
@@ -146,7 +164,8 @@ void __fastcall HkFader(void* a) {
 TIMED1(setup, kSetup)
 TIMED1(mapFill, kMapFill)
 TIMED1(setItems, kSetItems)
-TIMED3(mapL, kMapL)
+bool g_mapHooked = false;
+void __fastcall HkmapL(void* a, void* b, uint64_t c) { Keepload_MapScreen(a, (uint64_t)b, (uint8_t)c); double t = Now(); o_mapL(a, b, c); if (g_open) Add(kMapL, t); }
 TIMED3(invL, kInvL)
 TIMED3(char, kChar)
 
@@ -302,6 +321,9 @@ void Menutime_Install(uintptr_t base, HMODULE self) {
 		std::string wf = file.substr(0, file.find_last_of('\\') + 1) + "fastload_menuwin.txt";
 		if (FILE* fp = fopen(wf.c_str(), "r")) { int m = 0; if (fscanf(fp, "%d", &m) == 1 && m == 1) g_menuWinOn = true; fclose(fp); }
 		Log("menutime: 1 ms sampling of menu opens %s (fastload_menuwin.txt 1 = on; it slows the open it measures)", g_menuWinOn ? "ON" : "off");
+		std::string cf = file.substr(0, file.find_last_of('\\') + 1) + "fastload_fadechain.txt";
+		if (FILE* fp = fopen(cf.c_str(), "r")) { int m = 1; if (fscanf(fp, "%d", &m) == 1 && m == 0) g_fadeChain = false; fclose(fp); }
+		Log("menutime: fadechain %s (a 0 s fade's steps in one frame, no frame of fade out / in; fastload_fadechain.txt 0 = off)", g_fadeChain ? "on" : "off");
 	}
 	for (const Hook& h : hooks)
 		if (memcmp((void*)(base + h.rva), h.bytes, sizeof h.bytes)) {
@@ -310,7 +332,12 @@ void Menutime_Install(uintptr_t base, HMODULE self) {
 		}
 	int ok = 0;
 	for (const Hook& h : hooks)
-		if (MH_CreateHook((void*)(base + h.rva), h.hk, h.orig) == MH_OK && MH_EnableHook((void*)(base + h.rva)) == MH_OK) ok++;
+		if (MH_CreateHook((void*)(base + h.rva), h.hk, h.orig) == MH_OK && MH_EnableHook((void*)(base + h.rva)) == MH_OK) {
+			ok++;
+			if (h.rva == 0x562300) g_mapHooked = true;
+		}
 	Log("menutime: %d of %d hooks on (each inventory / map open logs its steps; 0 in fastload_menutime.txt = off)", ok,
 	    (int)(sizeof hooks / sizeof hooks[0]));
 }
+
+bool Menutime_HooksMapHandler() { return g_mapHooked; }

@@ -29,6 +29,7 @@ Fn8 g_origLoad = nullptr, g_origSame = nullptr, g_origMgr = nullptr;
 std::atomic<uint64_t> g_mgr{0};
 std::atomic<uint32_t> g_user{0}, g_save{0};
 std::atomic<bool> g_pending{false};
+std::atomic<unsigned> g_loadSeq{0};
 thread_local int t_depth = 0;
 thread_local bool t_same = false;
 long long g_replayAt = 0;
@@ -37,6 +38,7 @@ inline long long Now() { LARGE_INTEGER t; QueryPerformanceCounter(&t); return t.
 inline double Ms(long long t) { return (double)t * 1000.0 / g_freq; }
 
 uint64_t __fastcall HkLoad(ARGS8) {   // a = the manager, b = user, c = save
+	g_loadSeq++;
 	const uintptr_t from = (uintptr_t)_ReturnAddress() - g_base;
 	g_mgr = a; g_user = (uint32_t)b; g_save = (uint32_t)c;
 	const bool outer = t_depth++ == 0;
@@ -90,6 +92,8 @@ void Samelevel_Install(uintptr_t base) {
 	       Hook(kRvaLevelMgr, kLevelMgrBytes, sizeof kLevelMgrBytes, (void*)&HkMgr, (void**)&g_origMgr, "level manager");
 	Log("samelevel: %s", g_on ? "save loads logged (`samelevel load` replays the last one)" : "OFF");
 }
+
+unsigned Samelevel_LoadSeq() { return g_loadSeq.load(); }
 
 void Samelevel_Command(const char* args) {
 	if (!g_on) { Log("samelevel: off (hooks not set)"); return; }

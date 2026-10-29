@@ -274,15 +274,19 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
   `menutime: open #N:` with the time of each step (fader, setup, map fill, SetItems, calls to Flash, GFx advance).
   Calls into the menu scripts over 3 ms are logged by name (`menutime:   call <name> <ms>`).
 - `keepload <mask>`: which menu screens stay loaded after the menu closes (the game unloads them all; the next open
-  rebuilds the screen). `64` (default) = the map; `4` inventory, `16` character; add them up; `0` = the game's choice.
-  The installed value is `84` (all three, in `fastload_keepload.txt`). Opening a screen in another mode (trade, loot,
-  pickpocket) still reloads it. The quest log's item events from the game's AI thread run on the main thread.
-  After a fast travel the map reloads once, at the first map close 10 s or more after the trip (never the close that
-  ends the trip: that one left the screen black for good, 2026-10-28).
+  rebuilds the screen). `64` = the map, `16` character (default `80` = map + character); `4` inventory is banned; add
+  them up; `0` = the game's choice. The installed value is in `fastload_keepload.txt`. Opening a screen in another mode
+  (trade, loot, pickpocket) still reloads it. The quest log's item events from the game's AI thread run on the main
+  thread. A kept map is rebuilt after a save load (full or same-level) or a fast travel: at the next open or tab switch
+  the map handler runs the game's own unload, so that open loads and fills it as unmodded (never at the close that ends
+  a trip: that one left the screen black for good, 2026-10-28).
 - `fastload_mvpause.txt` `0`: hidden menu screens advance every frame as the game does. Default on: a kept screen's
   movie (`Apse*.gfx`) that isn't drawn skips its update until it is drawn again (not for 2 s after a menu opens).
 - `fastload_menuwin.txt` `1`: samples each menu open every 1 ms (`hitch: #N menu-open window`). Off by default: it
   makes the open it measures ~2.7x slower.
+- `fastload_fadechain.txt` `0`: each menu fade step waits a frame, as the game does. Default on: a 0 s fade (our fade
+  cvars) runs fade out, the menu build and fade in within one frame (saves ~40 ms out + ~38 ms in per open; log line
+  `menutime: fadechain: fader state A -> B in the same frame`). Not during level loads.
 - The map movie `Libs/UI/ApseMap.gfx` (built by `tools/ui/mapfast/build.sh`): its marker search tree sorts with the
   engine's native sort instead of a script compare.
 - `krender 1|0` (sent by the Deagle scripts, not by hand): the gun mirror plugin (KCD2 Render) runs only with the
