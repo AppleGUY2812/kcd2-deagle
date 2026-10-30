@@ -104,3 +104,17 @@
   and save rollback. Do not settle on the supplied listener probe; do not retain item pointers or modify an open inventory.
 - [U] Review minors deferred: failed keeper-WUID/instance-token reads can print `0x0` rather than U; deserialization permits
   multi-unit rows despite the generating API's per-unit format. Neither is used for live mutation in phase 1.
+
+## Round 3 — blocked investigation (2026-10-30; phase 2 NOT implemented)
+- [V] Runtime evidence supplied by the user: `merchant/work/phase1_ingame.log:15-19` records shop 520, purse 3780 -> 8307, mixed directions and club buyback; this is not a native commit-result specification.
+- [U] New SSH/qk queries and the requested Linux g++ test command were rejected before execution (`permission.rejected: shell`); no new decompilation or test output was obtained in Round 3.
+| Step A | Evidence retained / remaining unknown |
+|---|---|
+| 1 Commit | [V] Prior checkout/payment evidence: `0x1808d5150`, `0x181951800`, `0x18197b1fc` (above). [U] Exact success result/layout and cancellation gate. |
+| 2 Time | [U] Native accessor, signature and units behind `Calendar.GetWorldTime`; Round 1's Lua claim does not establish a native read path. |
+| 3 Keeper | [V] WUID stored at shop+0x188 by `0x180c406d8`; local soul lookup lead `0x181f985d0(*(u64*)(G+0x80)+0x38,&wuid)`, G=`*(u64*)0x1853322a0` (`docs/whgame_re/stat_base.md:23-29`), name at soul+0x360 (`native/src/stormmemo.cpp:251-252,289`). [U] This keeper's resolution, localized name, soul -> entity/position and 300m roster. |
+| 4 Category | [V] item+0x48 -> definition, getters `0x182abc25c`/`0x180469510` (above). [U] Table-type accessor; a class-name guess is not verification. |
+| 5 Coins | [V] Purse getter `0x1808c57ac`; Round 1 identifies binding `0x182efe260`. [U] Safe native credit callee, arguments, units and pre-open mutation contract. |
+| 6 Remove | [V] Instance token observed at item+0x30 (`0x1808d5150`, above). [U] Token lookup/remove, stack splitting, missing-instance outcome; never reuse retained item pointers. |
+| 7 Saves | [V] Local instrumentation names load candidates `0x1825bdc7c`/`0x1825bda54` (`native/src/samelevel.cpp:14-24,40-61`). [U] Stable identity on save AND load, exact signatures, completion/failure; no safe sidecar key. |
+- [I] Safest fallback for all seven gaps: retain logging-only phase 1, no ledger integration or game writes; do not substitute wall time, global state, newest-save selection or unverified native calls. Resume Step A when execution permissions are available.
