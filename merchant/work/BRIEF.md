@@ -96,3 +96,52 @@ phase 1 = logging only, commands) and `mod.manifest` modeled on `dice/mod.manife
 - Commit only your paths on this branch (git add <paths>; git commit), no push, no merge. Trailer:
   `Co-Authored-By: GPT-6.1 Sol (opencode) <noreply@openai.com>`.
 - `work/REPORT2.md` <= 40 lines: test output numbers, each native answer with V/I/U, commit hash, what you skipped.
+
+# ROUND 3: phase 2, the real resale (decided by Claude + the user; follow it)
+
+## Phase 1 result (in game 2026-10-30, `merchant/work/phase1_ingame.log`)
+All hooks fired. Shop open (C_Shop 0x180c406d8, before original): shop_dbid 520, keeper WUID, purse_deci 3780.
+Checkout: one basket mixed buy (8 repair kits) + sell (training club); direction per item right; purse at the next open
+= 3780 + 4527 = 8307, so purse reads and deci units are right. Buyback of the club logged as direction=buy.
+Still U: merchant name, entity id, position, item category, commit_success.
+
+## Goal
+Merchants resell what the player sold them (docs/merchant_resale_design.md rules 1-6, numbers in merchant_logic.h),
+settled when the player opens that merchant's shop, before the UI fills.
+
+## Step A: research (Ghidra, read-only) -> append to docs/merchant_resale_native.md, [V]/[I]/[U] per claim
+1. Commit: how to know a checkout committed (not cancelled): return value of 0x1808d5150, or basket/purse after the
+   original returns. Record only committed rows.
+2. Game time in days (world time, the one Calendar.GetWorldTime uses), readable from native.
+3. Merchant: keeper WUID -> entity (id, name, world position). Position decides the market (merchants within 300 m).
+4. Item category: from the item class (its table type: MeleeWeapon/MissileWeapon -> weapon, Armor -> armor,
+   Food -> food, Herb/Alchemy/Potion -> alchemy, else misc). Find where the class row/type is reachable from the item.
+5. Add coins to a shop purse natively, before the UI opens: the game's own path (Shops.DoMoneyTransaction 0x182efe260
+   and what it calls, or the money item create). Exact function, args, units, and that it is safe before 0x180c406d8.
+6. Remove one resold item (by the instance token logged in phase 1) from the shop inventory natively, the game's own
+   remove function; what happens if the item is gone already (bought back, vanilla destock).
+7. Save/load: a hook point that gives the save's identity (file name or id) on save and on load, so state is kept
+   per save in a sidecar file `merchant_state/<save id>.txt` next to the plugin (merchant_logic.h already serialises).
+Any item you cannot verify: say so, then pick the safest fallback and mark it [I].
+
+## Step B: implement in native/src/merchant_main.cpp (+ merchant_logic.h if needed)
+- Committed sells -> ledger rows + demand drop; buyback (direction=buy of a ledger instance) removes the row.
+- Shop open, before the original: settle that merchant (rows past their ETA: remove the item, add coins at base value,
+  purse cap 10x preset; weekly-reset bonus rule 4), log one line per settled row and the purse before/after.
+- `merchant_resale 1` default ON, `0` = phase-1 behaviour (logging only); setting saved in merchant_settings.txt.
+- `merchant_status`: last opened merchant: purse, bonus, ledger rows with ETA in days, market demand per category.
+- Every game write behind SEH and a per-call sanity check; one failure = log it, stop writing for the session.
+- Hooks stay gated on the existing fingerprint check.
+
+## Step C: checks
+- Extend native/test/merchant_logic_test.cpp for anything new in merchant_logic.h; compile and run it with g++
+  (as round 2 did) and paste the output. Claude builds the plugin on Windows; you cannot.
+
+## Rules (unchanged from round 2, plus)
+- Never run powershell.exe, cmd.exe or any Windows program; never touch the game folder; install or download nothing.
+- Do not edit opencode.json. nice -n 19 for anything heavy. WSL has ~5.9 GB RAM: no whole-DLL scans locally,
+  grep the decompile on the ProLiant.
+- Commit only your own paths on branch merchant-research, no push/merge. Trailer:
+  `Co-Authored-By: GPT-6.1 Sol (opencode) <noreply@openai.com>`.
+- `merchant/work/REPORT3.md` (<= 60 lines): step A answers with addresses, what changed, test output, commit hashes,
+  what is unverified and what the user must test in game.
