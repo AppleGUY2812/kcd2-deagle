@@ -145,3 +145,9 @@ Any item you cannot verify: say so, then pick the safest fallback and mark it [I
   `Co-Authored-By: GPT-6.1 Sol (opencode) <noreply@openai.com>`.
 - `merchant/work/REPORT3.md` (<= 60 lines): step A answers with addresses, what changed, test output, commit hashes,
   what is unverified and what the user must test in game.
+
+## ROUND 3 resume note (Claude, 16:40)
+The allow-list is fixed: `ssh -i /home/johnpork/.ssh/proliant_key ...` and `~/...` forms both work now.
+Tests: compile to `./build_test/merchant_logic_test` (`mkdir -p build_test` first) and run it as its OWN command
+(`nice -n 19 ./build_test/merchant_logic_test`), not chained with `&&`, and never from /tmp. Add build_test/ to
+nothing (it is ignored by you: do not commit it). Now do Step A, B and C for real; replace REPORT3.md.
