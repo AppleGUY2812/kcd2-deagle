@@ -137,6 +137,7 @@ Deagle.cfg = {
 	-- for its first update to see it (plugin flashseed; 0 = off). Under test: the flash showed one game frame late
 	flashSeed = 0,
 	bullet = 0.25,            -- Z (deagle_bullet): game speed while bullet time is on (0.05-1), for learning combos
+	bulletMax = 6,            -- held bullet time ends by itself after this many real seconds (a lost key release; 0 = no limit)
 	bulletToggle = false,     -- true: Z toggles bullet time; false: it lasts while Z is held
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F2 / mouse 4 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off

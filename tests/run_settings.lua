@@ -142,6 +142,13 @@ check(string.format("bullet time: hold x%s, release x%s; over F9 x%s then x%s; s
 	tostring(b1), tostring(b2), tostring(b3), tostring(b4), tostring(b5), tostring(b6), tostring(b7), tostring(M.cvars.t_Scale)),
 	b1 == 0.25 and b2 == 1 and b3 == 0.1 and b4 == 0.1 and b5 == 1 and b6 == 0.25 and b7 == 1 and M.cvars.t_Scale == 1
 	and not Deagle.bulletOn, b1)
+-- a held bullet time whose release never arrives ends by itself after bulletMax seconds
+M.console("deagle_set", "bulletToggle 0")
+Deagle:OnAction("deagle_bullet", "press", 1)
+local held = M.cvars.t_Scale
+M.advance(7)
+check(string.format("bullet time ends by itself without a release: x%s while held, x%s after 7 s", tostring(held), tostring(M.cvars.t_Scale)),
+	held == 0.25 and M.cvars.t_Scale == 1 and not Deagle.bulletOn, M.cvars.t_Scale)
 M.console("deagle_reset")
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))

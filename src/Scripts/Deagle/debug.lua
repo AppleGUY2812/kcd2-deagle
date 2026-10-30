@@ -36,6 +36,19 @@ function Deagle:Bullet(down)
 	pcall(System.SetCVar, "t_Scale", self:GameSpeed())
 	self:Native(string.format("speed %.3f", self:GameSpeed()))
 	log("bullet time " .. (self.bulletOn and ("x" .. tostring(self:GameSpeed())) or "off"))
+	-- the release of the key didn't always arrive (2026-10-29: stuck in slow motion): held bullet time ends by itself
+	-- after bulletMax seconds of real time (the timer runs on game time, so scaled by the speed)
+	self.bulletTok = (self.bulletTok or 0) + 1
+	local max = tonumber(self.cfg.bulletMax) or 0
+	if self.bulletOn and not self.cfg.bulletToggle and max > 0 then
+		local tok = self.bulletTok
+		Script.SetTimer(math.max(50, max * 1000 * self:GameSpeed()), function()
+			if Deagle.bulletTok == tok and Deagle.bulletOn and not Deagle.cfg.bulletToggle then
+				log("bullet time: ended after " .. max .. " s (no key release arrived)")
+				Deagle:Bullet(false)
+			end
+		end)
+	end
 end
 
 function Deagle:BulletCmd(arg)
