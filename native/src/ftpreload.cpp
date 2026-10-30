@@ -57,6 +57,12 @@ struct State { bool valid; uint8_t active, active2; float dest[3]; size_t route;
 State g_was{};
 DWORD g_lastAdd = 0, g_walkStart = 0;
 int g_adds = 0;
+// Walk speed (user 2026-10-30: the map marker seemed much faster in Trosky than in Kuttenberg): the route's next point
+// steps along as the walk eats the route, so the sum of its steps is the distance walked; frames counted beside it
+// tell a speed in metres a second from one in metres a frame (tied to the frame rate).
+int g_walkFrames = 0;
+double g_walkDist = 0;
+float g_walkLast[3] = {};
 
 // "ftinstant S" (fastload_ftinstant.txt; 0 = off, the default): S seconds after the arrival wait starts, the
 // "AfterFastTravel" observer (ft+0x110: +0x18 mask 0x3f91, +0x20 expiry, +0x68 armed) is let in through the game's own
@@ -351,9 +357,23 @@ void Ftpre_Frame() {
 		Log("ftpre: travelling %d/%d (was %d/%d) dest %.1f %.1f %.1f route %zu points, last %.1f %.1f %.1f%s",
 			s.active, s.active2, g_was.active, g_was.active2, s.dest[0], s.dest[1], s.dest[2], s.route,
 			s.last[0], s.last[1], s.last[2], walking && !wasWalking ? "  << walk starts" : "");
-		if (walking && !wasWalking) { g_walkStart = now; g_adds = 0; g_lastAdd = 0; g_tripSeq++; }
-		if (!walking && wasWalking)
-			Log("ftpre: walk ended after %.1f s, %d precache requests", (now - g_walkStart) / 1000.0, g_adds);
+		if (walking && !wasWalking) {
+			g_walkStart = now; g_adds = 0; g_lastAdd = 0; g_tripSeq++;
+			g_walkFrames = 0; g_walkDist = 0; memcpy(g_walkLast, s.last, sizeof g_walkLast);
+		}
+		if (!walking && wasWalking) {
+			const double sec = (now - g_walkStart) / 1000.0;
+			Log("ftpre: walk ended after %.1f s, %d precache requests", sec, g_adds);
+			if (g_walkFrames > 0 && sec > 0)
+				Log("ftpre: walk speed: %.0f m of route in %.1f s = %.0f m/s; %d frames (%.0f fps) = %.2f m a frame",
+				    g_walkDist, sec, g_walkDist / sec, g_walkFrames, g_walkFrames / sec, g_walkDist / g_walkFrames);
+		}
+	}
+	if (s.active && wasWalking && s.route) {
+		g_walkFrames++;
+		const float dx = s.last[0] - g_walkLast[0], dy = s.last[1] - g_walkLast[1], dz = s.last[2] - g_walkLast[2];
+		g_walkDist += sqrt((double)dx * dx + (double)dy * dy + (double)dz * dz);
+		memcpy(g_walkLast, s.last, sizeof g_walkLast);
 	}
 	g_was = s;
 	if (s.active || s.active2) g_tripBusyAt = now;
