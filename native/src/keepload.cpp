@@ -14,7 +14,11 @@
 // those from the AI thread are replayed on the main thread (Drain). 2026-10-30 14:26 a replayed event found the
 // inventory changed and the game crashed on the next inventory open. So the default is 16 (character only) until the
 // kept map stops listening in play.
-// "keepload <mask>" (fastload_keepload.txt): 64 = map, 16 = character (default 16); 0 = the game's choice.
+// 2026-10-30 14:26 / 14:41 / 15:59 the game crashed three times opening the inventory, all in the character screen's
+// rebuild: UnloadChar (the game's own unload branch, run at an open after a save load) reached the quest log's item
+// handler and a memmove with a negative count. (14:26 was first blamed on the quest-log replay: wrong, the stack was
+// misread.) Default 0, and at 0 nothing here is hooked.
+// "keepload <mask>" (fastload_keepload.txt): 64 = map, 16 = character (default 0); 0 = the game's choice.
 // Screens: 1, 2 inventory, 4 character, 6 map, 7.
 #include <windows.h>
 #include <cstdio>
@@ -36,7 +40,8 @@ constexpr uintptr_t kRva = 0x56259c;
 constexpr uint8_t kBytes[] = { 0x8b, 0x05, 0x82, 0x05, 0x08, 0x05, 0x85, 0xc0, 0x74, 0x3c, 0x84, 0xd2, 0x74, 0x51 };
 typedef uint64_t(__fastcall* UnloadFn)(void* panel, char next, uint8_t own);
 UnloadFn o_unload = nullptr;
-unsigned g_mask = 1u << 4;   // character only: a kept map makes the quest log hear play (the 14:26 crash, see the header)
+unsigned g_mask = 0;   // off: the character screen's rebuild crashed the game three times (2026-10-30, see the header)
+bool g_live = false;   // hooks installed (only when the file asks for a screen at start)
 unsigned g_allowed = (1u << 6) | (1u << 4);   // only screens with a rebuild can be kept (Keepload_Install clears a failed one)
 std::string g_file;
 unsigned g_kept = 0, g_passed = 0;
@@ -122,9 +127,11 @@ void Fresh(Screen& sc, void* panel, uint64_t prev, uint8_t next, bool canUnload,
 }   // namespace
 
 void Keepload_MapScreen(void* panel, uint64_t prev, uint8_t next) {
+	if (!g_live) return;
 	Fresh(g_map, panel, prev, next, ((g_mask >> 6) & 1) && g_unloadPart, &UnloadMap);
 }
 void Keepload_CharScreen(void* panel, uint64_t prev, uint8_t next) {
+	if (!g_live) return;
 	Fresh(g_char, panel, prev, next, ((g_mask >> 4) & 1) && g_charU3, &UnloadChar);
 }
 
@@ -312,6 +319,11 @@ void Keepload_Install(uintptr_t base, HMODULE self) {
 		fclose(fp);
 	}
 	g_mask &= g_allowed;
+	if (!g_mask) {   // nothing to keep: no hooks at all, the menus and the quest log run unmodded
+		Log("keepload: off (fastload_keepload.txt 0 or missing): no hooks installed; a nonzero mask takes effect at the next start");
+		return;
+	}
+	g_live = true;
 	void* p = (void*)(base + kRva);
 	if (memcmp(p, kBytes, sizeof kBytes)) { Log("keepload: code check failed - not installed (other game version?)"); return; }
 	const bool h = MH_CreateHook(p, (void*)&HkUnload, (void**)&o_unload) == MH_OK && MH_EnableHook(p) == MH_OK;
@@ -364,6 +376,7 @@ void Keepload_Install(uintptr_t base, HMODULE self) {
 void Keepload_Command(const char* args) {
 	unsigned m;
 	if (args && sscanf_s(args, "%u", &m) == 1) {
+		if (!g_live && m) Log("keepload: the hooks aren't installed this run: %u takes effect at the next start", m);
 		if (m & ~g_allowed) Log("keepload: %u asks for screens whose rebuild isn't installed: those stay off", m & ~g_allowed);
 		g_mask = m & g_allowed;
 		if (FILE* fp = fopen(g_file.c_str(), "w")) { fprintf(fp, "%u\n", m); fclose(fp); }

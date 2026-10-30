@@ -282,7 +282,7 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
   `menutime: open #N:` with the time of each step (fader, setup, map fill, SetItems, calls to Flash, GFx advance).
   Calls into the menu scripts over 3 ms are logged by name (`menutime:   call <name> <ms>`).
 - `keepload <mask>`: which menu screens stay loaded after the menu closes (the game unloads them all; the next open
-  rebuilds the screen). `64` = the map, `16` character (default `16`: a kept map crashed the game 2026-10-30 14:26, see below); only those two can be kept; `0` = the
+  rebuilds the screen). `64` = the map, `16` character (default `0`, nothing hooked: the character screen's rebuild crashed the game three times on 2026-10-30, 14:26 / 14:41 / 15:59, each when the inventory opened after a save load); only those two can be kept; `0` = the
   game's choice. Since 2026-10-30 (rule 2) a kept screen is rebuilt at its next open whenever the world changed after it
   was built: any save load (full or same-level, a death's reload too), fast travel or level change (a region trip); with
   nothing changed it opens as it is. Rule 1 missed level changes (the map came back black, then crashed, after a
