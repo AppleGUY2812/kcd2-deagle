@@ -65,7 +65,9 @@ CRecallocFn o_recalloc = nullptr;
 // Thread exit: this module's TLS callbacks run in their section order, ours (.CRT$XLC) before mimalloc's detach
 // (.CRT$XLY), which deletes the thread's heaps. A later allocation on this thread (another module's thread-exit code)
 // must not use the deleted heap.
+volatile LONG g_tlsSeen = 0;   // TLS callbacks run so far: 0 at install = this load path skips them (see Fastalloc_Install)
 void NTAPI TlsCallback(PVOID, DWORD reason, PVOID) {
+	InterlockedIncrement(&g_tlsSeen);
 	if (reason == DLL_THREAD_DETACH) { t_heap = nullptr; t_heapC = nullptr; t_done = true; }
 }
 
@@ -272,6 +274,13 @@ void Fastalloc_Install(uintptr_t base, void* self) {
 	}
 	if (mode != 1 && mode != 2) { Log("fastalloc: off (fastload_fastalloc.txt: 1 = the game's small blocks from mimalloc, 2 = also the C runtime heap)"); return; }
 	const bool started = *(volatile unsigned char*)(base + 0x549d370) != 0;   // CryMalloc's first-use flag
+	// mimalloc starts itself from a TLS callback at our DLL's attach. Loaded by Ultimate ASI Loader as version.dll (before
+	// WHGame.dll, 2026-10-30) that never ran: the first heap call seeded its random state inside the read-only empty heap
+	// and crashed every launch (fastload.asi+e6047, write to .rdata). Start it here; a second call does nothing.
+	// With no TLS callbacks at all, thread exits don't hand their pages back either (mimalloc's detach is one too).
+	Log("fastalloc: TLS callbacks seen before install: %ld%s", (long)g_tlsSeen,
+	    g_tlsSeen ? "" : " (none: this load path skips them; mimalloc started by hand, exited threads keep their pages)");
+	mi_process_init();
 	mi_option_set(mi_option_purge_delay, purgeMs);   // -1: freed pages stay committed and are reused (no re-fault bursts)
 	// Commit per page as used. mimalloc's default commits each thread's second and later 32 MB segment whole: with ~77
 	// game threads that held ~1.4 GB more private memory at the level load's start (boot 146: 7788 MB, boot 145: 6347).
