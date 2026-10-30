@@ -43,7 +43,7 @@ rc-model)
 	for n in $nodes; do [ -s "$GL/build/model/$n" ] || { echo "rc left no $n" >&2; exit 1; }; done
 	echo "rc-model: $(echo "$nodes" | wc -w) files" ;;
 repatch)
-	tar -C "$GL" -cf - build/model/*.chr build/caf | R "mkdir -p $W/$slug && tar -C $W/$slug -xf -"
+	(cd "$GL" && tar -cf - build/model/*.chr build/caf) | R "mkdir -p $W/$slug && tar -C $W/$slug -xf -"
 	R "cd $W/$slug && HENRYVM_BODY=$W/henry_body $BL -P $W/repo/tools/armswap/animation_repatch.py -- $W/$slug 2>&1" \
 		| grep -E 'HENRY ANIM|Traceback|Error' | tee /dev/stderr | grep -q "HENRY ANIMATION REPACHED"
 	R "cd $W/$slug && tar -cf - build/anims" | tar -C "$GL" -xf - ;;
