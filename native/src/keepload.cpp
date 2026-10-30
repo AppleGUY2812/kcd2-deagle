@@ -10,7 +10,11 @@
 // is loaded but was built before the latest save load, fast travel or LoadLevel, the next open or tab switch (never the
 // close) first runs that screen's own unload branch, and the handler then loads and fills it like the unmodded game.
 // Opened again with nothing changed, the kept screen opens as it is. The inventory (4) stays banned.
-// "keepload <mask>" (fastload_keepload.txt): 64 = map, 16 = character (default 80); 0 = the game's choice.
+// A kept map also keeps the quest log listening to item events in play (the game listens only while the map is loaded);
+// those from the AI thread are replayed on the main thread (Drain). 2026-10-30 14:26 a replayed event found the
+// inventory changed and the game crashed on the next inventory open. So the default is 16 (character only) until the
+// kept map stops listening in play.
+// "keepload <mask>" (fastload_keepload.txt): 64 = map, 16 = character (default 16); 0 = the game's choice.
 // Screens: 1, 2 inventory, 4 character, 6 map, 7.
 #include <windows.h>
 #include <cstdio>
@@ -32,7 +36,7 @@ constexpr uintptr_t kRva = 0x56259c;
 constexpr uint8_t kBytes[] = { 0x8b, 0x05, 0x82, 0x05, 0x08, 0x05, 0x85, 0xc0, 0x74, 0x3c, 0x84, 0xd2, 0x74, 0x51 };
 typedef uint64_t(__fastcall* UnloadFn)(void* panel, char next, uint8_t own);
 UnloadFn o_unload = nullptr;
-unsigned g_mask = (1u << 6) | (1u << 4);   // map + character; each rebuilt after any world change (see the header)
+unsigned g_mask = 1u << 4;   // character only: a kept map makes the quest log hear play (the 14:26 crash, see the header)
 unsigned g_allowed = (1u << 6) | (1u << 4);   // only screens with a rebuild can be kept (Keepload_Install clears a failed one)
 std::string g_file;
 unsigned g_kept = 0, g_passed = 0;
@@ -244,17 +248,25 @@ bool Defer(int kind, uintptr_t ql, int type, uintptr_t item, uintptr_t inv) {
 	return true;
 }
 
+// Only for a kept map (the reason the quest log hears play at all). Map not kept: the game's own call, as unmodded.
+// 2026-10-30 14:26 an event queued here and replayed on the main thread later found the inventory changed and the game
+// crashed (a memmove with a negative count, opening the inventory).
+inline bool Deferring() { return (g_mask >> 6) & 1; }
+
 void __fastcall HkItemEv(uintptr_t ql, int type, uintptr_t item, uintptr_t inv) {
+	if (!Deferring()) { o_itemEv(ql, type, item, inv); return; }   // anything still queued drains in Keepload_Frame
 	if (GetCurrentThreadId() == g_mainTid) { Drain(); o_itemEv(ql, type, item, inv); return; }
 	if (type != 2 && (type < 0 || type >= 5)) return;   // the game's function does nothing for these
 	if (!Defer(0, ql, type, type == 2 ? item : 0, inv)) o_itemEv(ql, type, item, inv);
 }
 void __fastcall HkInvLoad(uintptr_t ql, int type, uintptr_t inv) {
+	if (!Deferring()) { o_invLoad(ql, type, inv); return; }
 	if (GetCurrentThreadId() == g_mainTid) { Drain(); o_invLoad(ql, type, inv); return; }
 	if (type != 1) return;
 	if (!Defer(1, ql, type, 0, inv)) o_invLoad(ql, type, inv);
 }
 void __fastcall HkInvDrop(uintptr_t ql, int type, uintptr_t inv) {
+	if (!Deferring()) { o_invDrop(ql, type, inv); return; }
 	if (GetCurrentThreadId() == g_mainTid) { Drain(); o_invDrop(ql, type, inv); return; }
 	if ((type & ~3u) || type == 1) return;
 	if (!Defer(2, ql, type, 0, inv)) o_invDrop(ql, type, inv);
