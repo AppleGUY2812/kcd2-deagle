@@ -82,10 +82,11 @@ for act in SOURCE_ACTIONS:
     f0, f1 = int(act.frame_range[0]), int(act.frame_range[1])
     frames = list(range(f0, f1 + 1))
     arr = __import__("numpy").empty((len(frames), len(HENRY_BONES), 16), dtype="float32")
-    fore, elbow, tips = [], [], {}
+    fore, elbow, tips, clav = [], [], {}, []
     for i, f in enumerate(frames):
         scene.frame_set(f)
         fit.frame("full")
+        clav.extend(fit.clavicle_deviation().values())
         mw = h.matrix_world
         for bi, pb in enumerate(h.pose.bones):
             arr[i, bi] = to_np(mw @ pb.matrix)
@@ -105,12 +106,13 @@ for act in SOURCE_ACTIONS:
         "fore_mean": sum(fore) / len(fore), "fore_max": max(fore),
         "elbow_mean": sum(elbow) / len(elbow), "elbow_max": max(elbow),
         "tip_mean": max(tip_means.values()), "tip_joint": max(tip_means, key=tip_means.get),
-        "tip_max": tip_max,
+        "tip_max": tip_max, "clav_mean": sum(clav) / max(len(clav), 1), "clav_max": max(clav, default=0.0),
     }
-    print("HENRYVM fit %-28s f %d-%d forearm %.2f/%.2f deg elbow %.2f/%.2f cm worst fingertip %s %.2f/%.2f cm" % (
+    print("HENRYVM fit %-28s f %d-%d forearm %.2f/%.2f deg elbow %.2f/%.2f cm worst fingertip %s %.2f/%.2f cm clavicle %.1f/%.1f deg" % (
         act.name, f0, f1, diags[act.name]["fore_mean"], diags[act.name]["fore_max"],
         diags[act.name]["elbow_mean"], diags[act.name]["elbow_max"],
-        diags[act.name]["tip_joint"], diags[act.name]["tip_mean"], diags[act.name]["tip_max"]), flush=True)
+        diags[act.name]["tip_joint"], diags[act.name]["tip_mean"], diags[act.name]["tip_max"],
+        diags[act.name]["clav_mean"], diags[act.name]["clav_max"]), flush=True)
 
 # --- 5. merge the armatures (fail loudly on a name collision) ----------------
 collisions = sorted(set(ron.data.bones.keys()) & set(h.data.bones.keys()))

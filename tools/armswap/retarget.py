@@ -4,7 +4,7 @@
 # Fit, per side: copy rotations (gives every bone its twist) -> aim the clavicle at the source shoulder -> 2-bone IK
 # with the elbow bent toward the source elbow and the palm centre on the source palm centre (Henry's hand is smaller:
 # pinning the wrist alone leaves the knuckles short) -> hand rotation -> aim each finger bone at the source's next joint.
-from mathutils import Matrix, Vector
+from mathutils import Euler, Matrix, Vector
 import math
 
 def _fingers(fmt, names, ext):
@@ -70,6 +70,35 @@ class Fit:
 
     # --- positions / rotations ---
     def upd(self): self.bpy.context.view_layer.update()
+    clav = {}   # last clavicle swing per side, degrees (a real shrug is 10-20; the old fit needed ~44)
+
+    def body_pose(self, shoulder, mid_h, mid_s):
+        """Place Henry's torso (turn + shift) so his collarbones barely have to move: the source arms (no torso, camera
+        close) imply shoulder positions that a fixed upright body only reaches by wrenching the collarbones."""
+        J = {H: self.hp(H + "Shoulder", True) for H, _ in self.sides}
+        A = {H: self.hp(H + "Arm", True) for H, _ in self.sides}
+        def cost(p):
+            R = Euler([math.radians(v) for v in p[:3]], "XYZ").to_matrix()
+            t = Vector(p[3:])
+            c = 0.0
+            for H, _ in self.sides:
+                j = mid_s + t + R @ (J[H] - mid_h)
+                c += math.degrees((R @ (A[H] - J[H])).angle(shoulder[H] - j))
+            return c + 0.05 * sum(abs(v) for v in p[:3]) + 20.0 * t.length
+        p, best = [0.0] * 6, None
+        best = cost(p)
+        for step in (1.0, 0.5, 0.25, 0.125, 0.0625, 0.03, 0.015):
+            moved = True
+            while moved:
+                moved = False
+                for i in range(6):
+                    st = step * 16 if i < 3 else step * 0.04     # degrees for the turn, metres for the shift
+                    for d in (st, -st):
+                        q = list(p); q[i] = max(-70.0, min(70.0, q[i] + d)) if i < 3 else max(-0.2, min(0.2, q[i] + d))
+                        c = cost(q)
+                        if c < best - 1e-9: p, best, moved = q, c, True
+        return Euler([math.radians(v) for v in p[:3]], "XYZ").to_matrix(), Vector(p[3:])
+
     def sp(self, j, rest=False):
         if isinstance(j, tuple):
             a, b = self.sp(j[1], rest), self.sp(j[2], rest); return a + (a - b) * EXT
@@ -126,6 +155,9 @@ class Fit:
                 shoulder[H] = self.sp(m["Arm"])
         mid_s = sum(shoulder.values(), Vector()) / 2
         h.matrix_world = Matrix.Translation(mid_s - mid_h) @ self.G; self.upd()
+        if mode == "full" and not __import__("os").environ.get("HENRYVM_NO_BODYFIT"):
+            Rb, tb = self.body_pose(shoulder, mid_h, mid_s)
+            h.matrix_world = Matrix.Translation(mid_s + tb) @ Rb.to_4x4() @ Matrix.Translation(-mid_h) @ self.G; self.upd()
         for H, m in self.sides:
             for ch in CHAINS:
                 for b, c in zip(ch, ch[1:]): self.copy_rot(H, m, b, c)
@@ -144,6 +176,15 @@ class Fit:
                 for b, c in zip(ch, ch[1:]):
                     self.copy_rot(H, m, b, c)
                     if mode == "full": self.aim(H, m, b, c)
+
+    def clavicle_deviation(self):
+        """Degrees each collarbone ends up turned away from its rest direction (within the torso's own placement)."""
+        out = {}
+        for H, _ in self.sides:
+            rest = self.hp(H + "Arm", True) - self.hp(H + "Shoulder", True)
+            pose = self.hp(H + "Arm") - self.hp(H + "Shoulder")
+            out[H] = math.degrees(rest.angle(pose))
+        return out
 
     def directions(self):
         """degrees between Henry's and the source's upper arm / forearm, both sides (what shows on screen)."""
