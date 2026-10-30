@@ -30,6 +30,7 @@ ps "Copy-Item '$(win "$here/guns/$slug.json")' '$G\\profile.json' -Force; Remove
 if [ "${GB_REMOTE:-}" = 1 ]; then   # Blender on the ProLiant (no game load on this PC); rc stays here
 	"$here/tools/gb/gb_remote.sh" "$slug" push
 	"$here/tools/gb/gb_remote.sh" "$slug" build
+	game_wait   # the compile (rc) is CPU work on this PC: not while KCD2 runs
 	"$here/tools/gb/gb_remote.sh" "$slug" rc-model
 else
 out="$(blend "$here/tools/gb/gb_build.py" "'$G' '$G\\profile.json' '$RC'" 'NOTE|GB BUILD DONE|Traceback|Error')"
@@ -38,6 +39,7 @@ out="$(blend "$here/tools/gb/gb_build.py" "'$G' '$G\\profile.json' '$RC'" 'NOTE|
 fi
 
 echo "== compile clips"
+game_wait
 cafs="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(win "$here/tools/gb/gb_anims.ps1")" -Gun "$G" -Slug "$slug" | tr -d '\r' | grep '^CAF:' || true)"
 n="$(grep -o '\.caf' <<<"$cafs" | wc -l)"
 ps "Copy-Item '$G\\build.json' '$(win "$tmp")\\build.json' -Force"
