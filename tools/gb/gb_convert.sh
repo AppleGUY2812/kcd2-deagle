@@ -53,6 +53,7 @@ if python3 -I -c 'import json,sys; sys.exit(not json.load(open(sys.argv[1])).get
 		echo "$out"
 		grep -q "HENRY ANIMATION REPACHED" <<<"$out" || { echo "animation repatch failed" >&2; exit 1; }
 	fi
+	game_wait
 	cafs="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(win "$here/tools/gb/gb_anims.ps1")" -Gun "$G" -Slug "$slug" | tr -d '\r' | grep '^CAF:' || true)"
 	n="$(grep -o '\.caf' <<<"$cafs" | wc -l)"
 	echo "$n of $want repatched clips"
