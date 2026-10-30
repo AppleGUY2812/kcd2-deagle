@@ -101,3 +101,12 @@ place at a time; at the arrival a loaded graph is used, an in-flight one is wait
 INFERRED: the places land in the list when the stop puts the player at the destination, so the arrival wait (3.7-6.7
 s) is the window; if they only land in the frame the observer fires, loading ahead gains nothing (`ftplaces:` lines
 show it).
+
+## The walk (decoded 2026-10-30)
+The player module's update `FUN_180533478(this, dt)` calls the fast-travel tick `FUN_181186f44(mgr, dt)`, which runs
+the walk step `FUN_182de3148(mgr, dt)` each frame while +0x48 is set: `step = dt * speed`, where speed (+0x50) is the
+rider's movement speed from the movement table (`FUN_182dde52c`: actor +0x668, gait from actor +0x7a0), and
+`+0x4c -= step` (+0x4c starts as the route length, `FUN_182dde2a4`). The route (+0x90/+0x98) is eaten from the back.
+So the marker's speed = speed * (game time per real second). `ftpre: walk speed (game's counter)` logs the speed, the
+game time each frame used (step / speed) and the real frame time, per trip (2adac7b): user 2026-10-30, the marker ran
+much faster in Trosky (581 m straight line in 3.7 s) than in Kuttenberg (450 m in 11.7 s, 1.3 km in 14.0 s on 10-23).
