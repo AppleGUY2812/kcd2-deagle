@@ -1000,6 +1000,7 @@ end
 System.AddCCommand("deagle_respec", "local a = Deagle.Arg([[%line]]); System.LogAlways('[Deagle] points: asked the plugin to reset ' .. a .. (Deagle.native and '' or ' (not linked: no answer will come)')); Deagle:PointsNative('respec ' .. a)", "deagle_respec <skill>: that skill's perks come off and their points come back (e.g. deagle_respec alchemy)")
 System.AddCCommand("deagle_respec_remove", "Deagle:RespecRemove([[%line]])", "internal: the plugin's list of perks for deagle_respec to remove")
 System.AddCCommand("deagle_clicklog", "Deagle:ClickLogCmd(Deagle.Arg([[%1]]))", "deagle_clicklog [on|off|report]: log every left click and the player animation state (for combos where a click does nothing); lines start with [clicklog] in kcd.log")
+System.AddCCommand("deagle_timecheck", "Deagle:TimeCheck()", "deagle_timecheck: measures the real game speed for 3 s (1.00 = normal) and what could be slowing it; run it when the game feels slow")
 System.AddCCommand("deagle_bullet", "Deagle:BulletCmd(Deagle.Arg([[%1]]))", "deagle_bullet [on|off|speed]: bullet time (all NPCs and you slow down; Z holds it, deagle_set bulletToggle 1 makes Z a toggle); a speed 0.05-1 is kept")
 System.AddCCommand("deagle_slowmo", "Deagle:SlowMoCmd(Deagle.Arg([[%1]]))", "deagle_slowmo [speed|off]: slow motion at that game speed (0.01-1, kept: F9 uses it too); no value = on / off like F9")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")

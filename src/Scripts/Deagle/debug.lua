@@ -855,3 +855,20 @@ function Deagle:ClickLogCmd(arg)
 		log("usage: deagle_clicklog [on|off|report]")
 	end
 end
+
+-- deagle_timecheck: is the game really running at normal speed? Measures the game clock against the engine's real
+-- clock for 3 s and logs the ratio with every setting that can slow it (2026-10-29: "not normal speed" while t_Scale
+-- read 1: the cause was not found; this is the tool to catch it the next time). 1.00 = normal, 0.25 = a quarter.
+function Deagle:TimeCheck()
+	local g0, a0 = System.GetCurrTime(), System.GetCurrAsyncTime()
+	local function cv(n) local ok, v = pcall(System.GetCVar, n) return ok and tostring(v) or "n/a" end
+	log(string.format("[timecheck] measuring 3 s: t_Scale %s, slowOn %s (x%s), bulletOn %s, t_MaxStep %s, t_FixedStep %s",
+		cv("t_Scale"), tostring(self.slowOn), tostring(self.cfg.slowmo), tostring(self.bulletOn), cv("t_MaxStep"), cv("t_FixedStep")))
+	-- the timer runs on game time: a slowed game takes longer, which is the point; the async clock tells the real time
+	Script.SetTimer(3000 * math.max(0.05, tonumber(System.GetCVar("t_Scale")) or 1), function()
+		local g, a = System.GetCurrTime() - g0, System.GetCurrAsyncTime() - a0
+		local ratio = g / math.max(1e-6, a)
+		log(string.format("[timecheck] game %.2f s in %.2f s real: x%.3f (t_Scale now %s)", g, a, ratio, cv("t_Scale")))
+		pcall(function() self:Notify(string.format("game speed x%.2f (t_Scale %s)", ratio, cv("t_Scale"))) end)
+	end)
+end
