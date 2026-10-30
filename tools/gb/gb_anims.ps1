@@ -26,6 +26,18 @@ if ($sl -notmatch "name=`"$alias`"") {
   $sl = $sl -replace '</SkeletonList>', "  <Skeleton name=`"$alias`" file=`"$rel`" />`r`n</SkeletonList>"
   Set-Content "$AR\Animations\SkeletonList.xml" $sl -Encoding ascii
 }
+# Guns that carry Henry's body skins (profile "bodySkins") keep every Henry track nearly lossless: rc's default
+# compression drops near-static tracks and the game then uses the .chr default, which moves the arms. One entry per
+# such gun, kept across builds of other guns.
+$presetFile = "$AR\Animations\CompressionPresets.json"
+$entries = @(); if (Test-Path $presetFile) { $entries = @((Get-Content $presetFile -Raw | ConvertFrom-Json).entries) }
+$entries = @($entries | Where-Object { $_.condition.pathContains.path -ne "Animations/guns/$name" })
+$prof = Get-Content "$Gun\profile.json" -Raw | ConvertFrom-Json
+if ($prof.bodySkins) {
+  $entries += [pscustomobject]@{ name = "body skins $Slug"; condition = @{ pathContains = @{ path = "Animations/guns/$name" } };
+    settings = @{ compressionValue = 0; compressionValueByContext = @(); positionEpsilon = 0.001; rotationEpsilon = 0.00001; perJointSettings = @{} } }
+}
+Set-Content $presetFile (@{ entries = @($entries) } | ConvertTo-Json -Depth 8 -Compress) -Encoding ascii
 $ad = "$AR\Animations\guns\$name"
 Remove-Item -Recurse -Force $ad -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $ad | Out-Null
 Get-ChildItem "$Gun\build\anims\*.dae" | % {

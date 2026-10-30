@@ -38,6 +38,16 @@ ps "Copy-Item '$G\\build.json' '$(win "$tmp")\\build.json' -Force"
 want="$(python3 -I -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["clips"]))' "$tmp/build.json")"
 echo "$n of $want clips"
 [ "$n" = "$want" ] || { echo "rc failed on some clips (see KCD2Mod/Tools/rc/rc_log_errors.log)" >&2; exit 1; }
+if python3 -I -c 'import json,sys; sys.exit(not json.load(open(sys.argv[1])).get("bodySkins"))' "$here/guns/$slug.json"; then
+	echo "== calibrate Henry against compiled gun tracks"
+	out="$(blend "$here/tools/armswap/animation_repatch.py" "'$G'" 'HENRY ANIM|Traceback|Error')"
+	echo "$out"
+	grep -q "HENRY ANIMATION REPACHED" <<<"$out" || { echo "animation repatch failed" >&2; exit 1; }
+	cafs="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(win "$here/tools/gb/gb_anims.ps1")" -Gun "$G" -Slug "$slug" | tr -d '\r' | grep '^CAF:' || true)"
+	n="$(grep -o '\.caf' <<<"$cafs" | wc -l)"
+	echo "$n of $want repatched clips"
+	[ "$n" = "$want" ] || { echo "rc failed on repatched clips" >&2; exit 1; }
+fi
 
 echo "== clip timings (cancel / mag seated / ready / settled, from the clip tracks)"
 out="$(ps "(Get-Process -Id \$PID).PriorityClass = 'Idle'; & '$BLENDER' -b '$G\\${slug}_vm_roles.blend' -t 3 -P '$(win "$here/tools/gb/gb_tracks_dump.py")' -- '$G\\tracks.json' '$G\\profile.json' 2>&1 | Select-String 'DUMP DONE|Traceback|Error' | % Line; exit 0")"
