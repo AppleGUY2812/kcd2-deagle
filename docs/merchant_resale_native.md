@@ -85,6 +85,12 @@
 
 ## Implementation choices and remaining checks
 
+- [V] Known-build gate before ANY hook: PE timestamp `0x6a350e20`, machine `0x8664`, 7 sections, SizeOfCode `0x03a01e00`,
+  SizeOfImage `0x05b2d000`, entry RVA `0x01c1fe0c` (`qk data 0x1800001c0/0x180000200`).
+- [V] CodeView directory: debug RVA `0x04099930` (`PE+0x278`), RSDS record RVA `0x047af510`, GUID
+  `db30851b-bffe-461c-97b6-3848a30e9325`, age 3 (`qk data 0x184099930/0x1847af510`). Missing/mismatched identity fails closed.
+- [V] Offline gate regression: matching prologues + wrong fingerprint -> `0` installation callbacks; `9` mismatches rejected;
+  known-build fixture permits `4` hook-installation attempts. This is metadata identity plus prologue checks, not cryptographic attestation.
 - [I] Pure model uses absolute game days, per-unit rows for stacks, pre-sale demand for ETA, stable item-ID/ordinal RNG,
   fixed roster single-link 300m markets, demand recovery at query, and close/open observations for restock bonus.
 - [I] Rule 4's mismatch heuristic cannot distinguish theft from restock; preserve it as specified, with explicit intervening-trade flag.
@@ -96,3 +102,5 @@
 - [V] Broad `qk sym` scans delayed other queries (20/30/60s timeouts); a background scan finished; targeted queries then resumed.
 - [I] Before enabling mutations: prove real checkout outcome, reconcile stock against destock/theft/buybacks, verify entity mapping
   and save rollback. Do not settle on the supplied listener probe; do not retain item pointers or modify an open inventory.
+- [U] Review minors deferred: failed keeper-WUID/instance-token reads can print `0x0` rather than U; deserialization permits
+  multi-unit rows despite the generating API's per-unit format. Neither is used for live mutation in phase 1.

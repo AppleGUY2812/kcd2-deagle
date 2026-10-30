@@ -6,7 +6,9 @@ tested model for a later integration; the plugin does not include it.
 
 ## What it observes
 
-For WHGame.dll **1.5.6**, `merchant.asi` checks function prologues before installing:
+For WHGame.dll **1.5.6**, `merchant.asi` first matches PE metadata and the CodeView PDB
+GUID/age against the researched build, then checks function prologues. Missing or mismatched
+build identity installs **zero hooks**, including the Lua channel (stripped metadata also fails closed):
 
 - Checkout `0x1808d5150`: one line per attempt, with final net price, shop/keeper identity
   when its concrete type matches, and each item's class name, GUID, count, base price,
@@ -18,6 +20,8 @@ For WHGame.dll **1.5.6**, `merchant.asi` checks function prologues before instal
 
 `U` means unavailable, **not zero**. Merchant display names, 32-bit entity IDs, positions,
 and native categories are unresolved. A keeper WUID is not a verified 32-bit entity ID.
+Known deferred logging caveat: failed keeper-WUID/instance-token reads can still print
+`0x0` instead of U; do not interpret those two zero tokens as proven IDs.
 Unexpected shop types produce U instead of unsafe casts. Each pointer read and game
 query is SEH-guarded; a failed observation never prevents the original call.
 
@@ -55,6 +59,7 @@ From the repository root, Linux only:
 ```sh
 nice -n 19 g++ -std=c++17 -O2 -Wall -I native/src native/test/merchant_logic_test.cpp -o /tmp/mlt && /tmp/mlt
 luajit merchant/tests/commands_test.lua
+nice -n 19 g++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic merchant/tests/build_guard_test.cpp -o /tmp/opencode/merchant_build_guard_test && /tmp/opencode/merchant_build_guard_test
 ```
 
 The model uses Groschen and absolute **game days** (native logged money is deciGroschen).
@@ -64,6 +69,8 @@ Stacks become per-unit ledger rows, each using pre-sale demand and stable item-I
 spread. Serialize/Deserialize produces one versioned string; no game persistence is wired.
 Settlement returns due rows and gross earned coin; integration must reconcile actual stock,
 then use the separate capped wealth helper. It must not blindly delete items by stale IDs.
+Deferred format hardening: Deserialize accepts multi-unit rows, although AddSale generates
+per-unit rows; only consume the model's own serialized state until that invariant is tightened.
 
 ## Later manual validation (only after the game is closed, build/install by its owner)
 

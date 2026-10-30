@@ -10,6 +10,7 @@
 #include "log.h"
 #include "scan.h"
 #include "settings.h"
+#include "../../merchant/native/build_guard.h"
 
 // WHGame.dll 1.5.6 only. All addresses/field provenance and the supplied open-hook
 // correction are in docs/merchant_resale_native.md. NO merchant_logic.h integration:
@@ -36,6 +37,39 @@ bool g_moneyReady = false;
 template<class T> bool Read(uintptr_t at, T& out) {
 	__try { out = *(const T*)at; return true; }
 	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool ReadFingerprint(merchantresale::BuildFingerprint& out) {
+	__try {
+		if (g_game.size < sizeof(IMAGE_DOS_HEADER)) return false;
+		const auto* dos = (const IMAGE_DOS_HEADER*)g_game.base;
+		if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew < 0 ||
+		    (size_t)dos->e_lfanew > g_game.size || sizeof(IMAGE_NT_HEADERS64) > g_game.size - dos->e_lfanew) return false;
+		const auto* nt = (const IMAGE_NT_HEADERS64*)(g_game.base + dos->e_lfanew);
+		if (nt->Signature != IMAGE_NT_SIGNATURE || nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC ||
+		    nt->FileHeader.SizeOfOptionalHeader < sizeof(IMAGE_OPTIONAL_HEADER64) ||
+		    nt->OptionalHeader.NumberOfRvaAndSizes <= IMAGE_DIRECTORY_ENTRY_DEBUG ||
+		    nt->OptionalHeader.SizeOfImage != g_game.size) return false;
+		out.machine = nt->FileHeader.Machine; out.sections = nt->FileHeader.NumberOfSections;
+		out.timestamp = nt->FileHeader.TimeDateStamp; out.codeSize = nt->OptionalHeader.SizeOfCode;
+		out.imageSize = nt->OptionalHeader.SizeOfImage; out.entryPoint = nt->OptionalHeader.AddressOfEntryPoint;
+		const auto debug = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG];
+		if (!debug.VirtualAddress || !debug.Size || debug.Size % sizeof(IMAGE_DEBUG_DIRECTORY) ||
+		    debug.Size / sizeof(IMAGE_DEBUG_DIRECTORY) > 64 || debug.VirtualAddress > g_game.size ||
+		    debug.Size > g_game.size - debug.VirtualAddress) return false;
+		const auto* entries = (const IMAGE_DEBUG_DIRECTORY*)(g_game.base + debug.VirtualAddress);
+		for (size_t i = 0; i < debug.Size / sizeof(IMAGE_DEBUG_DIRECTORY); ++i) {
+			if (entries[i].Type != IMAGE_DEBUG_TYPE_CODEVIEW) continue;
+			const auto rva = entries[i].AddressOfRawData;
+			if (!rva || rva > g_game.size || entries[i].SizeOfData < 24 ||
+			    entries[i].SizeOfData > g_game.size - rva) return false;
+			const auto address = g_game.base + rva;
+			if (*(const std::uint32_t*)address != 0x53445352) return false; // RSDS
+			memcpy(out.pdbGuid.data(), (const void*)(address + 4), out.pdbGuid.size());
+			out.pdbAge = *(const std::uint32_t*)(address + 20);
+			return true;
+		}
+		return false;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool Match(uintptr_t rva, const unsigned char* bytes, size_t size) {
 	if (rva > g_game.size || size > g_game.size - rva) return false;
@@ -231,13 +265,8 @@ bool Install(uintptr_t rva, const unsigned char* bytes, size_t size, void* hook,
 	if (enable != MH_OK) { MH_RemoveHook(target); Log("hook enable failed: %d", (int)enable); return false; }
 	return true;
 }
-DWORD WINAPI Init(LPVOID) {
-	Log("Merchant Resale phase 1 (WHGame 1.5.6): logging ONLY; supplied open address is a probe, corrected C_Shop entry also observed");
-	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); ++i) Sleep(100);
-	g_game = GetModule("WHGame.dll");
-	if (!g_game.base) { Log("WHGame.dll not found; nothing hooked"); return 0; }
-	for (const auto& saved : SettingsReplay()) Command(saved.c_str(), false);
-	if (MH_Initialize() != MH_OK) { Log("MinHook init failed; nothing hooked"); return 0; }
+void InstallObservedHooks() {
+	if (MH_Initialize() != MH_OK) { Log("MinHook init failed; nothing hooked"); return; }
 	g_moneyReady = Match(kMoney, kMoneyBytes, sizeof kMoneyBytes);
 	g_checkoutHook.store(Install(kCheckout, kCheckoutBytes, sizeof kCheckoutBytes, (void*)&HkCheckout, (void**)&g_origCheckout));
 	g_probeHook.store(Install(kSuppliedOpen, kSuppliedBytes, sizeof kSuppliedBytes, (void*)&HkSupplied, (void**)&g_origSupplied));
@@ -249,6 +278,18 @@ DWORD WINAPI Init(LPVOID) {
 	if (get && log && MH_CreateHook((void*)log, (void*)&HkLog, (void**)&g_origLog) == MH_OK &&
 	    MH_EnableHook((void*)log) == MH_OK) Log("Lua command channel installed (replies in merchant.log)");
 	else Log("Lua command channel unavailable; startup settings and default logging still apply");
+	Status();
+}
+DWORD WINAPI Init(LPVOID) {
+	Log("Merchant Resale phase 1 (WHGame 1.5.6): logging ONLY; supplied open address is a probe, corrected C_Shop entry also observed");
+	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); ++i) Sleep(100);
+	g_game = GetModule("WHGame.dll");
+	if (!g_game.base) { Log("WHGame.dll not found; nothing hooked"); return 0; }
+	for (const auto& saved : SettingsReplay()) Command(saved.c_str(), false);
+	merchantresale::BuildFingerprint fingerprint;
+	// No game getter, pattern scan, MinHook initialization, or hook installation before this gate.
+	if (!ReadFingerprint(fingerprint) || !merchantresale::ForKnownBuild(fingerprint, InstallObservedHooks))
+		Log("WHGame build fingerprint missing/mismatched; ZERO hooks installed (including Lua channel)");
 	Status();
 	return 0;
 }
