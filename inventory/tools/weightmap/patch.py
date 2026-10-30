@@ -61,11 +61,11 @@ for old, new in edits:
     text = text.replace(old, new)
 
 # both screens get the search bar (search.as): the inventory / shop list and the chest screen's two lists
-extra = "\n" + (here / "search.as").read_text(encoding="utf-8")
+extra = "\n" + (here / "search.as").read_text(encoding="utf-8") + "\n" + (here / "dict.as").read_text(encoding="utf-8")
 text += ("\n" + (here / "common.as").read_text(encoding="utf-8") + "\n" + (here / "total.as").read_text(encoding="utf-8")
          + "\n" + (here / "fast.as").read_text(encoding="utf-8") + extra + "\n"
          + (here / f"{kind}.as").read_text(encoding="utf-8")
-         + "\nWM_Setup();\nSB_Setup();\n")
+         + "\nDX_Install();\nWM_Setup();\nSB_Setup();\n")
 dst.parent.mkdir(parents=True, exist_ok=True)
 dst.write_text(text, encoding="utf-8")
 print(f"patched {kind}: {len(edits)} edits -> {dst}")
