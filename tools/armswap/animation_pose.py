@@ -28,7 +28,7 @@ def transform_animation_matrix(matrix):
 
 
 def patch(dae_path, arm, action, chr_path, anchor_caf=None):
-    check_binds.GAME_BODY = r'E:\Tools\deagle-work\henry\Objects\characters\humans\male\body'
+    check_binds.GAME_BODY = os.environ.get('HENRYVM_BODY') or r'E:\Tools\deagle-work\henry\Objects\characters\humans\male\body'
     henry = set(check_binds.game_binds())
     bones = check_caf.chr_bones(open(chr_path, 'rb').read())
     by_name = {b['name']: i for i, b in enumerate(bones)}

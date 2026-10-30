@@ -531,7 +531,8 @@ out_model, out_anims = os.path.join(GUN, "build", "model"), os.path.join(GUN, "b
 os.makedirs(out_model, exist_ok=True); os.makedirs(out_anims, exist_ok=True)
 arm.animation_data.action = A["@idle"]; scene.frame_set(rng(A["@idle"])[0])
 bpy.ops.bcry.export_to_game("EXEC_DEFAULT", filepath=os.path.join(out_model, f"{NAME}.dae"), apply_modifiers=False,
-                            generate_materials=False, convert_textures=False, save_dae=True, disable_rc=False)
+                            generate_materials=False, convert_textures=False, save_dae=True,
+                            disable_rc=bool(os.environ.get("GB_NO_RC")))   # GB_NO_RC=1: DAE only (no rc.exe, e.g. on the ProLiant)
 print("MODEL EXPORTED", sorted(os.listdir(out_model)))
 # The exported skeleton DAE carries the names rc compiles into the .chr; check those too (the .chr is still being
 # written by rc when export_to_game returns).
@@ -572,5 +573,6 @@ for act in sorted(roles(), key=lambda a: a.name):
         bpy.ops.bcry.export_animations("EXEC_DEFAULT", filepath=os.path.join(out_anims, f"{clip}_add.dae"), disable_rc=True, save_dae=True)
         info["clips"][act.name[1:] + "_add"] = {"name": clip + "_add", "frames": f1 - f0 + 1, "fps": fps}
         print("ANIM", clip + "_add", f0, f1, fps)
+info["exportNodes"] = [g.name for g in bpy.data.collections if g.name.endswith((".chr", ".skin"))]   # for the rc second pass
 json.dump(info, open(os.path.join(GUN, "build.json"), "w"), indent=1)
 print("GB BUILD DONE")

@@ -27,9 +27,15 @@ mkdir -p "$odir" "$adir" "$sdir" "$here/assets/build/gun_imgs"
 
 echo "== build (Blender)"
 ps "Copy-Item '$(win "$here/guns/$slug.json")' '$G\\profile.json' -Force; Remove-Item -Recurse -Force '$G\\build' -ErrorAction SilentlyContinue"
+if [ "${GB_REMOTE:-}" = 1 ]; then   # Blender on the ProLiant (no game load on this PC); rc stays here
+	"$here/tools/gb/gb_remote.sh" "$slug" push
+	"$here/tools/gb/gb_remote.sh" "$slug" build
+	"$here/tools/gb/gb_remote.sh" "$slug" rc-model
+else
 out="$(blend "$here/tools/gb/gb_build.py" "'$G' '$G\\profile.json' '$RC'" 'NOTE|GB BUILD DONE|Traceback|Error')"
-echo "$out" | grep -v "restored zeroed" || true
-grep -q "GB BUILD DONE" <<<"$out" || { echo "build failed" >&2; exit 1; }
+	echo "$out" | grep -v "restored zeroed" || true
+	grep -q "GB BUILD DONE" <<<"$out" || { echo "build failed" >&2; exit 1; }
+fi
 
 echo "== compile clips"
 cafs="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(win "$here/tools/gb/gb_anims.ps1")" -Gun "$G" -Slug "$slug" | tr -d '\r' | grep '^CAF:' || true)"
@@ -40,9 +46,11 @@ echo "$n of $want clips"
 [ "$n" = "$want" ] || { echo "rc failed on some clips (see KCD2Mod/Tools/rc/rc_log_errors.log)" >&2; exit 1; }
 if python3 -I -c 'import json,sys; sys.exit(not json.load(open(sys.argv[1])).get("bodySkins"))' "$here/guns/$slug.json"; then
 	echo "== calibrate Henry against compiled gun tracks"
-	out="$(blend "$here/tools/armswap/animation_repatch.py" "'$G'" 'HENRY ANIM|Traceback|Error')"
-	echo "$out"
-	grep -q "HENRY ANIMATION REPACHED" <<<"$out" || { echo "animation repatch failed" >&2; exit 1; }
+	if [ "${GB_REMOTE:-}" = 1 ]; then "$here/tools/gb/gb_remote.sh" "$slug" repatch; else
+		out="$(blend "$here/tools/armswap/animation_repatch.py" "'$G'" 'HENRY ANIM|Traceback|Error')"
+		echo "$out"
+		grep -q "HENRY ANIMATION REPACHED" <<<"$out" || { echo "animation repatch failed" >&2; exit 1; }
+	fi
 	cafs="$(powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$(win "$here/tools/gb/gb_anims.ps1")" -Gun "$G" -Slug "$slug" | tr -d '\r' | grep '^CAF:' || true)"
 	n="$(grep -o '\.caf' <<<"$cafs" | wc -l)"
 	echo "$n of $want repatched clips"
@@ -50,8 +58,10 @@ if python3 -I -c 'import json,sys; sys.exit(not json.load(open(sys.argv[1])).get
 fi
 
 echo "== clip timings (cancel / mag seated / ready / settled, from the clip tracks)"
+if [ "${GB_REMOTE:-}" = 1 ]; then "$here/tools/gb/gb_remote.sh" "$slug" tracks; else
 out="$(ps "(Get-Process -Id \$PID).PriorityClass = 'Idle'; & '$BLENDER' -b '$G\\${slug}_vm_roles.blend' -t 3 -P '$(win "$here/tools/gb/gb_tracks_dump.py")' -- '$G\\tracks.json' '$G\\profile.json' 2>&1 | Select-String 'DUMP DONE|Traceback|Error' | % Line; exit 0")"
 grep -q "DONE" <<<"$out" || { echo "tracks dump failed: $out" >&2; exit 1; }
+fi
 ps "Copy-Item '$G\\tracks.json' '$(win "$tmp")\\tracks.json' -Force"
 swap="$(python3 -I -c 'import json,sys; print(",".join(json.load(open(sys.argv[1])).get("timing", {}).get("swapTail", {})))' "$tmp/build.json")"
 python3 "$here/tools/clip_times.py" "$tmp/tracks.json" --profile "$here/guns/$slug.json" --swap "$swap" > "$tmp/times.json"
