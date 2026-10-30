@@ -2,15 +2,16 @@
 //
 // WHGame 1.5.6 FUN_18056259c(panel, next screen, own screen) decides, for every Apse panel listener, whether the panel's
 // Flash movie unloads (wh_ui_ApseUnloadMode, DAT_1855e2b24). Our hook answers "keep" for the screens in the mask when the
-// menu closes (next screen 0), so the next open skips the reload and the fill. A kept map can hold state from before a
-// save load or a fast travel: on 2026-10-29 01:03 a failed mission loaded a checkpoint through the same-level load
-// (samelevel.cpp) and the kept map came out stale and frozen. So the map's screen handler FUN_180562300 is also hooked:
-// after a save load or a finished fast travel it runs the game's own unload sequence at the next map screen change (an
-// open or tab switch, never the menu closing), and that open loads and fills the map like the unmodded game. The
-// inventory (4) stays banned. 2026-10-30: default 0: the kept character screen froze after a save load and the kept
-// map came back black and crashed the game after a level change (Kuttenberg -> Trosky, not a save load or fast
-// travel). "keepload <mask>" (fastload_keepload.txt): 64 = map, 16 = character; 0 = the
-// game's choice. Screens: 1, 2 inventory, 4 character, 6 map, 7.
+// menu closes (next screen 0), so the next open skips the reload and the fill.
+// A kept screen is only right for the world it was built in. Three ways it went stale in play: a checkpoint load
+// (2026-10-29 01:03: the map stale and frozen), a same-level save load after a skill change (2026-10-30 12:10: the
+// character screen frozen), a region trip Kuttenberg -> Trosky (2026-10-30 13:23: the map black with oversized icons,
+// then a crash). So each kept screen's handler (map FUN_180562300, character FUN_180561d68) is hooked: when the screen
+// is loaded but was built before the latest save load, fast travel or LoadLevel, the next open or tab switch (never the
+// close) first runs that screen's own unload branch, and the handler then loads and fills it like the unmodded game.
+// Opened again with nothing changed, the kept screen opens as it is. The inventory (4) stays banned.
+// "keepload <mask>" (fastload_keepload.txt): 64 = map, 16 = character (default 80); 0 = the game's choice.
+// Screens: 1, 2 inventory, 4 character, 6 map, 7.
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
@@ -21,6 +22,7 @@
 #include "ftpreload.h"
 #include "samelevel.h"
 #include "keepload.h"
+#include "levelprof.h"
 #include <atomic>
 #include <mutex>
 #include <vector>
@@ -30,7 +32,8 @@ constexpr uintptr_t kRva = 0x56259c;
 constexpr uint8_t kBytes[] = { 0x8b, 0x05, 0x82, 0x05, 0x08, 0x05, 0x85, 0xc0, 0x74, 0x3c, 0x84, 0xd2, 0x74, 0x51 };
 typedef uint64_t(__fastcall* UnloadFn)(void* panel, char next, uint8_t own);
 UnloadFn o_unload = nullptr;
-unsigned g_mask = 0;   // 2026-10-30: off by default: every kept screen broke in play (see the header)
+unsigned g_mask = (1u << 6) | (1u << 4);   // map + character; each rebuilt after any world change (see the header)
+unsigned g_allowed = (1u << 6) | (1u << 4);   // only screens with a rebuild can be kept (Keepload_Install clears a failed one)
 std::string g_file;
 unsigned g_kept = 0, g_passed = 0;
 
@@ -45,7 +48,6 @@ typedef void(__fastcall* MapHandlerFn)(void* panel, uint64_t prev, uint8_t next)
 MapHandlerFn o_mapHandler = nullptr;
 using UnloadPartFn = void(__fastcall*)(void*);
 UnloadPartFn g_unloadPart = nullptr;
-unsigned g_seenLoads = 0, g_seenTrips = 0;
 
 uint64_t __fastcall HkUnload(void* panel, char next, uint8_t own) {
 	uint64_t r = o_unload(panel, next, own);
@@ -61,42 +63,75 @@ uint64_t __fastcall HkUnload(void* panel, char next, uint8_t own) {
 	return r & ~(uint64_t)0xff;
 }
 
-// The map's screen handler: a save load or a fast travel made the kept movie stale. On an open or tab switch
-// (next != 0; never the close) run the game's own unload sequence, so the handler's not-loaded branch (called
-// after this hook returns) loads and fills it like the unmodded game.
+// The world a kept screen was built in: every save load (full or same-level), fast travel and level change (a region
+// trip: Kuttenberg -> Trosky on 2026-10-30 was none of the first two, and the kept map came back black, then crashed)
+// moves this on. Sum of counters that only grow, so any one moving changes it.
+unsigned World() { return Samelevel_LoadSeq() + Ftpre_TripSeq() + Levelprof_LoadSeq(); }
+
+// The character screen's handler FUN_180561d68 (C_UI character panel, screen 4): +0x521 = movie loaded; its unload
+// branch is FUN_182b00e5c(panel+0x460), FUN_1819b1e24(panel+0x4d0), FUN_1819ad114(panel), and the last clears +0x521.
+constexpr uintptr_t kRvaCharHandler = 0x561d68;
+constexpr uint8_t kCharHandlerBytes[] = { 0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x6c, 0x24, 0x10, 0x48, 0x89, 0x74, 0x24, 0x18, 0x57 };
+constexpr uintptr_t kRvaCharU1 = 0x2b00e5c, kRvaCharU2 = 0x19b1e24, kRvaCharU3 = 0x19ad114;
+constexpr uint8_t kCharU1Bytes[] = { 0x48, 0x83, 0xc1, 0x10, 0xe9 };
+constexpr uint8_t kCharU2Bytes[] = { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0x41, 0x08, 0x4c, 0x8d, 0x41, 0x10 };
+constexpr uint8_t kCharU3Bytes[] = { 0x40, 0x53, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xd9, 0x48, 0x83, 0xc1, 0x18, 0xe8 };
+UnloadPartFn g_charU1 = nullptr, g_charU2 = nullptr, g_charU3 = nullptr;
+MapHandlerFn o_charHandler = nullptr;
+
+struct Screen { const char* name; unsigned own; size_t loadedOff; unsigned built; };
+Screen g_map{ "map", 6, 0x748, 0 }, g_char{ "character screen", 4, 0x521, 0 };
+
+void UnloadMap(void* panel) {
+	g_unloadPart((char*)panel + 0x28);
+	void* movie = (char*)panel + 0x208;   // dis 180562355: LEA RCX,[RBX+0x208]; MOV RAX,[RCX]; CALL [RAX+0x78]
+	using VFn = void(__fastcall*)(void*);
+	(*(VFn*)(*(uintptr_t*)movie + 0x78))(movie);
+	*(uint8_t*)((char*)panel + 0x748) = 0;
+}
+void UnloadChar(void* panel) {
+	g_charU1((char*)panel + 0x460);
+	g_charU2((char*)panel + 0x4d0);
+	g_charU3(panel);   // clears +0x521
+}
+
+// Called first in the screen's handler. Not loaded: whatever loads now is built in today's world. Loaded and built in an
+// earlier world: on an open or tab switch (next != 0, never the close) run the game's own unload branch, so the
+// handler's not-loaded branch (after this returns) loads and fills it like the unmodded game. Loaded in this world:
+// nothing to do, the kept screen opens as it is.
+void Fresh(Screen& sc, void* panel, uint64_t prev, uint8_t next, bool canUnload, void (*unload)(void*)) {
+	const unsigned w = World();
+	__try {
+		const bool loaded = *(uint8_t*)((char*)panel + sc.loadedOff) != 0;
+		if (!loaded) { sc.built = w; return; }
+		if (sc.built == w) return;
+		if (next == 0 || !canUnload || Ftpre_TripQuietMs() < 2000) return;   // the close, or a trip still running: next time
+		unload(panel);
+		Log("keepload: %s rebuilt fresh (the world changed: save loads %u, trips %u, level loads %u), screen %u -> %u", sc.name,
+		    Samelevel_LoadSeq(), Ftpre_TripSeq(), Levelprof_LoadSeq(), (unsigned)prev, (unsigned)next);
+		sc.built = w;
+	} __except (1) {
+		Log("keepload: %s rebuild skipped (the panel read failed)", sc.name);
+		sc.built = w;
+	}
+}
 }   // namespace
 
 void Keepload_MapScreen(void* panel, uint64_t prev, uint8_t next) {
-	const unsigned loads = Samelevel_LoadSeq(), trips = Ftpre_TripSeq();
-	const bool byLoad = loads != g_seenLoads, byTrip = trips != g_seenTrips;
-	if (byLoad || byTrip) {
-		__try {
-			const bool loaded = *(uint8_t*)((char*)panel + 0x748) != 0;
-			if (loaded && ((g_mask >> 6) & 1) && next != 0 && Ftpre_TripQuietMs() >= 2000 && g_unloadPart) {
-				g_unloadPart((char*)panel + 0x28);
-				void* movie = (char*)panel + 0x208;   // dis 180562355: LEA RCX,[RBX+0x208]; MOV RAX,[RCX]; CALL [RAX+0x78]
-				using VFn = void(__fastcall*)(void*);
-				(*(VFn*)(*(uintptr_t*)movie + 0x78))(movie);
-				*(uint8_t*)((char*)panel + 0x748) = 0;
-				Log("keepload: map rebuilt fresh (%s), screen %u -> %u",
-				    byLoad && byTrip ? "after both" : byLoad ? "after a save load" : "after a fast travel",
-				    (unsigned)prev, (unsigned)next);
-				g_seenLoads = loads; g_seenTrips = trips;
-			} else if (!loaded) {   // already unloaded by the game: nothing to do
-				g_seenLoads = loads; g_seenTrips = trips;
-			}
-			// loaded but closing / trip still running / mask off: keep the stale flag for the next call
-		} __except (1) {
-			Log("keepload: map rebuild skipped (the panel read failed)");
-			g_seenLoads = loads; g_seenTrips = trips;
-		}
-	}
+	Fresh(g_map, panel, prev, next, ((g_mask >> 6) & 1) && g_unloadPart, &UnloadMap);
+}
+void Keepload_CharScreen(void* panel, uint64_t prev, uint8_t next) {
+	Fresh(g_char, panel, prev, next, ((g_mask >> 4) & 1) && g_charU3, &UnloadChar);
 }
 
 namespace {
 void __fastcall HkMapHandler(void* panel, uint64_t prev, uint8_t next) {
 	Keepload_MapScreen(panel, prev, next);
 	o_mapHandler(panel, prev, next);
+}
+void __fastcall HkCharHandler(void* panel, uint64_t prev, uint8_t next) {
+	Keepload_CharScreen(panel, prev, next);
+	o_charHandler(panel, prev, next);
 }
 // The map's quest-item tracker (vtable near 0x183ed8dd0: init FUN_18174e130, shutdown FUN_182afe83c, game events
 // FUN_18085e104) listens to item events of the inventories it tracks (FUN_181f46f40 adds FUN_180dc7068 to each item).
@@ -264,26 +299,48 @@ void Keepload_Install(uintptr_t base, HMODULE self) {
 		if (fscanf(fp, "%u", &m) == 1) g_mask = m;
 		fclose(fp);
 	}
+	g_mask &= g_allowed;
 	void* p = (void*)(base + kRva);
 	if (memcmp(p, kBytes, sizeof kBytes)) { Log("keepload: code check failed - not installed (other game version?)"); return; }
 	const bool h = MH_CreateHook(p, (void*)&HkUnload, (void**)&o_unload) == MH_OK && MH_EnableHook(p) == MH_OK;
 	Log("keepload: %s, mask %u (64 = map, 16 = character; 0 = the game's choice)", h ? "on" : "hook FAILED", g_mask);
-	void* mh = (void*)(base + kRvaMapHandler);
+	const bool levels = Levelprof_LoadLevelHooked();   // without it a region trip isn't seen: nothing is kept
+	g_map.built = g_char.built = World();
 	{
+		void* mh = (void*)(base + kRvaMapHandler);
 		const uint8_t* up = (const uint8_t*)(base + 0x5631b4);
 		if (up[0] == 0xCC || up[0] == 0x00) Log("keepload: map rebuild: unload function 5631b4 starts with %02x - not used", up[0]);
 		else g_unloadPart = (UnloadPartFn)(base + 0x5631b4);
-		g_seenLoads = Samelevel_LoadSeq();
-		g_seenTrips = Ftpre_TripSeq();
 		bool m = false;
 		const char* how = "";
 		if (Menutime_HooksMapHandler()) { m = true; how = " (through menutime's hook)"; }   // installed first; calls Keepload_MapScreen
 		else if (!memcmp(mh, kMapHandlerBytes, sizeof kMapHandlerBytes))
 			m = MH_CreateHook(mh, (void*)&HkMapHandler, (void**)&o_mapHandler) == MH_OK && MH_EnableHook(mh) == MH_OK;
 		else how = " (code check failed)";
-		if (!m || !g_unloadPart) { g_mask &= ~(1u << 6); }   // a kept map that can't be rebuilt goes stale: don't keep it
-		Log("keepload: map rebuild after save loads / fast travels %s%s%s", m ? "on" : "OFF", how,
-		    m && g_unloadPart ? "" : "; the map is not kept (mask bit 64 cleared)");
+		const bool ok = m && g_unloadPart && levels;
+		if (!ok) { g_mask &= ~(1u << 6); g_allowed &= ~(1u << 6); }   // a kept map that can't be rebuilt goes stale: don't keep it
+		Log("keepload: map rebuild after save loads / fast travels / level changes %s%s%s", m ? "on" : "OFF", how,
+		    ok ? "" : "; the map is not kept (mask bit 64 cleared)");
+	}
+	{
+		void* ch = (void*)(base + kRvaCharHandler);
+		if (!memcmp((void*)(base + kRvaCharU1), kCharU1Bytes, sizeof kCharU1Bytes) &&
+		    !memcmp((void*)(base + kRvaCharU2), kCharU2Bytes, sizeof kCharU2Bytes) &&
+		    !memcmp((void*)(base + kRvaCharU3), kCharU3Bytes, sizeof kCharU3Bytes)) {
+			g_charU1 = (UnloadPartFn)(base + kRvaCharU1);
+			g_charU2 = (UnloadPartFn)(base + kRvaCharU2);
+			g_charU3 = (UnloadPartFn)(base + kRvaCharU3);
+		}
+		bool c = false;
+		const char* how = "";
+		if (Menutime_HooksCharHandler()) { c = true; how = " (through menutime's hook)"; }
+		else if (!memcmp(ch, kCharHandlerBytes, sizeof kCharHandlerBytes))
+			c = MH_CreateHook(ch, (void*)&HkCharHandler, (void**)&o_charHandler) == MH_OK && MH_EnableHook(ch) == MH_OK;
+		else how = " (code check failed)";
+		const bool ok = c && g_charU3 && levels;
+		if (!ok) { g_mask &= ~(1u << 4); g_allowed &= ~(1u << 4); }
+		Log("keepload: character screen rebuild after save loads / fast travels / level changes %s%s%s", c ? "on" : "OFF", how,
+		    ok ? "" : "; the character screen is not kept (mask bit 16 cleared)");
 	}
 	void* u = (void*)(base + kRvaUntrack);
 	if (memcmp(u, kUntrackBytes, sizeof kUntrackBytes)) { Log("keepload: map quest tracker guard: code check failed - not installed"); return; }
@@ -295,7 +352,8 @@ void Keepload_Install(uintptr_t base, HMODULE self) {
 void Keepload_Command(const char* args) {
 	unsigned m;
 	if (args && sscanf_s(args, "%u", &m) == 1) {
-		g_mask = m;
+		if (m & ~g_allowed) Log("keepload: %u asks for screens whose rebuild isn't installed: those stay off", m & ~g_allowed);
+		g_mask = m & g_allowed;
 		if (FILE* fp = fopen(g_file.c_str(), "w")) { fprintf(fp, "%u\n", m); fclose(fp); }
 	}
 	Log("keepload: mask %u (64 = map, 16 = character, 4 = inventory; 0 = the game's choice)", g_mask);

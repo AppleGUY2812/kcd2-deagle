@@ -282,13 +282,15 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
   `menutime: open #N:` with the time of each step (fader, setup, map fill, SetItems, calls to Flash, GFx advance).
   Calls into the menu scripts over 3 ms are logged by name (`menutime:   call <name> <ms>`).
 - `keepload <mask>`: which menu screens stay loaded after the menu closes (the game unloads them all; the next open
-  rebuilds the screen). `64` = the map, `16` character; `4` inventory is banned; add them up; `0` = the game's choice,
-  the default and installed value since 2026-10-30 (the kept character screen froze after a save load; the kept map
-  came back black and crashed the game after a Kuttenberg -> Trosky trip). The installed value is in `fastload_keepload.txt`. Opening a screen in another mode
-  (trade, loot, pickpocket) still reloads it. The quest log's item events from the game's AI thread run on the main
-  thread. A kept map is rebuilt after a save load (full or same-level) or a fast travel: at the next open or tab switch
-  the map handler runs the game's own unload, so that open loads and fills it as unmodded (never at the close that ends
-  a trip: that one left the screen black for good, 2026-10-28).
+  rebuilds the screen). `64` = the map, `16` character (default `80` = both); only those two can be kept; `0` = the
+  game's choice. Since 2026-10-30 (rule 2) a kept screen is rebuilt at its next open whenever the world changed after it
+  was built: any save load (full or same-level, a death's reload too), fast travel or level change (a region trip); with
+  nothing changed it opens as it is. Rule 1 missed level changes (the map came back black, then crashed, after a
+  Kuttenberg -> Trosky trip) and had no rebuild for the character screen (frozen after a same-level save load). `keepload:
+  map rebuilt fresh` / `character screen rebuilt fresh` lines in the plugin log. The installed value is in
+  `fastload_keepload.txt`. Opening a screen in another mode (trade, loot, pickpocket) still reloads it. The quest log's
+  item events from the game's AI thread run on the main thread. The rebuild runs at an open or tab switch, never at the
+  close that ends a trip (that one left the screen black for good, 2026-10-28).
 - `fastload_mvpause.txt` `0`: hidden menu screens advance every frame as the game does. Default on: a kept screen's
   movie (`Apse*.gfx`) that isn't drawn skips its update until it is drawn again (not for 2 s after a menu opens).
 - `fastload_menuwin.txt` `1`: samples each menu open every 1 ms (`hitch: #N menu-open window`). Off by default: it

@@ -18,4 +18,7 @@ long long Levelprof_GameProfiles();
 // it ends (false when the LoadLevel hook is off). For physlock.
 unsigned long Levelprof_MainTid();
 bool Levelprof_InLoadLevel();
+// LoadLevel calls started so far (every level change: a region trip, a full save load); whether that hook is on.
+unsigned Levelprof_LoadSeq();
+bool Levelprof_LoadLevelHooked();
 bool Levelprof_SetEndCall(void (*f)());

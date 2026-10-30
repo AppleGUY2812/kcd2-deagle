@@ -167,7 +167,8 @@ TIMED1(setItems, kSetItems)
 bool g_mapHooked = false;
 void __fastcall HkmapL(void* a, void* b, uint64_t c) { Keepload_MapScreen(a, (uint64_t)b, (uint8_t)c); double t = Now(); o_mapL(a, b, c); if (g_open) Add(kMapL, t); }
 TIMED3(invL, kInvL)
-TIMED3(char, kChar)
+bool g_charHooked = false;
+void __fastcall Hkchar(void* a, void* b, uint64_t c) { Keepload_CharScreen(a, (uint64_t)b, (uint8_t)c); double t = Now(); o_char(a, b, c); if (g_open) Add(kChar, t); }
 
 // The function name: b is the CryString's text pointer (FUN_180565144 passes *name). Read under SEH.
 void CallName(void* b, char* out, size_t n) {
@@ -335,9 +336,11 @@ void Menutime_Install(uintptr_t base, HMODULE self) {
 		if (MH_CreateHook((void*)(base + h.rva), h.hk, h.orig) == MH_OK && MH_EnableHook((void*)(base + h.rva)) == MH_OK) {
 			ok++;
 			if (h.rva == 0x562300) g_mapHooked = true;
+			if (h.rva == 0x561d68) g_charHooked = true;
 		}
 	Log("menutime: %d of %d hooks on (each inventory / map open logs its steps; 0 in fastload_menutime.txt = off)", ok,
 	    (int)(sizeof hooks / sizeof hooks[0]));
 }
 
 bool Menutime_HooksMapHandler() { return g_mapHooked; }
+bool Menutime_HooksCharHandler() { return g_charHooked; }
