@@ -23,9 +23,11 @@ and with demand, so it feels like part of the game.
 4. **Wealth survives the weekly reset.** The merchant's earned money above preset is kept as a bonus B. When the
    vanilla restock has reset the purse (detected: purse at open != purse at last close, no sale in between), the mod adds
    B back. B never goes below 0; total purse capped at 10x preset (a fat Kuttenberg merchant, not a bank).
-5. **Lazy.** Nothing runs while the player is away. All settlement happens when the player opens that merchant's
-   shop, before the UI fills (`C_UIShop::Open`), so the list and purse the player sees are already settled.
-6. **Per save.** State lives in the save game, so loading an older save gives that save's ledger.
+5. **Lazy.** Nothing runs while the player is away. A shop settles when the player comes within 6 m of its keeper or
+   stash (Lua, 1 s timer; never while its shop screen is open), so the list and purse the player then sees are settled.
+   (Phase 2 change: settling inside `C_UIShop::Open` would have moved items from native code; Lua's inventory calls
+   are the game's own and were verified live.)
+6. **Per save.** State lives in `player.AI.MerchantResale`, which `Player:OnSaveAI` writes into every save.
 7. **No UI.** Console: `merchant_status` (nearest merchant: purse, bonus, ledger rows with ETA, market demand),
    `merchant_resale 0|1` (saved setting).
 
@@ -37,5 +39,6 @@ Still unverified: that 0x1808d5150 runs for every sell and buyback; that `Player
 ## Phases
 1. Read-only: hooks log every checkout (items, counts, prices, merchant) and every shop open (merchant, purse). The user
    sells and buys once; the log proves the hooks. No game state changed.
-2. Ledger + demand + settlement on open + save persistence.
+2. Ledger + demand + settlement on approach + save persistence (built 2026-10-30: plugin reports committed
+   checkouts through `MRN.pull()`, `merchant.lua` does the rest; see `merchant/README.md`).
 3. Tune numbers from play.

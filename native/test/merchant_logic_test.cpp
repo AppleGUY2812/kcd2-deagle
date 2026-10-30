@@ -127,4 +127,51 @@ int main() {
 	assert(rejected && Serialize(fresh) == untouched);
 	assert(DemandAt(flood, 1, Category::Armor, 0) == floor);
 	std::cout << "invalid_sales_rejected=2\nALL MERCHANT LOGIC TESTS PASS\n";
+
+	// A newly discovered bridging shop must not reset either market's depressed demand.
+	State discovered;
+	ObserveMerchant(discovered, {10, "west", {0, 0, 0}}, 0);
+	ObserveMerchant(discovered, {20, "east", {600, 0, 0}}, 0);
+	AddSale(discovered, 20, "plate", "east-plate", Category::Armor, 1, 3000, 1000, 0);
+	ObserveMerchant(discovered, {30, "bridge", {300, 0, 0}}, 4);
+	assert(discovered.markets.size() == 1 && MarketOf(discovered, 20) == 10);
+	assert(std::abs(DemandAt(discovered, 10, Category::Armor, 4) - 0.75) < 1e-12);
+	ObserveMerchant(discovered, {20, "wanderer", {5000, 0, 0}}, 5);
+	assert(MarketOf(discovered, 20) == 10); // first observed position is the persistent anchor
+	std::cout << "discovered_markets=" << discovered.markets.size() << " merged_armor_demand="
+	          << DemandAt(discovered, 10, Category::Armor, 4) << '\n';
+
+	// Repeated sales merged into the same native instance need distinct per-unit row keys.
+	State merged = Kuttenberg();
+	AddSale(merged, 1, "plate", "merged-token", Category::Armor, 2, 100, 20, 0);
+	AddSale(merged, 1, "plate", "merged-token", Category::Armor, 1, 100, 20, 0);
+	assert(merged.ledger[2].ordinal == 2);
+	assert(merged.ledger[0].eta != merged.ledger[2].eta);
+	std::cout << "merged_instance_ordinals=0,1," << merged.ledger[2].ordinal << '\n';
+
+	// Reconciliation, unlike pure Settle, never pays for vanished stock. On one uncertain
+	// write it consumes that row conservatively, stops, and leaves later rows untouched.
+	State checked = Kuttenberg();
+	AddSale(checked, 1, "food", "stock", Category::Food, 4, 20, 5, 0);
+	int attempts = 0;
+	auto effects = SettleChecked(checked, 1, 100, [&](const LedgerRow&) {
+		++attempts;
+		if (attempts == 1) return RowEffect{RowDisposition::Missing, 0};
+		if (attempts == 2) return RowEffect{RowDisposition::Resold, 20};
+		return RowEffect{RowDisposition::Failed, 0};
+	});
+	assert(!effects.ok && effects.resold == 1 && effects.missing == 1 && effects.coinEarned == 20);
+	assert(attempts == 3 && checked.ledger.size() == 1 && checked.ledger[0].ordinal == 3);
+	assert(SettleChecked(checked, 2, 100, [](const LedgerRow&) {
+		assert(false); return RowEffect{};
+	}).ok);
+	std::cout << "checked_resold=" << effects.resold << " missing=" << effects.missing
+	          << " coin=" << effects.coinEarned << " failed_write_stops_at=" << attempts
+	          << " rows_left=" << checked.ledger.size() << '\n';
+	// Modified/corrupt sidecars must not smuggle multi-unit rows into unit-at-a-time writes.
+	State invalid = Kuttenberg();
+	AddSale(invalid, 1, "food", "bad-stack", Category::Food, 1, 20, 5, 0);
+	invalid.ledger[0].count = 2;
+	assert(!Deserialize(Serialize(invalid), loaded, error));
+	std::cout << "multiunit_sidecar_rejected=1\nALL ROUND 3 LOGIC TESTS PASS\n";
 }

@@ -1,6 +1,7 @@
 #pragma once
+// Reference model (Sol, rounds 1-3). The game does not use it: phase 2 runs in merchant/src/Scripts/MerchantResale/merchant.lua.
 // Standalone model only: no game calls. Time is absolute GAME DAYS; money is Groschen.
-// Phase 1 does not instantiate this model in the plugin.
+// The plugin adapts verified native operations to this model; it never stores game pointers here.
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -12,6 +13,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -91,6 +93,30 @@ inline double DemandAt(const State& s, std::uint64_t merchant, Category category
 	return it == s.demand.end() ? 1 : Recover(it->second, now);
 }
 
+// Discover shops lazily and freeze their first position. When a new shop bridges markets,
+// merge recovered demand conservatively (minimum, never a fresh-market reset). Existing ETAs
+// do not change. Build everything in a temporary so an allocation/validation failure is atomic.
+inline void ObserveMerchant(State& s, Merchant merchant, double now) {
+	Require(Nonnegative(now));
+	std::vector<Merchant> roster;
+	for (const auto& market : s.markets) for (const auto& m : market.merchants) {
+		if (m.id == merchant.id) return;
+		roster.push_back(m);
+	}
+	roster.push_back(std::move(merchant));
+	State next;
+	next.markets = ClusterMarkets(std::move(roster));
+	for (const auto& d : s.demand) {
+		Require(now >= d.second.updated);
+		const auto key = std::make_pair(MarketOf(next, d.first.first), d.first.second);
+		const double value = Recover(d.second, now);
+		const auto found = next.demand.find(key);
+		if (found == next.demand.end()) next.demand.emplace(key, Demand{value, now});
+		else found->second.value = std::min(found->second.value, value);
+	}
+	s.markets.swap(next.markets); s.demand.swap(next.demand);
+}
+
 // Fixed FNV-1a + SplitMix64, not implementation-defined std::hash / random distributions.
 inline double ResaleEta(Category category, double demand, const std::string& itemId, std::uint32_t ordinal = 0) {
 	Require(ValidCategory(category) && std::isfinite(demand) && demand >= 0.15 && demand <= 1);
@@ -119,10 +145,15 @@ inline void AddSale(State& s, std::uint64_t merchant, const std::string& classGu
 	// pricePaid is per unit; the caller must allocate a negotiated basket total externally.
 	std::vector<LedgerRow> rows;
 	rows.reserve(count);
+	std::uint32_t firstOrdinal = 0;
+	for (const auto& row : s.ledger) if (row.merchant == merchant && row.itemId == itemId)
+		firstOrdinal = std::max(firstOrdinal, row.ordinal + 1);
+	Require(firstOrdinal <= kMaxRecords - count);
 	for (std::uint32_t i = 0; i < count; ++i) {
-		const double eta = now + ResaleEta(category, d.value, itemId, i);
+		const auto ordinal = firstOrdinal + i;
+		const double eta = now + ResaleEta(category, d.value, itemId, ordinal);
 		Require(std::isfinite(eta));
-		rows.push_back({merchant, classGuid, itemId, category, 1, i, baseValue, pricePaid, now, eta});
+		rows.push_back({merchant, classGuid, itemId, category, 1, ordinal, baseValue, pricePaid, now, eta});
 		d.value = std::max(0.15, d.value - baseValue / capacity[static_cast<unsigned>(category)]);
 	}
 	s.ledger.insert(s.ledger.end(), rows.begin(), rows.end());
@@ -151,6 +182,30 @@ inline Settlement Settle(State& s, std::uint64_t merchant, double now) {
 		return row.merchant == merchant && row.eta <= now;
 	}), s.ledger.end());
 	return result; // caller must reconcile actual stock before applying; never holds C_Item*.
+}
+
+enum class RowDisposition { Missing, Resold, Failed };
+struct RowEffect { RowDisposition disposition = RowDisposition::Failed; double coins = 0; };
+struct CheckedSettlement { bool ok = true; unsigned resold = 0, missing = 0; double coinEarned = 0; };
+// Native adapter must check ownership/class/count on every call, remove exactly one unit,
+// verify the count decrease, then cap/credit/verify the purse. A failure is session-fatal.
+// Consume an uncertain row BEFORE calling out: no retry can mint twice after a partial write
+// or C++ exception. Unprocessed rows stay in the ledger. Callback may not mutate the ledger.
+template<class Apply> CheckedSettlement SettleChecked(State& s, std::uint64_t merchant, double now, Apply apply) {
+	Require(Nonnegative(now));
+	CheckedSettlement result;
+	for (std::size_t i = 0; i < s.ledger.size();) {
+		if (s.ledger[i].merchant != merchant || s.ledger[i].eta > now) { ++i; continue; }
+		Require(s.ledger[i].count == 1);
+		const LedgerRow row = s.ledger[i];
+		s.ledger.erase(s.ledger.begin() + i);
+		const auto effect = apply(row);
+		Require(Nonnegative(effect.coins));
+		if (effect.disposition == RowDisposition::Failed) { result.ok = false; break; }
+		if (effect.disposition == RowDisposition::Missing) ++result.missing;
+		else { ++result.resold; result.coinEarned += effect.coins; }
+	}
+	return result;
 }
 inline double Cap(const Wealth& w) {
 	Require(Nonnegative(w.preset) && w.preset <= std::numeric_limits<double>::max() / 10);
@@ -234,13 +289,15 @@ inline bool Deserialize(const std::string& text, State& out, std::string& error)
 			        d.value <= 1 && Nonnegative(d.updated));
 			Require(s.demand.emplace(std::make_pair(market, static_cast<Category>(c)), d).second);
 		}
+		std::map<std::tuple<std::uint64_t, std::string, std::uint32_t>, bool> rowKeys;
 		for (std::size_t n = size(); n; --n) {
 			LedgerRow r; int c;
 			Require(static_cast<bool>(in >> r.merchant >> std::quoted(r.classGuid) >> std::quoted(r.itemId) >> c
 			        >> r.count >> r.ordinal >> r.baseValue >> r.pricePaid >> r.soldAt >> r.eta));
 			Require(merchantIds.count(r.merchant) && !r.classGuid.empty() && !r.itemId.empty() && c >= 0 && c < 5 &&
-			        r.count && r.count <= kMaxRecords && r.ordinal < kMaxRecords && Nonnegative(r.baseValue) &&
+			        r.count == 1 && r.ordinal < kMaxRecords && Nonnegative(r.baseValue) &&
 			        Nonnegative(r.pricePaid) && Nonnegative(r.soldAt) && Nonnegative(r.eta) && r.eta >= r.soldAt);
+			Require(rowKeys.emplace(std::make_tuple(r.merchant, r.itemId, r.ordinal), true).second);
 			r.category = static_cast<Category>(c); s.ledger.push_back(std::move(r));
 		}
 		for (std::size_t n = size(); n; --n) {

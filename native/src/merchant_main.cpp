@@ -6,6 +6,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
 #include "MinHook.h"
 #include "log.h"
 #include "scan.h"
@@ -13,16 +14,21 @@
 #include "merchant_build_guard.h"
 
 // WHGame.dll 1.5.6 only. All addresses/field provenance and the supplied open-hook
-// correction are in docs/merchant_resale_native.md. NO merchant_logic.h integration:
-// this binary observes calls; it never moves items, credits money, or persists a ledger.
+// correction are in docs/merchant_resale_native.md. Phase 2: this binary still never moves items or money.
+// It reports COMMITTED checkouts (the shop purse moved by exactly the basket price) to Lua through
+// MRN.pull(); Lua (Scripts/MerchantResale/merchant.lua) keeps the ledger and settles with the game's own
+// script calls.
 namespace {
 HMODULE g_self = nullptr;
 Module g_game;
-std::atomic<bool> g_logging{true}, g_resaleSetting{false}; // resale setting is deliberately inert
-std::atomic<unsigned long long> g_checkouts{0}, g_opens{0}, g_probes{0};
-std::atomic<bool> g_checkoutHook{false}, g_openHook{false}, g_probeHook{false};
+std::atomic<bool> g_logging{true}, g_resaleSetting{true}; // Lua reads it back through MRN.pull's first line
+std::atomic<unsigned long long> g_checkouts{0}, g_opens{0}, g_probes{0}, g_committed{0}, g_rejected{0};
+std::atomic<bool> g_checkoutHook{false}, g_openHook{false}, g_probeHook{false}, g_bound{false};
 std::mutex g_lastMu;
 std::string g_last = "no shop observed";
+std::mutex g_queueMu;
+std::string g_queue;          // committed sale/buy lines waiting for MRN.pull(); capped
+uintptr_t g_env = 0;          // SSystemGlobalEnvironment*, found on the first "bind"
 
 constexpr uintptr_t kCheckout = 0x8d5150, kSuppliedOpen = 0xa4a118, kShopOpen = 0xc406d8;
 constexpr uintptr_t kShopVtable = 0x3a949b8, kMoney = 0x8c57ac;
@@ -198,12 +204,52 @@ CheckoutFn g_origCheckout = nullptr;
 SuppliedOpenFn g_origSupplied = nullptr;
 ShopOpenFn g_origOpen = nullptr;
 
+// One basket row as Lua needs it. Read BEFORE the original runs (it moves/merges/frees the items).
+struct Row { char dir; std::string guid; unsigned count; int base; uintptr_t token; };
+bool Snapshot(uintptr_t tx, uintptr_t& shop, int& dbid, std::vector<Row>& rows) {
+	uintptr_t vt = 0, begin = 0, end = 0;
+	if (!Read(tx + 0x18, shop) || !shop || !Read(shop, vt) || vt != g_game.base + kShopVtable) return false;
+	if (!Read(shop + 0x1b0, dbid)) return false;
+	if (!Read(tx + 0x98, begin) || !Read(tx + 0xa0, end) || end < begin || (end - begin) % sizeof(uintptr_t) ||
+	    (end - begin) / sizeof(uintptr_t) > 4096 || (end != begin && !begin)) return false;
+	for (uintptr_t at = begin; at != end; at += sizeof(uintptr_t)) {
+		uintptr_t item = 0, cls = 0, token = 0; std::uint32_t count = 0; Guid guid{}; int base = 0; bool owns = false;
+		if (!Read(at, item) || !item || !Read(item + 0x50, count) || !count || !Read(item + 0x48, cls) || !cls ||
+		    !Read(cls + 8, guid) || !BasePrice(cls, base) || !Owns(shop, item, owns)) return false;   // all or nothing
+		Read(item + 0x30, token);
+		rows.push_back({owns ? 'b' : 's', GuidText(guid), count, base, token});
+	}
+	return true;
+}
+void Queue(int dbid, const std::vector<Row>& rows) {
+	std::lock_guard<std::mutex> lock(g_queueMu);
+	for (const auto& r : rows) {
+		if (g_queue.size() > 64 * 1024) { Log("queue full (Lua not pulling?): dropped the rest of this checkout"); return; }
+		char line[160];
+		std::snprintf(line, sizeof line, "%s %d %s %u %d %016llX\n", r.dir == 's' ? "sell" : "buy", dbid, r.guid.c_str(),
+		              r.count, r.base, (unsigned long long)r.token);
+		g_queue += line;
+	}
+}
 void __fastcall HkCheckout(uintptr_t tx, int price, uintptr_t result) {
 	++g_checkouts;
 	// Snapshot BEFORE the original transfers/frees basket items. No raw pointer escapes the call.
 	if (g_logging.load()) try { Log("%s", CheckoutText(tx, price).c_str()); }
 	catch (...) { Log("checkout snapshot failed (C++ exception); original still called"); }
+	std::vector<Row> rows; uintptr_t shop = 0; int dbid = -1, before = 0, after = 0; bool snap = false, haveBefore = false;
+	try { snap = Snapshot(tx, shop, dbid, rows); } catch (...) { snap = false; }
+	if (snap) haveBefore = Money(shop + 8, before);
 	g_origCheckout(tx, price, result); // exactly once; never swallow an exception in the original
+	if (!snap) { if (g_logging.load()) Log("commit check skipped: basket snapshot incomplete (nothing reported to Lua)"); return; }
+	// Committed = the shop purse moved by exactly the basket price (+ = player paid the shop). A rejected
+	// payment leaves the purse unchanged. A zero-price swap can't be told apart, so it is reported as committed.
+	const bool haveAfter = Money(shop + 8, after);
+	const bool committed = haveBefore && haveAfter && after - before == price;
+	if (committed) { ++g_committed; if (g_bound.load()) try { Queue(dbid, rows); } catch (...) { Log("queue failed"); } }
+	else ++g_rejected;
+	if (g_logging.load())
+		Log("commit %s shop_dbid=%d price_deci=%d purse_deci %d -> %d rows=%zu%s", committed ? "YES" : "NO", dbid, price,
+		    before, after, rows.size(), committed && !g_bound.load() ? " (Lua not bound yet: not queued)" : "");
 }
 void __fastcall HkSupplied(uintptr_t self) {
 	++g_probes;
@@ -220,22 +266,99 @@ void __fastcall HkOpen(uintptr_t shop, uintptr_t keeper) {
 	g_origOpen(shop, keeper);
 }
 
+// ---- MRN: the Lua binding (docs/whgame_re/script_binding.md, same route as probe.cpp / rounds.cpp DN).
+// IScriptSystem = gEnv+0x28: +0x68 CreateTable(bool), +0xF8 SetGlobalAny. IScriptTable +0x18 AddRef, +0xB0 AddFunction.
+// IFunctionHandler +0x50 EndFunctionAny(a), +0x58 EndFunction(). ScriptAnyValue: type +0 (1 nil, 2 bool, 5 string).
+struct Any { int type; int pad; union { bool b; const char* s; uintptr_t p; }; std::uint64_t extra; };
+static_assert(sizeof(Any) == 0x18, "ScriptAnyValue is 0x18 bytes");
+uintptr_t VF(uintptr_t object, int slot) { uintptr_t vt = 0, fn = 0; return object && Read(object, vt) && vt && Read(vt + slot, fn) ? fn : 0; }
+bool ValidEnv(uintptr_t env) {
+	uintptr_t rnd = 0, vt = 0;
+	if (!Read(env + 0x108, rnd) || !rnd || !Read(rnd, vt)) return false;
+	return RttiName(g_game, vt).find("Renderer") != std::string::npos;
+}
+uintptr_t FindEnv() {   // the same two RIP-relative patterns main.cpp uses
+	uintptr_t cands[2] = {};
+	if (uintptr_t a = FindUnique(g_game, "48 8D 05 ?? ?? ?? ?? 48 89 0F 4C 8D 67 28 48 8D 0D ?? ?? ?? ?? 48 89 47 20 48 89 4F 08"))
+		cands[0] = RipTarget(a, 3, 7);
+	if (uintptr_t b = FindUnique(g_game, "48 8B 51 08 48 8B C8 FF D2 48 8B 0D ?? ?? ?? ?? 48 85 C9"))
+		cands[1] = RipTarget(b + 9, 3, 7);
+	for (uintptr_t c : cands) {
+		if (!c) continue;
+		if (ValidEnv(c)) return c;
+		uintptr_t d = 0;
+		if (Read(c, d) && d && ValidEnv(d)) return d;
+	}
+	return 0;
+}
+std::string g_pulled;   // keeps the returned text alive until Lua has copied it
+int __cdecl MrnPull(uintptr_t pH, void*, int) {
+	Any r{}; r.type = 1;   // nil when nothing is waiting
+	{
+		std::lock_guard<std::mutex> lock(g_queueMu);
+		g_pulled.swap(g_queue); g_queue.clear();
+	}
+	if (!g_pulled.empty()) { r.type = 5; r.s = g_pulled.c_str(); }
+	auto end = (int(__fastcall*)(uintptr_t, const Any*))VF(pH, 0x50);
+	return end ? end(pH, &r) : 0;
+}
+int __cdecl MrnEnabled(uintptr_t pH, void*, int) {
+	Any r{}; r.type = 2; r.b = g_resaleSetting.load();
+	auto end = (int(__fastcall*)(uintptr_t, const Any*))VF(pH, 0x50);
+	return end ? end(pH, &r) : 0;
+}
+bool AddFn(uintptr_t table, const char* name, void* fn) {
+	alignas(16) unsigned char desc[0x58] = {};
+	static int marker = 0x4D52;   // a non-empty data buffer selects the user-data-function closure
+	*(const char**)(desc + 0x00) = name;
+	*(const char**)(desc + 0x08) = "";
+	*(const char**)(desc + 0x10) = "MRN";
+	*(void**)(desc + 0x40) = fn;
+	*(void**)(desc + 0x48) = &marker;
+	*(int*)(desc + 0x50) = sizeof(marker);
+	auto add = (bool(__fastcall*)(uintptr_t, const unsigned char*))VF(table, 0xB0);
+	return add && add(table, desc);
+}
+int SafeBind() {
+	__try {
+		uintptr_t ss = 0;
+		if (!g_env || !Read(g_env + 0x28, ss) || !ss) return -1;
+		auto create = (uintptr_t(__fastcall*)(uintptr_t, bool))VF(ss, 0x68);
+		uintptr_t t = create ? create(ss, false) : 0;
+		if (!t) return -2;
+		((void(__fastcall*)(uintptr_t))VF(t, 0x18))(t);   // AddRef: kept for the session
+		const int n = AddFn(t, "pull", (void*)&MrnPull) + AddFn(t, "enabled", (void*)&MrnEnabled);
+		Any g{}; g.type = 6; g.p = t;
+		auto setGlobal = (void(__fastcall*)(uintptr_t, const char*, const Any*))VF(ss, 0xF8);
+		if (!setGlobal) return -3;
+		setGlobal(ss, "MRN", &g);
+		return n;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return -100; }
+}
+void Bind() {   // runs on the Lua thread (from HkLog); Lua re-sends "bind" after every load, so it must be repeatable
+	if (!g_env) g_env = FindEnv();
+	const int r = SafeBind();
+	g_bound.store(r == 2);
+	Log("bind: %s (%d, gEnv %p)", r == 2 ? "MRN.pull / MRN.enabled registered" : "FAILED", r, (void*)g_env);
+}
+
 void Status() {
 	std::lock_guard<std::mutex> lock(g_lastMu);
-	Log("status phase=1 logging=%d resale_setting=%d resale_active=0 checkout_hook=%d supplied_probe=%d shop_open_hook=%d calls=%llu/%llu/%llu last=[%s] nearest_merchant=U",
-	    g_logging.load(), g_resaleSetting.load(), g_checkoutHook.load(), g_probeHook.load(), g_openHook.load(),
-	    g_checkouts.load(), g_probes.load(), g_opens.load(), g_last.c_str());
+	Log("status phase=2 logging=%d resale=%d lua_bound=%d checkout_hook=%d shop_open_hook=%d checkouts=%llu committed=%llu not_committed=%llu opens=%llu last=[%s]",
+	    g_logging.load(), g_resaleSetting.load(), g_bound.load(), g_checkoutHook.load(), g_openHook.load(),
+	    g_checkouts.load(), g_committed.load(), g_rejected.load(), g_opens.load(), g_last.c_str());
 }
 void Command(const char* line, bool persist = true) {
 	char key[32] = {}, value[8] = {}, extra[8] = {};
 	if (!strcmp(line, "hello") || !strcmp(line, "status")) { Status(); return; }
+	if (!strcmp(line, "bind")) { Bind(); return; }
 	if (sscanf_s(line, "set %31s %7s %7s", key, (unsigned)sizeof key, value, (unsigned)sizeof value,
 	             extra, (unsigned)sizeof extra) != 2 || (strcmp(value, "0") && strcmp(value, "1"))) return;
 	if (!strcmp(key, "logging")) g_logging.store(value[0] == '1');
 	else if (!strcmp(key, "resale")) g_resaleSetting.store(value[0] == '1');
 	else return;
 	if (persist) SettingsSave(key, value);
-	Log("setting %s=%s (phase 1 NEVER changes items or money)", key, value);
+	Log("setting %s=%s", key, value);
 }
 using LogHandlerFn = int(__fastcall*)(void*, uintptr_t);
 using GetParamStrFn = bool(__fastcall*)(uintptr_t, int, const char**);
@@ -281,7 +404,7 @@ void InstallObservedHooks() {
 	Status();
 }
 DWORD WINAPI Init(LPVOID) {
-	Log("Merchant Resale phase 1 (WHGame 1.5.6): logging ONLY; supplied open address is a probe, corrected C_Shop entry also observed");
+	Log("Merchant Resale phase 2 (WHGame 1.5.6): reports committed checkouts to Lua (MRN.pull); never moves items or money itself");
 	for (int i = 0; i < 600 && !GetModuleHandleA("WHGame.dll"); ++i) Sleep(100);
 	g_game = GetModule("WHGame.dll");
 	if (!g_game.base) { Log("WHGame.dll not found; nothing hooked"); return 0; }
