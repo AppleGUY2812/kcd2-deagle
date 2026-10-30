@@ -296,7 +296,7 @@ inline void SaveCache(const std::filesystem::path& path, const Game& g) {
 
 inline std::unique_ptr<CachedGame> SolveCached(const std::array<const Die*, 6>& mine,
                                                const std::array<const Die*, 6>& opp, int target,
-                                               const std::string& cacheDir) {
+                                               const std::string& cacheDir, int threads = 4) {
 	if (target <= 0 || target % STEP) throw std::invalid_argument("target must be a positive multiple of 50");
 	auto out = std::make_unique<CachedGame>();
 	Scorer scorer;
@@ -308,7 +308,7 @@ inline std::unique_ptr<CachedGame> SolveCached(const std::array<const Die*, 6>& 
 	if (!cacheDir.empty()) std::filesystem::create_directories(cacheDir);
 	const auto path = advisor_detail::CachePath(cacheDir, mine, opp, target);
 	if (!advisor_detail::LoadCache(path, out->game)) {
-		out->game.Solve();
+		out->game.Solve(threads);
 		if (!cacheDir.empty()) advisor_detail::SaveCache(path, out->game);
 	}
 	return out;

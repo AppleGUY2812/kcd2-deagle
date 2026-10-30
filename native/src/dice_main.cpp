@@ -225,7 +225,15 @@ struct Matchup {
 	std::array<const farkle::Die*, 6> ptr[2];
 	std::unique_ptr<farkle::CachedGame> solved;
 };
-enum class Action { None, Scoring, Passing };
+// Warm: solve the game early (the first throw's animation) so the player's first choice finds it done; shows nothing.
+enum class Action { None, Scoring, Passing, Warm };
+std::atomic<bool> g_solving{ false };   // the worker is inside a solve (the first throw of a new dice set / target can take a minute)
+// 2026-10-29: Balatro x3 + Pie + Weighted + Tengri at a 5000 target solved for 90 s in game (55 s alone with 4 threads;
+// 2000 target 1.9 s): the solve costs about target^3 and strong dice make it worse. All but three of the CPU's threads now.
+int SolveThreads() {
+	const unsigned hw = std::thread::hardware_concurrency();
+	return (int)std::max(4u, std::min(9u, hw > 3 ? hw - 3 : 1u));
+}
 struct Work { uint64_t generation = 0; uintptr_t game = 0; Action action = Action::None; diceadvisor::Snapshot snapshot; };
 
 // Glow markers on the dice to set aside: the worker publishes which dice (by index) for which advice generation; the
@@ -338,9 +346,15 @@ void Worker() {
 			} else match = it->second.get();
 			if (!match->solved) {
 				// "Calculating..." only when a solve is actually needed; updates of the player's own pick are instant.
-				Queue("dice_busy " + std::to_string(w.generation));
-				match->solved = farkle::SolveCached(match->ptr[0], match->ptr[1], w.snapshot.target, g_cacheDir);
+				if (w.action != Action::Warm) Queue("dice_busy " + std::to_string(w.generation));
+				g_solving.store(true);
+				const auto t0 = GetTickCount64();
+				match->solved = farkle::SolveCached(match->ptr[0], match->ptr[1], w.snapshot.target, g_cacheDir, SolveThreads());
+				g_solving.store(false);
+				Log("dice: solved the game (target %d) in %llu ms with %d threads%s", w.snapshot.target,
+				    (unsigned long long)(GetTickCount64() - t0), SolveThreads(), w.action == Action::Warm ? " (warm-up)" : "");
 			}
+			if (w.action == Action::Warm) continue;
 			const double cost = CommittedCost(*match, w);
 			farkle::Advice a = diceadvisor::AdviseSnapshot(match->solved->game, w.snapshot);
 			farkle::Selection sel = diceadvisor::SelectSnapshot(match->solved->game, w.snapshot);
@@ -422,6 +436,7 @@ void Worker() {
 }
 
 void Submit(uintptr_t game, const diceadvisor::Snapshot& s, Action action = Action::None) {
+	if (action != Action::Warm && g_solving.load()) Queue("dice_busy " + std::to_string(g_generation + 1));   // waits behind a warm-up
 	{
 		std::lock_guard<std::mutex> lk(g_workMu);
 		g_work = Work{ ++g_generation, game, action, s };
@@ -594,6 +609,11 @@ uintptr_t __fastcall HkState(uintptr_t controller, uintptr_t arg2, uintptr_t old
 		if (passing && raw.human && g_enabled.load()) {
 			diceadvisor::Snapshot s = Convert(raw);
 			Submit(controller, s, Action::Passing);
+		} else if (IsRolling(newState) && raw.human && raw.rolledMask && g_enabled.load()) {
+			// the throw's animation takes seconds and both dice sets are known: start solving now
+			diceadvisor::Snapshot s = Convert(raw);
+			std::string werr;
+			if (Valid(s, werr)) Submit(controller, s, Action::Warm);
 		}
 		return result;
 	}

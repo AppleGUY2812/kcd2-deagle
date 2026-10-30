@@ -90,7 +90,7 @@ function DiceAdvisor:Busy(line)
 	self.generation = generation
 	self:Clear()
 	self.pickerOpen = false
-	self.lines = { "Calculating..." }
+	self.lines = { "Calculating...", "(first throw with these dice and this target - then it is instant)" }
 	self.mistakeLine = nil
 	self:Render()
 end
