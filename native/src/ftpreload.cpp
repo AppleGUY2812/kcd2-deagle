@@ -53,7 +53,7 @@ bool g_ok = false, g_tried = false;    // the code checks passed / ran
 AddPrecacheFn g_add = nullptr;
 uintptr_t g_engine = 0;
 
-struct State { bool valid; uint8_t active, active2; float dest[3]; size_t route; float last[3], prev[3]; };
+struct State { bool valid; uint8_t active, active2; float dest[3]; size_t route; float last[3], prev[3]; float speed, left; };
 State g_was{};
 DWORD g_lastAdd = 0, g_walkStart = 0;
 int g_adds = 0;
@@ -63,6 +63,10 @@ int g_adds = 0;
 int g_walkFrames = 0;
 double g_walkDist = 0;
 float g_walkLast[3] = {};
+// From the game's own counter: the game time each frame's step used (step / speed), against the real frame time.
+float g_walkSpeed = 0, g_walkLen = 0, g_walkPrevLeft = 0;
+double g_walkGameT = 0, g_walkMaxDt = 0, g_walkMinDt = 1e9;
+long long g_walkQpcStart = 0;
 
 // "ftinstant S" (fastload_ftinstant.txt; 0 = off, the default): S seconds after the arrival wait starts, the
 // "AfterFastTravel" observer (ft+0x110: +0x18 mask 0x3f91, +0x20 expiry, +0x68 armed) is let in through the game's own
@@ -225,6 +229,10 @@ bool ReadState(State& s) {
 		uintptr_t t = *(uintptr_t*)(m + 0x110);
 		s.active2 = t ? *(uint8_t*)(t + 0x68) : 0;
 		memcpy(s.dest, (void*)(m + 0x68), 12);
+		// the walk step FUN_182de3148(mgr, dt): step = dt * speed (+0x50, the rider's movement speed, FUN_182dde52c),
+		// +0x4c -= step (+0x4c = the route's length when it is built, FUN_182dde2a4)
+		s.speed = *(float*)(m + 0x50);
+		s.left = *(float*)(m + 0x4c);
 		uintptr_t b = *(uintptr_t*)(m + 0x90), e = *(uintptr_t*)(m + 0x98);
 		s.route = (b && e > b && (e - b) % 12 == 0) ? (e - b) / 12 : 0;
 		if (s.route > 100000) s.route = 0;
@@ -360,6 +368,8 @@ void Ftpre_Frame() {
 		if (walking && !wasWalking) {
 			g_walkStart = now; g_adds = 0; g_lastAdd = 0; g_tripSeq++;
 			g_walkFrames = 0; g_walkDist = 0; memcpy(g_walkLast, s.last, sizeof g_walkLast);
+			g_walkSpeed = s.speed; g_walkLen = s.left; g_walkPrevLeft = s.left; g_walkGameT = 0; g_walkMaxDt = 0; g_walkMinDt = 1e9;
+			LARGE_INTEGER q; QueryPerformanceCounter(&q); g_walkQpcStart = q.QuadPart;
 		}
 		if (!walking && wasWalking) {
 			const double sec = (now - g_walkStart) / 1000.0;
@@ -367,6 +377,14 @@ void Ftpre_Frame() {
 			if (g_walkFrames > 0 && sec > 0)
 				Log("ftpre: walk speed: %.0f m of route in %.1f s = %.0f m/s; %d frames (%.0f fps) = %.2f m a frame",
 				    g_walkDist, sec, g_walkDist / sec, g_walkFrames, g_walkFrames / sec, g_walkDist / g_walkFrames);
+			if (g_walkFrames > 0 && g_walkSpeed > 0) {
+				LARGE_INTEGER q, f; QueryPerformanceCounter(&q); QueryPerformanceFrequency(&f);
+				const double real = (double)(q.QuadPart - g_walkQpcStart) / f.QuadPart;
+				Log("ftpre: walk speed (game's counter): rider speed %.2f m/s, route %.0f m; game time walked %.2f s in %.2f s "
+				    "real (x%.1f); game time a frame %.4f s average, %.4f min, %.4f max; real frame %.4f s average",
+				    g_walkSpeed, g_walkLen, g_walkGameT, real, real > 0 ? g_walkGameT / real : 0, g_walkGameT / g_walkFrames,
+				    g_walkMinDt < 1e9 ? g_walkMinDt : 0, g_walkMaxDt, real / g_walkFrames);
+			}
 		}
 	}
 	if (s.active && wasWalking && s.route) {
@@ -374,6 +392,16 @@ void Ftpre_Frame() {
 		const float dx = s.last[0] - g_walkLast[0], dy = s.last[1] - g_walkLast[1], dz = s.last[2] - g_walkLast[2];
 		g_walkDist += sqrt((double)dx * dx + (double)dy * dy + (double)dz * dz);
 		memcpy(g_walkLast, s.last, sizeof g_walkLast);
+		if (g_walkSpeed <= 0) g_walkSpeed = s.speed;   // set at the start; read again in case it came a frame late
+		if (g_walkLen <= 0) g_walkLen = s.left;
+		const float step = g_walkPrevLeft - s.left;   // this frame's step (0 when the walk didn't tick)
+		if (g_walkSpeed > 0 && step > 0) {
+			const double dt = step / g_walkSpeed;
+			g_walkGameT += dt;
+			if (dt > g_walkMaxDt) g_walkMaxDt = dt;
+			if (dt < g_walkMinDt) g_walkMinDt = dt;
+		}
+		g_walkPrevLeft = s.left;
 	}
 	g_was = s;
 	if (s.active || s.active2) g_tripBusyAt = now;
