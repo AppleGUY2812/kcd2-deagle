@@ -1,31 +1,23 @@
 # Dice Advisor for Kingdom Come: Deliverance II
 
-Dice Advisor is a read-only helper for Henry's Farkle games. After each throw it marks the dice worth setting aside with the game's own die selector and writes the recommended move in the game's own centre info-text style: **Throw again** or **Bank**, with the win chance of each. It follows what the player actually picks, so the numbers update as dice are selected. No die, score, AI, input or rule is changed.
+Dice Advisor is a read-only helper for Henry's Farkle games. After each throw it puts a soft glow on the dice worth setting aside and shows the recommended move in a panel beside the game's own dice score panel: **THROW AGAIN** or **BANK**, with the risk of throwing on and the reason. It follows what the player actually picks, so the numbers update as dice are selected. No die, score, AI, input or rule is changed.
 
-Version 1 does not touch `hud.gfx` or `UIElements/HUD.xml`: the panel is the existing HUD info text (`ShowInfoText`), drawn with the game's `DefaultFont` and its ornament background. The dice markers are the same selectors the game itself uses when the player clicks a die.
+The advice is a fourth column block in the HUD movie (`Libs/UI/hud.gfx` + `UIElements/HUD.xml`), in the score panel's own style: gold bold headings, cream body text and the same thin divider, no box or fill. It is positioned relative to the game's score container, so it follows it at every resolution. `dice_advisor_ui 0` switches back to the old centre info text (`ShowInfoText`) for the session; the panel is the default.
 
 ## What the panel shows
 
 On the result of a throw:
 
 ```
-Set aside: 1 1 1 = 1000
-throw again 62 %       bank 48 %
-Finish this turn 31 %       Hot dice 2.3 %
+Advice
+[1] [6] [6] [J]   then BANK
+Throwing on: 11 % chance to lose 700 points
+Why: keeps your Weighted in hand (+1.6 % win)
 ```
 
-When the player has set dice aside:
+Row 1 draws the dice to set aside as small die faces (a joker is `J`), then the action in bright gold; when the player's own pick already equals the advice it says `Now BANK` / `Now THROW AGAIN`. Row 2 prices the risk of throwing on. Row 3 is the one-line reason: the die kept in hand, or taking all the scoring dice, or the bank/throw difference. The action and advice update as the player picks dice; a worse pick adds the same `Why` reasoning for the recommended set.
 
-```
-Your pick: 1 1 1 = 1000
-Throw 3 dice: bust 27.8 %
-throw again 64 %       bank 51 %
-Finish this turn 33 %       Hot dice 5.6 %
-```
-
-The recommended action is brighter. If the player keeps a worse set than the advice, a `Last choice cost x % win` line appears (the banked/busted choice is priced too, and carried to the next throw's panel). After an unscorable roll the panel says the turn is lost and shows the chance left after the bust.
-
-`dice_advisor_detail 1` adds the extra numbers on a separate line: the opponent's chance to finish on their next turn, the average points of the next throw, and, when the advice deliberately keeps fewer dice than another scoring set, the comparison between the two sets.
+`dice_advisor_detail 1` adds a fourth row with the bank and throw win chances, the opponent's chance to finish on their next turn and, if the advice deliberately keeps fewer dice than another scoring set, the comparison between the two sets.
 
 ## Install and use
 
@@ -40,6 +32,7 @@ This version requires WHGame 1.5.6 and exactly six dice per player; anything els
 - `dice_advisor 0|1`: disable/enable advice (saved).
 - `dice_advisor_log 0|1`: detailed state logging (saved; default on).
 - `dice_advisor_detail 0|1`: the extra take-fewer / opponent / average-points line (saved; default off).
+- `dice_advisor_ui 0|1`: the HUD panel (default) or the old centre info text (session only, not saved).
 
 Settings live in `dice_settings.txt` next to `dice.asi`. The log is `dice.log`, also next to the plugin.
 
@@ -58,7 +51,7 @@ W=$(wslpath -w native)
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "(Get-Process -Id \$PID).PriorityClass='Idle'; & '$W\build.ps1' '$W' '$(wslpath -w native/dist)\deagle_native.asi' 'E:\Tools\deagle-work\native-build-kimi'"
 ```
 
-Then `bash dice/build.sh` packs the mod. The v1 pak contains only Lua and `mod.manifest`. `dice/tools/hud/build.sh` is research for a future v2 movie panel; it writes into `dice/build/re/hud_v2` and is not part of the v1 build.
+Then `bash dice/build.sh` packs the mod. `dice/tools/hud/build.sh` rebuilds the game's `hud.gfx` (advice panel, die faces, glow markers) and `UIElements/HUD.xml` into `src/Libs/UI/`, and `bash dice/build.sh` packs them plus the Lua into `data/dice.pak`. The game's pak is only read, never written.
 
 ## How it reads the game
 
@@ -72,15 +65,16 @@ The solver is exact for the table's Farkle rules and optimal future play. It doe
 
 ## Files
 
-- `src/Scripts/DiceAdvisor/dice.lua`: commands, the panel text and the die selectors.
+- `src/Scripts/DiceAdvisor/dice.lua`: commands, the panel rows (faces, action, why) and the die names.
+- `tools/hud/`: `advice.as`, `patch.py`, `patch_xml.py`, `build.sh`: the HUD panel, the glow markers and the movie build.
 - `src/Scripts/Mods/dice.lua`: loader.
 - `build.sh`, `mod.manifest`, `tools/install_on_close.sh`: packaging and install.
 - `tests/test_logic.cpp`: plugin-side tests, run on Linux.
 - `../native/src/dice_main.cpp`, `dice_logic.h`: the plugin; the solver lives in `../tools/farkle/`.
 
 ## Dice picker (2026-10-28)
-On the dice-picking screen (the minigame's Null state before a game) the advice text shows the best 6 of your dice:
-"Best dice to bring: 2x Lucky die, 1x Aranka's die, ... / About 1925 points per turn on average". Lua lists the
+On the dice-picking screen (the minigame's Null state before a game) the panel shows the best 6 of your dice:
+one row per die kind (`Favourable x3`), then a `Why` row naming the surest die and the points per turn against plain dice. Lua lists the
 die items in your inventory (`dice_items.lua`, generated by `dice/tools/gen_dice_items.py` from the game's item.xml)
 and sends them to the plugin (`own`); the plugin ranks them with `tools/farkle/bestset.h` (local search by
 E[min(turn points, 4000)], about 10 s for 14 kinds, lowest thread priority) and answers `dice_best`. The collection is

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# v2 research only: rebuilds the game's HUD movie with the DiceAdvice panel. v1 does not ship a movie or HUD.xml, so
-# this writes into dice/build/re/hud_v2 and never into dice/src (the packed mod folder).
+# Rebuilds the game's HUD movie with the DiceAdvice panel and writes it into the packed mod (dice/src/Libs/UI/).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
@@ -8,7 +7,7 @@ game=${KCD2_DIR:-/mnt/e/SteamLibrary/steamapps/common/KingdomComeDeliverance2}
 ffdec=${FFDEC:-$HOME/.local/share/ffdec/ffdec-cli.jar}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-out="$repo/dice/build/re/hud_v2"
+out="$repo/dice/src/Libs/UI"
 mkdir -p "$out/UIElements"
 python3 -I - "$game/Data/IPL_GameData.pak" "$work" <<'PY'
 import sys, zipfile
@@ -27,4 +26,6 @@ python3 "$here/patch_xml.py" "$work/Libs/UI/UIElements/HUD.xml" "$out/UIElements
 ff -selectclass frame_1 -export script "$work/check" "$out/hud.gfx" || true
 check=$(find "$work/check" -path '*/scripts/frame_1/DoAction.as' | head -1)
 grep -q "function fc_diceAdvice" "$check" || { echo "HUD advice patch missing after rebuild"; exit 1; }
-echo "built $out/hud.gfx ($(head -c3 "$out/hud.gfx"), $(stat -c%s "$out/hud.gfx") bytes)"
+grep -q "function DA_Die" "$check" || { echo "HUD die-face drawing missing after rebuild"; exit 1; }
+grep -q "function fc_addDiceSelector(selectorId, xPos, yPos, isPlayer)" "$check" || { echo "HUD selector patch missing after rebuild"; exit 1; }
+echo "built $out/hud.gfx ($(head -c3 "$out/hud.gfx"), $(stat -c%s "$out/hud.gfx") bytes) + UIElements/HUD.xml"
