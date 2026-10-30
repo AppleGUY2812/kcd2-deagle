@@ -74,6 +74,28 @@ void NTAPI TlsCallback(PVOID, DWORD reason, PVOID) {
 inline bool Ours(const void* p) { return (uintptr_t)p - g_lo < g_size; }
 inline bool OursC(const void* p) { return (uintptr_t)p - g_loC < g_sizeC; }
 
+// Reads past a block's end. With eager_commit 0 the arena is committed page by page, so the space right after a block
+// can be reserved but not committed, and a game read that runs past its block faults there. CryMalloc's buckets sit in
+// pools that are committed throughout, so the same read in the unmodded game just reads the neighbour. 2026-10-30 13:28
+// (Kuttenberg -> Trosky level load): CryPhysics' array growth FUN_1813522a4 on a loading thread copied an old 8-byte
+// array past its end, into 000005AB9C100000 (a reserved page of this arena), and the game crashed. This handler commits
+// that one page (zeroed, read-write, as mimalloc's own commit does; mimalloc never assumes a commit is fresh: is_zero is
+// false on Windows) and lets the read go on. Reads only: a write past a block still crashes as before.
+std::atomic<long long> g_overreads{0};
+std::atomic<uintptr_t> g_overFirstIp{0}, g_overFirstAt{0};
+LONG CALLBACK OverreadGuard(EXCEPTION_POINTERS* e) {
+	const EXCEPTION_RECORD* r = e->ExceptionRecord;
+	if (r->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || r->NumberParameters < 2 || r->ExceptionInformation[0] != 0)
+		return EXCEPTION_CONTINUE_SEARCH;
+	const uintptr_t at = r->ExceptionInformation[1];
+	if (!Ours((const void*)at) && !OursC((const void*)at)) return EXCEPTION_CONTINUE_SEARCH;
+	MEMORY_BASIC_INFORMATION mbi{};
+	if (!VirtualQuery((const void*)at, &mbi, sizeof mbi) || mbi.State != MEM_RESERVE) return EXCEPTION_CONTINUE_SEARCH;
+	if (!VirtualAlloc((void*)(at & ~(uintptr_t)0xfff), 0x1000, MEM_COMMIT, PAGE_READWRITE)) return EXCEPTION_CONTINUE_SEARCH;
+	if (g_overreads.fetch_add(1) == 0) { g_overFirstIp = (uintptr_t)r->ExceptionAddress; g_overFirstAt = at; }
+	return EXCEPTION_CONTINUE_EXECUTION;
+}
+
 mi_heap_t* HeapC() {
 	mi_heap_t* h = t_heapC;
 	if (h || t_done) return h;
@@ -308,6 +330,8 @@ void Fastalloc_Install(uintptr_t base, void* self) {
 	const bool ok = MH_EnableHook((void*)(base + kRvaFree)) == MH_OK && MH_EnableHook((void*)(base + kRvaRealloc)) == MH_OK &&
 	                MH_EnableHook((void*)(base + kRvaAlloc)) == MH_OK;
 	g_on = ok;
+	// first in line: runs before crashlog's handler, so a read it fixes isn't written down as a crash
+	if (ok && !AddVectoredExceptionHandler(1, OverreadGuard)) Log("fastalloc: the guard for reads past a block was NOT installed");
 	Log("fastalloc: %s: CryMalloc's blocks of up to 512 bytes from mimalloc %d (per-thread heaps in a %zu GB arena at %p); %s",
 	    ok ? "on" : "FAILED to enable", mi_version(), sz >> 30, lo,
 	    started ? "the game had already allocated (its earlier blocks stay its own)" : "before the game's first allocation");
@@ -338,4 +362,15 @@ void Fastalloc_Report(const char* when) {
 	    "allocated-bytes counter %ld", when, g_heaps.load(), g_heapFails.load(), g_fallbacks.load(), g_crtOn ? "on" : "off",
 	    g_crtHeaps.load(), g_crtFallbacks.load(), pm.PrivateUsage / 1048576.0, peakCommit / 1048576.0,
 	    pm.WorkingSetSize / 1048576.0, *g_allocated);
+	if (const long long n = g_overreads.load()) {
+		HMODULE m = nullptr;
+		char name[MAX_PATH] = "?";
+		const uintptr_t ip = g_overFirstIp.load();
+		if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)ip, &m))
+			GetModuleFileNameA(m, name, MAX_PATH);
+		const char* base = strrchr(name, '\\');
+		Log("fastalloc: %s: %lld reads ran past a block into an uncommitted page (committed, read on; the unmodded game reads "
+		    "the neighbour there); first at %s+%llx reading %p", when, n, base ? base + 1 : name,
+		    (unsigned long long)(ip - (uintptr_t)m), (void*)g_overFirstAt.load());
+	}
 }
