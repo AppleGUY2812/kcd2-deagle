@@ -20,8 +20,31 @@ end
 
 -- the game's speed now: cfg.slowmo while slow motion is on, kept to 0.01-1 (the plugin's clock and sounds stop at 0.01)
 function Deagle:GameSpeed()
-	if not self.slowOn then return 1 end
-	return math.max(0.01, math.min(1, tonumber(self.cfg.slowmo) or 0.1))
+	local v = 1
+	if self.slowOn then v = math.max(0.01, math.min(1, tonumber(self.cfg.slowmo) or 0.1)) end
+	if self.bulletOn then v = math.min(v, math.max(0.05, math.min(1, tonumber(self.cfg.bullet) or 0.25))) end
+	return v
+end
+
+-- Bullet time (key Z, deagle_bullet): the whole game slows (t_Scale: NPCs, Henry, animations) while the key is held, or
+-- toggles with `deagle_set bulletToggle 1`; for learning combos. It sits on top of F9 slow motion and gives it back.
+function Deagle:Bullet(down)
+	if down == nil then down = not self.bulletOn end
+	if down and self.bulletOn and not self.cfg.bulletToggle then down = false end   -- a second press while held: the release was lost (a menu opened)
+	if (down and true or false) == (self.bulletOn and true or false) then return end
+	self.bulletOn = down and true or false
+	pcall(System.SetCVar, "t_Scale", self:GameSpeed())
+	self:Native(string.format("speed %.3f", self:GameSpeed()))
+	log("bullet time " .. (self.bulletOn and ("x" .. tostring(self:GameSpeed())) or "off"))
+end
+
+function Deagle:BulletCmd(arg)
+	if arg == "off" or arg == "0" then return self:Bullet(false) end
+	if arg == "on" or arg == "1" then return self:Bullet(true) end
+	local v = tonumber(arg)
+	if v and v > 0 and v <= 1 then self:Set("bullet " .. v); if not self.bulletOn then self:Bullet(true) end return end
+	if arg == "" then return self:Bullet() end
+	log("usage: deagle_bullet [on|off|speed 0.05-1]")
 end
 
 function Deagle:SlowMo(on)
@@ -135,6 +158,7 @@ function Deagle:PathAdd(a, b, color)
 	end
 end
 function Deagle:PathMark(p, color)
+	if not self.cfg.debugPaths then return end   -- paths off: no tables for marks nothing will draw
 	for _, d in ipairs({ { x = 0.06, y = 0, z = 0 }, { x = 0, y = 0.06, z = 0 }, { x = 0, y = 0, z = 0.06 } }) do
 		self:PathAdd(vsub(p, d), vadd(p, d), color)
 	end
@@ -737,3 +761,84 @@ function Deagle:ClothCopy(arg)
 	self:Notify("clothing copy -> " .. tostring(best:GetName()) .. ": " .. parts)
 end
 System.AddCCommand("deagle_clothcopy", "Deagle:ClothCopy([[%line]])", "deagle_clothcopy npc|vm|off [arms,hands,...]: test - copies Henry's worn clothing (sleeves, gauntlets) onto the nearest NPC or the gun's arms; off removes the copies")
+
+-- ---------------------------------------------------------------------------
+-- deagle_clicklog: why a click in a combo does nothing. Every left-mouse press / release the game's input gets
+-- (our own "deagle_fire" action sees mouse1 whether or not the gun is out; the game's combat ignores it, it doesn't
+-- consume it) is logged with the player's animation state, how long ago that state began, stamina and combat mode;
+-- every animation-state change is logged too. So one log shows whether the click arrived and what the player was
+-- doing: "click press ... anim=attack_2 (0.12 s in)" and no following change = the game dropped it (combo window),
+-- no "click" line at all = the input never reached the game. Lines are "[clicklog] ..." in kcd.log.
+-- ---------------------------------------------------------------------------
+local CL_RING = 40   -- clicks kept for `deagle_clicklog report`
+
+local function clState(self)
+	local p = self:Player()
+	local anim, stam, combat = "?", -1, -1
+	if p then
+		if p.actor and p.actor.GetCurrentAnimationState then
+			local ok, a = pcall(p.actor.GetCurrentAnimationState, p.actor)
+			if ok then anim = tostring(a) end
+		end
+		if p.soul then
+			if p.soul.GetState then local ok, v = pcall(p.soul.GetState, p.soul, "stamina"); if ok and tonumber(v) then stam = tonumber(v) end end
+			if p.soul.IsInCombatMode then local ok, v = pcall(p.soul.IsInCombatMode, p.soul); if ok then combat = v and 1 or 0 end end
+		end
+	end
+	return anim, stam, combat
+end
+
+function Deagle:ClickLogTick(token)
+	local cl = self.clicklog
+	if not cl or token ~= cl.token then return end
+	local anim = clState(self)
+	local t = os.clock()
+	if anim ~= cl.anim then
+		log(string.format("[clicklog] anim %s -> %s (after %.3f s)", tostring(cl.anim), anim, t - (cl.animT or t)))
+		cl.anim, cl.animT = anim, t
+	end
+	Script.SetTimer(0, cl.tickFn)
+end
+
+-- from OnAction: the mouse-1 events (action "deagle_fire")
+function Deagle:ClickLogEvent(activation)
+	local cl = self.clicklog
+	if not cl then return end
+	local anim, stam, combat = clState(self)
+	local t = os.clock()
+	cl.ring[#cl.ring + 1] = { t = t, act = activation, anim = anim, inAnim = t - (cl.animT or t), stam = stam }
+	if #cl.ring > CL_RING then table.remove(cl.ring, 1) end
+	log(string.format("[clicklog] click %s: anim=%s (%.3f s in) stamina=%.0f combat=%d gameSpeed=%.2f",
+		activation, anim, t - (cl.animT or t), stam, combat, self:GameSpeed()))
+end
+
+function Deagle:ClickLogCmd(arg)
+	arg = tostring(arg or ""):lower()
+	if arg == "" then arg = self.clicklog and "off" or "on" end
+	if arg == "on" or arg == "1" then
+		if self.clicklog then return log("[clicklog] already on") end
+		local cl = { token = (self.clickToken or 0) + 1, ring = {} }
+		self.clickToken, self.clicklog = cl.token, cl
+		cl.tickFn = function() Deagle:ClickLogTick(cl.token) end
+		Script.SetTimer(0, cl.tickFn)
+		log("[clicklog] on: click presses / releases and animation changes are logged; try the combo, then deagle_clicklog report")
+	elseif arg == "off" or arg == "0" then
+		self.clickToken = (self.clickToken or 0) + 1   -- the stored tick sees a stale token and stops
+		self.clicklog = nil
+		log("[clicklog] off")
+	elseif arg == "report" then
+		local cl = self.clicklog
+		if not cl or #cl.ring == 0 then return log("[clicklog] nothing logged yet") end
+		local n, last = 0, nil
+		for _, e in ipairs(cl.ring) do
+			if e.act == "press" then
+				n = n + 1
+				log(string.format("[clicklog] #%d press anim=%s %.3f s in, stamina %.0f%s", n, e.anim, e.inAnim, e.stam,
+					last and string.format(", %.3f s after the last press", e.t - last) or ""))
+				last = e.t
+			end
+		end
+	else
+		log("usage: deagle_clicklog [on|off|report]")
+	end
+end

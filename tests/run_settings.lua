@@ -116,6 +116,32 @@ check(string.format("slow motion: deagle_slowmo 0.02 -> x%s, kept %s; set 0.005 
 	tostring(on1), tostring(keep1), tostring(on2), tostring(snd2), tostring(off3), tostring(f9), tostring(M.cvars.t_Scale)),
 	on1 == 0.02 and keep1 == "slowmo 0.02" and on2 == 0.01 and snd2 == 0.01 and off3 == 1 and f9 == 0.01
 	and M.cvars.t_Scale == 1 and not Deagle.slowOn, on2)
+-- bullet time: Z held slows the game to cfg.bullet and its release gives the speed back; on top of F9 it gives F9's back;
+-- bulletToggle makes Z a toggle; a second press while held (lost release) ends it; a save load ends it
+Deagle:OnAction("deagle_bullet", "press", 1)
+local b1 = M.cvars.t_Scale
+Deagle:OnAction("deagle_bullet", "release", 0)
+local b2 = M.cvars.t_Scale
+M.console("deagle_slowmo", "0.1")
+Deagle:OnAction("deagle_bullet", "press", 1)
+local b3 = M.cvars.t_Scale
+Deagle:OnAction("deagle_bullet", "release", 0)
+local b4 = M.cvars.t_Scale
+M.console("deagle_slowmo", "off")
+Deagle:OnAction("deagle_bullet", "press", 1)
+Deagle:OnAction("deagle_bullet", "press", 1)
+local b5 = M.cvars.t_Scale
+M.console("deagle_set", "bulletToggle 1")
+Deagle:OnAction("deagle_bullet", "press", 1)
+Deagle:OnAction("deagle_bullet", "release", 0)
+local b6 = M.cvars.t_Scale
+Deagle:OnAction("deagle_bullet", "press", 1)
+local b7 = M.cvars.t_Scale
+M.console("deagle_bullet", "off")
+check(string.format("bullet time: hold x%s, release x%s; over F9 x%s then x%s; second press x%s; toggle on x%s, again x%s; off x%s",
+	tostring(b1), tostring(b2), tostring(b3), tostring(b4), tostring(b5), tostring(b6), tostring(b7), tostring(M.cvars.t_Scale)),
+	b1 == 0.25 and b2 == 1 and b3 == 0.1 and b4 == 0.1 and b5 == 1 and b6 == 0.25 and b7 == 1 and M.cvars.t_Scale == 1
+	and not Deagle.bulletOn, b1)
 M.console("deagle_reset")
 
 check("no script errors", #M.errors == 0, table.concat(M.errors, " | "))

@@ -136,6 +136,8 @@ Deagle.cfg = {
 	-- m: a per-shot flash gets a bounding box this big (x its size) the moment it's spawned, so the engine needn't wait
 	-- for its first update to see it (plugin flashseed; 0 = off). Under test: the flash showed one game frame late
 	flashSeed = 0,
+	bullet = 0.25,            -- Z (deagle_bullet): game speed while bullet time is on (0.05-1), for learning combos
+	bulletToggle = false,     -- true: Z toggles bullet time; false: it lasts while Z is held
 	slowmo = 0.1,             -- F9 (deagle_slowmo): game speed while slow motion is on, for checking effects
 	debugZoom = { 4, 10 },    -- F2 / mouse 4 (deagle_zoom): zoom steps for looking at impacts / tracers far away, then off
 	debugPaths = false,       -- deagle_paths 1 / 0 / clear: draw every round's path, kept until cleared
@@ -600,6 +602,9 @@ function Deagle:NativeSyncVm()
 	if self.vmId then self:Native("vm 0x" .. entityHex(self.vmId)) end
 	self:Native(string.format("off %.4f %.4f %.4f", c.offset.right, c.offset.fwd, c.offset.up))
 	self:Native("follow " .. ((self.vmShown and self.vmInFp) and "1" or "0"))
+	-- the KCD2 Render plugin's gun mirror (separate mod) takes its photos only while this is 1: the mirror skin on and
+	-- the gun out in first person (the user 2026-10-26: "turn it on when i do deagle skin mirror and i take my gun out")
+	self:Native("krender " .. ((self.vmShown and self.vmInFp and self.cfg.skin == "mirror") and "1" or "0"))
 	self:Native(string.format("motion %.2f", c.motion))
 	self:Native("flashgrow " .. table.concat(self.cfg.flashGrow, " "))
 	self:Native(string.format("flashseed %.3f", self.cfg.flashSeed))
@@ -622,6 +627,7 @@ function Deagle:OnAction(action, activation, value)
 		if activation == "press" then self:Inspect() end
 		return true
 	end
+	if action == "deagle_fire" and self.clicklog then self:ClickLogEvent(activation) end   -- before anything can consume it
 	if not self.inputLoaded then self:EnsureInit() end
 	if s.reloading then self:FinishReload() end
 	if s.logActions then log("action " .. tostring(action) .. " " .. tostring(activation)) end
@@ -631,6 +637,12 @@ function Deagle:OnAction(action, activation, value)
 	if s.drawn and (action == "toggle_torch" or action == "xi_toggle_torch") then return true end
 	if action == "deagle_toggle" then
 		if activation == "press" then self:Toggle() end
+		return true
+	end
+	if action == "deagle_bullet" then
+		if activation == "press" then
+			if self.cfg.bulletToggle then self:Bullet(not self.bulletOn) else self:Bullet(true) end
+		elseif activation == "release" and not self.cfg.bulletToggle then self:Bullet(false) end
 		return true
 	end
 	if action == "deagle_slowmo" then
@@ -788,6 +800,8 @@ function Deagle:OnGameplayStarted()
 	self.gunKick, self.camRecoil, self.camRecoilLast, self.motionIn, self.flashLights = nil, nil, nil, nil, nil
 	s.heat, s.accFire, s.accT, s.burstReady = 0, 0, nil, nil
 	if self.slowOn then self:SlowMo(false) end
+	if self.bulletOn then self:Bullet(false) end
+	self.clicklog = nil   -- Script timers are gone at a load
 	self:RemoveStaleEntities()   -- at load, not just on draw: a holstered gun would leave the pyramid in view
 	self:DummyLoaded()           -- Script timers are gone: the dummy loop must not survive a load
 	self:NativeHello()
@@ -800,8 +814,10 @@ end
 -- What a setting changes besides itself (the plugin holds some; others are applied when they change)
 local AFTER_SET = {
 	flashGrow = function(self) self:NativeSyncVm() end,
+	bullet = function(self) if self.bulletOn then self:Bullet(true) end end,
 	slowmo = function(self) if self.slowOn then self:SlowMo(true) else self:NativeSyncVm() end end,
 	flashSeed = function(self) self:NativeSyncVm() end,
+	skin = function(self) self:NativeSyncVm() end,   -- the gun mirror's on/off ("krender")
 	["vm.motion"] = function(self) self:NativeSyncVm() end,
 	["vm.arms"] = function(self) self.vmArmsApplied = nil; self:VmApplyArms() end,
 	["vm.ads"] = function(self) self:SetAim(false) end,
@@ -982,6 +998,8 @@ function Deagle:RespecRemove(line)
 end
 System.AddCCommand("deagle_respec", "local a = Deagle.Arg([[%line]]); System.LogAlways('[Deagle] points: asked the plugin to reset ' .. a .. (Deagle.native and '' or ' (not linked: no answer will come)')); Deagle:PointsNative('respec ' .. a)", "deagle_respec <skill>: that skill's perks come off and their points come back (e.g. deagle_respec alchemy)")
 System.AddCCommand("deagle_respec_remove", "Deagle:RespecRemove([[%line]])", "internal: the plugin's list of perks for deagle_respec to remove")
+System.AddCCommand("deagle_clicklog", "Deagle:ClickLogCmd(Deagle.Arg([[%1]]))", "deagle_clicklog [on|off|report]: log every left click and the player animation state (for combos where a click does nothing); lines start with [clicklog] in kcd.log")
+System.AddCCommand("deagle_bullet", "Deagle:BulletCmd(Deagle.Arg([[%1]]))", "deagle_bullet [on|off|speed]: bullet time (all NPCs and you slow down; Z holds it, deagle_set bulletToggle 1 makes Z a toggle); a speed 0.05-1 is kept")
 System.AddCCommand("deagle_slowmo", "Deagle:SlowMoCmd(Deagle.Arg([[%1]]))", "deagle_slowmo [speed|off]: slow motion at that game speed (0.01-1, kept: F9 uses it too); no value = on / off like F9")
 System.AddCCommand("deagle_zoom", "Deagle:SetZoom(tonumber(Deagle.Arg([[%1]])))", "deagle_zoom <factor>: debug zoom (1 / nothing = off); F2 / mouse 4 step x4, x10, off")
 System.AddCCommand("deagle_toggle", "Deagle:EnsureInit() Deagle:Toggle()", "Draw / holster the Desert Eagle")
