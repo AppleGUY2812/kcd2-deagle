@@ -1,4 +1,4 @@
-#include "../native/build_guard.h"
+#include "merchant_build_guard.h"
 #include <cassert>
 #include <iostream>
 

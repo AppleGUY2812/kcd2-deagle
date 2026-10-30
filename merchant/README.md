@@ -59,7 +59,7 @@ From the repository root, Linux only:
 ```sh
 nice -n 19 g++ -std=c++17 -O2 -Wall -I native/src native/test/merchant_logic_test.cpp -o /tmp/mlt && /tmp/mlt
 luajit merchant/tests/commands_test.lua
-nice -n 19 g++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic merchant/tests/build_guard_test.cpp -o /tmp/opencode/merchant_build_guard_test && /tmp/opencode/merchant_build_guard_test
+nice -n 19 g++ -std=c++17 -O2 -Wall -Wextra -Werror -pedantic -I native/src native/test/merchant_build_guard_test.cpp -o /tmp/opencode/merchant_build_guard_test && /tmp/opencode/merchant_build_guard_test
 ```
 
 The model uses Groschen and absolute **game days** (native logged money is deciGroschen).

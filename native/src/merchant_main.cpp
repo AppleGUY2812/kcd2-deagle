@@ -10,7 +10,7 @@
 #include "log.h"
 #include "scan.h"
 #include "settings.h"
-#include "../../merchant/native/build_guard.h"
+#include "merchant_build_guard.h"
 
 // WHGame.dll 1.5.6 only. All addresses/field provenance and the supplied open-hook
 // correction are in docs/merchant_resale_native.md. NO merchant_logic.h integration:
