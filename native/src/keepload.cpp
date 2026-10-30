@@ -7,7 +7,9 @@
 // (samelevel.cpp) and the kept map came out stale and frozen. So the map's screen handler FUN_180562300 is also hooked:
 // after a save load or a finished fast travel it runs the game's own unload sequence at the next map screen change (an
 // open or tab switch, never the menu closing), and that open loads and fills the map like the unmodded game. The
-// inventory (4) stays banned. "keepload <mask>" (fastload_keepload.txt): default 80 = map (64) + character (16); 0 = the
+// inventory (4) stays banned. 2026-10-30: default 0: the kept character screen froze after a save load and the kept
+// map came back black and crashed the game after a level change (Kuttenberg -> Trosky, not a save load or fast
+// travel). "keepload <mask>" (fastload_keepload.txt): 64 = map, 16 = character; 0 = the
 // game's choice. Screens: 1, 2 inventory, 4 character, 6 map, 7.
 #include <windows.h>
 #include <cstdio>
@@ -28,7 +30,7 @@ constexpr uintptr_t kRva = 0x56259c;
 constexpr uint8_t kBytes[] = { 0x8b, 0x05, 0x82, 0x05, 0x08, 0x05, 0x85, 0xc0, 0x74, 0x3c, 0x84, 0xd2, 0x74, 0x51 };
 typedef uint64_t(__fastcall* UnloadFn)(void* panel, char next, uint8_t own);
 UnloadFn o_unload = nullptr;
-unsigned g_mask = (1u << 6) | (1u << 4);
+unsigned g_mask = 0;   // 2026-10-30: off by default: every kept screen broke in play (see the header)
 std::string g_file;
 unsigned g_kept = 0, g_passed = 0;
 

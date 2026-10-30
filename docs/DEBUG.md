@@ -281,8 +281,9 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
   `menutime: open #N:` with the time of each step (fader, setup, map fill, SetItems, calls to Flash, GFx advance).
   Calls into the menu scripts over 3 ms are logged by name (`menutime:   call <name> <ms>`).
 - `keepload <mask>`: which menu screens stay loaded after the menu closes (the game unloads them all; the next open
-  rebuilds the screen). `64` = the map, `16` character (default `80` = map + character); `4` inventory is banned; add
-  them up; `0` = the game's choice. The installed value is in `fastload_keepload.txt`. Opening a screen in another mode
+  rebuilds the screen). `64` = the map, `16` character; `4` inventory is banned; add them up; `0` = the game's choice,
+  the default and installed value since 2026-10-30 (the kept character screen froze after a save load; the kept map
+  came back black and crashed the game after a Kuttenberg -> Trosky trip). The installed value is in `fastload_keepload.txt`. Opening a screen in another mode
   (trade, loot, pickpocket) still reloads it. The quest log's item events from the game's AI thread run on the main
   thread. A kept map is rebuilt after a save load (full or same-level) or a fast travel: at the next open or tab switch
   the map handler runs the game's own unload, so that open loads and fills it as unmodded (never at the close that ends
