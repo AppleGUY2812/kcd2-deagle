@@ -7,16 +7,18 @@ local timers = {}
 -- an inventory: items {id, class, amount}; money is a class like any other (deci units, as in the game)
 local function Inventory(money)
 	local inv = { items = {}, next = 1 }
-	function inv:Add(class, amount, id)
+	function inv:Add(class, amount, id, health, owned)
 		id = id or string.format("userdata: 02%014X", self.next); self.next = self.next + 1
-		self.items[#self.items + 1] = { id = id, class = class, amount = amount }
+		self.items[#self.items + 1] = { id = id, class = class, amount = amount, health = health or 1, owned = owned }
 		return id
 	end
 	function inv:GetMoney() return self:GetCountOfClass(MONEY) / 10 end
 	function inv:GetCountOfClass(c) local n = 0; for _, it in ipairs(self.items) do if it.class == c then n = n + it.amount end end; return n end
 	function inv:CreateItem(c, health, amount) self:Add(c, amount) end
 	function inv:DeleteItem(id, n)
-		for i, it in ipairs(self.items) do if it.id == id then it.amount = it.amount - n; if it.amount <= 0 then table.remove(self.items, i) end; return end end
+		for i, it in ipairs(self.items) do if it.id == id then
+			if it.owned then return end          -- the game skips items another inventory owns (sold to the merchant)
+			it.amount = it.amount - n; if it.amount <= 0 then table.remove(self.items, i) end; return end end
 	end
 	function inv:DeleteItemOfClass(c, n)
 		for i = #self.items, 1, -1 do local it = self.items[i]
@@ -49,9 +51,14 @@ Shops = {
 	GetShopDBIdByKeeper = function(id) return (id == "stash520" or id == "stash520b" or id == "keeper520") and 520 or -1 end,
 	IsShopOpened = function() return false end,
 }
+local removeWorks = true
 ItemManager = { GetItem = function(id)
 	for _, s in ipairs({ stash, empty }) do for _, it in ipairs(s.inventory.items) do
-		if it.id == id then return { class = it.class, amount = it.amount, health = 1, id = id } end end end
+		if it.id == id then return { class = it.class, amount = it.amount, health = it.health, id = id } end end end
+end, RemoveItem = function(id)                -- deletes the whole stack from its owner, wherever it is
+	if not removeWorks then return end
+	for _, s in ipairs({ stash, empty }) do for i, it in ipairs(s.inventory.items) do
+		if it.id == id then table.remove(s.inventory.items, i); return end end end
 end }
 Script = { SetTimer = function(ms, fn) timers[#timers + 1] = fn end }
 g_localActor = { AI = {}, GetWorldPos = function() return { x = 2292, y = 2056, z = 0 } end }
@@ -64,7 +71,7 @@ local MR = MerchantResale
 local function tick() realTime = realTime + 30; local t = timers; timers = {}; for _, f in ipairs(t) do f() end end
 local function has(text) for _, l in ipairs(logs) do if l:find(text, 1, true) then return true end end end
 local checks = 0
-local function check(ok, what) checks = checks + 1; if not ok then error("FAIL: " .. what, 2) end end
+local function check(ok, what) checks = checks + 1; if not ok then for _, l in ipairs(logs) do print(l) end; error("FAIL: " .. what, 2) end end
 
 -- pure model: one plate in a fresh market resells in 3 days +-30%; 30 plates floor the demand
 local S = MR.NewState()
@@ -128,17 +135,46 @@ check(has("1 gone from stock") and math.abs(stash.inventory:GetMoney() - 428.0) 
 g_localActor.AI = { MerchantResale = MR.Serialize(S) }
 tick()
 check(MR.S ~= St and #MR.S.rows == 28, "load picks the save's state")
--- a removal that fails stops writes for the session
+-- what the player sold stays the merchant's: the chest's DeleteItem skips it, ItemManager.RemoveItem takes it
 g_localActor.AI = {}
 tick()
-stash.inventory:Add(SWORD, 1, "userdata: 020000000000D00D")
+local p0 = stash.inventory:GetMoney()
+stash.inventory:Add(SWORD, 1, "userdata: 020000000000D00D", 1, true)
 queue = "sell 520 " .. SWORD .. " 1 1000 020000000000D00D\n"
 tick()
-local realDelete = stash.inventory.DeleteItem
-stash.inventory.DeleteItem = function() end                    -- the game refuses
 worldTime = worldTime + 10 * 86400
 tick()
-check(MR.stopped and has("STOPPED for this session"), "failed removal stops")
+check(stash.inventory:GetCountOfClass(SWORD) == 0 and math.abs(stash.inventory:GetMoney() - p0 - 100) < 1e-6,
+	"merchant-owned sale removed, +100 gr: " .. stash.inventory:GetMoney() - p0)
+-- condition: a sword at 40% resells for 40% of its price
+stash.inventory:Add(SWORD, 1, "userdata: 020000000000D0D0", 0.4, true)
+queue = "sell 520 " .. SWORD .. " 1 1000 020000000000D0D0\n"
+tick()
+check(MR.S.rows[#MR.S.rows].base == 400 and has("40% condition, 40.0 gr each"), "condition sets the resale value")
+-- the game refuses both ways: no coins, the row goes, the mod keeps running
+removeWorks = false
+p0 = stash.inventory:GetMoney()
+worldTime = worldTime + 10 * 86400
+tick()
+check(not MR.stopped and has("would not remove") and #MR.S.rows == 0 and stash.inventory:GetMoney() == p0,
+	"refused removal: no coins, no stop")
+removeWorks = true
+-- half a stack gone is a broken state: stop for the session
+local realDelete = stash.inventory.DeleteItem
+stash.inventory:Add(SWORD, 2, "userdata: 020000000000D11D")
+queue = "sell 520 " .. SWORD .. " 2 1000 020000000000D11D\n"
+tick()
+stash.inventory.DeleteItem = function(self, id, n) realDelete(self, id, 1) end
+worldTime = worldTime + 10 * 86400
+tick()
+check(MR.stopped and has("STOPPED for this session"), "partial removal stops")
 stash.inventory.DeleteItem = realDelete
+-- market size: one 2217.5 gr axe at a lone 339 gr shop costs weapon demand 0.18, not 0.55
+local S4 = MR.NewState(); MR.Observe(S4, 522, 0, 0, 3390)
+MR.AddSale(S4, 522, SWORD, 1, 22175, "AX", 0)
+check(math.abs(MR.DemandAt(S4, 522, "weapon", 0) - (1 - 2217.5 / (10000 * (1 + 339 / 1500)))) < 1e-9
+	and MR.DemandAt(S4, 522, "weapon", 0) > 0.8, "hamlet weapon market " .. MR.DemandAt(S4, 522, "weapon", 0))
+for i = 1, 20 do MR.Observe(S4, 600 + i, 10 * i, 0, 6000) end   -- a town: 20 more shops of 600 gr nearby
+check(MR.Capacity(S4, 522, "weapon") > 80000, "town weapon market " .. MR.Capacity(S4, 522, "weapon"))
 print(string.format("merchant logic tests: %d checks passed (fresh plate %.2f days, flooded last plate %.1f days)",
 	checks, r1.eta, S.rows[#S.rows].eta))

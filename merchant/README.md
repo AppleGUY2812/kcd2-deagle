@@ -1,9 +1,10 @@
 # Merchant Resale (phase 2)
 
 Merchants resell what you sell them. Every item you sell to a shop goes into that shop's ledger; over the next game
-days it leaves the shop's stock and the shop gets the item's full price in coin. Selling a lot of one kind in one town
-(say 30 plates of armour in Kuttenberg) floods that market: those items take ~3 weeks instead of ~3 days, and demand
-recovers with a 4-day half-life. Money a shop earns this way survives the weekly restock (capped at 10x its normal
+days it leaves the shop's stock and the shop gets the item's price at its condition in coin (a 40% sword: 40% of its
+price). Selling a lot of one kind in one town floods that market: those items take ~3 weeks instead of ~3 days, and
+demand recovers with a 4-day half-life. A market's size grows with the shops the mod knows there: a lone 339 gr fence
+absorbs ~12 000 gr of weapons, a town of 20 shops ~90 000 gr. Money a shop earns this way survives the weekly restock (capped at 10x its normal
 purse). Rules and numbers: `docs/merchant_resale_design.md`.
 
 ## How it works
@@ -14,8 +15,10 @@ purse). Rules and numbers: `docs/merchant_resale_design.md`.
   of its keeper or stash (before you can open the shop screen; never while it is open): due items leave the stash,
   coins go into the purse (the stash holding the most money), and a restocked purse gets its savings back.
 - State (ledger, demand, purses) lives in the player's AI table, which every save stores: each save has its own.
-- Any failed removal or a purse that moved by the wrong amount stops all changes for the session
-  (`STOPPED for this session` in the log).
+- Sold items stay the merchant's property in his chest, and the chest's `DeleteItem` skips them; the mod then uses
+  `ItemManager.RemoveItem` (deletes from the owner's inventory, whole stack). If the game refuses both, the item stays
+  in stock and the shop gets no coins (`would not remove` in the log). Half a stack removed, or a purse that moved by
+  the wrong amount, stops all changes for the session (`STOPPED for this session`).
 - `categories.lua` is generated from the game's item tables: `python3 merchant/tools/build_categories.py <game dir>
   merchant/src/Scripts/MerchantResale/categories.lua` (weapon / armor / food / alchemy; everything else is misc).
 

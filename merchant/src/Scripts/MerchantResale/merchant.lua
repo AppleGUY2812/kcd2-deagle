@@ -9,7 +9,10 @@ MerchantResale = MerchantResale or {}
 local MR = MerchantResale
 
 MR.cfg = {
-	capacity = { armor = 6000, weapon = 4000, food = 600, alchemy = 1500, misc = 2000 },   -- groschen per market
+	-- groschen of goods a market absorbs per category (demand 1 -> 0): capacity x (1 + wealth / wealthRef), wealth =
+	-- the normal purses of the market's shops the mod knows (a 339 gr hamlet fence: weapons 12 300 gr; a town whose
+	-- known shops hold 12 000 gr: 90 000 gr)
+	capacity = { armor = 15000, weapon = 10000, food = 1500, alchemy = 4000, misc = 5000 }, wealthRef = 1500,
 	baseDays = { armor = 3, weapon = 3, food = 1, alchemy = 2, misc = 2 },
 	floor = 0.15, halfLife = 4, spread = 0.3,
 	marketRadius = 300, capMul = 10, minPreset = 500,          -- metres, x normal purse, deci (a 0 gr purse still earns)
@@ -52,6 +55,14 @@ function MR.Observe(S, dbid, x, y, purse)
 	return shop
 end
 
+-- groschen: the normal purses of the market's known shops, and the goods a category can absorb
+function MR.Wealth(S, anchor)
+	local w, n = 0, 0
+	for _, s in pairs(S.shops) do if s.anchor == anchor then w, n = w + s.preset, n + 1 end end
+	return w / 10, n
+end
+function MR.Capacity(S, anchor, cat) return MR.cfg.capacity[cat] * (1 + MR.Wealth(S, anchor) / MR.cfg.wealthRef) end
+
 function MR.DemandAt(S, anchor, cat, now) return MR.Recover(S.demand[anchor .. ":" .. cat], now) end
 
 -- a committed sale of `count` units (one row: a stack resells together)
@@ -65,7 +76,7 @@ function MR.AddSale(S, dbid, guid, count, baseDeci, token, now)
 	local row = { shop = dbid, guid = guid, cat = cat, n = count, base = baseDeci, sold = now,
 		eta = now + MR.cfg.baseDays[cat] / d * jitter, token = token }
 	S.rows[#S.rows + 1] = row
-	S.demand[key] = { v = math.max(MR.cfg.floor, d - count * baseDeci / 10 / MR.cfg.capacity[cat]), t = now }
+	S.demand[key] = { v = math.max(MR.cfg.floor, d - count * baseDeci / 10 / MR.Capacity(S, shop.anchor, cat)), t = now }
 	return row
 end
 
@@ -190,14 +201,17 @@ function MR:Pull(S, now)
 	local traded = {}
 	for dir, dbid, guid, count, base, token in text:gmatch("(%a+) (%-?%d+) (%S+) (%d+) (%-?%d+) (%x+)\n") do
 		dbid, count, base = tonumber(dbid), tonumber(count), tonumber(base)
-		local _, purse = self:Stashes(dbid)
+		local stashes, purse = self:Stashes(dbid)
 		if purse then
 			local p = purse:GetWorldPos()
 			MR.Observe(S, dbid, p.x, p.y, deci(purse))
 			if dir == "sell" and base > 0 then
-				local r = MR.AddSale(S, dbid, guid, count, base, token, now)
-				say(string.format("shop %d bought %dx %s (%s, %.1f gr each): resells in %.1f days", dbid, count, guid,
-					r.cat, base / 10, r.eta - now))
+				-- customers pay for the condition it is in (linear in health; the plugin reports the full price)
+				local _, _, it = MR.find(stashes, token, guid)
+				local h = math.max(0, math.min(1, tonumber(it and it.health) or 1))
+				local r = MR.AddSale(S, dbid, guid, count, math.floor(base * h + 0.5), token, now)
+				say(string.format("shop %d bought %dx %s (%s, %.0f%% condition, %.1f gr each): resells in %.1f days", dbid,
+					count, guid, r.cat, h * 100, r.base / 10, r.eta - now))
 			elseif dir == "buy" then
 				local n = MR.Buyback(S, dbid, guid, count)
 				if n > 0 then say(string.format("shop %d: you bought back %d of its resale stock", dbid, n)) end
@@ -217,24 +231,47 @@ end
 
 -- remove a row's item from the shop's stashes: the exact instance first, else the same class.
 -- true = removed, false = the count didn't drop as expected, nil = gone (bought back, restocked away, stolen)
-local function take(stashes, row)
+-- the item a sale's token names, in any of the shop's stashes
+local function find(stashes, token, guid)
 	for _, st in ipairs(stashes) do
 		for _, id in pairs(st.inventory:GetInventoryTable() or {}) do
-			if tostring(id):upper():find(row.token:upper(), 1, true) then
+			if tostring(id):upper():find(token:upper(), 1, true) then
 				local it = ItemManager.GetItem(id)
-				if it and it.class == row.guid and (it.amount or 1) >= row.n then
-					local before = st.inventory:GetCountOfClass(row.guid)
-					st.inventory:DeleteItem(id, row.n)
-					return before - st.inventory:GetCountOfClass(row.guid) == row.n
-				end
+				if it and it.class == guid then return st, id, it end
 			end
 		end
+	end
+end
+MR.find = find
+
+-- removes a resold row's items: true (removed), nil (no longer in stock: bought back or destocked), false (the game
+-- refused, nothing changed); throws when only part of it went. What the player sold stays the MERCHANT's property in
+-- his chest, and the chest's DeleteItem skips items another inventory owns (WHGame 1.5.6 FUN_182ac0eac: item+0x90
+-- must be that inventory; seen 2026-10-30, a sold axe stayed). ItemManager.RemoveItem deletes an item from its owner's
+-- inventory (FUN_182ac0e54, same delete call), whole stack only.
+local function take(stashes, row)
+	local st, id, it = find(stashes, row.token, row.guid)
+	if st and (it.amount or 1) >= row.n then
+		local inv = st.inventory
+		local before = inv:GetCountOfClass(row.guid)
+		inv:DeleteItem(id, row.n)
+		local gone = before - inv:GetCountOfClass(row.guid)
+		if gone == 0 and (it.amount or 1) == row.n and ItemManager.RemoveItem then
+			ItemManager.RemoveItem(id)
+			gone = before - inv:GetCountOfClass(row.guid)
+		end
+		if gone == row.n then return true end
+		if gone == 0 then return false end
+		error(string.format("%d of %d removed", gone, row.n))
 	end
 	for _, st in ipairs(stashes) do
 		local before = st.inventory:GetCountOfClass(row.guid)
 		if before >= row.n then
 			st.inventory:DeleteItemOfClass(row.guid, row.n)
-			return before - st.inventory:GetCountOfClass(row.guid) == row.n
+			local gone = before - st.inventory:GetCountOfClass(row.guid)
+			if gone == row.n then return true end
+			if gone == 0 then return false end
+			error(string.format("%d of %d removed by class", gone, row.n))
 		end
 	end
 	return nil
@@ -259,13 +296,15 @@ function MR:Settle(S, dbid, now)
 	local resold, gone, coins = 0, 0, 0
 	for _, row in ipairs(MR.Due(S, dbid, now)) do
 		local ok, result = pcall(take, stashes, row)
-		if not ok or result == false then
+		if not ok then
 			self.stopped = "removing " .. row.guid .. " from shop " .. dbid .. " failed: " .. tostring(result)
 			say("STOPPED for this session: " .. self.stopped)
 			break
 		end
 		MR.Drop(S, row)
-		if result == nil then gone = gone + 1
+		if result == false then
+			say(string.format("shop %d: the game would not remove %dx %s; it stays in stock, no coins", dbid, row.n, row.guid))
+		elseif result == nil then gone = gone + 1
 		else
 			local add = math.min(row.base * row.n, MR.Room(shop, deci(purse)))
 			if add > 0 then purse.inventory:CreateItem(MONEY, 1, add) end
@@ -366,6 +405,9 @@ function MR:Status()
 	local parts = {}
 	for _, cat in ipairs(CATS) do parts[#parts + 1] = string.format("%s %.2f", cat, MR.DemandAt(S, shop.anchor, cat, now)) end
 	say("market demand: " .. table.concat(parts, ", "))
+	local w, n = MR.Wealth(S, shop.anchor)
+	say(string.format("market: %d known shop(s) worth %.0f gr; it absorbs %.0f gr of weapons, %.0f gr of armor", n, w,
+		MR.Capacity(S, shop.anchor, "weapon"), MR.Capacity(S, shop.anchor, "armor")))
 	for _, r in ipairs(S.rows) do
 		if r.shop == best then
 			say(string.format("  %dx %s (%s, %.1f gr each): %s", r.n, r.guid, r.cat, r.base / 10,

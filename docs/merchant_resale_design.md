@@ -10,12 +10,14 @@ and with demand, so it feels like part of the game.
 ## Rules (decided)
 1. **Resale.** Every item the player sells to a merchant goes into that merchant's ledger: class, count, base value
    (the item's full price), the price the merchant paid, and the game time. Over game days the merchant resells it to
-   unseen customers: the item leaves the stock and the merchant gets its base value (his margin = what he paid you
-   vs full price). Buybacks: if the player buys a ledger item back, it leaves the ledger, no coin.
+   unseen customers: the item leaves the stock and the merchant gets its base value times its condition (health
+   0..1, read when the sale is recorded; his margin = what he paid you vs that). Buybacks: if the player buys a ledger item back, it leaves the ledger, no coin.
 2. **Demand.** A market = merchants within 300 m of each other (Kuttenberg, Trosky village, ...); a category = the
    item's top-level class (armor, weapon, food, herb/alchemy, misc). Demand d per market x category, 0.15..1.0, starts
-   at 1. Each sale lowers d by (base value / market capacity) where capacity is per category (armor 6000 gr, weapon
-   4000, food 600, alchemy 1500, misc 2000). d recovers toward 1 with a 4-day half-life.
+   at 1. Each sale lowers d by (value / market capacity). Capacity = per category (armor 15000 gr, weapon 10000, food
+   1500, alchemy 4000, misc 5000) x (1 + W / 1500 gr), W = the normal purses of the market's shops the mod knows
+   (2026-10-30, user: "4000 gr weapon market sounds too little"; one 2217 gr axe had cut a hamlet's weapon demand to
+   0.45, now 0.82). d recovers toward 1 with a 4-day half-life.
 3. **Speed.** An item resells after its expected time T = base_days[category] / d (armor 3 days, weapon 3, food 1,
    alchemy 2, misc 2), with +-30% random spread per item (seeded by item id, so reloads give the same answer).
    Flooding Kuttenberg with 30 plates drops armor demand to the floor: those take ~20 days, not 3. Prices are NOT
