@@ -65,6 +65,31 @@ function MR.Capacity(S, anchor, cat) return MR.cfg.capacity[cat] * (1 + MR.Wealt
 
 function MR.DemandAt(S, anchor, cat, now) return MR.Recover(S.demand[anchor .. ":" .. cat], now) end
 
+-- what the shop gets back from customers per groschen of an item's value: twice what that shop's own price rule pays
+-- the player for it (shop.xml price_sell_multiplier), never above the item's full value, unless the shop also charges
+-- more than full value for it (price_buy_multiplier > 1, herbs at a herbalist). A blacksmith's armour (pays 0.5):
+-- 1.0; a fence's or general trader's anything (0.35): 0.7; a fence's rings (0.85): 1.0. Unknown shop or item: 0.7.
+-- The game uses the LAST matching rule (later rows override "player_item.*.*").
+local function glob(p) return "^" .. p:gsub("[%^%$%(%)%%%.%[%]%+%-%?]", "%%%0"):gsub("%*", ".*") .. "$" end
+function MR.Rule(dbid, guid)
+	local rows = MerchantResaleShops and MerchantResaleShops[dbid]
+	local kind = MerchantResaleKinds and MerchantResaleKinds[guid]
+	if not (rows and kind) then return nil end
+	local cats, typ, sub = kind:match("^([^|]*)|([^|]*)|([^|]*)$")
+	local hit
+	for _, r in ipairs(rows) do
+		local c, t, u = (r[1] .. ".*.*"):match("^([^.]*)%.([^.]*)%.([^.]*)")
+		local catOk = c == "player_item" or ("," .. cats .. ","):find("," .. c .. ",", 1, true)
+		if catOk and typ:find(glob(t)) and sub:find(glob(u)) then hit = r end
+	end
+	return hit
+end
+function MR.Rate(dbid, guid)
+	local r = MR.Rule(dbid, guid)
+	if not (r and r[2]) then return 0.7, nil end
+	return math.min(2 * r[3], math.max(1, r[2])), r
+end
+
 -- a committed sale of `count` units (one row: a stack resells together)
 function MR.AddSale(S, dbid, guid, count, baseDeci, token, now)
 	local shop = S.shops[dbid]
@@ -160,10 +185,14 @@ end
 function MR:Now() return Calendar.GetWorldTime() / 86400 end
 function MR:Count(t) local n = 0; for _ in pairs(t) do n = n + 1 end; return n end
 
--- state follows the save: the player's AI table is replaced on every load (Player:OnLoadAI)
+-- state follows the save. The player entity's OnSave / OnLoad write it into the save and read it back (the engine
+-- serializes a script entity through them, WHGame 1.5.6 FUN_183815254). Player:OnSaveAI never reached a save in
+-- game (2026-10-30: a sale at 17:20, autosave at 17:27, that save loaded with 0 sales). The AI table copy stays as
+-- the fallback until OnLoad has fired once this session.
 function MR:State()
 	local ai = g_localActor and g_localActor.AI
 	if not ai then return nil end
+	if self.viaOnLoad then return self.S end
 	if ai ~= self.aiRef then
 		self.aiRef = ai
 		self.S = MR.Deserialize(ai.MerchantResale)
@@ -174,6 +203,39 @@ end
 function MR:Store()
 	local ai = g_localActor and g_localActor.AI
 	if ai and self.S then ai.MerchantResale = MR.Serialize(self.S) end
+end
+
+function MR.OnSave(tbl)
+	if type(tbl) == "table" and MR.S and tbl ~= MR.lastSaveTbl then   -- the class and the live player both hook
+		MR.lastSaveTbl = tbl
+		tbl.MerchantResale = MR.Serialize(MR.S)
+		say(string.format("written into the save: %d shops, %d sales waiting", MR:Count(MR.S.shops), #MR.S.rows))
+	end
+end
+function MR.OnLoad(tbl)
+	if tbl ~= nil and tbl == MR.lastLoadTbl then return end
+	MR.lastLoadTbl = tbl
+	MR.S = MR.Deserialize(type(tbl) == "table" and tbl.MerchantResale or nil)
+	MR.viaOnLoad = true
+	MR.stopped = nil
+	say(string.format("read from the save: %d shops, %d sales waiting", MR:Count(MR.S.shops), #MR.S.rows))
+end
+-- wraps the entity's own OnSave / OnLoad (keeps any other mod's), on the Player class and the live player
+function MR.HookSave()
+	for _, t in ipairs({ Player, g_localActor }) do
+		if type(t) == "table" and not rawget(t, "MerchantResaleHooked") then
+			local oldSave, oldLoad = t.OnSave, t.OnLoad
+			rawset(t, "OnSave", function(self, tbl)
+				if oldSave then oldSave(self, tbl) end
+				if self == g_localActor or self == Player then pcall(MR.OnSave, tbl) end
+			end)
+			rawset(t, "OnLoad", function(self, tbl)
+				if oldLoad then oldLoad(self, tbl) end
+				if self == g_localActor or self == Player then pcall(MR.OnLoad, tbl) end
+			end)
+			rawset(t, "MerchantResaleHooked", true)
+		end
+	end
 end
 
 -- every stash of a shop near the player; the purse is the one holding the most money
@@ -206,12 +268,15 @@ function MR:Pull(S, now)
 			local p = purse:GetWorldPos()
 			MR.Observe(S, dbid, p.x, p.y, deci(purse))
 			if dir == "sell" and base > 0 then
-				-- customers pay for the condition it is in (linear in health; the plugin reports the full price)
+				-- what customers pay this shop: the item's value at its condition (the game's own curve: price x
+				-- (0.01 + 0.99 x health), FUN_18064a024 / ItemHealthPriceStatusWeight) x this shop's resale rate
 				local _, _, it = MR.find(stashes, token, guid)
 				local h = math.max(0, math.min(1, tonumber(it and it.health) or 1))
-				local r = MR.AddSale(S, dbid, guid, count, math.floor(base * h + 0.5), token, now)
-				say(string.format("shop %d bought %dx %s (%s, %.0f%% condition, %.1f gr each): resells in %.1f days", dbid,
-					count, guid, r.cat, h * 100, r.base / 10, r.eta - now))
+				local rate, rule = MR.Rate(dbid, guid)
+				local value = math.floor(base * (0.01 + 0.99 * h) * rate + 0.5)
+				local r = MR.AddSale(S, dbid, guid, count, value, token, now)
+				say(string.format("shop %d bought %dx %s (%s, %.0f%% condition, rule %s, resale rate %.2f): resells for %.1f gr each in %.1f days",
+					dbid, count, guid, r.cat, h * 100, rule and rule[1] or "none", rate, r.base / 10, r.eta - now))
 			elseif dir == "buy" then
 				local n = MR.Buyback(S, dbid, guid, count)
 				if n > 0 then say(string.format("shop %d: you bought back %d of its resale stock", dbid, n)) end
@@ -416,7 +481,7 @@ function MR:Status()
 	end
 end
 
-function MR:Hello() native("hello"); self:Start() end
+function MR:Hello() native("hello"); pcall(MR.HookSave); self:Start() end
 System.AddCCommand("merchant_status", "MerchantResale:Status()", "Nearest shop: purse, savings, demand, items waiting to resell")
 System.AddCCommand("merchant_log", "MerchantResale:Logging([[%line]])", "merchant_log 0|1: checkout/open logging in merchant.log (saved)")
 System.AddCCommand("merchant_resale", "MerchantResale:Resale([[%line]])", "merchant_resale 0|1: merchants resell what you sold them (saved, default 1)")

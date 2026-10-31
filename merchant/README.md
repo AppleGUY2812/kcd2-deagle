@@ -1,8 +1,10 @@
 # Merchant Resale (phase 2)
 
 Merchants resell what you sell them. Every item you sell to a shop goes into that shop's ledger; over the next game
-days it leaves the shop's stock and the shop gets the item's price at its condition in coin (a 40% sword: 40% of its
-price). Selling a lot of one kind in one town floods that market: those items take ~3 weeks instead of ~3 days, and
+days it leaves the shop's stock and the shop gets coin for it: the item's value at its condition (the game's own
+curve) times that merchant's resale rate, twice what his own price rule pays you, at most full value (a blacksmith's
+armour or a fence's rings: full value; a fence's or general trader's anything else: 70 %; `prices.lua`, generated
+by `python3 merchant/tools/build_prices.py <game dir> merchant/src/Scripts/MerchantResale/prices.lua` from shop.xml). Selling a lot of one kind in one town floods that market: those items take ~3 weeks instead of ~3 days, and
 demand recovers with a 4-day half-life. A market's size grows with the shops the mod knows there: a lone 339 gr fence
 absorbs ~12 000 gr of weapons, a town of 20 shops ~90 000 gr. Money a shop earns this way survives the weekly restock (capped at 10x its normal
 purse). Rules and numbers: `docs/merchant_resale_design.md`.
