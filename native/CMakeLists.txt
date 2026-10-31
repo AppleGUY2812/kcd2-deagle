@@ -50,6 +50,13 @@ target_compile_features(merchant PRIVATE cxx_std_17)
 target_include_directories(merchant PRIVATE ${MINHOOK_INC} src)
 target_compile_options(merchant PRIVATE /W3 /EHa /O2)
 set_target_properties(merchant PROPERTIES SUFFIX ".asi" OUTPUT_NAME "merchant")
+
+# reach.asi: the Unarmed Reach mod's plugin (reach/README.md): NPCs dodge less against faster attacks.
+add_library(reach SHARED src/reach_main.cpp src/log.cpp src/scan.cpp src/settings.cpp ${MINHOOK_SRC})
+target_compile_features(reach PRIVATE cxx_std_17)
+target_include_directories(reach PRIVATE ${MINHOOK_INC} src)
+target_compile_options(reach PRIVATE /W3 /EHa /O2)
+set_target_properties(reach PROPERTIES SUFFIX ".asi" OUTPUT_NAME "reach")
 # outside-the-game test: KCD2's FMOD 2.02 and Ready or Not's 2.03 in one process (native/test/ron_coexist.cpp)
 add_executable(ron_coexist test/ron_coexist.cpp src/ron.cpp src/log.cpp)
 set_property(TARGET ron_coexist PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")

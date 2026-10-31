@@ -5,6 +5,7 @@ here="$(cd "$(dirname "$0")" && pwd)"
 out="$here/dist/unarmed_reach"
 rm -rf "$out" && mkdir -p "$out/data"
 cp "$here/mod.manifest" "$out/"
+[[ -f "$here/../native/dist/reach.asi" ]] || { echo "no native/dist/reach.asi: build it first" >&2; exit 1; }
 python3 - "$here/src" "$out/data/unarmed_reach.pak" <<'PY'
 import os, sys, zipfile
 src, dst = sys.argv[1], sys.argv[2]
@@ -22,5 +23,7 @@ if [[ "${1:-}" == "--install" ]]; then
   fi
   rm -rf "$game/Mods/unarmed_reach"
   cp -r "$out" "$game/Mods/unarmed_reach"
-  echo "installed Unarmed Reach -> $game/Mods/unarmed_reach"
+  # the plugin (NPCs dodge less against faster attacks): needs the ASI loader the other mods use
+  cp "$here/../native/dist/reach.asi" "$game/Bin/Win64MasterMasterSteamPGO/reach.asi"
+  echo "installed Unarmed Reach -> $game/Mods/unarmed_reach + Bin/Win64MasterMasterSteamPGO/reach.asi"
 fi
