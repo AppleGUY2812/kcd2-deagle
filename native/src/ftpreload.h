@@ -27,3 +27,7 @@ DWORD Ftpre_TripQuietMs();
 // the game's 0.5 s a frame (which made its speed the frame rate: Kuttenberg slower than Trosky); 0 = the game's step
 void Ftspeed_Install(uintptr_t base, HMODULE self);
 void Ftspeed_Command(const char* args);
+// "clockstep R" (fastload_clockstep.txt, default 22): during a time skip (wait, sleep: t_GameScale over 1.5) t_MaxStep
+// follows the frame time so the skip runs at the 88 fps speed at any frame rate; 0 = the game's 0.25 s cap
+void Clockstep_Install(HMODULE self);
+void Clockstep_Command(const char* args);

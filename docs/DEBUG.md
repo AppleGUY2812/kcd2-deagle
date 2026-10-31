@@ -260,7 +260,7 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   `fastload.log` there, its settings and records `fastload_*.txt` / `.bin` (they were `deagle_*` before 2026-10-24;
   `native/install.ps1` copies the old ones over once). Its commands (`ftpre`, `fastzip`, `streamio`, `readiness`,
   `hitch`, `ftplaces`, `pakahead`, `cvars`, `xmlahead`, `questbench`, `streamahead`, `terrainfast`, `fttex`, `ftinstant`,
-  `ftspeed`, `mapvd`, `perkcopy`) still go in as
+  `ftspeed`, `clockstep`, `mapvd`, `perkcopy`) still go in as
   `deagle_lua Deagle:Native([[...]])` and the Deagle plugin hands them over; without the Deagle mod only the files work.
 - `deagle_log_actions` logs every key action the mod receives; `deagle_native_test` pings the plugin with a shot sound.
 
@@ -274,6 +274,12 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
   frame rate: 160-170 m/s at 81-89 fps, 69-87 m/s at 36-46 fps, which is why Kuttenberg (lower frame rate) crawled.
   `44` = the 88 fps speed at any frame rate (at most 2 s a frame); the walk's start and a random event's slow-down keep
   the game's own step. `ftspeed 0` = the game's step. Log: `ftspeed:` at start, `ftpre: walk speed` per trip.
+- `clockstep R` (default `22`, 2026-10-30): waits, sleeps and other time skips at the same speed at any frame rate.
+  The engine timer caps each frame's game time at `t_MaxStep` (0.25 s) after the time scales, so when a skip raises
+  `t_GameScale` every frame gets 0.25 s and the skip's speed follows the frame rate (user: waiting faster in Trosky).
+  While `t_GameScale` is over 1.5 the plugin sets `t_MaxStep` to the real frame time * R (0.25 to 1 s; 22 = 0.25 s at
+  88 fps) and puts the game's value back the frame the skip ends. `clockstep 0` = the game's cap. Log: `clockstep:`
+  per skip. Not confirmed yet that a wait raises `t_GameScale` (the wait probe, `[waitprobe]` in kcd.log, says).
 - `fttex MB JOBS NPC`: raises the texture streaming caps and the NPC detail-switch budget during the arrival wait
   (`fttex 0` = off, the default; measured no gain, kept for tests).
 - `mapvd 1|0`: the map and inventory lower the view distance (140 -> 100) on open and raise it on close, and each change

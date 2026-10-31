@@ -886,16 +886,22 @@ function Deagle:WaitProbe(token)
 	if okW and type(w) == "number" and p.w and a > p.a then
 		local dw, da = w - p.w, a - p.a
 		if dw / da > 200 and dw < 86400 then
-			if not p.on then p.on, p.n, p.gw, p.ga, p.mn, p.mx = true, 0, 0, 0, 1e9, 0 end
+			if not p.on then p.on, p.n, p.gw, p.ga, p.mn, p.mx, p.gs, p.r = true, 0, 0, 0, 1e9, 0, 0, 0 end
 			p.n, p.gw, p.ga = p.n + 1, p.gw + dw, p.ga + da
 			if dw < p.mn then p.mn = dw end
 			if dw > p.mx then p.mx = dw end
+			if p.n % 10 == 1 then   -- what the game set for the skip: the timer's game scale and the clock's ratio
+				local gs = tonumber(System.GetCVar("t_GameScale")) or 0
+				local okR, r = pcall(Calendar.GetWorldTimeRatio)
+				if gs > (p.gs or 0) then p.gs = gs end
+				if okR and type(r) == "number" and r > (p.r or 0) then p.r = r end
+			end
 		elseif p.on then
 			p.on = false
 			if p.n > 5 then
-				log(string.format("[waitprobe] world clock ran %.2f game h in %.2f s real (x%.0f): %d frames (%.0f fps); game s a frame avg %.1f, min %.1f, max %.1f; t_GameScale %s",
+				log(string.format("[waitprobe] world clock ran %.2f game h in %.2f s real (x%.0f): %d frames (%.0f fps); game s a frame avg %.1f, min %.1f, max %.1f; during it t_GameScale up to %s, clock ratio up to %s; t_GameScale now %s",
 					p.gw / 3600, p.ga, p.gw / math.max(1e-6, p.ga), p.n, p.n / math.max(1e-6, p.ga), p.gw / p.n, p.mn, p.mx,
-					tostring(System.GetCVar("t_GameScale"))))
+					tostring(p.gs), tostring(p.r), tostring(System.GetCVar("t_GameScale"))))
 			end
 		end
 	end

@@ -319,6 +319,74 @@ void SaveSpeed() {
 	if (g_spdFile.empty()) return;
 	if (FILE* f = fopen(g_spdFile.c_str(), "w")) { fprintf(f, "%g\n", g_ftspeed); fclose(f); }
 }
+
+// ---- clockstep: waiting, sleeping and every other time skip at the same speed at any frame rate ----
+// CTimer::UpdateOnFrameStart (FUN_18045f7f0) caps a frame's game time at t_MaxStep (0.25 s) AFTER the time scales:
+// game frame = min(min(real, t_MaxStep) * scale * t_GameScale, t_MaxStep). A time skip raises t_GameScale (the time
+// modifiers at (game+0xe0)+0x150 -> FUN_180b9196c -> the cvar), so once real * scale passes 0.25 every frame is 0.25 s
+// and the skip's speed is the frame rate (the calendar FUN_180a58d90 adds dt * ratio each frame). While t_GameScale is
+// over 1.5, t_MaxStep follows the real frame time: real * R (R = 22: 0.25 s at 88 fps), 0.25 to 1 s; back to the game's
+// value the frame the scale drops. "clockstep R" / fastload_clockstep.txt, 0 = off.
+constexpr uintptr_t kRvaConsole = 0x492d8a8;
+float g_clockR = 22.f;
+std::string g_clkFile;
+void* g_cvScale = nullptr;   // t_GameScale
+void* g_cvStep = nullptr;    // t_MaxStep
+float g_stepGame = 0;        // t_MaxStep as the game had it (0: not changed)
+float g_stepSet = 0;         // what we last set
+long long g_clkPrev = 0;
+int g_clkLogged = 0;
+double g_clkSkipReal = 0, g_clkSkipFrames = 0;
+inline void* Slot(void* obj, int off) { return *(void**)(*(uintptr_t*)obj + off); }
+
+__declspec(noinline) void* ConFind(const char* name) {
+	__try {
+		void* con = *(void**)(g_base + kRvaConsole);
+		return con ? ((void*(__fastcall*)(void*, const char*))Slot(con, 0xb8))(con, name) : nullptr;
+	} __except (1) { return nullptr; }
+}
+__declspec(noinline) bool ConGetF(void* v, float& out) {
+	__try {
+		const char* t = ((const char*(__fastcall*)(void*))Slot(v, 0x28))(v);
+		if (!t) return false;
+		out = (float)atof(t);
+		return true;
+	} __except (1) { return false; }
+}
+__declspec(noinline) bool ConSetF(void* v, float f) {
+	__try { ((void(__fastcall*)(void*, float))Slot(v, 0x40))(v, f); return true; } __except (1) { return false; }
+}
+
+void Clockstep_Frame() {
+	LARGE_INTEGER q; QueryPerformanceCounter(&q);
+	const double real = g_clkPrev && g_qpcF > 0 ? (q.QuadPart - g_clkPrev) / g_qpcF : 0;
+	g_clkPrev = q.QuadPart;
+	if (!g_base) g_base = (uintptr_t)GetModuleHandleA("WHGame.dll");
+	if (!g_cvScale) { g_cvScale = ConFind("t_GameScale"); g_cvStep = ConFind("t_MaxStep"); }
+	if (!g_cvScale || !g_cvStep) return;
+	float gs = 1;
+	if (!ConGetF(g_cvScale, gs)) return;
+	const bool skip = g_clockR > 0 && gs > 1.5f && real > 0;
+	if (skip) {
+		if (!g_stepGame) {
+			float cur = 0;
+			if (!ConGetF(g_cvStep, cur) || cur <= 0) return;
+			g_stepGame = cur; g_clkSkipReal = 0; g_clkSkipFrames = 0;
+			if (g_clkLogged++ < 20) Log("clockstep: a time skip started (t_GameScale %.1f): t_MaxStep follows the frame time (x%.0f), the game's %.3f s back after", gs, g_clockR, cur);
+		}
+		float want = (float)(real < 0.25 ? real : 0.25) * g_clockR;
+		if (want < g_stepGame) want = g_stepGame;
+		if (want > 1.f) want = 1.f;
+		if (fabsf(want - g_stepSet) > 0.01f * want && ConSetF(g_cvStep, want)) g_stepSet = want;
+		g_clkSkipReal += real; g_clkSkipFrames++;
+	} else if (g_stepGame) {
+		ConSetF(g_cvStep, g_stepGame);
+		if (g_clkLogged++ < 40)
+			Log("clockstep: the time skip ended after %.1f s, %.0f frames (%.0f fps); t_MaxStep back to %.3f",
+			    g_clkSkipReal, g_clkSkipFrames, g_clkSkipReal > 0 ? g_clkSkipFrames / g_clkSkipReal : 0, g_stepGame);
+		g_stepGame = 0; g_stepSet = 0;
+	}
+}
 }  // namespace
 
 void Ftpre_Install(uintptr_t env, uintptr_t) { g_env = env; }   // Setup waits for the first drawn frame (the 3D engine is up)
@@ -383,6 +451,7 @@ void Ftpre_Command(const char* args) {
 }
 
 void Ftpre_Frame() {
+	Clockstep_Frame();
 	if (g_mode <= 0 || !g_env) return;
 	if (!g_tried) { g_tried = true; g_ok = Setup(); }
 	if (!g_ok) return;
@@ -498,4 +567,28 @@ void Ftspeed_Command(const char* args) {
 	if (args && sscanf_s(args, "%f", &v) == 1 && v >= 0 && v <= 200) { g_ftspeed = v; SaveSpeed(); }
 	Log("ftspeed: %g  (ftspeed R: the fast-travel piece walks R game seconds per real second, at most 2 s a frame; "
 	    "44 = the 88 fps speed everywhere (default); 0 = the game's own 0.5 s a frame)", g_ftspeed);
+}
+
+void Clockstep_Install(HMODULE self) {
+	char path[MAX_PATH] = {};
+	GetModuleFileNameA(self, path, MAX_PATH);
+	std::string p(path);
+	g_clkFile = p.substr(0, p.find_last_of('\\') + 1) + "fastload_clockstep.txt";
+	if (FILE* f = fopen(g_clkFile.c_str(), "r")) {
+		float v = 0;
+		if (fscanf(f, "%f", &v) == 1 && v >= 0 && v <= 100) g_clockR = v;
+		fclose(f);
+	}
+	if (g_qpcF <= 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_qpcF = (double)f.QuadPart; }
+	Log("clockstep: %g (time skips: t_MaxStep follows the frame time while t_GameScale is over 1.5; fastload_clockstep.txt, 0 = off)", g_clockR);
+}
+
+void Clockstep_Command(const char* args) {
+	float v = 0;
+	if (args && sscanf_s(args, "%f", &v) == 1 && v >= 0 && v <= 100) {
+		g_clockR = v;
+		if (!g_clkFile.empty()) if (FILE* f = fopen(g_clkFile.c_str(), "w")) { fprintf(f, "%g\n", v); fclose(f); }
+	}
+	Log("clockstep: %g  (clockstep R: during a wait, sleep or other time skip a frame may hold up to real frame time * R "
+	    "game-step seconds, 0.25 to 1 s; 22 = the 88 fps speed everywhere (default); 0 = the game's 0.25 s cap)", g_clockR);
 }
