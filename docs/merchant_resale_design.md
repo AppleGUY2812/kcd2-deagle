@@ -44,3 +44,15 @@ Still unverified: that 0x1808d5150 runs for every sell and buyback; that `Player
 2. Ledger + demand + settlement on approach + save persistence (built 2026-10-30: plugin reports committed
    checkouts through `MRN.pull()`, `merchant.lua` does the rest; see `merchant/README.md`).
 3. Tune numbers from play.
+
+## Reference: the Legacy of the Forge sales chest (read 2026-10-30 from Scripts.pak)
+`Quests/Final/Barbora/kutnohorsko/legacy_of_the_forge/selling_stuff*` (Skald graphs; settings on the
+`balancing_variables` node in `selling_stuff.xml`):
+- Once per game day (`selling_period` 1d, world time), only if the chest holds weapons, helmets, hoods, armour, ammo or
+  crafting material. Days spent in another level are caught up (`selling_after_levelswitch`).
+- Daily budget = 2 x (random 50..100 gr, shuffled) x prestige factor (linear: prestige level x 5/30, so 5x at level 30).
+  Unused budget carries over to the next day.
+- Each item in turn: worth = its current stack price (condition included) / 1.43, i.e. 70 %. Sold (deleted with
+  `Inventory.DeleteItems`) if it still fits in the day's budget; items that don't fit wait, smaller ones go on.
+- Every day nothing sells, the divisor grows by 10 % (max 5 days): payout falls to 47 % of the price.
+- The money goes to the PLAYER (collected later, `createmoney_player`); no demand, no per-town market.
