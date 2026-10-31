@@ -872,3 +872,42 @@ function Deagle:TimeCheck()
 		pcall(function() self:Notify(string.format("game speed x%.2f (t_Scale %s)", ratio, cv("t_Scale"))) end)
 	end)
 end
+
+-- Wait / sleep speed probe (2026-10-30, user: "time waiting is also faster in Trosky"). Each frame reads the world clock
+-- (Calendar.GetWorldTime, game seconds) and the real clock; while the world clock runs over x200 (a wait, sleep or fast
+-- travel), it adds up the frames, and when it drops back it logs one line: game hours in real seconds, frames, game
+-- seconds a frame (avg / min / max) and real fps. A fixed game step a frame = the wait's speed is the frame rate (as
+-- with fast travel); a step that grows with the frame time = the frame rate doesn't matter. Cost: two clock reads a frame.
+function Deagle:WaitProbe(token)
+	if token ~= self.waitProbeToken then return end
+	local okW, w = pcall(Calendar.GetWorldTime)
+	local a = System.GetCurrAsyncTime()
+	local p = self.waitProbe
+	if okW and type(w) == "number" and p.w and a > p.a then
+		local dw, da = w - p.w, a - p.a
+		if dw / da > 200 and dw < 86400 then
+			if not p.on then p.on, p.n, p.gw, p.ga, p.mn, p.mx = true, 0, 0, 0, 1e9, 0 end
+			p.n, p.gw, p.ga = p.n + 1, p.gw + dw, p.ga + da
+			if dw < p.mn then p.mn = dw end
+			if dw > p.mx then p.mx = dw end
+		elseif p.on then
+			p.on = false
+			if p.n > 5 then
+				log(string.format("[waitprobe] world clock ran %.2f game h in %.2f s real (x%.0f): %d frames (%.0f fps); game s a frame avg %.1f, min %.1f, max %.1f; t_GameScale %s",
+					p.gw / 3600, p.ga, p.gw / math.max(1e-6, p.ga), p.n, p.n / math.max(1e-6, p.ga), p.gw / p.n, p.mn, p.mx,
+					tostring(System.GetCVar("t_GameScale"))))
+			end
+		end
+	end
+	p.w, p.a = okW and w or nil, a
+	Script.SetTimer(0, function() Deagle:WaitProbe(token) end)
+end
+
+function Deagle:WaitProbeStart()
+	if not (Calendar and Calendar.GetWorldTime) then return end   -- no game clock (the test mock): off
+	self.waitProbeToken = (self.waitProbeToken or 0) + 1
+	self.waitProbe = {}
+	local token = self.waitProbeToken
+	Script.SetTimer(0, function() Deagle:WaitProbe(token) end)
+end
+Deagle:WaitProbeStart()
