@@ -199,6 +199,131 @@ struct Game {
 		return V[md.full];
 	}
 
+	// ---- the row solver (2026-10-30; target 8000 took 122 s with Solve, the user's game). Inside a turn the start score
+	// a only matters through c = a + t (what banking gives; c >= K wins) and the value of a bust, lose = 1 - the other
+	// player's turn start. So per player and opponent score ("row") one table F[c][S] serves every start score, with lose
+	// sampled at J points; the turn-start value at the real lose is a cubic Hermite interpolation of those samples (value
+	// + slope = the bust chance under that sample's play). Cost ~ K^2 x J table rows instead of K^3 x ~3.4 turns.
+	// Pass 1 samples lose over 0..1; pass 2 only over each row's band of lose values from pass 1 (+- pad).
+	// Checked against Solve (scratchpad bench, 2026-10-30, Favourable x3 + Painted + Weighted + Ordinary vs Ci + Even x2 +
+	// Ordinary x3): target 8000 in 8.1 s instead of 137.6 s on a 12-thread Xeon (passes of 5 and 17 samples). Table max
+	// error 0.33 points of win %; playing every turn by it loses at most 0.0034 points of win chance against the exact
+	// table. Six ordinary dice at 8000 (the widest bands): 0.98 points table error, at most 0.02 points lost per turn.
+	// Balatro x3 + Pie + Weighted + Tengri vs ordinary at 5000: 3.5 s instead of 37 s, at most 0.0044 points per turn.
+	int J = 9;
+	double pad = 0.02;
+	std::vector<float> lo[2], span[2];   // per (player, row): the band of lose values sampled (empty: 0..1)
+	double Lam(int p, int row, int j) const { return lo[p].empty() ? (double)j / (J - 1) : lo[p][row] + span[p][row] * j / (J - 1); }
+	// v, d at the J samples (d per band unit) -> the value at band position x in 0..1
+	double Hermite(const float* v, const float* d, double x) const {
+		const double f = std::clamp(x, 0.0, 1.0) * (J - 1);
+		const int i = std::clamp((int)f, 0, J - 2);
+		const double h = 1.0 / (J - 1), s = f - i, s2 = s * s, s3 = s2 * s;
+		return (2 * s3 - 3 * s2 + 1) * v[i] + (s3 - 2 * s2 + s) * h * d[i] + (-2 * s3 + 3 * s2) * v[i + 1] + (s3 - s2) * h * d[i + 1];
+	}
+	double Secant(const float* v, double x) const {
+		const int i = std::clamp((int)(std::clamp(x, 0.0, 1.0) * (J - 1)), 0, J - 2);
+		return (v[i + 1] - v[i]) * (J - 1);
+	}
+	void SolveRows(int threads, int samples, bool banded) {
+		J = samples;
+		for (int p = 0; p < 2; p++) {
+			lo[p].clear(); span[p].clear();
+			if (!banded) continue;
+			lo[p].resize(K); span[p].resize(K);
+			for (int row = 0; row < K; row++) {   // row = the other player's score; lose = 1 - their turn start vs a
+				double mn = 1, mx = 0;
+				for (int a = 0; a < K; a++) { const double l = 1.0 - Get(1 - p, row, a); mn = std::min(mn, l); mx = std::max(mx, l); }
+				mn = std::max(0.0, mn - pad); mx = std::min(1.0, mx + pad);
+				lo[p][row] = (float)mn; span[p][row] = (float)std::max(1e-6, mx - mn);
+			}
+		}
+		W[0].assign((size_t)K * K, 0); W[1].assign((size_t)K * K, 0);
+		std::vector<float> Fv[2], Fd[2];   // [row][c][S][j]: value, d value / d lose
+		for (int p = 0; p < 2; p++) { Fv[p].assign((size_t)K * K * m[p]->N * J, 0.f); Fd[p].assign(Fv[p].size(), 0.f); }
+		auto idx = [&](int p, int row, int c, int S) { return (((size_t)row * K + c) * m[p]->N + S) * J; };
+		// throw values (banking not allowed) at (row, c) for every S and sample -> rv, rd [S][j]
+		auto rollRow = [&](int p, int row, int c, float* rv, float* rd, std::vector<double>& acc, std::vector<double>& accd,
+		                   float* best, float* bd) {
+			const Model& md = *m[p];
+			turns++;
+			for (int S = 1; S < md.N; S++) {
+				for (int j = 0; j < J; j++) { acc[j] = md.bust[S] * Lam(p, row, j); accd[j] = md.bust[S]; }
+				for (auto& rc : md.rolls[S]) {
+					for (int j = 0; j < J; j++) { best[j] = 0.f; bd[j] = 0.f; }
+					bool win = false;
+					for (uint32_t k = 0; k < rc.on; k++) {
+						const Opt& o = md.opts[rc.o0 + k];
+						const int c2 = c + o.sc;
+						if (c2 >= K) { win = true; break; }
+						const size_t at = idx(p, row, c2, o.rem);
+						const float* v = &Fv[p][at];
+						const float* d = &Fd[p][at];
+						for (int j = 0; j < J; j++) { const bool g = v[j] > best[j]; best[j] = g ? v[j] : best[j]; bd[j] = g ? d[j] : bd[j]; }
+					}
+					if (win) for (int j = 0; j < J; j++) acc[j] += rc.p;
+					else for (int j = 0; j < J; j++) { acc[j] += rc.p * best[j]; accd[j] += rc.p * bd[j]; }
+				}
+				for (int j = 0; j < J; j++) { rv[(size_t)S * J + j] = (float)acc[j]; rd[(size_t)S * J + j] = (float)accd[j]; }
+			}
+		};
+		for (int s = 2 * K - 2; s >= 0; s--) {
+			std::vector<std::pair<int, int>> pairs;
+			for (int a = std::max(0, s - K + 1); a <= s / 2; a++) pairs.push_back({ a, s - a });
+			std::atomic<size_t> next{ 0 };
+			auto work = [&]() {
+				std::vector<float> r0((size_t)64 * J), d0((size_t)64 * J), r1((size_t)64 * J), d1((size_t)64 * J);
+				std::vector<float> best(J), bd(J), e0(J), e1(J);
+				std::vector<double> acc(J), accd(J);
+				for (size_t i; (i = next++) < pairs.size();) {
+					const auto [a, b] = pairs[i];
+					for (int c = 0; c < (a == b ? 1 : 2); c++) {
+						const int x = c ? b : a, y = c ? a : b;   // p0 has x (its row: y), p1 has y (its row: x)
+						rollRow(0, y, x, r0.data(), d0.data(), acc, accd, best.data(), bd.data());
+						rollRow(1, x, y, r1.data(), d1.data(), acc, accd, best.data(), bd.data());
+						// the turn starts (six dice): value and slope per band unit
+						const float* R0 = &r0[(size_t)m[0]->full * J]; const float* R1 = &r1[(size_t)m[1]->full * J];
+						const double s0 = lo[0].empty() ? 1.0 : span[0][y], s1 = lo[1].empty() ? 1.0 : span[1][x];
+						const double l0 = lo[0].empty() ? 0.0 : lo[0][y], l1 = lo[1].empty() ? 0.0 : lo[1][x];
+						for (int j = 0; j < J; j++) { e0[j] = (float)(d0[(size_t)m[0]->full * J + j] * s0); e1[j] = (float)(d1[(size_t)m[1]->full * J + j] * s1); }
+						auto T0 = [&](double lose) { return (lose - l0) / s0; };
+						auto T1 = [&](double lose) { return (lose - l1) / s1; };
+						// u = H0(1 - H1(1 - u)), slopes < 1: Newton on the interpolants
+						double u = y + 1 < K ? Get(0, x, y + 1) : 0.5, v = 0;
+						for (int it = 0; it < 60; it++) {
+							v = Hermite(R1, e1.data(), T1(1.0 - u));
+							const double gu = Hermite(R0, e0.data(), T0(1.0 - v));
+							const double sl = Secant(R0, T0(1.0 - v)) / s0 * Secant(R1, T1(1.0 - u)) / s1;
+							const double step = (gu - u) / std::max(1e-3, 1.0 - sl);
+							u = std::clamp(u + step, 0.0, 1.0);
+							if (std::fabs(step) < 1e-12) break;
+						}
+						v = Hermite(R1, e1.data(), T1(1.0 - u));
+						At(0, x, y) = u; At(1, y, x) = v;
+						// banking at this score is now known: F = max(bank, throw)
+						auto store = [&](int p, int row, int cc, double bank, const std::vector<float>& rv, const std::vector<float>& rd) {
+							for (int S = 1; S < m[p]->N; S++) for (int j = 0; j < J; j++) {
+								const size_t k = idx(p, row, cc, S) + j; const float t = rv[(size_t)S * J + j];
+								if (bank >= t) { Fv[p][k] = (float)bank; Fd[p][k] = 0; } else { Fv[p][k] = t; Fd[p][k] = rd[(size_t)S * J + j]; }
+							}
+						};
+						store(0, y, x, 1.0 - v, r0, d0);   // p0 banking at x: 1 - p1's turn start (y vs x)
+						store(1, x, y, 1.0 - u, r1, d1);
+					}
+				}
+			};
+			std::vector<std::thread> th;
+			for (int i = 0; i < threads; i++) th.emplace_back(work);
+			for (auto& t : th) t.join();
+		}
+	}
+	// exact for small targets (2000: ~2 s), the two-pass row solver above that
+	void SolveFast(int threads = 4) {
+		if (K <= 40) { Solve(threads); return; }
+		SolveRows(threads, 5, false);
+		SolveRows(threads, 17, true);
+	}
+
 	void Solve(int threads = 4) {
 		W[0].assign((size_t)K * K, 0); W[1].assign((size_t)K * K, 0);
 		for (int s = 2 * K - 2; s >= 0; s--) {

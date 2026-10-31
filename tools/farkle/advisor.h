@@ -308,7 +308,7 @@ inline std::unique_ptr<CachedGame> SolveCached(const std::array<const Die*, 6>& 
 	if (!cacheDir.empty()) std::filesystem::create_directories(cacheDir);
 	const auto path = advisor_detail::CachePath(cacheDir, mine, opp, target);
 	if (!advisor_detail::LoadCache(path, out->game)) {
-		out->game.Solve(threads);
+		out->game.SolveFast(threads);
 		if (!cacheDir.empty()) advisor_detail::SaveCache(path, out->game);
 	}
 	return out;
