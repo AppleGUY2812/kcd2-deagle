@@ -17,6 +17,12 @@ MR.cfg = {
 	floor = 0.15, halfLife = 4, spread = 0.3,
 	marketRadius = 300, capMul = 10, minPreset = 500,          -- metres, x normal purse, deci (a 0 gr purse still earns)
 	settleRadius = 6, stashRadius = 60, settleEvery = 20,      -- metres, metres, real seconds
+	-- prosperity of a market, 0.5 .. 2 (1 = vanilla): its shops' weekly purse is the normal purse x prosperity.
+	-- Money the player spends there raises it, its merchants' resale profit raises it at half weight, coins stolen from
+	-- its shop chests lower it at double weight; one unit of prosperity = prospK x the market's known purses (at least
+	-- prospMinWealth gr). It drifts back to 1 with a prospHalfLife-day half-life.
+	prospMin = 0.5, prospMax = 2, prospK = 4, prospMinWealth = 300, prospHalfLife = 14,
+	prospSpend = 1, prospProfit = 0.5, prospTheft = 2,
 }
 local MONEY = "5ef63059-322e-4e1b-abe8-926e100c770e"
 local CATS = { "armor", "weapon", "food", "alchemy", "misc" }
@@ -26,7 +32,7 @@ local function native(command) System.LogAlways("[MERCHANT] " .. command) end
 local function clock() return System.GetCurrTime() end
 
 -- ---- state (pure; no game calls) -------------------------------------------------------------------------------
-function MR.NewState() return { shops = {}, demand = {}, rows = {} } end
+function MR.NewState() return { shops = {}, demand = {}, rows = {}, prosper = {} } end
 
 -- small deterministic hash in [0, 1): stays below 2^24 because the game's Lua numbers are floats
 local function unit(text)
@@ -62,6 +68,34 @@ function MR.Wealth(S, anchor)
 	return w / 10, n
 end
 function MR.Capacity(S, anchor, cat) return MR.cfg.capacity[cat] * (1 + MR.Wealth(S, anchor) / MR.cfg.wealthRef) end
+
+function MR.Prosperity(S, anchor, now)
+	local p = S.prosper[anchor]
+	if not p then return 1 end
+	return 1 + (p.v - 1) * 0.5 ^ (math.max(0, now - p.t) / MR.cfg.prospHalfLife)
+end
+-- moves a market's prosperity by `gr` groschen of activity at `weight` (spending +1, resale profit +0.5, theft -2)
+function MR.Nudge(S, anchor, gr, weight, now)
+	local c = MR.cfg
+	local w = math.max(MR.Wealth(S, anchor), c.prospMinWealth)
+	local v = MR.Prosperity(S, anchor, now) + weight * gr / (c.prospK * w)
+	S.prosper[anchor] = { v = math.max(c.prospMin, math.min(c.prospMax, v)), t = now }
+	return S.prosper[anchor].v
+end
+
+-- the line shown when the player walks up to a shop: only what stands out (nil when the market is normal)
+local CAT_NAMES = { armor = "armour", weapon = "weapons", food = "food", alchemy = "herbs and potions", misc = "goods" }
+function MR.Note(S, anchor, now)
+	local parts = {}
+	local p = MR.Prosperity(S, anchor, now)
+	if p >= 1.05 then parts[#parts + 1] = string.format("prosperous (purses +%d%%)", math.floor((p - 1) * 100 + 0.5))
+	elseif p <= 0.95 then parts[#parts + 1] = string.format("struggling (purses -%d%%)", math.floor((1 - p) * 100 + 0.5)) end
+	for _, cat in ipairs({ "armor", "weapon", "food", "alchemy", "misc" }) do
+		if MR.DemandAt(S, anchor, cat, now) < 0.7 then parts[#parts + 1] = CAT_NAMES[cat] .. " flooded (slow to sell)" end
+	end
+	if #parts == 0 then return nil end
+	return "Market: " .. table.concat(parts, " - ")
+end
 
 function MR.DemandAt(S, anchor, cat, now) return MR.Recover(S.demand[anchor .. ":" .. cat], now) end
 
@@ -134,18 +168,24 @@ end
 -- coins a resale or restock may add without passing the cap
 function MR.Room(shop, purse) return math.max(0, math.max(shop.preset, MR.cfg.minPreset) * MR.cfg.capMul - purse) end
 
--- the purse changed while nobody traded. A vanilla restock sets it back to the preset: the savings come back.
--- A purse that ROSE without a trade is a restock too, and its amount is the real preset (the first sighting may have
--- been a drained purse). A drop to anything but the preset (the player stole coins, ...) only moves the bookkeeping.
-function MR.Restock(shop, purse)
-	if math.abs(purse - shop.last) < 1 then return 0 end
+-- the purse changed while nobody traded. A vanilla restock sets it back to the preset: the savings come back, and
+-- the market's prosperity scales the preset part (`prosper` 0.5 .. 2: -50 % .. +100 % of the preset). A purse that ROSE
+-- without a trade is a restock too, and its amount is the real preset (the first sighting may have been a drained
+-- purse). A drop to anything but the preset is coins taken (the player stole them): returned as `stolen`.
+-- Returns the coins to add (negative: to remove) and the coins stolen.
+function MR.Restock(shop, purse, prosper)
+	if math.abs(purse - shop.last) < 1 then return 0, 0 end
 	if purse > shop.last then shop.preset = purse end
-	local add = 0
-	if math.abs(purse - shop.preset) <= math.max(10, shop.preset * 0.01) and shop.bonus > 0 then
-		add = math.min(shop.bonus, MR.Room(shop, purse))
+	if math.abs(purse - shop.preset) <= math.max(10, shop.preset * 0.01) then
+		local add = math.floor(shop.preset * ((prosper or 1) - 1) + 0.5)
+		if shop.bonus > 0 then add = add + shop.bonus end
+		add = math.max(-purse, math.min(add, MR.Room(shop, purse)))
+		shop.last = purse + add
+		return add, 0
 	end
-	shop.last = purse + add
-	return add
+	local stolen = purse < shop.last and shop.last - purse or 0
+	shop.last = purse
+	return 0, stolen
 end
 
 function MR.Serialize(S)
@@ -154,8 +194,10 @@ function MR.Serialize(S)
 		out[#out + 1] = string.format("S %d %.1f %.1f %d %d %d %d", id, s.x, s.y, s.anchor, s.preset, s.last, s.bonus)
 	end
 	for key, d in pairs(S.demand) do out[#out + 1] = string.format("D %s %.5f %.5f", key, d.v, d.t) end
+	for a, p in pairs(S.prosper) do out[#out + 1] = string.format("P %d %.5f %.5f", a, p.v, p.t) end
 	for _, r in ipairs(S.rows) do
-		out[#out + 1] = string.format("R %d %s %s %d %d %.5f %.5f %s", r.shop, r.guid, r.cat, r.n, r.base, r.sold, r.eta, r.token)
+		out[#out + 1] = string.format("R %d %s %s %d %d %.5f %.5f %s %d", r.shop, r.guid, r.cat, r.n, r.base, r.sold, r.eta,
+			r.token, r.paid or 0)
 	end
 	return table.concat(out, "\n")
 end
@@ -173,9 +215,12 @@ function MR.Deserialize(text)
 			local key, v, t = line:match("^D (%S+) (%S+) (%S+)$")
 			if key then S.demand[key] = { v = tonumber(v), t = tonumber(t) } end
 		elseif kind == "R" then
-			local s, g, c, n, b, so, e, tk = line:match("^R (%-?%d+) (%S+) (%S+) (%d+) (%d+) (%S+) (%S+) (%S+)$")
+			local s, g, c, n, b, so, e, tk, pd = line:match("^R (%-?%d+) (%S+) (%S+) (%d+) (%d+) (%S+) (%S+) (%x+) ?(%d*)$")
 			if s then S.rows[#S.rows + 1] = { shop = tonumber(s), guid = g, cat = c, n = tonumber(n), base = tonumber(b),
-				sold = tonumber(so), eta = tonumber(e), token = tk } end
+				sold = tonumber(so), eta = tonumber(e), token = tk, paid = tonumber(pd) or 0 } end
+		elseif kind == "P" then
+			local a, v, t = line:match("^P (%-?%d+) (%S+) (%S+)$")
+			if a then S.prosper[tonumber(a)] = { v = tonumber(v), t = tonumber(t) } end
 		end
 	end
 	return S
@@ -260,7 +305,7 @@ function MR:Pull(S, now)
 	if not (MRN and MRN.pull) then return end
 	local ok, text = pcall(MRN.pull)
 	if not ok or not text then return end
-	local traded = {}
+	local traded, added = {}, {}
 	for dir, dbid, guid, count, base, token in text:gmatch("(%a+) (%-?%d+) (%S+) (%d+) (%-?%d+) (%x+)\n") do
 		dbid, count, base = tonumber(dbid), tonumber(count), tonumber(base)
 		local stashes, purse = self:Stashes(dbid)
@@ -275,6 +320,8 @@ function MR:Pull(S, now)
 				local rate, rule = MR.Rate(dbid, guid)
 				local value = math.floor(base * (0.01 + 0.99 * h) * rate + 0.5)
 				local r = MR.AddSale(S, dbid, guid, count, value, token, now)
+				added[dbid] = added[dbid] or {}
+				table.insert(added[dbid], r)
 				say(string.format("shop %d bought %dx %s (%s, %.0f%% condition, rule %s, resale rate %.2f): resells for %.1f gr each in %.1f days",
 					dbid, count, guid, r.cat, h * 100, rule and rule[1] or "none", rate, r.base / 10, r.eta - now))
 			elseif dir == "buy" then
@@ -288,6 +335,15 @@ function MR:Pull(S, now)
 	end
 	for dbid, purse in pairs(traded) do   -- trades explain this purse change: no restock bonus for it
 		local shop, p = S.shops[dbid], deci(purse)
+		local net = p - shop.last
+		if net > 0 then                       -- the player spent here: the town gets richer
+			local v = MR.Nudge(S, shop.anchor, net / 10, MR.cfg.prospSpend, now)
+			say(string.format("shop %d: you spent %.1f gr here; market prosperity %.2f", dbid, net / 10, v))
+		elseif net < 0 and added[dbid] then   -- what the shop paid, shared over this trade's sold rows by value
+			local sum = 0
+			for _, r in ipairs(added[dbid]) do sum = sum + r.base * r.n end
+			for _, r in ipairs(added[dbid]) do r.paid = sum > 0 and math.floor(-net * r.base * r.n / sum + 0.5) or 0 end
+		end
 		shop.bonus = math.max(0, math.min(shop.bonus, p - shop.preset))   -- savings spent on the player's goods
 		shop.last = p
 	end
@@ -352,11 +408,25 @@ function MR:Settle(S, dbid, now)
 	end
 	local p = purse:GetWorldPos()
 	local shop = MR.Observe(S, dbid, p.x, p.y, deci(purse))
+	self.noted = self.noted or {}
+	if now - (self.noted[dbid] or -1) >= 1 then        -- at most once a game day per shop
+		self.noted[dbid] = now
+		local note = MR.Note(S, shop.anchor, now)
+		if note then pcall(Game.SendInfoText, note, false); say("shop " .. dbid .. ": " .. note) end
+	end
 	local before = deci(purse)
-	local restored = MR.Restock(shop, before)
+	local pros = MR.Prosperity(S, shop.anchor, now)
+	local restored, stolen = MR.Restock(shop, before, pros)
 	if restored > 0 then
 		purse.inventory:CreateItem(MONEY, 1, restored)
-		say(string.format("shop %d restocked: its savings came back (+%.1f gr)", dbid, restored / 10))
+		say(string.format("shop %d restocked: +%.1f gr (savings and prosperity %.2f)", dbid, restored / 10, pros))
+	elseif restored < 0 then
+		purse.inventory:DeleteItemOfClass(MONEY, -restored)
+		say(string.format("shop %d restocked poorer: %.1f gr (prosperity %.2f)", dbid, restored / 10, pros))
+	end
+	if stolen > 0 then
+		local v = MR.Nudge(S, shop.anchor, stolen / 10, -MR.cfg.prospTheft, now)
+		say(string.format("shop %d: %.1f gr gone from its chest; market prosperity %.2f", dbid, stolen / 10, v))
 	end
 	local resold, gone, coins = 0, 0, 0
 	for _, row in ipairs(MR.Due(S, dbid, now)) do
@@ -374,12 +444,16 @@ function MR:Settle(S, dbid, now)
 			local add = math.min(row.base * row.n, MR.Room(shop, deci(purse)))
 			if add > 0 then purse.inventory:CreateItem(MONEY, 1, add) end
 			coins = coins + add; resold = resold + 1
+			local profit = add - (row.paid or 0)
+			if profit > 0 then MR.Nudge(S, shop.anchor, profit / 10, MR.cfg.prospProfit, now) end
 		end
 	end
 	local after = deci(purse)
-	if after - before ~= coins + restored then
+	if after - before > coins + restored then          -- more money than the mod added: never let that go on
 		self.stopped = string.format("shop %d purse moved %d deci, expected %d", dbid, after - before, coins + restored)
 		say("STOPPED for this session: " .. self.stopped)
+	elseif after - before < coins + restored then      -- a removal the game refused: harmless, the purse stays richer
+		say(string.format("shop %d: purse %d deci short of the plan (coins not removed)", dbid, coins + restored - (after - before)))
 	end
 	shop.bonus = shop.bonus + coins
 	shop.last = after
@@ -470,6 +544,7 @@ function MR:Status()
 	local parts = {}
 	for _, cat in ipairs(CATS) do parts[#parts + 1] = string.format("%s %.2f", cat, MR.DemandAt(S, shop.anchor, cat, now)) end
 	say("market demand: " .. table.concat(parts, ", "))
+	say(string.format("market prosperity %.2f (weekly purses x that)", MR.Prosperity(S, shop.anchor, now)))
 	local w, n = MR.Wealth(S, shop.anchor)
 	say(string.format("market: %d known shop(s) worth %.0f gr; it absorbs %.0f gr of weapons, %.0f gr of armor", n, w,
 		MR.Capacity(S, shop.anchor, "weapon"), MR.Capacity(S, shop.anchor, "armor")))

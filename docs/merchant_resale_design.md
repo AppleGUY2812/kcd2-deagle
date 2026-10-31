@@ -49,7 +49,19 @@ Still unverified: that 0x1808d5150 runs for every sell and buyback; that the pla
    sells and buys once; the log proves the hooks. No game state changed.
 2. Ledger + demand + settlement on approach + save persistence (built 2026-10-30: plugin reports committed
    checkouts through `MRN.pull()`, `merchant.lua` does the rest; see `merchant/README.md`).
-3. Tune numbers from play.
+3. Live economy (decided 2026-10-30 with the user: "a dynamic live economy ... the player can see and be rewarded by
+   his actions or punished, not broken but still a buff to the vanilla"; no fixed allowances):
+   a. Prosperity per market, 0.5 .. 2, drifting back to 1 with a 14-day half-life. The weekly restock purse = normal
+      purse x prosperity (on top of savings). Raised by money the player spends in its shops (x1) and its merchants'
+      resale profit (x0.5); lowered by coins taken from its shop chests (x2); one unit = 4 x the market's known
+      purses (at least 300 gr). Built (step 1).
+   b. Seen: a line when the player walks up to a shop, only when something stands out ("Market: prosperous (purses
+      +20%) - weapons flooded (slow to sell)"), at most once a game day per shop; `merchant_status` shows it all; the
+      trade screen shows the purses. Built (step 1).
+   c. Demand sets what merchants pay the player: x (0.70 + 0.40 d): fresh +10 %, half -10 %, flooded -24 %. Only the
+      price they pay, never what they charge (no buy-low/sell-high loop: vanilla buys at 0.7-0.8, sells at
+      0.35-0.5). The merchant's own resale income gets the same factor. Needs a hook on the trade price
+      (FUN_180566410). Step 2, not built.
 
 ## Reference: the Legacy of the Forge sales chest (read 2026-10-30 from Scripts.pak)
 `Quests/Final/Barbora/kutnohorsko/legacy_of_the_forge/selling_stuff*` (Skald graphs; settings on the

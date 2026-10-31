@@ -115,23 +115,40 @@ tick()
 check(stash.inventory:GetCountOfClass(SWORD) == 0, "sword left the stash")
 check(math.abs(stash.inventory:GetMoney() - 428.0) < 1e-6, "purse +60 gr: " .. stash.inventory:GetMoney())
 check(St.shops[520].bonus == 600 and #St.rows == 0, "savings 60 gr")
+-- his profit (60 - 10 gr paid) makes the market a little richer: +0.5 x 50 / (4 x 378 gr of known purses) = +0.0165
+check(math.abs(MR.Prosperity(St, 520, MR:Now()) - (1 + 0.5 * 50 / 1512)) < 1e-4, "resale profit raises prosperity")
 -- the weekly restock resets the purse to its preset (378 gr): the savings come back
 stash.inventory:DeleteItemOfClass(MONEY, 500)
 tick()
-check(math.abs(stash.inventory:GetMoney() - 438.0) < 1e-6, "restock keeps savings: " .. stash.inventory:GetMoney())
+local pr = MR.Prosperity(St, 520, MR:Now())
+local want = 378 + 60 + math.floor(3780 * (pr - 1) + 0.5) / 10
+check(math.abs(stash.inventory:GetMoney() - want) < 1e-6, "restock: savings + prosperity: " .. stash.inventory:GetMoney() .. " vs " .. want)
 -- the player steals 50 gr: no savings come back for that
 stash.inventory:DeleteItemOfClass(MONEY, 500)
 tick()
-check(math.abs(stash.inventory:GetMoney() - 388.0) < 1e-6, "theft not refunded: " .. stash.inventory:GetMoney())
+check(math.abs(stash.inventory:GetMoney() - (want - 50)) < 1e-6, "theft not refunded: " .. stash.inventory:GetMoney())
+-- and it costs the market: -2 x 50 / 1512
+check(math.abs(MR.Prosperity(St, 520, MR:Now()) - (pr - 100 / 1512)) < 1e-4 and has("50.0 gr gone from its chest"),
+	"theft lowers prosperity " .. MR.Prosperity(St, 520, MR:Now()))
+local afterTheft = stash.inventory:GetMoney()
 -- first sighting was a drained purse: a rise without a trade teaches the real preset
 local S3 = MR.NewState(); local sh = MR.Observe(S3, 9, 0, 0, 200)
 check(MR.Restock(sh, 3000) == 0 and sh.preset == 3000, "preset learned from a restock")
+-- prosperity scales the weekly purse: a 2x town restocks 3000 -> 6000, a 0.5x town 3000 -> 1500
+sh.last = 100; check(MR.Restock(sh, 3000, 2) == 3000, "rich town doubles the purse")
+sh.last = 100; check(MR.Restock(sh, 3000, 0.5) == -1500, "poor town halves it")
+-- spending: 300 gr in a 300 gr market = +0.25; drift back half way in 14 days; clamps 0.5 .. 2
+local S5 = MR.NewState(); MR.Observe(S5, 1, 0, 0, 3000)
+check(math.abs(MR.Nudge(S5, 1, 300, 1, 0) - 1.25) < 1e-9, "spending raises prosperity")
+check(math.abs(MR.Prosperity(S5, 1, 14) - 1.125) < 1e-9, "drifts back with a 14-day half-life")
+check(MR.Nudge(S5, 1, 100000, -2, 14) == 0.5 and MR.Nudge(S5, 1, 1e6, 1, 14) == 2, "clamped 0.5 .. 2")
+check(MR.Deserialize(MR.Serialize(S5)).prosper[1].v == 2, "prosperity saved")
 -- a sold item that vanished (bought back by class elsewhere / destocked): no coins
 queue = "sell 520 " .. SWORD .. " 1 1000 020000000000CAFE\n"
 tick()
 worldTime = worldTime + 10 * 86400
 tick()
-check(has("1 gone from stock") and math.abs(stash.inventory:GetMoney() - 388.0) < 1e-6, "gone item pays nothing")
+check(has("1 gone from stock") and math.abs(stash.inventory:GetMoney() - afterTheft) < 1e-6, "gone item pays nothing")
 -- loading another save swaps the state
 g_localActor.AI = { MerchantResale = MR.Serialize(S) }
 tick()
@@ -203,5 +220,17 @@ check(#MR.S.rows == 0 and has("read from the save: 0 shops"), "OnLoad of a save 
 g_localActor:OnLoad(saved)
 tick()
 check(#MR.S.rows == 1 and MR.S.rows[1].token == "020000000000E00E", "OnLoad restores the ledger, ticks keep it")
+-- the walk-up line: nothing when normal; prosperity and floods when they stand out
+local S6 = MR.NewState(); MR.Observe(S6, 1, 0, 0, 3000)
+check(MR.Note(S6, 1, 0) == nil, "normal market: no note")
+MR.Nudge(S6, 1, 240, 1, 0)
+for i = 1, 6 do MR.AddSale(S6, 1, SWORD, 1, 30000, "N" .. i, 0) end
+check(MR.Note(S6, 1, 0) == "Market: prosperous (purses +20%) - weapons flooded (slow to sell)", "note: " .. tostring(MR.Note(S6, 1, 0)))
+-- spending in a shop (its purse rose in a trade) makes the town richer
+local p1 = stash.inventory:GetMoney()
+stash.inventory:Add(MONEY, 1000)
+queue = "buy 520 " .. SWORD .. " 1 1000 020000000000F00F\n"
+tick()
+check(has("you spent 100.0 gr here"), "spending recorded")
 print(string.format("merchant logic tests: %d checks passed (fresh plate %.2f days, flooded last plate %.1f days)",
 	checks, r1.eta, S.rows[#S.rows].eta))
