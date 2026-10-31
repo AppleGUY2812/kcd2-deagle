@@ -357,6 +357,46 @@ __declspec(noinline) bool ConSetF(void* v, float f) {
 	__try { ((void(__fastcall*)(void*, float))Slot(v, 0x40))(v, f); return true; } __except (1) { return false; }
 }
 
+
+// The world clock's update FUN_180a58d90(calendar, dt): world ms (+0x48) += dt * 1000 * ratio (+0x60, 15 in play).
+// Logged per time skip (ratio over 20 or dt over 0.3 s): game hours, real seconds, frames, dt a frame, the highest
+// ratio and t_GameScale seen. Tells what a wait raises (the ratio, the game scale, or both) and whether dt hits the cap.
+using CalUpdFn = char(__fastcall*)(void* cal, float dt);
+CalUpdFn o_calUpd = nullptr;
+const uint8_t kCalUpd[] = {0x48, 0x89, 0x5c, 0x24, 0x08, 0x57, 0x48, 0x83, 0xec, 0x40, 0x0f, 0x29, 0x74, 0x24, 0x30};
+struct CalSkip { bool on; int frames; double game, real, dtMin, dtMax, ratioMax, gsMax; long long prev; } g_cal{};
+int g_calLogged = 0;
+float g_lastGs = 1;
+
+char __fastcall HkCalUpd(void* cal, float dt) {
+	LARGE_INTEGER q; QueryPerformanceCounter(&q);
+	const double real = g_cal.prev && g_qpcF > 0 ? (q.QuadPart - g_cal.prev) / g_qpcF : 0;
+	g_cal.prev = q.QuadPart;
+	float ratio = 0;
+	__try { ratio = *(float*)((char*)cal + 0x60); } __except (1) { ratio = 0; }
+	const bool skip = ratio > 20.f || dt > 0.3f || g_lastGs > 1.5f;
+	if (skip) {
+		if (!g_cal.on) { g_cal = CalSkip{true, 0, 0, 0, 1e9, 0, 0, 0, q.QuadPart}; }
+		g_cal.frames++; g_cal.game += (double)dt * ratio; if (real < 1) g_cal.real += real;
+		if (dt < g_cal.dtMin) g_cal.dtMin = dt;
+		if (dt > g_cal.dtMax) g_cal.dtMax = dt;
+		if (ratio > g_cal.ratioMax) g_cal.ratioMax = ratio;
+		if (g_lastGs > g_cal.gsMax) g_cal.gsMax = g_lastGs;
+	} else if (g_cal.on) {
+		g_cal.on = false;
+		if (g_cal.frames > 5 && g_calLogged++ < 60)
+			Log("clock: a time skip ran %.2f game h in %.1f s real (x%.0f): %d frames (%.0f fps); dt a frame avg %.3f, min %.3f, max %.3f s; clock ratio up to %.0f, t_GameScale up to %.1f",
+			    g_cal.game / 3600, g_cal.real, g_cal.real > 0 ? g_cal.game / g_cal.real : 0, g_cal.frames,
+			    g_cal.real > 0 ? g_cal.frames / g_cal.real : 0, g_cal.game / g_cal.frames / (g_cal.ratioMax > 0 ? g_cal.ratioMax : 1),
+			    g_cal.dtMin, g_cal.dtMax, g_cal.ratioMax, g_cal.gsMax);
+	}
+	return o_calUpd(cal, dt);
+}
+
+bool CalBytesMatch(const void* fn) {
+	__try { return memcmp(fn, kCalUpd, sizeof kCalUpd) == 0; } __except (1) { return false; }
+}
+
 void Clockstep_Frame() {
 	LARGE_INTEGER q; QueryPerformanceCounter(&q);
 	const double real = g_clkPrev && g_qpcF > 0 ? (q.QuadPart - g_clkPrev) / g_qpcF : 0;
@@ -366,6 +406,7 @@ void Clockstep_Frame() {
 	if (!g_cvScale || !g_cvStep) return;
 	float gs = 1;
 	if (!ConGetF(g_cvScale, gs)) return;
+	g_lastGs = gs;
 	const bool skip = g_clockR > 0 && gs > 1.5f && real > 0;
 	if (skip) {
 		if (!g_stepGame) {
@@ -569,7 +610,7 @@ void Ftspeed_Command(const char* args) {
 	    "44 = the 88 fps speed everywhere (default); 0 = the game's own 0.5 s a frame)", g_ftspeed);
 }
 
-void Clockstep_Install(HMODULE self) {
+void Clockstep_Install(uintptr_t base, HMODULE self) {
 	char path[MAX_PATH] = {};
 	GetModuleFileNameA(self, path, MAX_PATH);
 	std::string p(path);
@@ -580,6 +621,9 @@ void Clockstep_Install(HMODULE self) {
 		fclose(f);
 	}
 	if (g_qpcF <= 0) { LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_qpcF = (double)f.QuadPart; }
+	void* cu = (void*)(base + 0xa58d90);
+	if (!CalBytesMatch(cu)) Log("clock: the clock update's bytes differ: skips not logged");
+	else if (MH_CreateHook(cu, (void*)&HkCalUpd, (void**)&o_calUpd) != MH_OK || MH_EnableHook(cu) != MH_OK) Log("clock: hook FAILED");
 	Log("clockstep: %g (time skips: t_MaxStep follows the frame time while t_GameScale is over 1.5; fastload_clockstep.txt, 0 = off)", g_clockR);
 }
 
