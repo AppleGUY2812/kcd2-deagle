@@ -91,9 +91,11 @@ function Lua-List($ids) { "{" + (($ids | ForEach-Object { "'$_'" }) -join ",") +
 # Levels: soul:GetSkillLevel / GetStatLevel read them; AdvanceToSkillLevel / AdvanceToStatLevel (what the game's own
 # player.lua and FeatureTests use) raise them through XP, so the level-ups give their perk points as in play. The soul
 # has no call that lowers a level (SetStatLevel / SetSkillLevel are nil in game, checked 2026-10-19). Stats go by full
-# name (strength...; "str" is nil). Max 30. The Main level (the menu's ui_derivstat_mainlevel) is the derived stat "lvl"
+# name (strength...; "str" is nil). Max $MaxLevel (30 in vanilla). The Main level (the menu's ui_derivstat_mainlevel) is the derived stat "lvl"
 # (soul:GetDerivedStat('lvl'), 17.17 in game 2026-10-19): the game grows it from the four stats, quests and the main story
 # and has no Lua call that sets it, so the window shows it and it moves when a stat is raised.
+# the highest skill / stat level: 100 with the user's level-cap mod (2026-10-30; vanilla 30)
+$MaxLevel = 100
 $StatNames = @{ stat0 = "strength"; stat1 = "agility"; stat2 = "vitality"; stat3 = "speech" }
 function Lvl-Call([string]$key) {
 	if ($StatNames.ContainsKey($key)) { return @("Stat", $StatNames[$key]) } else { return @("Skill", $key) }
@@ -233,7 +235,7 @@ $form.ForeColor = [System.Drawing.Color]::FromArgb(236, 226, 205)
 $gold = [System.Drawing.Color]::FromArgb(201, 162, 39)
 
 $top = New-Object System.Windows.Forms.Label
-$top.Text = "Level: type a higher level, press Raise (only up, max 30; level-ups give their perk points). Points: Set changes free perk points. Reset gives a skill's perk points back. Reopen the perk screen to see changes."
+$top.Text = "Level: type a higher level, press Raise (only up, max $MaxLevel; level-ups give their perk points). Points: Set changes free perk points. Reset gives a skill's perk points back. Reopen the perk screen to see changes."
 $top.Location = "14,10"; $top.Size = "680,40"
 $form.Controls.Add($top)
 
@@ -263,7 +265,7 @@ foreach ($r in $Rows) {
 	$lab.Text = $name; $lab.Location = "14,$($y + 4)"; $lab.Size = "160,24"
 	$form.Controls.Add($lab)
 	$lv = New-Object System.Windows.Forms.NumericUpDown
-	$lv.Minimum = 0; $lv.Maximum = 30; $lv.Location = "180,$y"; $lv.Size = "56,26"
+	$lv.Minimum = 0; $lv.Maximum = $MaxLevel; $lv.Location = "180,$y"; $lv.Size = "56,26"
 	$lv.BackColor = [System.Drawing.Color]::FromArgb(52, 45, 38); $lv.ForeColor = $form.ForeColor
 	$form.Controls.Add($lv)
 	$levels[$key] = $lv
@@ -274,7 +276,7 @@ foreach ($r in $Rows) {
 		$k = $this.Tag[0]; $n = $this.Tag[1].TrimEnd(' ', '*')
 		$to = [int]$levels[$k].Value
 		$now = $levels[$k].Tag
-		# Stats: the shown level includes buffs (GetStatLevel = base + modifiers, capped at 30), but AdvanceToStatLevel
+		# Stats: the shown level includes buffs (GetStatLevel = base + modifiers, capped at the level cap), but AdvanceToStatLevel
 		# compares against the BASE (docs/whgame_re/stat_base.md), so a stat can't be refused here: a target at or
 		# below the base is a no-op in the game itself.
 		$isStat = $k.StartsWith("stat")
@@ -331,7 +333,7 @@ function Refresh-All {
 	$status.Text = "reading..."
 	# levels first: they come from Lua and don't depend on the plugin's points read, which can refuse (several lists)
 	$lh = Read-Levels
-	foreach ($k in $levels.Keys) { if ($lh.ContainsKey($k)) { $levels[$k].Value = [Math]::Min(30, $lh[$k]); $levels[$k].Tag = $lh[$k] } }
+	foreach ($k in $levels.Keys) { if ($lh.ContainsKey($k)) { $levels[$k].Value = [Math]::Min($MaxLevel, $lh[$k]); $levels[$k].Tag = $lh[$k] } }
 	$main.Text = $(if ($script:MainLevel) { "Main level: $script:MainLevel" } else { "Main level: ?" })
 	$line = Ask "deagle_points" $ListDone
 	$h = Parse-List $line
