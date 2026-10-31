@@ -25,9 +25,9 @@ ROW = 26
 ADVICE_W = 430
 SS = 4  # supersampling for the panel
 
-# panel top-left in 1920x1080 UI coordinates (advice: top-right container, 60 px from the corner)
-ADVICE_X, ADVICE_Y = 1920 - 430 - 60, 60
-PICKER_X, PICKER_Y = 960, 150
+# panel top-left in 1920x1080 UI coordinates (advice: container-local 470,-352 => screen 728; picker: top-right container)
+ADVICE_X, ADVICE_Y = 470, 728
+PICKER_X, PICKER_Y = 1920 - 440 - 40, 60
 
 
 def scale(image):
