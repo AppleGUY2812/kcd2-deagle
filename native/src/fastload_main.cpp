@@ -301,6 +301,7 @@ DWORD WINAPI Init(LPVOID) {
 	STEP(Streamio_Install(g_game.base, g_self));  // one read per streaming request instead of 128 KB pieces (streamio.cpp)
 	STEP(Fttex_Install(g_self));       // fast-travel arrival texture caps, mode file (ftpreload.cpp)
 	STEP(Ftinstant_Install(g_self));   // fast-travel arrival let in early, mode file (ftpreload.cpp)
+	STEP(Ftspeed_Install(g_game.base, g_self));   // fast-travel piece speed independent of the frame rate (ftpreload.cpp)
 	STEP(Ftplaces_Install(g_game.base, g_self));   // fast-travel arrival places loaded ahead, mode file (ftplaces.cpp)
 	STEP(Mapvd_Install(g_game.base, g_self));      // map / inventory: no octree rebuild (mapvd.cpp)
 	STEP(Perkcopy_Install(g_game.base, g_self));   // map / inventory: the perk copy without per-perk re-checks (perkcopy.cpp)
@@ -368,6 +369,7 @@ extern "C" __declspec(dllexport) int Fastload_Command(const char* line) {
 	if (!strcmp(cmd, "ftpre")) Ftpre_Command(rest);
 	else if (!strcmp(cmd, "fttex")) Fttex_Command(rest);
 	else if (!strcmp(cmd, "ftinstant")) Ftinstant_Command(rest);
+	else if (!strcmp(cmd, "ftspeed")) Ftspeed_Command(rest);
 	else if (!strcmp(cmd, "mapvd")) Mapvd_Command(rest);
 	else if (!strcmp(cmd, "perkcopy")) Perkcopy_Command(rest);
 	else if (!strcmp(cmd, "keepload")) Keepload_Command(rest);

@@ -110,3 +110,10 @@ rider's movement speed from the movement table (`FUN_182dde52c`: actor +0x668, g
 So the marker's speed = speed * (game time per real second). `ftpre: walk speed (game's counter)` logs the speed, the
 game time each frame used (step / speed) and the real frame time, per trip (2adac7b): user 2026-10-30, the marker ran
 much faster in Trosky (581 m straight line in 3.7 s) than in Kuttenberg (450 m in 11.7 s, 1.3 km in 14.0 s on 10-23).
+
+Measured 2026-10-30 (2adac7b log, 12 trips): rider speed 3.84 m/s every trip; game time a frame 0.5000 s on every frame
+that moved, so 1.91 m a frame: Trosky 65-89 fps = 124-169 m/s, 36-46 fps = 69-87 m/s; Kuttenberg 55-58 fps. The
+speed is the frame rate, not the region. `ftspeed` (ftpreload.cpp) hooks the walk step and gives a full-step frame
+max(dt, real frame time * R) game seconds (R = 44, at most 2 s); the loop in FUN_182de3148 eats as many route points
+as the step covers, so a bigger step is safe for the route. Not checked: whether the clock or anything else reads the
+walk's game time (the arrival hour could come out earlier than at a low frame rate in the unmodded game).

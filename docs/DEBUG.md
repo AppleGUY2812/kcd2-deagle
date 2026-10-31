@@ -260,7 +260,7 @@ Examples: `deagle_set physics.camPerFlip 0.45` (bigger kick for every gun), `dea
   `fastload.log` there, its settings and records `fastload_*.txt` / `.bin` (they were `deagle_*` before 2026-10-24;
   `native/install.ps1` copies the old ones over once). Its commands (`ftpre`, `fastzip`, `streamio`, `readiness`,
   `hitch`, `ftplaces`, `pakahead`, `cvars`, `xmlahead`, `questbench`, `streamahead`, `terrainfast`, `fttex`, `ftinstant`,
-  `mapvd`, `perkcopy`) still go in as
+  `ftspeed`, `mapvd`, `perkcopy`) still go in as
   `deagle_lua Deagle:Native([[...]])` and the Deagle plugin hands them over; without the Deagle mod only the files work.
 - `deagle_log_actions` logs every key action the mod receives; `deagle_native_test` pings the plugin with a shot sound.
 
@@ -269,6 +269,11 @@ All go in as `deagle_lua Deagle:Native([[...]])`; each is kept in `fastload_<nam
 - `ftinstant S`: the fast-travel arrival fades in S seconds after the walk ends instead of waiting for every NPC and
   texture (0.3 in use; `ftinstant 0` = the game's wait, 2.5-3.8 s of black). NPC detail and sharp textures arrive in
   the first seconds of play.
+- `ftspeed R` (default `44`, 2026-10-30): the fast-travel piece walks R game seconds per real second. The game gives
+  the walk at most 0.5 s of game time a frame (3.84 m/s riding speed = 1.91 m a frame), so the piece's speed was the
+  frame rate: 160-170 m/s at 81-89 fps, 69-87 m/s at 36-46 fps, which is why Kuttenberg (lower frame rate) crawled.
+  `44` = the 88 fps speed at any frame rate (at most 2 s a frame); the walk's start and a random event's slow-down keep
+  the game's own step. `ftspeed 0` = the game's step. Log: `ftspeed:` at start, `ftpre: walk speed` per trip.
 - `fttex MB JOBS NPC`: raises the texture streaming caps and the NPC detail-switch budget during the arrival wait
   (`fttex 0` = off, the default; measured no gain, kept for tests).
 - `mapvd 1|0`: the map and inventory lower the view distance (140 -> 100) on open and raise it on close, and each change

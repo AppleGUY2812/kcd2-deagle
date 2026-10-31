@@ -23,3 +23,7 @@ void Ftpre_GateNpc(bool on);
 unsigned Ftpre_TripSeq();
 // ms since a fast-travel walk or arrival wait was last on (0xffffffff: none this run; main thread)
 DWORD Ftpre_TripQuietMs();
+// "ftspeed R" (fastload_ftspeed.txt, default 44): the fast-travel piece walks R game seconds per real second instead of
+// the game's 0.5 s a frame (which made its speed the frame rate: Kuttenberg slower than Trosky); 0 = the game's step
+void Ftspeed_Install(uintptr_t base, HMODULE self);
+void Ftspeed_Command(const char* args);

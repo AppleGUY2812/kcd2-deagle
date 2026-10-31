@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include "MinHook.h"
 
 namespace {
 
@@ -284,6 +285,40 @@ bool Setup() {
 	return true;
 }
 
+
+// ---- ftspeed: the fast-travel piece at the same speed at any frame rate ----
+// The walk step FUN_182de3148(mgr, dt) moves the piece dt * rider speed (+0x50) along the route, once a frame, and the
+// game hands it at most 0.5 s of game time a frame. So the piece moves 0.5 s * 3.84 m/s = 1.91 m a frame and its speed
+// is the frame rate: 2026-10-30 log, 160-170 m/s at 81-89 fps, 87 m/s at 46, 69 m/s at 36 fps (Kuttenberg runs lower).
+// With ftspeed R, a frame at the full step (dt >= 0.45 s) gets max(dt, real frame time * R) game seconds, at most 2 s:
+// R = 44 is the 88 fps speed everywhere. Smaller steps (the walk's start, a random event's slow-down) stay the game's.
+using WalkStepFn = char(__fastcall*)(void* mgr, float dt);
+WalkStepFn o_walkStep = nullptr;
+float g_ftspeed = 44.f;            // game seconds per real second while walking; 0 = the game's own step
+std::string g_spdFile;
+long long g_spdPrev = 0;           // QPC of the last walk step
+double g_qpcF = 0;
+const uint8_t kWalkStep[] = {0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x08, 0x48, 0x89, 0x68, 0x10, 0x48, 0x89, 0x70, 0x18, 0x57};
+
+char __fastcall HkWalkStep(void* mgr, float dt) {
+	LARGE_INTEGER q; QueryPerformanceCounter(&q);
+	const double real = g_spdPrev ? (q.QuadPart - g_spdPrev) / g_qpcF : 0;
+	g_spdPrev = q.QuadPart;
+	if (g_ftspeed > 0 && dt >= 0.45f && real > 0 && real < 0.25) {
+		const double want = real * g_ftspeed;
+		if (want > dt) dt = (float)(want < 2.0 ? want : 2.0);
+	}
+	return o_walkStep(mgr, dt);
+}
+
+bool BytesMatch(const void* fn) {
+	__try { return memcmp(fn, kWalkStep, sizeof kWalkStep) == 0; } __except (1) { return false; }
+}
+
+void SaveSpeed() {
+	if (g_spdFile.empty()) return;
+	if (FILE* f = fopen(g_spdFile.c_str(), "w")) { fprintf(f, "%g\n", g_ftspeed); fclose(f); }
+}
 }  // namespace
 
 void Ftpre_Install(uintptr_t env, uintptr_t) { g_env = env; }   // Setup waits for the first drawn frame (the 3D engine is up)
@@ -437,3 +472,30 @@ void Ftpre_Frame() {
 void Ftpre_GateNpc(bool on) { NpcGate(on); }
 unsigned Ftpre_TripSeq() { return g_tripSeq; }
 DWORD Ftpre_TripQuietMs() { return g_tripBusyAt ? GetTickCount() - g_tripBusyAt : 0xffffffffu; }
+
+void Ftspeed_Install(uintptr_t base, HMODULE self) {
+	char path[MAX_PATH] = {};
+	GetModuleFileNameA(self, path, MAX_PATH);
+	std::string p(path);
+	g_spdFile = p.substr(0, p.find_last_of('\\') + 1) + "fastload_ftspeed.txt";
+	if (FILE* f = fopen(g_spdFile.c_str(), "r")) {
+		float v = 0;
+		if (fscanf(f, "%f", &v) == 1 && v >= 0 && v <= 200) g_ftspeed = v;
+		fclose(f);
+	}
+	LARGE_INTEGER f; QueryPerformanceFrequency(&f); g_qpcF = (double)f.QuadPart;
+	void* fn = (void*)(base + 0x2de3148);
+	if (!BytesMatch(fn)) { Log("ftspeed: the walk step's bytes differ (another game version?): not hooked"); return; }
+	if (MH_CreateHook(fn, (void*)&HkWalkStep, (void**)&o_walkStep) != MH_OK || MH_EnableHook(fn) != MH_OK) {
+		Log("ftspeed: hook FAILED"); return;
+	}
+	Log("ftspeed: %g game seconds per real second while the fast-travel piece walks (%s; fastload_ftspeed.txt, 0 = the game's 0.5 s a frame)",
+	    g_ftspeed, g_ftspeed > 0 ? "the 88 fps speed at any frame rate" : "off");
+}
+
+void Ftspeed_Command(const char* args) {
+	float v = 0;
+	if (args && sscanf_s(args, "%f", &v) == 1 && v >= 0 && v <= 200) { g_ftspeed = v; SaveSpeed(); }
+	Log("ftspeed: %g  (ftspeed R: the fast-travel piece walks R game seconds per real second, at most 2 s a frame; "
+	    "44 = the 88 fps speed everywhere (default); 0 = the game's own 0.5 s a frame)", g_ftspeed);
+}
