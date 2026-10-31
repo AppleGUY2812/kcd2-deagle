@@ -73,10 +73,15 @@ check(string.format("roll: right key -> time %.3f (want ~1), weight %.3f (0.525)
 	vm.layers[4] == A.roll[1] and (vm.layerTime[4] or 0) > 0.99 and math.abs((weight(4) or 0) - 0.525) < 0.005, vm.layerTime[4])
 act("moveright", "release"); M.advance(0.5)
 check("  let go: back to the middle (0.5)", math.abs((vm.layerTime[4] or 0) - 0.5) < 0.01, vm.layerTime[4])
--- rc kept the idle reference frame (4 frames): left, centre, right are frames 1-3 of 0-3
+-- a 4-frame profile (the Grizzlies: the compiled caf runs ticks 1..4, keys left / centre / right at 1, 2, 3): the engine
+-- puts the centre at 1/3 and the right key at 2/3 (measured live 2026-10-30; 2/3 at rest held the gun rolled right)
 A.roll[2] = 4; M.advance(0.5)
-check(string.format("  4-frame roll clip (reference kept): centre at %.3f (2/3)", vm.layerTime[4] or -1),
+check(string.format("  4-frame roll clip: centre at %.3f (1/3)", vm.layerTime[4] or -1),
+	math.abs((vm.layerTime[4] or 0) - 1 / 3) < 0.01, vm.layerTime[4])
+act("moveright"); M.advance(0.5)
+check(string.format("  4-frame roll clip: right key at %.3f (2/3)", vm.layerTime[4] or -1),
 	math.abs((vm.layerTime[4] or 0) - 2 / 3) < 0.01, vm.layerTime[4])
+act("moveright", "release"); M.advance(0.5)
 A.roll[2] = 3
 
 -- sprinting puts the shake at 0.1, and it stays there (Ready or Not's bug, copied)

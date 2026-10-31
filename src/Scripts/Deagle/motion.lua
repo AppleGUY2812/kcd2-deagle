@@ -257,11 +257,12 @@ function Deagle:RonLayersTick()
 		local want = (k.right and 1 or 0) - (k.left and 1 or 0)
 		L.roll = L.roll + (want - L.roll) * math.min(1, dt * C.rollRate)
 		if not L.clip[AL.roll] then self:LayerPlay(AL.roll, "roll", 0, 0, true) end
-		-- left, centre, right are its last 3 frames (a 4th, first, is the idle reference if rc kept it)
+		-- left, centre, right keys: the engine's normalized time 0, 1/3, 2/3 (measured live 2026-10-30: the compiled caf runs
+		-- ticks 1..4 with keys at 1, 2, 3; t = 1 clamps to the right key). The old (1 + roll + 1) / 3 held the gun at the full
+		-- right key at rest (weapon_right 11.4 deg, x0.525 at the hip).
 		local frames = a.roll[2]
-		local first = math.max(0, frames - 3)
 		local vm = self:VmEntity()
-		if vm then pcall(vm.SetAnimationTime, vm, 0, AL.roll, (first + L.roll + 1) / math.max(1, frames - 1)) end
+		if vm then pcall(vm.SetAnimationTime, vm, 0, AL.roll, (L.roll + 1) / math.max(1, frames - 1)) end
 		self:LayerFade(AL.roll, C.rollW * L.aim, 0)
 	end
 	-- jump
