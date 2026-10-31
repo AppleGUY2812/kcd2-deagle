@@ -109,19 +109,20 @@ check(g_localActor.AI.MerchantResale:find("R 520", 1, true), "state written into
 -- not due yet: nothing happens
 tick()
 check(stash.inventory:GetCountOfClass(SWORD) == 1, "not resold early")
--- shop 520 is a general merchant (shop_ttkc_merchant): pays 30 % for a hunting sword, resells it at 60 %
+-- shop 520 is a general merchant (shop_ttkc_merchant): pays 30 % for a hunting sword, resells it at 60 %, x1.10 for
+-- a fresh market (the demand price factor the player was paid at)
 worldTime = worldTime + 5 * 86400
 tick()
 check(stash.inventory:GetCountOfClass(SWORD) == 0, "sword left the stash")
-check(math.abs(stash.inventory:GetMoney() - 428.0) < 1e-6, "purse +60 gr: " .. stash.inventory:GetMoney())
-check(St.shops[520].bonus == 600 and #St.rows == 0, "savings 60 gr")
--- his profit (60 - 10 gr paid) makes the market a little richer: +0.5 x 50 / (4 x 378 gr of known purses) = +0.0165
-check(math.abs(MR.Prosperity(St, 520, MR:Now()) - (1 + 0.5 * 50 / 1512)) < 1e-4, "resale profit raises prosperity")
+check(math.abs(stash.inventory:GetMoney() - 434.0) < 1e-6, "purse +66 gr: " .. stash.inventory:GetMoney())
+check(St.shops[520].bonus == 660 and #St.rows == 0, "savings 66 gr")
+-- his profit (66 - 10 gr paid) makes the market a little richer: +0.5 x 56 / (4 x 378 gr of known purses) = +0.0185
+check(math.abs(MR.Prosperity(St, 520, MR:Now()) - (1 + 0.5 * 56 / 1512)) < 1e-4, "resale profit raises prosperity")
 -- the weekly restock resets the purse to its preset (378 gr): the savings come back
-stash.inventory:DeleteItemOfClass(MONEY, 500)
+stash.inventory:DeleteItemOfClass(MONEY, math.floor((stash.inventory:GetMoney() - 378) * 10 + 0.5))
 tick()
 local pr = MR.Prosperity(St, 520, MR:Now())
-local want = 378 + 60 + math.floor(3780 * (pr - 1) + 0.5) / 10
+local want = 378 + 66 + math.floor(3780 * (pr - 1) + 0.5) / 10
 check(math.abs(stash.inventory:GetMoney() - want) < 1e-6, "restock: savings + prosperity: " .. stash.inventory:GetMoney() .. " vs " .. want)
 -- the player steals 50 gr: no savings come back for that
 stash.inventory:DeleteItemOfClass(MONEY, 500)
@@ -162,14 +163,17 @@ queue = "sell 520 " .. SWORD .. " 1 1000 020000000000D00D\n"
 tick()
 worldTime = worldTime + 10 * 86400
 tick()
-check(stash.inventory:GetCountOfClass(SWORD) == 0 and math.abs(stash.inventory:GetMoney() - p0 - 60) < 1e-6,
-	"merchant-owned sale removed, +60 gr: " .. stash.inventory:GetMoney() - p0)
+check(stash.inventory:GetCountOfClass(SWORD) == 0 and math.abs(stash.inventory:GetMoney() - p0 - 66) < 1e-6,
+	"merchant-owned sale removed, +66 gr: " .. stash.inventory:GetMoney() - p0)
 -- condition, the game's curve: at 40 % a sword is worth 0.01 + 0.99 x 0.4 = 40.6 % of its price
 stash.inventory:Add(SWORD, 1, "userdata: 020000000000D0D0", 0.4, true)
+local pf = MR.PriceFactor(MR.S, 520, "weapon", MR:Now())
 queue = "sell 520 " .. SWORD .. " 1 1000 020000000000D0D0\n"
 tick()
-check(MR.S.rows[#MR.S.rows].base == 244 and has("40% condition, rule player_item.*.*, resale rate 0.60): resells for 24.4 gr"),
-	"condition sets the resale value " .. MR.S.rows[#MR.S.rows].base)
+local wantBase = math.floor(1000 * 0.406 * 0.6 * pf + 0.5)
+check(pf < 1.1 and MR.S.rows[#MR.S.rows].base == wantBase and has(string.format(
+	"40%% condition, rule player_item.*.*, resale rate 0.60, demand price x%.2f): resells for %.1f gr", pf, wantBase / 10)),
+	"condition and demand set the resale value " .. MR.S.rows[#MR.S.rows].base .. " vs " .. wantBase)
 -- each merchant's own rate (shop.xml): twice what he pays, at most full value (more for herbs a herbalist marks up)
 local function rate(shop, guid) return (MR.Rate(shop, guid)) end
 check(rate(522, SWORD) == 0.7, "fence Krejzl, a weapon: 0.7")
@@ -225,12 +229,34 @@ local S6 = MR.NewState(); MR.Observe(S6, 1, 0, 0, 3000)
 check(MR.Note(S6, 1, 0) == nil, "normal market: no note")
 MR.Nudge(S6, 1, 240, 1, 0)
 for i = 1, 6 do MR.AddSale(S6, 1, SWORD, 1, 30000, "N" .. i, 0) end
-check(MR.Note(S6, 1, 0) == "Market: prosperous (purses +20%) - weapons flooded (slow to sell)", "note: " .. tostring(MR.Note(S6, 1, 0)))
+local wantNote = string.format("Market: prosperous (purses +20%%) - weapons flooded (pays %d%%, slow to sell)",
+	math.floor((MR.PriceFactor(S6, 1, "weapon", 0) - 1) * 100 + 0.5))
+check(MR.Note(S6, 1, 0) == wantNote, "note: " .. tostring(MR.Note(S6, 1, 0)))
+-- prices: fresh pays +10 %, half -10 %, the floor -24 %; the plugin gets every known shop and every category
+local S7 = MR.NewState(); MR.Observe(S7, 7, 0, 0, 3000)
+check(math.abs(MR.PriceFactor(S7, 7, "armor", 0) - 1.10) < 1e-9, "fresh market pays x1.10")
+S7.demand["7:armor"] = { v = 0.5, t = 0 }
+check(math.abs(MR.PriceFactor(S7, 7, "armor", 0) - 0.90) < 1e-9, "half demand pays x0.90 " .. MR.PriceFactor(S7, 7, "armor", 0))
+S7.demand["7:armor"] = { v = 0.15, t = 0 }
+check(math.abs(MR.PriceFactor(S7, 7, "armor", 0) - 0.76) < 1e-9, "flooded pays x0.76")
+check(MR.PriceText(S7, 0) == "7 0.760 1.100 1.100 1.100 1.100", "price text: " .. MR.PriceText(S7, 0))
+check(MR.CatText():find(SWORD .. " 1", 1, true), "categories text has the sword as a weapon")
 -- spending in a shop (its purse rose in a trade) makes the town richer
 local p1 = stash.inventory:GetMoney()
 stash.inventory:Add(MONEY, 1000)
 queue = "buy 520 " .. SWORD .. " 1 1000 020000000000F00F\n"
 tick()
 check(has("you spent 100.0 gr here"), "spending recorded")
+-- the plugin: categories once per binding, factors when they change, "" (vanilla) when resale is off
+local catsSent, pushed, pushes = 0, nil, 0
+MRN.cats = function(t) catsSent = catsSent + 1 end
+MRN.prices = function(t) pushed = t; pushes = pushes + 1 end
+MR.stopped = nil
+tick(); tick()
+check(catsSent == 1 and pushes == 1 and pushed:find("^520 "), "prices pushed once: " .. tostring(pushed))
+MRN.enabled = function() return false end
+tick()
+check(pushed == "" and pushes == 2, "resale off: vanilla prices")
+MRN.enabled = function() return true end
 print(string.format("merchant logic tests: %d checks passed (fresh plate %.2f days, flooded last plate %.1f days)",
 	checks, r1.eta, S.rows[#S.rows].eta))

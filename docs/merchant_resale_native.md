@@ -118,3 +118,13 @@
 | 6 Remove | [V] Instance token observed at item+0x30 (`0x1808d5150`, above). [U] Token lookup/remove, stack splitting, missing-instance outcome; never reuse retained item pointers. |
 | 7 Saves | [V] Local instrumentation names load candidates `0x1825bdc7c`/`0x1825bda54` (`native/src/samelevel.cpp:14-24,40-61`). [U] Stable identity on save AND load, exact signatures, completion/failure; no safe sidecar key. |
 - [I] Safest fallback for all seven gaps: retain logging-only phase 1, no ledger integration or game writes; do not substitute wall time, global state, newest-save selection or unverified native calls. Resume Step A when execution permissions are available.
+
+## Phase 3: the trade-price hook (2026-10-30)
+- `FUN_180566410` (RVA 0x566410), the price calculator's vtable slot +0x30, called from `FUN_180566844`:
+  `(this, int* out, item, ?, player, bool p6, C_Shop* p7)`. p6 = `!(p7+8)->vtbl[0x18](item)`, the same ownership call
+  as `Owns()`, so p6 != 0 = the shop does not own the item = the player sells. p7's vtable is checked against
+  `kShopVtable`; its dbid is at +0x1b0. Result: out = price x shop multiplier x player factor x reputation factor.
+- Prologue (qk data): `48 8b c4 | 48 89 58 08 | 48 89 68 10 | 48 89 70 18` (four whole instructions).
+- The hook runs the original, then (player sells, resale on, the shop has factors from Lua) scales `*out` by
+  the factor of the item's category. Item class guid: item+0x48 -> class +8. Not yet verified in game: that p6 is
+  the direction (the first 40 changed prices go to merchant.log with before/after).

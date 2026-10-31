@@ -23,6 +23,9 @@ MR.cfg = {
 	-- prospMinWealth gr). It drifts back to 1 with a prospHalfLife-day half-life.
 	prospMin = 0.5, prospMax = 2, prospK = 4, prospMinWealth = 300, prospHalfLife = 14,
 	prospSpend = 1, prospProfit = 0.5, prospTheft = 2,
+	-- what a shop PAYS the player (never what it charges) = vanilla x (priceLo + priceSpan x demand): fresh +10 %,
+	-- half -10 %, flooded (0.15) -24 %. The plugin's trade-price hook applies it (merchant.asi, MRN.prices).
+	priceLo = 0.70, priceSpan = 0.40,
 }
 local MONEY = "5ef63059-322e-4e1b-abe8-926e100c770e"
 local CATS = { "armor", "weapon", "food", "alchemy", "misc" }
@@ -83,6 +86,41 @@ function MR.Nudge(S, anchor, gr, weight, now)
 	return S.prosper[anchor].v
 end
 
+function MR.PriceFactor(S, anchor, cat, now)
+	return MR.cfg.priceLo + MR.cfg.priceSpan * MR.DemandAt(S, anchor, cat, now)
+end
+-- what the plugin needs: every known shop's factors, "<dbid> <armor> <weapon> <food> <alchemy> <misc>" lines
+function MR.PriceText(S, now)
+	local lines = {}
+	for id, shop in pairs(S.shops) do
+		local f = {}
+		for i, cat in ipairs(CATS) do f[i] = string.format("%.3f", MR.PriceFactor(S, shop.anchor, cat, now)) end
+		lines[#lines + 1] = id .. " " .. table.concat(f, " ")
+	end
+	table.sort(lines)
+	return table.concat(lines, "\n")
+end
+local CAT_DIGIT = { armor = 0, weapon = 1, food = 2, alchemy = 3, misc = 4 }
+function MR.CatText()
+	local lines = {}
+	for guid, cat in pairs(MerchantResaleCategories or {}) do lines[#lines + 1] = guid .. " " .. (CAT_DIGIT[cat] or 4) end
+	return table.concat(lines, "\n")
+end
+-- sends the categories once per binding and the factors whenever they change ("" when resale is off: vanilla)
+function MR:PushPrices(S, now)
+	if not (MRN and MRN.prices and MRN.cats) then return end
+	if self.catsFor ~= MRN then
+		self.catsFor = MRN
+		self.pricesSent = nil
+		pcall(MRN.cats, MR.CatText())
+	end
+	local text = (MRN.enabled and MRN.enabled()) and not self.stopped and MR.PriceText(S, now) or ""
+	if text ~= self.pricesSent then
+		self.pricesSent = text
+		pcall(MRN.prices, text)
+	end
+end
+
 -- the line shown when the player walks up to a shop: only what stands out (nil when the market is normal)
 local CAT_NAMES = { armor = "armour", weapon = "weapons", food = "food", alchemy = "herbs and potions", misc = "goods" }
 function MR.Note(S, anchor, now)
@@ -91,7 +129,10 @@ function MR.Note(S, anchor, now)
 	if p >= 1.05 then parts[#parts + 1] = string.format("prosperous (purses +%d%%)", math.floor((p - 1) * 100 + 0.5))
 	elseif p <= 0.95 then parts[#parts + 1] = string.format("struggling (purses -%d%%)", math.floor((1 - p) * 100 + 0.5)) end
 	for _, cat in ipairs({ "armor", "weapon", "food", "alchemy", "misc" }) do
-		if MR.DemandAt(S, anchor, cat, now) < 0.7 then parts[#parts + 1] = CAT_NAMES[cat] .. " flooded (slow to sell)" end
+		if MR.DemandAt(S, anchor, cat, now) < 0.7 then
+			parts[#parts + 1] = string.format("%s flooded (pays %d%%, slow to sell)", CAT_NAMES[cat],
+				math.floor((MR.PriceFactor(S, anchor, cat, now) - 1) * 100 + 0.5))
+		end
 	end
 	if #parts == 0 then return nil end
 	return "Market: " .. table.concat(parts, " - ")
@@ -125,10 +166,11 @@ function MR.Rate(dbid, guid)
 end
 
 -- a committed sale of `count` units (one row: a stack resells together)
+function MR.Category(guid) return (MerchantResaleCategories and MerchantResaleCategories[guid]) or "misc" end
 function MR.AddSale(S, dbid, guid, count, baseDeci, token, now)
 	local shop = S.shops[dbid]
 	if not shop then return nil end
-	local cat = (MerchantResaleCategories and MerchantResaleCategories[guid]) or "misc"
+	local cat = MR.Category(guid)
 	local key = shop.anchor .. ":" .. cat
 	local d = MR.Recover(S.demand[key], now)
 	local jitter = 1 + MR.cfg.spread * (2 * unit(token .. ":" .. #S.rows .. ":" .. guid) - 1)
@@ -318,12 +360,14 @@ function MR:Pull(S, now)
 				local _, _, it = MR.find(stashes, token, guid)
 				local h = math.max(0, math.min(1, tonumber(it and it.health) or 1))
 				local rate, rule = MR.Rate(dbid, guid)
-				local value = math.floor(base * (0.01 + 0.99 * h) * rate + 0.5)
+				local shop = S.shops[dbid]
+				local pf = MR.PriceFactor(S, shop.anchor, MR.Category(guid), now)   -- the factor this trade was paid at
+				local value = math.floor(base * (0.01 + 0.99 * h) * rate * pf + 0.5)
 				local r = MR.AddSale(S, dbid, guid, count, value, token, now)
 				added[dbid] = added[dbid] or {}
 				table.insert(added[dbid], r)
-				say(string.format("shop %d bought %dx %s (%s, %.0f%% condition, rule %s, resale rate %.2f): resells for %.1f gr each in %.1f days",
-					dbid, count, guid, r.cat, h * 100, rule and rule[1] or "none", rate, r.base / 10, r.eta - now))
+				say(string.format("shop %d bought %dx %s (%s, %.0f%% condition, rule %s, resale rate %.2f, demand price x%.2f): resells for %.1f gr each in %.1f days",
+					dbid, count, guid, r.cat, h * 100, rule and rule[1] or "none", rate, pf, r.base / 10, r.eta - now))
 			elseif dir == "buy" then
 				local n = MR.Buyback(S, dbid, guid, count)
 				if n > 0 then say(string.format("shop %d: you bought back %d of its resale stock", dbid, n)) end
@@ -475,6 +519,7 @@ function MR:Tick()
 		end
 		local now = self:Now()
 		self:Pull(S, now)
+		self:PushPrices(S, now)
 		if self.stopped or not (MRN.enabled and MRN.enabled()) then return end
 		self.settled = self.settled or {}
 		local pp = g_localActor:GetWorldPos()
@@ -483,6 +528,7 @@ function MR:Tick()
 			if okd and dbid and dbid >= 0 and clock() > (self.settled[dbid] or 0) then
 				self.settled[dbid] = clock() + MR.cfg.settleEvery
 				self:Settle(S, dbid, now)
+				self:PushPrices(S, now)   -- a shop seen for the first time gets its prices before the trade screen opens
 			end
 		end
 	end)
@@ -542,7 +588,10 @@ function MR:Status()
 		purse and string.format("%.1f", purse.inventory:GetMoney()) or "?", shop.preset / 10, shop.bonus / 10,
 		math.max(shop.preset, MR.cfg.minPreset) * MR.cfg.capMul / 10))
 	local parts = {}
-	for _, cat in ipairs(CATS) do parts[#parts + 1] = string.format("%s %.2f", cat, MR.DemandAt(S, shop.anchor, cat, now)) end
+	for _, cat in ipairs(CATS) do
+		parts[#parts + 1] = string.format("%s %.2f (pays x%.2f)", cat, MR.DemandAt(S, shop.anchor, cat, now),
+			MR.PriceFactor(S, shop.anchor, cat, now))
+	end
 	say("market demand: " .. table.concat(parts, ", "))
 	say(string.format("market prosperity %.2f (weekly purses x that)", MR.Prosperity(S, shop.anchor, now)))
 	local w, n = MR.Wealth(S, shop.anchor)

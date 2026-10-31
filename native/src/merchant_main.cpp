@@ -1,11 +1,13 @@
 #define NOMINMAX
 #include <windows.h>
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "MinHook.h"
 #include "log.h"
@@ -32,12 +34,25 @@ uintptr_t g_env = 0;          // SSystemGlobalEnvironment*, found on the first "
 
 constexpr uintptr_t kCheckout = 0x8d5150, kSuppliedOpen = 0xa4a118, kShopOpen = 0xc406d8;
 constexpr uintptr_t kShopVtable = 0x3a949b8, kMoney = 0x8c57ac;
+// Trade price (FUN_180566410, the price calculator's vtable slot +0x30, called from FUN_180566844):
+// (this, int* out, item, ?, player, bool playerSells = !shop owns item, C_Shop* shop) -> out.
+constexpr uintptr_t kPrice = 0x566410;
 // Bytes read with qk data, not invented signatures (each array covers whole instructions).
 const unsigned char kCheckoutBytes[] = {0x48,0x89,0x5c,0x24,0x10,0x55,0x56,0x57,0x48,0x8d,0x6c,0x24,0xb9};
 const unsigned char kSuppliedBytes[] = {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83,0xec,0x30};
 const unsigned char kShopOpenBytes[] = {0x48,0x89,0x5c,0x24,0x18,0x48,0x89,0x74,0x24,0x20,0x55,0x57,0x41,0x56};
 const unsigned char kMoneyBytes[] = {0x4c,0x8b,0xdc,0x53,0x48,0x81,0xec,0x80,0,0,0};
+const unsigned char kPriceBytes[] = {0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x18};
 bool g_moneyReady = false;
+using GetParamStrFn = bool(__fastcall*)(uintptr_t, int, const char**);
+GetParamStrFn g_getParamStr = nullptr;
+// Phase 3 prices (Lua pushes them, docs/merchant_resale_design.md): what a shop PAYS the player is x factor[category]
+// of that shop's market; what it charges is never touched. Categories: 0 armor, 1 weapon, 2 food, 3 alchemy, 4 misc.
+std::atomic<bool> g_priceHook{false};
+std::atomic<unsigned long long> g_priced{0}, g_scaled{0};
+std::mutex g_priceMu;
+std::unordered_map<std::string, unsigned char> g_cats;     // item class guid (lower case) -> category
+std::unordered_map<int, std::array<float, 5>> g_factors;   // shop dbid -> factor per category
 
 // Keep SEH in POD-only leaf helpers, as dice_main.cpp does (no C++ unwinding / C2712).
 template<class T> bool Read(uintptr_t at, T& out) {
@@ -197,6 +212,39 @@ std::string CheckoutText(uintptr_t tx, int price) {
 	return line + " commit_success=U"; // original may reject payment internally; hook entry is not proof of success
 }
 
+// ---- the price hook: runs for every price the shop screen shows and for the checkout total, so it stays cheap
+bool PriceInputs(uintptr_t item, uintptr_t shop, int& dbid, Guid& guid) {
+	uintptr_t vt = 0, cls = 0;
+	return shop && Read(shop, vt) && vt == g_game.base + kShopVtable && Read(shop + 0x1b0, dbid) &&
+	       item && Read(item + 0x48, cls) && cls && Read(cls + 8, guid);
+}
+using PriceFn = int*(__fastcall*)(uintptr_t, int*, uintptr_t, uintptr_t, uintptr_t, bool, uintptr_t);
+PriceFn g_origPrice = nullptr;
+int* __fastcall HkPrice(uintptr_t self, int* out, uintptr_t item, uintptr_t p4, uintptr_t p5, bool playerSells,
+                        uintptr_t shop) {
+	int* r = g_origPrice(self, out, item, p4, p5, playerSells, shop);
+	++g_priced;
+	if (!playerSells || !r || !g_resaleSetting.load()) return r;
+	try {
+		int dbid = 0; Guid guid{};
+		if (!PriceInputs(item, shop, dbid, guid)) return r;
+		float f = 1.f; int cat = 4;
+		{
+			std::lock_guard<std::mutex> lock(g_priceMu);
+			const auto s = g_factors.find(dbid);
+			if (s == g_factors.end()) return r;
+			const auto c = g_cats.find(GuidText(guid));
+			if (c != g_cats.end()) cat = c->second;
+			f = s->second[cat];
+		}
+		if (f == 1.f) return r;
+		const int before = *r, after = (int)((float)before * f + 0.5f);
+		*r = after;
+		if (++g_scaled <= 40) Log("price shop_dbid=%d cat=%d player_sells x%.3f: %d -> %d", dbid, cat, f, before, after);
+	} catch (...) { Log("price hook failed (C++ exception); vanilla price kept"); }
+	return r;
+}
+
 using CheckoutFn = void(__fastcall*)(uintptr_t, int, uintptr_t);
 using SuppliedOpenFn = void(__fastcall*)(uintptr_t);
 using ShopOpenFn = void(__fastcall*)(uintptr_t, uintptr_t);
@@ -307,6 +355,67 @@ int __cdecl MrnEnabled(uintptr_t pH, void*, int) {
 	auto end = (int(__fastcall*)(uintptr_t, const Any*))VF(pH, 0x50);
 	return end ? end(pH, &r) : 0;
 }
+int EndBool(uintptr_t pH, bool b) {
+	Any r{}; r.type = 2; r.b = b;
+	auto end = (int(__fastcall*)(uintptr_t, const Any*))VF(pH, 0x50);
+	return end ? end(pH, &r) : 0;
+}
+bool ArgPtr(uintptr_t pH, const char*& s) {   // SEH stays in a POD-only leaf
+	__try { return g_getParamStr && g_getParamStr(pH, 1, &s) && s; }
+	__except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+bool ArgText(uintptr_t pH, std::string& out) {
+	const char* s = nullptr;
+	if (!ArgPtr(pH, s)) return false;
+	out = s;
+	return true;
+}
+// MRN.cats("<guid> <0..4>\n..."): every item class's category, sent once per bind
+int __cdecl MrnCats(uintptr_t pH, void*, int) {
+	std::string text; bool ok = false;
+	try {
+		if (ArgText(pH, text)) {
+			std::unordered_map<std::string, unsigned char> cats;
+			cats.reserve(5000);
+			size_t at = 0;
+			while (at < text.size()) {
+				size_t nl = text.find('\n', at); if (nl == std::string::npos) nl = text.size();
+				const size_t sp = text.find(' ', at);
+				if (sp != std::string::npos && sp < nl && sp + 1 < nl && text[sp + 1] >= '0' && text[sp + 1] <= '4')
+					cats[text.substr(at, sp - at)] = (unsigned char)(text[sp + 1] - '0');
+				at = nl + 1;
+			}
+			{ std::lock_guard<std::mutex> lock(g_priceMu); g_cats.swap(cats); }
+			Log("prices: %zu item categories from Lua", g_cats.size());
+			ok = true;
+		}
+	} catch (...) { Log("MRN.cats failed"); }
+	return EndBool(pH, ok);
+}
+// MRN.prices("<dbid> <armor> <weapon> <food> <alchemy> <misc>\n..."): replaces every shop's factors; "" = vanilla
+int __cdecl MrnPrices(uintptr_t pH, void*, int) {
+	std::string text; bool ok = false;
+	try {
+		if (ArgText(pH, text)) {
+			std::unordered_map<int, std::array<float, 5>> factors;
+			size_t at = 0;
+			while (at < text.size()) {
+				size_t nl = text.find('\n', at); if (nl == std::string::npos) nl = text.size();
+				const std::string line = text.substr(at, nl - at);
+				int dbid = 0; std::array<float, 5> f{};
+				if (sscanf_s(line.c_str(), "%d %f %f %f %f %f", &dbid, &f[0], &f[1], &f[2], &f[3], &f[4]) == 6) {
+					for (auto& x : f) x = x < 0.5f ? 0.5f : x > 1.5f ? 1.5f : x;   // never more than that, whatever Lua sends
+					factors[dbid] = f;
+				}
+				at = nl + 1;
+			}
+			std::lock_guard<std::mutex> lock(g_priceMu);
+			g_factors.swap(factors);
+			ok = true;
+		}
+	} catch (...) { Log("MRN.prices failed"); }
+	return EndBool(pH, ok);
+}
 bool AddFn(uintptr_t table, const char* name, void* fn) {
 	alignas(16) unsigned char desc[0x58] = {};
 	static int marker = 0x4D52;   // a non-empty data buffer selects the user-data-function closure
@@ -327,7 +436,8 @@ int SafeBind() {
 		uintptr_t t = create ? create(ss, false) : 0;
 		if (!t) return -2;
 		((void(__fastcall*)(uintptr_t))VF(t, 0x18))(t);   // AddRef: kept for the session
-		const int n = AddFn(t, "pull", (void*)&MrnPull) + AddFn(t, "enabled", (void*)&MrnEnabled);
+		const int n = AddFn(t, "pull", (void*)&MrnPull) + AddFn(t, "enabled", (void*)&MrnEnabled) +
+		              AddFn(t, "cats", (void*)&MrnCats) + AddFn(t, "prices", (void*)&MrnPrices);
 		Any g{}; g.type = 6; g.p = t;
 		auto setGlobal = (void(__fastcall*)(uintptr_t, const char*, const Any*))VF(ss, 0xF8);
 		if (!setGlobal) return -3;
@@ -338,14 +448,17 @@ int SafeBind() {
 void Bind() {   // runs on the Lua thread (from HkLog); Lua re-sends "bind" after every load, so it must be repeatable
 	if (!g_env) g_env = FindEnv();
 	const int r = SafeBind();
-	g_bound.store(r == 2);
-	Log("bind: %s (%d, gEnv %p)", r == 2 ? "MRN.pull / MRN.enabled registered" : "FAILED", r, (void*)g_env);
+	g_bound.store(r == 4);
+	Log("bind: %s (%d, gEnv %p)", r == 4 ? "MRN.pull / enabled / cats / prices registered" : "FAILED", r, (void*)g_env);
 }
 
 void Status() {
 	std::lock_guard<std::mutex> lock(g_lastMu);
-	Log("status phase=2 logging=%d resale=%d lua_bound=%d checkout_hook=%d shop_open_hook=%d checkouts=%llu committed=%llu not_committed=%llu opens=%llu last=[%s]",
+	size_t shops = 0, cats = 0;
+	{ std::lock_guard<std::mutex> plock(g_priceMu); shops = g_factors.size(); cats = g_cats.size(); }
+	Log("status phase=3 logging=%d resale=%d lua_bound=%d checkout_hook=%d shop_open_hook=%d price_hook=%d prices_called=%llu prices_scaled=%llu price_shops=%zu item_categories=%zu checkouts=%llu committed=%llu not_committed=%llu opens=%llu last=[%s]",
 	    g_logging.load(), g_resaleSetting.load(), g_bound.load(), g_checkoutHook.load(), g_openHook.load(),
+	    g_priceHook.load(), g_priced.load(), g_scaled.load(), shops, cats,
 	    g_checkouts.load(), g_committed.load(), g_rejected.load(), g_opens.load(), g_last.c_str());
 }
 void Command(const char* line, bool persist = true) {
@@ -361,9 +474,7 @@ void Command(const char* line, bool persist = true) {
 	Log("setting %s=%s", key, value);
 }
 using LogHandlerFn = int(__fastcall*)(void*, uintptr_t);
-using GetParamStrFn = bool(__fastcall*)(uintptr_t, int, const char**);
 LogHandlerFn g_origLog = nullptr;
-GetParamStrFn g_getParamStr = nullptr;
 bool LuaLine(uintptr_t handler, char* out, size_t size) {
 	__try {
 		const char* source = nullptr;
@@ -395,6 +506,7 @@ void InstallObservedHooks() {
 	g_probeHook.store(Install(kSuppliedOpen, kSuppliedBytes, sizeof kSuppliedBytes, (void*)&HkSupplied, (void**)&g_origSupplied));
 	// Additional read-only hook: evidence disproved the design's address as a true shop open.
 	g_openHook.store(Install(kShopOpen, kShopOpenBytes, sizeof kShopOpenBytes, (void*)&HkOpen, (void**)&g_origOpen));
+	g_priceHook.store(Install(kPrice, kPriceBytes, sizeof kPriceBytes, (void*)&HkPrice, (void**)&g_origPrice));
 	const auto get = FindUnique(g_game, "48 89 5C 24 08 57 48 83 EC ?? 48 8B 01 49 8B F8 4C 8D 44 24 20 C7 44 24 20 05 00 00 00 FF 50 38 32 DB 84 C0 74 11");
 	const auto log = FindLogAlwaysHandler(g_game);
 	g_getParamStr = (GetParamStrFn)get;

@@ -24,8 +24,8 @@ and with demand, so it feels like part of the game.
    0.45, now 0.82). d recovers toward 1 with a 4-day half-life.
 3. **Speed.** An item resells after its expected time T = base_days[category] / d (armor 3 days, weapon 3, food 1,
    alchemy 2, misc 2), with +-30% random spread per item (seeded by item id, so reloads give the same answer).
-   Flooding Kuttenberg with 30 plates drops armor demand to the floor: those take ~20 days, not 3. Prices are NOT
-   changed (v2 maybe).
+   Flooding Kuttenberg with 30 plates drops armor demand to the floor: those take ~20 days, not 3. Since phase 3
+   demand also sets the price (3c).
 4. **Wealth survives the weekly reset.** The merchant's earned money above preset is kept as a bonus B. When the
    vanilla restock has reset the purse (detected: purse at open != purse at last close, no sale in between), the mod adds
    B back. B never goes below 0; total purse capped at 10x preset (a fat Kuttenberg merchant, not a bank).
@@ -61,7 +61,8 @@ Still unverified: that 0x1808d5150 runs for every sell and buyback; that the pla
    c. Demand sets what merchants pay the player: x (0.70 + 0.40 d): fresh +10 %, half -10 %, flooded -24 %. Only the
       price they pay, never what they charge (no buy-low/sell-high loop: vanilla buys at 0.7-0.8, sells at
       0.35-0.5). The merchant's own resale income gets the same factor. Needs a hook on the trade price
-      (FUN_180566410). Step 2, not built.
+      (FUN_180566410: `merchant.asi` hooks it; param 6 = !shop owns item = the player sells, param 7 = the C_Shop).
+      Built (step 2), not yet seen in game.
 
 ## Reference: the Legacy of the Forge sales chest (read 2026-10-30 from Scripts.pak)
 `Quests/Final/Barbora/kutnohorsko/legacy_of_the_forge/selling_stuff*` (Skald graphs; settings on the
