@@ -229,8 +229,23 @@ end
 -- "draw_holster_torch": R takes the torch out) are held off every frame. Switching them off once at H wasn't enough:
 -- a gun drawn another way (gun switch, save load, script reload) skipped it, and the game turns its maps back on
 -- after some state changes (R still took the torch out, user 2026-10-12).
+-- KCD2's combat lock-on is off while the gun is out (wh_cs_PlayerLockDisabled: "Disables player locking functionality";
+-- the camera turned to an opponent and held on him). The player's own value comes back at the holster.
+function Deagle:SetLockOff(off)
+	off = off and self.cfg.vm.noLockOn
+	if off and self.savedLock == nil then
+		local ok, v = pcall(System.GetCVar, "wh_cs_PlayerLockDisabled")
+		self.savedLock = ok and tonumber(v) or 0
+		pcall(System.SetCVar, "wh_cs_PlayerLockDisabled", 1)
+	elseif not off and self.savedLock ~= nil then
+		pcall(System.SetCVar, "wh_cs_PlayerLockDisabled", self.savedLock)
+		self.savedLock = nil
+	end
+end
+
 function Deagle:HoldGameMapsOff()
 	if not self.state.drawn then return end
+	self:SetLockOff(true)   -- a gun drawn another way (save load, gun switch) as well; a Lua check after the first
 	for _, map in ipairs(GAME_MAPS_OFF) do ActionMapManager.EnableActionMap(map, false) end
 	if self:LeanOn() then   -- Q leans (KCD2's chat); turned back on at the holster only if we turned it off
 		self.leanMapsOff = true
@@ -684,6 +699,7 @@ function Deagle:Toggle()
 	-- and R: the game's own no_torch filter while the gun is out (plugin; returning true from OnAction for
 	-- toggle_torch didn't stop it: the game takes the torch out elsewhere too, in game 2026-10-12)
 	self:Native("notorch " .. (s.drawn and "1" or "0"))
+	self:SetLockOff(s.drawn)
 	if not s.drawn then self:SetAim(false) end
 	log(s.drawn and "drawn" or "holstered")
 	self:ShowAmmo()

@@ -343,6 +343,7 @@ Deagle.cfg.vm = {
 		drawEmpty = { "deagle_vm_draw_empty", 37 }, holsterEmpty = { "deagle_vm_holster_empty", 37 },
 	},
 	hideBody = true,          -- Henry's body and worn gear are hidden in first person while the gun is up (shadow stays)
+	noLockOn = true,          -- KCD2's combat lock-on (the camera turns to an opponent and holds on him) is off while the gun is out
 	fpMaxDist = 0.35,         -- camera within this of the Head bone = first person (dialogue / cutscene cameras aren't)
 	gearDist = 0.35,          -- worn items within this of the hips / spine are hidden with the body
 	soundVol = { shot = 1.0, foley = 0.75, ron = 1.0 },   -- ron: Ready or Not handling events, x its own level
