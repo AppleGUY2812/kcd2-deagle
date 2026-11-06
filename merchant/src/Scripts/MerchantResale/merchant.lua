@@ -508,7 +508,8 @@ function MR:Settle(S, dbid, now)
 	self:Store()
 end
 
-function MR:Tick()
+function MR:Tick(gen)
+	if gen ~= self.gen then return end   -- an older tick: Start launched a newer one
 	self.lastTick = clock()
 	local ok, err = pcall(function()
 		local S = self:State()
@@ -536,15 +537,18 @@ function MR:Tick()
 		self.stopped = "error: " .. tostring(err)
 		say("STOPPED for this session: " .. self.stopped)
 	end
-	Script.SetTimer(1000, function() MR:Tick() end)   -- keeps pulling (and recording) even when stopped
+	Script.SetTimer(1000, function() MR:Tick(gen) end)   -- keeps pulling (and recording) even when stopped
 end
 
--- starts the 1 s tick; safe to call again (after a load the old timer may be gone)
+-- starts the 1 s tick; safe to call again. A save load kills script timers, so every call starts a new tick and any
+-- older one still alive stops itself (generation check). The old "ran in the last 5 s, keep it" guard skipped the
+-- restart right after a load and left the mod dead: sales went unrecorded (user's game 2026-11-06, tick dead 48 min).
 function MR:Start()
-	if self.lastTick and clock() - self.lastTick < 5 then return end
+	self.gen = (self.gen or 0) + 1
+	local gen = self.gen
 	self.lastTick = clock()
 	native("bind")
-	Script.SetTimer(1000, function() MR:Tick() end)
+	Script.SetTimer(1000, function() MR:Tick(gen) end)
 end
 
 -- ---- commands -----------------------------------------------------------------------------------------------------

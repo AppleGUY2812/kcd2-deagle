@@ -258,5 +258,18 @@ MRN.enabled = function() return false end
 tick()
 check(pushed == "" and pushes == 2, "resale off: vanilla prices")
 MRN.enabled = function() return true end
+-- a save load kills script timers and the game calls Hello right after, within 5 s of the last tick (the user's game
+-- 2026-11-06: the tick stayed dead and a sale went unrecorded). The tick must restart, and only one may run.
+tick()
+timers = {}                                   -- the load wiped them
+MR:Hello()                                    -- same realTime: within 5 s of the last tick
+check(#timers == 1, "tick restarted right after a load")
+MR:Hello()                                    -- a second Hello (gameplay-started event) while that tick is queued
+tick()
+check(#timers == 1, "older tick stopped itself: one tick running, " .. #timers .. " queued")
+queue = "sell 520 " .. SWORD .. " 1 1000 020000000000F00D\n"
+stash.inventory:Add(SWORD, 1, "userdata: 020000000000F00D")
+tick()
+check(has("shop 520 bought 1x"), "a sale after the load is recorded")
 print(string.format("merchant logic tests: %d checks passed (fresh plate %.2f days, flooded last plate %.1f days)",
 	checks, r1.eta, S.rows[#S.rows].eta))
