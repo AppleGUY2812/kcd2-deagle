@@ -362,9 +362,169 @@ bool ClothTrace(const char* rest) {
 	return true;
 }
 
+
+// ---- cloth: Henry's worn clothing on the gun's arms, exactly as he wears it (docs/ARMSWAP.md "Clothing on the arms").
+// A Henry-arms viewmodel's CDF lists every arms / hands clothing skin of the game, hidden (hc_*, made by
+// tools/armswap/cloth_cdf.py), next to his body's arms and hands. The sync below runs for every skin attachment of
+// the viewmodel whose .skin file Henry has attached too: it takes his attachment's 6 LOD materials and its
+// C_MaterialInstance (att +0x38) and shows the piece; an hc_* piece he doesn't wear is hidden. CAttachmentSKIN::Render
+// (0x1804a3c80) hands att +0x38 to the render object, so the draw reads Henry's own colour, dirt, scratch, blood and
+// hide-mask entries: the same pixels as on him, by construction. Nothing here knows an item or a gun.
+// The mod hides all of Henry's attachments while the gun is out, so his hidden flags say nothing: a piece he has is shown.
+struct SkinRef { uintptr_t att, obj, iface, skin, inst; const char* path; const char* name; };
+
+bool SkinOf(uintptr_t att, const char* name, SkinRef& r) {
+	__try {
+		uintptr_t vt = 0;
+		r = SkinRef{}; r.att = att; r.name = name;
+		if (!Rd(att, vt) || vt != g_wh + kRvaVtAttSkin) return false;
+		r.obj = ((PtrFn)Vf(att, 0xE0))(att);
+		if (!r.obj || !Rd(r.obj, vt) || vt != g_wh + kRvaVtSkinObj) return false;   // a cloth-sim piece binds differently
+		r.iface = ((PtrFn)Vf(att, 0xE8))(att); if (r.iface != att + 8) return false;
+		r.skin = ((PtrFn)Vf(r.iface, 0x10))(r.iface); if (!r.skin) return false;
+		r.path = (const char*)((PtrFn)Vf(r.skin, 0x20))(r.skin);
+		Rd(att + 0x38, r.inst);
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool SamePath(const char* a, const char* b) {   // .skin paths: any case, either slash
+	if (!a || !b) return false;
+	__try {
+		for (int i = 0; i < 260; i++) {
+			char x = a[i], y = b[i];
+			if (x >= 'A' && x <= 'Z') x += 32; if (y >= 'A' && y <= 'Z') y += 32;
+			if (x == '\\') x = '/'; if (y == '\\') y = '/';
+			if (x != y) return false;
+			if (!x) return i > 5;
+		}
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	return false;
+}
+
+int CollectSkins(uintptr_t mgr, SkinRef* out, int cap) {
+	int n = Count(mgr), k = 0;
+	for (int i = 0; i < n && i < 1024 && k < cap; i++) {
+		AttInfo a{};
+		if (Info(mgr, (uint32_t)i, a) && a.type == 2 && SkinOf(a.att, a.name, out[k])) k++;
+	}
+	return k;
+}
+
+uintptr_t LodMtl(uintptr_t obj, uint32_t lod) {
+	__try { return ((GetMtlFn)Vf(obj, 0x80))(obj, lod); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+// d draws as s: s's materials on all LODs, s's material instance (0 clears d's). The instance setter (skin interface
+// vt +0x60 = 0x180ab965c) assigns the smart pointer at att +0x38 (AddRef new, Release old) and then releases the
+// caller's reference, so a reference is taken for it first.
+bool ShareLook(const SkinRef& s, const SkinRef& d, int& mtls) {
+	__try {
+		for (uint32_t l = 0; l < 6; l++)
+			if (uintptr_t m = ((GetMtlFn)Vf(s.obj, 0x80))(s.obj, l)) { ((SetMtlFn)Vf(d.obj, 0x78))(d.obj, m, l); mtls++; }
+		uintptr_t mvt = 0, inst = (s.inst && Rd(s.inst, mvt) && mvt == g_wh + kRvaVtMatInst) ? s.inst : 0;
+		if (inst != d.inst) {
+			if (inst) ((PtrFn)Vf(inst, 0x08))(inst);
+			uintptr_t sp = inst;
+			((SetInstFn)Vf(d.iface, 0x60))(d.iface, &sp);
+		}
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+bool DropLook(const SkinRef& d) {   // an unworn piece gives Henry's instance back
+	if (!d.inst) return true;
+	__try { uintptr_t sp = 0; ((SetInstFn)Vf(d.iface, 0x60))(d.iface, &sp); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
+
+constexpr int kMaxWorn = 96, kMaxVm = 640;
+struct { int on = 1; uintptr_t dmgr = 0; uint64_t sig = 0; int worn = 0, shown = 0, syncs = 0; double lastMs = 0; } g_cloth;
+
+uint64_t Mix(uint64_t h, uint64_t v) { return (h ^ v) * 1099511628211ull; }
+
+// One pass. quiet: only when Henry's worn skins (attachments, skin files, instances, materials) or the viewmodel
+// changed since the last one. Returns the number of the viewmodel's pieces now drawn as Henry's.
+int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
+	static SkinRef worn[kMaxWorn], vm[kMaxVm];
+	uintptr_t dmgr = AttachmentManager(env, dst), smgr = AttachmentManager(env, src);
+	if (!dmgr || !smgr) { if (!quiet) Log("cloth %08X <- %08X: no attachment manager (viewmodel %p, Henry %p)", dst, src, (void*)dmgr, (void*)smgr); return -1; }
+	int nw = CollectSkins(smgr, worn, kMaxWorn);
+	uint64_t sig = Mix(1469598103934665603ull, dmgr);
+	for (int i = 0; i < nw; i++) {
+		sig = Mix(Mix(Mix(sig, worn[i].att), worn[i].skin), worn[i].inst);
+		for (uint32_t l = 0; l < 6; l++) sig = Mix(sig, LodMtl(worn[i].obj, l));
+	}
+	if (quiet && dmgr == g_cloth.dmgr && sig == g_cloth.sig) return g_cloth.shown;
+	LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
+	int nv = CollectSkins(dmgr, vm, kMaxVm), shown = 0, hidden = 0, failed = 0, pieces = 0;
+	static bool used[kMaxWorn];
+	for (int i = 0; i < nw; i++) used[i] = false;
+	bool say = !quiet || g_cloth.syncs < 12;   // the piece-by-piece lines: every forced sync, the first dozen of the others
+	for (int j = 0; j < nv; j++) {
+		const SkinRef& d = vm[j];
+		bool piece = d.name && !_strnicmp(d.name, "hc_", 3);
+		pieces += piece;
+		int hit = -1;
+		for (int i = 0; i < nw && hit < 0; i++) if (worn[i].skin == d.skin) hit = i;
+		for (int i = 0; i < nw && hit < 0; i++) if (SamePath(worn[i].path, d.path)) hit = i;
+		if (hit < 0) {
+			if (piece) { hidden += Hide(d.att, true); if (!DropLook(d)) failed++; }
+			continue;
+		}
+		int mtls = 0;
+		if (!ShareLook(worn[hit], d, mtls) || !Hide(d.att, false)) { failed++; continue; }
+		used[hit] = true; shown++;
+		if (say) Log("cloth: %s draws as Henry's %s (%d LOD materials, instance %llX): %s", d.name ? d.name : "?", worn[hit].name ? worn[hit].name : "?",
+			mtls, (unsigned long long)worn[hit].inst, worn[hit].path ? worn[hit].path : "?");
+	}
+	for (int i = 0; i < nw && say; i++)   // what he wears that the viewmodel has no piece for: the list to grow the CDF from
+		if (!used[i]) Log("cloth: Henry's %s is not on the viewmodel: %s", worn[i].name ? worn[i].name : "?", worn[i].path ? worn[i].path : "?");
+	QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
+	g_cloth.dmgr = dmgr; g_cloth.sig = sig; g_cloth.worn = nw; g_cloth.shown = shown; g_cloth.syncs++;
+	g_cloth.lastMs = (t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
+	if (!quiet || g_cloth.syncs <= 200)
+		Log("cloth %08X <- %08X: %d of the viewmodel's %d skins drawn as Henry's (he has %d skins on; %d of %d clothing pieces hidden, %d failed), %.3f ms",
+			dst, src, shown, nv, nw, hidden, pieces, failed, g_cloth.lastMs);
+	return shown;
+}
+
+// cloth 0|1|status, clothsync <dst entityHex> [src entityHex]
+bool ClothCmd(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
+	if (!WhOk()) { Log("%s: not WHGame 1.5.6 (signature mismatch), refusing", cmd); return true; }
+	if (!strcmp(cmd, "clothsync")) {
+		char dstTok[24] = {}, srcTok[24] = {};
+		int n = sscanf_s(rest, "%23s %23s", dstTok, (unsigned)sizeof(dstTok), srcTok, (unsigned)sizeof(srcTok));
+		uint32_t dst = n >= 1 ? ParseId(dstTok) : vmId, src = n >= 2 ? ParseId(srcTok) : 0x7777;
+		if (!env || !dst) { Log("clothsync: no viewmodel yet (usage: clothsync [dst entityHex] [src entityHex])"); return true; }
+		ClothSync(env, dst, src, false);
+		return true;
+	}
+	if (!_strnicmp(rest, "status", 6) || !*rest) {
+		Log("cloth %d: %d syncs, last %.3f ms: %d pieces drawn as Henry's, he has %d skins on", g_cloth.on, g_cloth.syncs, g_cloth.lastMs, g_cloth.shown, g_cloth.worn);
+		return true;
+	}
+	g_cloth.on = atoi(rest) != 0; g_cloth.sig = 0; g_cloth.dmgr = 0;
+	if (!g_cloth.on && env && vmId) {   // off: the clothing pieces go, the bare arms stay as they are
+		static SkinRef vm[kMaxVm];
+		uintptr_t dmgr = AttachmentManager(env, vmId);
+		int nv = dmgr ? CollectSkins(dmgr, vm, kMaxVm) : 0, hidden = 0;
+		for (int j = 0; j < nv; j++) if (vm[j].name && !_strnicmp(vm[j].name, "hc_", 3)) { hidden += Hide(vm[j].att, true); DropLook(vm[j]); }
+		Log("cloth 0: %d clothing pieces hidden", hidden);
+	} else Log("cloth %d", g_cloth.on);
+	return true;
+}
+
 }  // namespace
 
-bool GoreCommand(const char* cmd, const char* rest, uintptr_t env) {
+void ClothReset() { g_cloth.dmgr = 0; g_cloth.sig = 0; }
+
+void ClothTick(uintptr_t env, uint32_t vmId) {
+	if (!g_cloth.on || !env || !vmId || !WhOk()) return;
+	ClothSync(env, vmId, 0x7777, true);
+}
+
+bool GoreCommand(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
+	if (!strcmp(cmd, "cloth") || !strcmp(cmd, "clothsync")) return ClothCmd(cmd, rest, env, vmId);
 	if (!strcmp(cmd, "clothtrace")) return ClothTrace(rest);
 	if (!strcmp(cmd, "clothinst")) return ClothInst(rest, env);
 	if (!strcmp(cmd, "clothcopy")) return ClothCopy(rest, env);

@@ -1115,7 +1115,7 @@ static void Command(const char* line) {
 	else if (!strcmp(cmd, "vm")) {
 		unsigned long long id = 0;
 		const char* hex = strstr(rest, "0x"); hex = hex ? hex + 2 : rest;
-		if (sscanf_s(hex, "%llx", &id) == 1) { g_vmId = (uint32_t)id; Log("viewmodel entity %08X", g_vmId); }
+		if (sscanf_s(hex, "%llx", &id) == 1) { g_vmId = (uint32_t)id; ClothReset(); Log("viewmodel entity %08X", g_vmId); }
 	}
 	else if (!strcmp(cmd, "rigid")) {   // rigid clear | rigid <entity id hex> <bone>: a piece that rides that bone
 		unsigned long long id = 0; char bone[48] = {};
@@ -1427,7 +1427,7 @@ static void Command(const char* line) {
 		std::lock_guard<std::mutex> lk(g_consoleMu);
 		g_console.push_back("deagle_points_said " + said);
 	}
-	else if (GoreCommand(cmd, rest, g_env)) {}   // listatt / hideatt (gore.cpp)
+	else if (GoreCommand(cmd, rest, g_env, g_vmId)) {}   // listatt / hideatt / cloth (gore.cpp)
 }
 
 // LogAlways Lua handler: int (this, IFunctionHandler* pH); string via GetParam<const char*>(pH, 1, &s)
@@ -1518,6 +1518,7 @@ static void OnCamera(uintptr_t camera) {
 		Freecam_ViewOffset(rvm.shakeRot, rvm.shakeLoc, rvm.shakeFov);
 	}
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam, true)) g_placed++;
+	if (g_vmId && g_env && n % 30 == 0) ClothTick(g_env, g_vmId);   // Henry's worn clothing on the gun's arms (gore.cpp)
 	if (!ApplyLayerWeights()) { static int said = 0; if (said++ < 5) Log("lweight: setting the viewmodel's layer weights failed"); }
 	{   // our sounds are heard from where the view is: the free camera while it's on, else Henry's eye
 		float fc[12];
