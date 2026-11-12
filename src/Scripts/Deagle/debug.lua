@@ -755,6 +755,8 @@ function Deagle:ArmPose(arg)
 	self:Notify("Henry's arms on the gun: " .. (m == 0 and "off" or "mode " .. m))
 end
 
+if (Deagle.armPose or 0) > 0 then Deagle.cfg.vm.hideBody = false end   -- a dev reload rebuilt cfg; the plugin still has armpose on
+
 System.AddCCommand("deagle_armpose", "Deagle:ArmPose(Deagle.Arg([[%1]]))", "deagle_armpose 0|1|2|status: test - Henry's body shows and his own arms take the gun arms' pose every frame (1 skin only, 2 also cloth and capsules); the gun's arm copy is not drawn")
 
 -- Clothing copy test (2026-10-26, arm swap step 2, docs/ARMSWAP.md): the plugin copies Henry's worn clothing skins

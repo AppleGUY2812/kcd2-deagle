@@ -12,3 +12,4 @@ bool GoreCommand(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId
 void ClothTick(uintptr_t env, uint32_t vmId);
 void ClothReset();   // a new viewmodel: sync on the next frame, not up to 29 frames later (bare arms in the draw clip)
 bool ClothPending();
+void ClothKick();    // look again on the next frame (armpose went on, off, or stopped applying)

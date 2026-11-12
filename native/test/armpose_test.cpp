@@ -110,6 +110,31 @@ int main() {
 	check("  the elbow helper kept its place on the moved upper arm", dist(elbow, abs[4]) < 1e-5f && turn(elbow, abs[4]) < 0.05f, dist(elbow, abs[4]));
 	check("  spine and head did not move", dist(spine, abs[1]) == 0 && dist(head, abs[6]) == 0, dist(head, abs[6]));
 
+	{   // twice in a frame (the camera hook repeats): the same arrays again
+		QT abs2[7], rel2[7];
+		memcpy(abs2, abs, sizeof(abs)); memcpy(rel2, rel, sizeof(rel));
+		Apply(p, abs2, rel2, vabs, Between(bw, vw));
+		float d = 0;
+		for (int i = 0; i < 7; i++) d += dist(abs[i], abs2[i]) + turn(abs[i], abs2[i]) + dist(rel[i], rel2[i]) + turn(rel[i], rel2[i]);
+		check("a second write in the same frame changes nothing", d < 0.05f, d);
+	}
+	{   // a joint the viewmodel has, hanging below one it lacks: Arm > Elbow (follows) > Strap (copied)
+		const char* n2[] = { "Hips", "LeftShoulder", "LeftArm", "LeftElbow", "Strap" };
+		const int16_t p2[] = { -1, 0, 1, 2, 3 };
+		const char* v2[] = { "LeftShoulder", "LeftArm", "Strap" };
+		static Plan q2;
+		const bool ok2 = Build(q2, n2, p2, 5, v2, 3, roots, 2);
+		check("plan: a copied joint below a following one", ok2 && q2.copied == 3 && q2.follow == 1 && q2.src[4] == 2, q2.copied);
+		QT r2[5] = { axis(0, 0, 1, 5, 0, 0, 1), axis(0, 1, 0, 20, -0.1f, 0, 0.4f), axis(0, 1, 0, 30, -0.2f, 0, 0), axis(1, 0, 0, 15, -0.25f, 0, 0), axis(0, 0, 1, 9, -0.05f, 0, 0) }, a2[5];
+		for (int i = 0; i < 5; i++) a2[i] = p2[i] < 0 ? r2[i] : Mul(a2[p2[i]], r2[i]);
+		const QT elbowRel2 = r2[3];
+		const QT va2[3] = { axis(0, 1, 1, 50, 0.1f, -0.15f, -0.25f), axis(1, 0, 1, 65, 0.25f, 0.1f, -0.3f), axis(1, 1, 0, 80, 0.35f, 0.5f, -0.2f) };
+		Apply(q2, a2, r2, va2, Between(bw, vw));
+		const QT mine = Mul(bw, a2[4]), theirs = Mul(vw, va2[2]), elbow2 = Mul(a2[2], elbowRel2), again = Mul(a2[3], r2[4]);
+		check("  it sits on the viewmodel's joint in the world", dist(mine, theirs) < 6e-5f && turn(mine, theirs) < 0.05f, dist(mine, theirs));
+		check("  the following joint above it kept its place on the arm", dist(elbow2, a2[3]) < 1e-5f, dist(elbow2, a2[3]));
+		check("  and its parent-relative transform agrees", dist(again, a2[4]) + turn(again, a2[4]) < 0.05f, dist(again, a2[4]));
+	}
 	{   // 4 km from the origin, 1.6 m apart: the hand's place in the body's space, against the same sum in doubles
 		const QT fb = axis(0, 0, 1, 75, -3909.372f, -4001.730f, 51.292f), fv = axis(0.2f, 0.1f, 1, -35, -3909.172f, -4001.630f, 52.892f);
 		const QT x = Between(fb, fv), got = Mul(x, vabs[1]);

@@ -9,4 +9,5 @@ void ArmPose_Install();                                   // once, after MH_Init
 // same frame's camera again (the write is repeated against the viewmodel's new place; nothing else moves on).
 void ArmPose_AfterCamera(uintptr_t env, uint32_t vmId, bool newFrame);
 bool ArmPose_Command(const char* cmd, const char* rest);  // true when cmd was "armpose"
-bool ArmPose_On();
+bool ArmPose_On();       // the mode is 1 or 2
+bool ArmPose_Active();   // and the pose is being written (a plan for this Henry / viewmodel pair stands)

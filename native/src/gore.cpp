@@ -586,6 +586,7 @@ int ArmSkins(uintptr_t dmgr, bool hide) {
 
 void ClothReset() { g_cloth.dmgr = 0; g_cloth.sig = 0; g_cloth.pending = true; g_armsOff = 0; }
 bool ClothPending() { return g_cloth.pending && (g_cloth.on || ArmPose_On() || g_armsOff); }
+void ClothKick() { g_cloth.pending = true; }
 
 // The viewmodel's pieces that draw as Henry's, with KCD2's stream state of each (CAttachmentSKIN +0x50: 6 / 7 = ready;
 // a skin whose joints the skeleton lacks waits at 2 for the skeleton to be extended, 0x180ab9df0).
@@ -601,13 +602,13 @@ void ClothStates(uintptr_t env, uint32_t vmId) {
 
 void ClothTick(uintptr_t env, uint32_t vmId) {
 	if (!env || !vmId || !WhOk()) return;
-	if (ArmPose_On()) {
+	if (ArmPose_Active()) {
 		uintptr_t dmgr = AttachmentManager(env, vmId);
 		if (dmgr && dmgr != g_armsOff) { Log("armpose: %d arm skins of the viewmodel hidden (Henry's own arms hold the gun)", ArmSkins(dmgr, true)); g_armsOff = dmgr; }
 		if (dmgr) g_cloth.pending = false;
 		return;
 	}
-	if (g_armsOff) {   // armpose went off: the bare arms back; with cloth on, the sync below shows the worn pieces
+	if (g_armsOff) {   // armpose went off or stopped applying: the bare arms back; with cloth on, the sync below shows the worn pieces
 		uintptr_t dmgr = AttachmentManager(env, vmId);
 		if (dmgr == g_armsOff) Log("armpose off: %d bare arm skins of the viewmodel shown again", ArmSkins(dmgr, false));
 		g_armsOff = 0; g_cloth.dmgr = 0; g_cloth.sig = 0;
@@ -618,7 +619,11 @@ void ClothTick(uintptr_t env, uint32_t vmId) {
 }
 
 bool GoreCommand(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
-	if (!strcmp(cmd, "cloth") || !strcmp(cmd, "clothsync")) return ClothCmd(cmd, rest, env, vmId);
+	if (!strcmp(cmd, "cloth") || !strcmp(cmd, "clothsync")) {
+		bool r = ClothCmd(cmd, rest, env, vmId);
+		if (ArmPose_Active()) { g_armsOff = 0; g_cloth.pending = true; }   // these show arm skins: the next tick hides them again
+		return r;
+	}
 	if (!strcmp(cmd, "clothtrace")) return ClothTrace(rest);
 	if (!strcmp(cmd, "clothinst")) return ClothInst(rest, env);
 	if (!strcmp(cmd, "clothcopy")) return ClothCopy(rest, env);

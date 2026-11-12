@@ -57,7 +57,11 @@ using BoolFn = unsigned char(__fastcall*)(uintptr_t self);
 using PushPosFn = void(__fastcall*)(uintptr_t self, uint32_t joint, uint16_t op, const float* v3);
 using PushRotFn = void(__fastcall*)(uintptr_t self, uint32_t joint, uint16_t op, const float* q4);
 
-struct Side { uintptr_t inst = 0, skel = 0; int n = 0; };
+struct Side { uintptr_t inst = 0, skel = 0; uint32_t serial = 0; int n = 0; };   // serial: skel+0x178, one per skeleton ever built
+struct Key {
+	uintptr_t bi = 0, bs = 0, vi = 0, vs = 0; uint32_t bser = 0, vser = 0; int bn = 0, vn = 0;
+	bool operator==(const Key& o) const { return bi == o.bi && bs == o.bs && vi == o.vi && vs == o.vs && bser == o.bser && vser == o.vser && bn == o.bn && vn == o.vn; }
+};
 struct Arrays { QT* rel = nullptr; QT* abs = nullptr; int n = 0; };
 
 uintptr_t g_wh = 0;
@@ -66,6 +70,8 @@ std::atomic<int> g_mode{ 0 };                     // 0 off, 1 skin after the cam
 Plan g_plan;
 Side g_body, g_vm;
 bool g_planOk = false;
+Key g_key, g_noKey;                               // the pair the plan is for; the pair last refused
+uint64_t g_noFrame = 0;                           // a refused pair is tried again after 30 drawn frames
 int g_refused = 0;                                // why the last plan was refused, said once per change
 PosePrepFn g_origPosePrep = nullptr;
 bool g_hooked = false;
@@ -76,12 +82,13 @@ int g_stageN = 0;
 uint32_t g_stageJoint[kMaxCopy];
 QT g_stagePose[kMaxCopy];
 uintptr_t g_stageSkel = 0;
+uint32_t g_stageSerial = 0;
 uint64_t g_stageFrame = 0;
 std::atomic<uintptr_t> g_stageSkelAnim{ 0 };
 std::atomic<uint64_t> g_frame{ 0 };
 uintptr_t g_queue[2] = { 0, 0 };                  // std::shared_ptr<IAnimationOperatorQueue>: object, control block
 
-struct Stats { uint64_t frames = 0, pushes = 0, pushFail = 0, noJob = 0, stale = 0; double us = 0, usMax = 0; } g_st;
+struct Stats { uint64_t frames = 0, pushes = 0, pushFail = 0, noJob = 0, stale = 0, busy = 0; double us = 0, usMax = 0; } g_st;
 
 bool Rd(uintptr_t addr, uintptr_t& out) {
 	__try { out = *(uintptr_t*)addr; return true; } __except (EXCEPTION_EXECUTE_HANDLER) { out = 0; return false; }
@@ -128,10 +135,10 @@ bool PoseArrays(uintptr_t inst, Arrays& a) {
 // layout is refused, not used). Returns the joint count, 0 when anything is off.
 int Joints(uintptr_t skel, const char** names, int16_t* parent, int cap) {
 	__try {
-		auto count = (uint32_t(__fastcall*)(uintptr_t))Vf(skel, 0xa8);
-		const int n = count ? (int)count(skel) : 0;
+		// the count sits before the array (what CDefaultSkeleton vt+0x08 returns; vt+0xa8 is the skeleton's serial)
 		const uintptr_t arr = *(uintptr_t*)(skel + 8);
-		if (n <= 0 || n > cap || !arr) return 0;
+		const int n = arr ? *(int*)(arr - 4) : 0;
+		if (n <= 0 || n > cap) return 0;
 		for (int i = 0; i < n; i++) {
 			const uintptr_t e = arr + (uintptr_t)i * kJointSize;
 			const char* nm = *(const char**)e;
@@ -143,12 +150,17 @@ int Joints(uintptr_t skel, const char** names, int16_t* parent, int cap) {
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
 }
 
-// absolute = parent's absolute * relative for every joint: the pose arrays are what this file takes them for
-float Coherence(const Arrays& a, const int16_t* parent, int n) {
+uint32_t Serial(uintptr_t skel) {
+	__try { return *(uint32_t*)(skel + 0x178); } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
+
+// absolute = parent's absolute * relative for the picked joints (pick[i] >= 0): the pose arrays are what this file
+// takes them for. Only the arm joints: cloth joints elsewhere on Henry need not agree.
+float Coherence(const Arrays& a, const int16_t* parent, const int16_t* pick, int n) {
 	__try {
 		float worst = 0;
 		for (int i = 0; i < n; i++) {
-			if (parent[i] < 0) continue;
+			if (parent[i] < 0 || pick[i] < 0) continue;
 			const QT m = Mul(a.abs[parent[i]], a.rel[i]);
 			const float d = fabsf(m.tx - a.abs[i].tx) + fabsf(m.ty - a.abs[i].ty) + fabsf(m.tz - a.abs[i].tz);
 			if (!(d <= worst)) worst = d;      // a NaN counts
@@ -157,32 +169,61 @@ float Coherence(const Arrays& a, const int16_t* parent, int n) {
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return 1e9f; }
 }
 
+void PlanOk(bool ok) {   // gore.cpp hides the viewmodel's arm skins only while the pose is really written
+	if (ok != g_planOk) { g_planOk = ok; ClothKick(); }
+}
+
 bool Refuse(int why, const char* text) {
-	g_planOk = false;
-	if (g_refused != why) { g_refused = why; Log("armpose: off for now: %s", text); }
+	PlanOk(false);
+	if (g_refused != why) { g_refused = why; Log("armpose: not applied (the gun's own arms show): %s", text); }
 	return false;
+}
+
+// model space = the entity's world matrix is assumed for both characters; a slot offset would shift the arms. Said once
+// per plan: how far slot 0's world matrix (IEntity vt+0x2D8) is from the entity's.
+float SlotGap(uintptr_t env, uint32_t id) {
+	__try {
+		uintptr_t es = *(uintptr_t*)(env + 0xA0);
+		uintptr_t ent = ((GetEntityFn)Vf(es, 0x70))(es, id);
+		auto slotTM = (const float* (__fastcall*)(uintptr_t, int))Vf(ent, 0x2D8);
+		auto getTM = (GetWorldTMFn)Vf(ent, 0x100);
+		if (!ent || !slotTM || !getTM) return -1;
+		const float* a = slotTM(ent, 0); const float* b = getTM(ent);
+		if (!a || !b) return -1;
+		float d = 0;
+		for (int i = 0; i < 12; i++) d += fabsf(a[i] - b[i]);
+		return d;
+	} __except (EXCEPTION_EXECUTE_HANDLER) { return -1; }
 }
 
 // (Re)builds the plan when either character or skeleton changed. Henry's skeleton is replaced on every change of
 // clothes (the game extends it with the clothes' joints), so his joint numbers move.
-bool Plan_(uintptr_t bodyInst, uintptr_t vmInst) {
+bool Plan_(uintptr_t env, uint32_t vmId, uintptr_t bodyInst, uintptr_t vmInst) {
 	uintptr_t bs = 0, vs = 0;
 	if (!Rd(bodyInst + kOffSkel, bs) || !Rd(vmInst + kOffSkel, vs) || !bs || !vs) return Refuse(1, "a character without a skeleton");
 	Arrays ba, va;
 	if (!PoseArrays(bodyInst, ba) || !PoseArrays(vmInst, va)) return Refuse(2, "pose data not readable");
-	if (g_planOk && bodyInst == g_body.inst && bs == g_body.skel && ba.n == g_body.n && vmInst == g_vm.inst && vs == g_vm.skel && va.n == g_vm.n) return true;
+	const Key key{ bodyInst, bs, vmInst, vs, Serial(bs), Serial(vs), ba.n, va.n };
+	if (g_planOk && key == g_key) return true;
+	const uint64_t frame = g_frame.load();
+	if (!g_planOk && key == g_noKey && frame - g_noFrame < 30) return false;   // refused a moment ago: not every call
+	auto no = [&](int why, const char* text) { g_noKey = key; g_noFrame = frame; return Refuse(why, text); };
 	static const char* bn[kMaxJoints]; static const char* vn[kMaxJoints];
-	static int16_t bp[kMaxJoints], vp[kMaxJoints];
+	static int16_t bp[kMaxJoints], vp[kMaxJoints], used[kMaxJoints];
 	const int nb = Joints(bs, bn, bp, kMaxJoints), nv = Joints(vs, vn, vp, kMaxJoints);
-	if (!nb || !nv) return Refuse(3, "joint table not as expected (names do not match their ids)");
-	if (nb != ba.n || nv != va.n) return Refuse(4, "pose and skeleton disagree on the joint count (a skeleton swap in progress)");
-	const float cb = Coherence(ba, bp, nb), cv = Coherence(va, vp, nv);
-	if (!(cb < 2e-3f) || !(cv < 2e-3f)) { char t[160]; snprintf(t, sizeof(t), "pose arrays not as expected (absolute vs parent * relative off by %.4f m body, %.4f m viewmodel)", cb, cv); return Refuse(5, t); }
-	if (!Build(g_plan, bn, bp, nb, vn, nv, kRoots, 2)) return Refuse(6, "the viewmodel shares no arm joint with the body (not a Henry-arms gun)");
-	if (g_plan.copied > kMaxCopy) return Refuse(7, "more arm joints than this file holds");
-	g_body = { bodyInst, bs, nb }; g_vm = { vmInst, vs, nv };
-	g_planOk = true; g_refused = 0;
-	Log("armpose: plan: %d of Henry's %d joints copy the viewmodel's (%d joints), %d below them follow their parent", g_plan.copied, nb, nv, g_plan.follow);
+	if (!nb || !nv) return no(3, "joint table not as expected (names do not match their ids)");
+	if (nb != ba.n || nv != va.n) return no(4, "pose and skeleton disagree on the joint count (a skeleton swap in progress)");
+	if (!Build(g_plan, bn, bp, nb, vn, nv, kRoots, 2)) return no(6, "the viewmodel shares no arm joint with the body (not a Henry-arms gun)");
+	if (g_plan.copied > kMaxCopy) return no(7, "more arm joints than this file holds");
+	for (int i = 0; i < nv; i++) used[i] = -1;
+	for (int i = 0; i < nb; i++) if (g_plan.src[i] >= 0) used[g_plan.src[i]] = 0;
+	const float cb = Coherence(ba, bp, g_plan.src, nb), cv = Coherence(va, vp, used, nv);
+	if (!(cb < 2e-3f) || !(cv < 2e-3f)) { char t[160]; snprintf(t, sizeof(t), "pose arrays not as expected (arm joints: absolute vs parent * relative off by %.4f m body, %.4f m viewmodel)", cb, cv); return no(5, t); }
+	g_body = { bodyInst, bs, key.bser, nb }; g_vm = { vmInst, vs, key.vser, nv };
+	g_key = key; g_refused = 0;
+	PlanOk(true);
+	Log("armpose: plan: %d of Henry's %d joints copy the viewmodel's (%d joints), %d below them follow their parent; slot 0 vs entity matrix differs by %.4f (Henry) %.4f (viewmodel), thread %lu",
+		g_plan.copied, nb, nv, g_plan.follow, SlotGap(env, kPlayer), SlotGap(env, vmId), GetCurrentThreadId());
 	return true;
 }
 
@@ -210,12 +251,14 @@ bool QueueMake() {
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
-// 1 pushed, 0 the engine refused it (queue full), -1 fault, -2 no job this frame
+// 1 pushed, 0 the engine refused it (queue full), -1 fault, -2 no job this frame, -3 the engine still holds the queue
 int QueueFill(uintptr_t skelAnim, const uint32_t* joint, const QT* pose, int n) {
 	__try {
 		const uintptr_t sp = *(uintptr_t*)(skelAnim + 0x4e0);
 		// as the engine gates its own late push ("BlenderAim"): a full update, not ragdoll-driven; and a job pose exists
 		if (!sp || !*(uintptr_t*)(sp + 0x318) || !(*(unsigned char*)(sp + 0x360) & 2) || (*(unsigned char*)(sp + 0x11c) & 0x20)) return -2;
+		// last frame's queue entry must be gone (the engine drops it when it synchronises): we alone hold the object
+		if (*(volatile long*)(g_queue[1] + 8) != 1) return -3;
 		const uintptr_t q = g_queue[0], vt = *(uintptr_t*)q;
 		((VoidFn)*(uintptr_t*)(vt + 0x70))(q);                           // Clear
 		for (int k = 0; k < n; k++) {                                    // parents first: joints are in index order
@@ -235,16 +278,19 @@ void InJob(uintptr_t skelAnim) {
 	static QT pose[kMaxCopy];
 	int n = 0;
 	uintptr_t skel = 0, inst = 0, now = 0;
+	uint32_t serial = 0;
+	{ static bool said = false; if (!said) { said = true; Log("armpose: Henry's pose prepare runs on thread %lu", GetCurrentThreadId()); } }
 	{
 		std::lock_guard<std::mutex> lk(g_mu);
 		if (g_frame.load() != g_stageFrame) { g_st.stale++; return; }   // no pose from the last drawn frame: the gun is away
-		n = g_stageN; skel = g_stageSkel;
+		n = g_stageN; skel = g_stageSkel; serial = g_stageSerial;
 		memcpy(joint, g_stageJoint, n * sizeof(uint32_t)); memcpy(pose, g_stagePose, n * sizeof(QT));
 	}
-	if (n <= 0 || !Rd(skelAnim + 0x4e8, inst) || !inst || !Rd(inst + kOffSkel, now) || now != skel) { g_st.stale++; return; }
+	if (n <= 0 || !Rd(skelAnim + 0x4e8, inst) || !inst || !Rd(inst + kOffSkel, now) || now != skel || Serial(now) != serial) { g_st.stale++; return; }
 	if (!g_queue[0] && !QueueMake()) { g_mode = 1; Log("armpose: the engine gave no operator queue: back to mode 1 (skin only)"); return; }
 	const int r = QueueFill(skelAnim, joint, pose, n);
 	if (r == 1) g_st.pushes++; else if (r == 0) g_st.pushFail++; else if (r == -2) g_st.noJob++;
+	else if (r == -3) { if (!g_st.busy++) Log("armpose: the engine still held last frame's queue: this frame not queued (counted as busy)"); }
 	else { g_mode = 1; Log("armpose: fault while queueing the pose: back to mode 1 (skin only)"); }
 }
 
@@ -263,6 +309,7 @@ void ArmPose_Install() {
 }
 
 bool ArmPose_On() { return g_mode.load(std::memory_order_relaxed) > 0; }
+bool ArmPose_Active() { return g_mode.load(std::memory_order_relaxed) > 0 && g_planOk; }
 
 void ArmPose_AfterCamera(uintptr_t env, uint32_t vmId, bool newFrame) {
 	const uint64_t frame = newFrame ? ++g_frame : g_frame.load();
@@ -274,24 +321,24 @@ void ArmPose_AfterCamera(uintptr_t env, uint32_t vmId, bool newFrame) {
 	if (!Instance(env, kPlayer, body, btm) || !Instance(env, vmId, vm, vtm)) { Refuse(8, "no character on Henry or on the viewmodel"); return; }
 	QT bw, vw;
 	if (!FromRows(btm, bw) || !FromRows(vtm, vw)) { Refuse(9, "an entity is scaled or mirrored"); return; }
-	if (!Plan_(body, vm)) return;
+	if (!Plan_(env, vmId, body, vm)) return;
 	static uint32_t joint[kMaxCopy];
 	static QT pose[kMaxCopy];
 	const int n = Write(body, vm, Between(bw, vw), joint, pose);
 	if (n < 0) { Refuse(10, "fault or bad value while writing the pose"); return; }
 	if (mode >= 2) {
 		std::lock_guard<std::mutex> lk(g_mu);
-		g_stageN = n; g_stageSkel = g_body.skel; g_stageFrame = frame;
+		g_stageN = n; g_stageSkel = g_body.skel; g_stageSerial = g_body.serial; g_stageFrame = frame;
 		memcpy(g_stageJoint, joint, n * sizeof(uint32_t)); memcpy(g_stagePose, pose, n * sizeof(QT));
 		g_stageSkelAnim = body + kOffSkelAnim;
 	}
-	if (!newFrame) return;
 	QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
 	const double us = (t1.QuadPart - t0.QuadPart) * 1e6 / (double)fq.QuadPart;
-	g_st.us += us; if (us > g_st.usMax) g_st.usMax = us;
+	g_st.us += us; if (us > g_st.usMax) g_st.usMax = us;   // every call, the same frame's repeats too
+	if (!newFrame) return;
 	if (++g_st.frames % 3000 == 0) {
-		Log("armpose %d: %.1f us avg, %.0f max over 3000 frames; job: %llu queued, %llu refused, %llu frames without a job, %llu stale",
-			mode, g_st.us / 3000, g_st.usMax, g_st.pushes, g_st.pushFail, g_st.noJob, g_st.stale);
+		Log("armpose %d: %.1f us a frame, %.0f max call, over 3000 frames (main thread only: mode 2's work in the pose job is not in it); job: %llu queued, %llu refused, %llu frames without a job, %llu stale, %llu busy",
+			mode, g_st.us / 3000, g_st.usMax, g_st.pushes, g_st.pushFail, g_st.noJob, g_st.stale, g_st.busy);
 		g_st.us = g_st.usMax = 0;
 	}
 }
@@ -300,18 +347,18 @@ bool ArmPose_Command(const char* cmd, const char* rest) {
 	if (strcmp(cmd, "armpose")) return false;
 	if (!SigOk()) { Log("armpose: not WHGame 1.5.6 (signature mismatch), refusing"); return true; }
 	if (!*rest || !_strnicmp(rest, "status", 6)) {
-		Log("armpose %d: plan %s (%d copied, %d follow; Henry %d joints, viewmodel %d); %llu frames written; job: %llu queued, %llu refused, %llu without a job, %llu stale; hook %s",
-			g_mode.load(), g_planOk ? "ok" : "none", g_plan.copied, g_plan.follow, g_body.n, g_vm.n, g_st.frames, g_st.pushes, g_st.pushFail, g_st.noJob, g_st.stale, g_hooked ? "in" : "missing");
+		Log("armpose %d: plan %s (%d copied, %d follow; Henry %d joints, viewmodel %d); %llu frames written; job: %llu queued, %llu refused, %llu without a job, %llu stale, %llu busy; hook %s",
+			g_mode.load(), g_planOk ? "ok" : "none", g_plan.copied, g_plan.follow, g_body.n, g_vm.n, g_st.frames, g_st.pushes, g_st.pushFail, g_st.noJob, g_st.stale, g_st.busy, g_hooked ? "in" : "missing");
 		return true;
 	}
 	int m = atoi(rest);
 	if (m < 0) m = 0;
 	if (m > 2) m = 2;
 	if (m == 2 && !g_hooked) { m = 1; Log("armpose: the pose hook is missing: mode 1 (skin only)"); }
-	if (!m) g_stageSkelAnim = 0;
-	g_planOk = false; g_refused = 0;
+	if (!m) { g_stageSkelAnim = 0; PlanOk(false); }   // 1 <-> 2 keeps the plan: no frame with both pairs of arms
+	g_refused = 0; g_noKey = Key{};
 	g_mode = m;
-	ClothReset();   // gore.cpp: the viewmodel's own arm skins go (or come back) on the next frame
+	ClothKick();   // gore.cpp: the viewmodel's own arm skins go (or come back) on the next frame
 	Log("armpose %d (%s)", m, m == 0 ? "off: Henry's arms are his own animation's again" : m == 1 ? "his arm joints follow the viewmodel's, written after the camera" :
 		"as 1, and queued in his pose job so cloth and capsules follow");
 	return true;
