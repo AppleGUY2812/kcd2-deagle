@@ -432,6 +432,23 @@ bool ShareLook(const SkinRef& s, const SkinRef& d, int& mtls) {
 	} __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+// A skin of the game's own characters (bare arms and hands, clothing): the viewmodel shows it only while Henry has
+// that skin on. The game takes his bare hands off under gauntlets and his bare arms off under sleeves or plates;
+// drawn anyway, the skin pokes through the clothing (user, 2026-11-11). The gun's own skins are never touched.
+bool BodySkin(const char* path) {
+	static const char kDir[] = "objects/characters/humans/";
+	if (!path) return false;
+	__try {
+		for (int i = 0; kDir[i]; i++) {
+			char x = path[i];
+			if (x >= 'A' && x <= 'Z') x += 32;
+			if (x == '\\') x = '/';
+			if (x != kDir[i]) return false;
+		}
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	return false;
+}
 bool DropLook(const SkinRef& d) {   // an unworn piece gives Henry's instance back
 	if (!d.inst) return true;
 	__try { uintptr_t sp = 0; ((SetInstFn)Vf(d.iface, 0x60))(d.iface, &sp); return true; } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
@@ -457,7 +474,7 @@ int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
 	}
 	if (quiet && dmgr == g_cloth.dmgr && sig == g_cloth.sig) return g_cloth.shown;
 	LARGE_INTEGER t0, t1, fq; QueryPerformanceCounter(&t0);
-	int nv = CollectSkins(dmgr, vm, kMaxVm), shown = 0, hidden = 0, failed = 0, pieces = 0;
+	int nv = CollectSkins(dmgr, vm, kMaxVm), shown = 0, hidden = 0, failed = 0, pieces = 0, bare = 0;
 	static bool used[kMaxWorn];
 	for (int i = 0; i < nw; i++) used[i] = false;
 	bool say = !quiet || g_cloth.syncs < 12;   // the piece-by-piece lines: every forced sync, the first dozen of the others
@@ -468,8 +485,10 @@ int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
 		int hit = -1;
 		for (int i = 0; i < nw && hit < 0; i++) if (worn[i].skin == d.skin) hit = i;
 		for (int i = 0; i < nw && hit < 0; i++) if (SamePath(worn[i].path, d.path)) hit = i;
-		if (hit < 0) {   // not worn: a clothing piece goes; any piece gives a left-over instance back
+		if (hit < 0) {   // not worn: a clothing piece or a bare body part goes; any piece gives a left-over instance back
+			bool body = !piece && BodySkin(d.path);
 			if (piece) hidden += Hide(d.att, true);
+			else if (body) { bare += Hide(d.att, true); if (say) Log("cloth: %s hidden, Henry has no such skin on: %s", d.name ? d.name : "?", d.path ? d.path : "?"); }
 			if (!DropLook(d)) failed++;
 			continue;
 		}
@@ -486,8 +505,8 @@ int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
 	g_cloth.report = say ? 6 : 0;   // ClothTick: the pieces' stream states about 3 s later
 	g_cloth.lastMs = (t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
 	if (!quiet || g_cloth.syncs <= 200)
-		Log("cloth %08X <- %08X: %d of the viewmodel's %d skins drawn as Henry's (he has %d skins on; %d of %d clothing pieces hidden, %d failed), %.3f ms",
-			dst, src, shown, nv, nw, hidden, pieces, failed, g_cloth.lastMs);
+		Log("cloth %08X <- %08X: %d of the viewmodel's %d skins drawn as Henry's (he has %d skins on; %d of %d clothing pieces hidden, %d bare body parts hidden, %d failed), %.3f ms",
+			dst, src, shown, nv, nw, hidden, pieces, bare, failed, g_cloth.lastMs);
 	return shown;
 }
 
@@ -510,14 +529,15 @@ bool ClothCmd(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
 	g_cloth.on = atoi(rest) != 0; g_cloth.sig = 0; g_cloth.dmgr = 0;
 	g_cloth.pending = g_cloth.on != 0;
 	if (!g_cloth.on && env && vmId) {
-		// off: the clothing pieces go, and every piece gives Henry's instance back (the bare arms too: with it they
-		// would keep the hide mask that cuts the skin under a gauntlet that is no longer drawn). The bare arms keep
-		// his body's materials from the last sync.
+		// off: the clothing pieces go, the bare arms and hands come back, and every piece gives Henry's instance back
+		// (the bare arms too: with it they would keep the hide mask that cuts the skin under a gauntlet that is no
+		// longer drawn). The bare arms keep his body's materials from the last sync.
 		static SkinRef vm[kMaxVm];
 		uintptr_t dmgr = AttachmentManager(env, vmId);
 		int nv = dmgr ? CollectSkins(dmgr, vm, kMaxVm) : 0, hidden = 0, dropped = 0;
 		for (int j = 0; j < nv; j++) {
 			if (vm[j].name && !_strnicmp(vm[j].name, "hc_", 3)) hidden += Hide(vm[j].att, true);
+			else if (BodySkin(vm[j].path)) Hide(vm[j].att, false);
 			if (vm[j].inst) dropped += DropLook(vm[j]);
 		}
 		Log("cloth 0: %d clothing pieces hidden, %d instances given back", hidden, dropped);
