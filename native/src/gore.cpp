@@ -405,6 +405,26 @@ bool SamePath(const char* a, const char* b) {   // .skin paths: any case, either
 	return false;
 }
 
+// A cloth-simulated piece is on the viewmodel as a copy of the game's skin with its cloth joints pinned to body bones
+// (tools/armswap/cloth_fold.py): objects/deagle_cloth/<the game path after objects/characters/humans/>.
+bool StartsPath(const char* s, const char* lowerPrefix) {
+	if (!s) return false;
+	__try {
+		for (int i = 0; lowerPrefix[i]; i++) {
+			char x = s[i];
+			if (x >= 'A' && x <= 'Z') x += 32;
+			if (x == '\\') x = '/';
+			if (x != lowerPrefix[i]) return false;
+		}
+		return true;
+	} __except (EXCEPTION_EXECUTE_HANDLER) {}
+	return false;
+}
+bool CopyOf(const char* game, const char* copy) {
+	static const char kGame[] = "objects/characters/humans/", kCopy[] = "objects/deagle_cloth/";
+	return StartsPath(game, kGame) && StartsPath(copy, kCopy) && SamePath(game + sizeof(kGame) - 1, copy + sizeof(kCopy) - 1);
+}
+
 int CollectSkins(uintptr_t mgr, SkinRef* out, int cap) {
 	int n = Count(mgr), k = 0;
 	for (int i = 0; i < n && i < 1024 && k < cap; i++) {
@@ -487,7 +507,7 @@ int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
 		pieces += piece;
 		int hit = -1;
 		for (int i = 0; i < nw && hit < 0; i++) if (worn[i].skin == d.skin) hit = i;
-		for (int i = 0; i < nw && hit < 0; i++) if (SamePath(worn[i].path, d.path)) hit = i;
+		for (int i = 0; i < nw && hit < 0; i++) if (SamePath(worn[i].path, d.path) || CopyOf(worn[i].path, d.path)) hit = i;
 		if (hit < 0) {   // not worn: a clothing piece or a bare body part goes; any piece gives a left-over instance back
 			bool body = !piece && BodySkin(d.path);
 			if (piece) hidden += Hide(d.att, true);
