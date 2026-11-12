@@ -1518,7 +1518,7 @@ static void OnCamera(uintptr_t camera) {
 		Freecam_ViewOffset(rvm.shakeRot, rvm.shakeLoc, rvm.shakeFov);
 	}
 	if (g_follow && g_vmId && g_env && SafePlace(g_cam, true)) g_placed++;
-	if (g_vmId && g_env && n % 30 == 0) ClothTick(g_env, g_vmId);   // Henry's worn clothing on the gun's arms (gore.cpp)
+	if (g_vmId && g_env && (n % 30 == 0 || ClothPending())) ClothTick(g_env, g_vmId);   // Henry's worn clothing on the gun's arms (gore.cpp)
 	if (!ApplyLayerWeights()) { static int said = 0; if (said++ < 5) Log("lweight: setting the viewmodel's layer weights failed"); }
 	{   // our sounds are heard from where the view is: the free camera while it's on, else Henry's eye
 		float fc[12];

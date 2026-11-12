@@ -438,7 +438,7 @@ bool DropLook(const SkinRef& d) {   // an unworn piece gives Henry's instance ba
 }
 
 constexpr int kMaxWorn = 96, kMaxVm = 640;
-struct { int on = 1; uintptr_t dmgr = 0; uint64_t sig = 0; int worn = 0, shown = 0, syncs = 0, report = 0; double lastMs = 0; } g_cloth;
+struct { int on = 1; uintptr_t dmgr = 0; uint64_t sig = 0; int worn = 0, shown = 0, syncs = 0, report = 0; bool pending = false; double lastMs = 0; } g_cloth;
 
 uint64_t Mix(uint64_t h, uint64_t v) { return (h ^ v) * 1099511628211ull; }
 
@@ -448,6 +448,7 @@ int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
 	static SkinRef worn[kMaxWorn], vm[kMaxVm];
 	uintptr_t dmgr = AttachmentManager(env, dst), smgr = AttachmentManager(env, src);
 	if (!dmgr || !smgr) { if (!quiet) Log("cloth %08X <- %08X: no attachment manager (viewmodel %p, Henry %p)", dst, src, (void*)dmgr, (void*)smgr); return -1; }
+	g_cloth.pending = false;   // both characters are there: from here on the 30-frame check is enough
 	int nw = CollectSkins(smgr, worn, kMaxWorn);
 	uint64_t sig = Mix(1469598103934665603ull, dmgr);
 	for (int i = 0; i < nw; i++) {
@@ -467,8 +468,9 @@ int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
 		int hit = -1;
 		for (int i = 0; i < nw && hit < 0; i++) if (worn[i].skin == d.skin) hit = i;
 		for (int i = 0; i < nw && hit < 0; i++) if (SamePath(worn[i].path, d.path)) hit = i;
-		if (hit < 0) {
-			if (piece) { hidden += Hide(d.att, true); if (!DropLook(d)) failed++; }
+		if (hit < 0) {   // not worn: a clothing piece goes; any piece gives a left-over instance back
+			if (piece) hidden += Hide(d.att, true);
+			if (!DropLook(d)) failed++;
 			continue;
 		}
 		int mtls = 0;
@@ -506,19 +508,27 @@ bool ClothCmd(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
 		return true;
 	}
 	g_cloth.on = atoi(rest) != 0; g_cloth.sig = 0; g_cloth.dmgr = 0;
-	if (!g_cloth.on && env && vmId) {   // off: the clothing pieces go, the bare arms stay as they are
+	g_cloth.pending = g_cloth.on != 0;
+	if (!g_cloth.on && env && vmId) {
+		// off: the clothing pieces go, and every piece gives Henry's instance back (the bare arms too: with it they
+		// would keep the hide mask that cuts the skin under a gauntlet that is no longer drawn). The bare arms keep
+		// his body's materials from the last sync.
 		static SkinRef vm[kMaxVm];
 		uintptr_t dmgr = AttachmentManager(env, vmId);
-		int nv = dmgr ? CollectSkins(dmgr, vm, kMaxVm) : 0, hidden = 0;
-		for (int j = 0; j < nv; j++) if (vm[j].name && !_strnicmp(vm[j].name, "hc_", 3)) { hidden += Hide(vm[j].att, true); DropLook(vm[j]); }
-		Log("cloth 0: %d clothing pieces hidden", hidden);
+		int nv = dmgr ? CollectSkins(dmgr, vm, kMaxVm) : 0, hidden = 0, dropped = 0;
+		for (int j = 0; j < nv; j++) {
+			if (vm[j].name && !_strnicmp(vm[j].name, "hc_", 3)) hidden += Hide(vm[j].att, true);
+			if (vm[j].inst) dropped += DropLook(vm[j]);
+		}
+		Log("cloth 0: %d clothing pieces hidden, %d instances given back", hidden, dropped);
 	} else Log("cloth %d", g_cloth.on);
 	return true;
 }
 
 }  // namespace
 
-void ClothReset() { g_cloth.dmgr = 0; g_cloth.sig = 0; }
+void ClothReset() { g_cloth.dmgr = 0; g_cloth.sig = 0; g_cloth.pending = true; }
+bool ClothPending() { return g_cloth.pending && g_cloth.on; }
 
 // The viewmodel's pieces that draw as Henry's, with KCD2's stream state of each (CAttachmentSKIN +0x50: 6 / 7 = ready;
 // a skin whose joints the skeleton lacks waits at 2 for the skeleton to be extended, 0x180ab9df0).

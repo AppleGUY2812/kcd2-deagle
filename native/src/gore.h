@@ -10,4 +10,5 @@ bool GoreCommand(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId
 // Henry's worn clothing on the viewmodel's arms: a cheap check of what he wears (a few dozen pointer reads), and a
 // sync of the viewmodel's pieces only when that changed. Call it a few times a second on the main thread.
 void ClothTick(uintptr_t env, uint32_t vmId);
-void ClothReset();   // a new viewmodel or a save load: the next tick syncs again
+void ClothReset();   // a new viewmodel: sync on the next frame, not up to 29 frames later (bare arms in the draw clip)
+bool ClothPending();
