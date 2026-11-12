@@ -1116,6 +1116,12 @@ function Deagle:LoadGuns()
 	pcall(load, "Scripts/Deagle/guns/index.lua")
 	for _, id in ipairs(self.gunIds or {}) do pcall(load, "Scripts/Deagle/guns/" .. id .. ".lua") end
 	pcall(load, "Scripts/Deagle/guns/ron_handling.lua")   -- after the guns: it adds their Ready or Not handling cues
+	-- a gun built from another (gun.skinOf: the Henry-arms copy plays its source's clips frame for frame) takes that
+	-- gun's handling cues when it has none of its own: its reload / draw / holster / inspect were silent (2026-11-11)
+	for _, g in pairs(self.guns) do
+		local s = g.skinOf and self.guns[g.skinOf]
+		if s and s.ronCues and not g.ronCues then g.ronCues = s.ronCues end
+	end
 end
 Deagle:LoadModule("Scripts/Deagle/ballistics.lua")   -- rounds, ricochets, wallbangs, armour
 Deagle:LoadGuns()
