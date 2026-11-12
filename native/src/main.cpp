@@ -11,6 +11,7 @@
 #include "scan.h"
 #include "motion.h"
 #include "gore.h"
+#include "armpose.h"
 #include "settings.h"
 #include "freecam.h"
 #include "ronvm.h"
@@ -1427,6 +1428,7 @@ static void Command(const char* line) {
 		std::lock_guard<std::mutex> lk(g_consoleMu);
 		g_console.push_back("deagle_points_said " + said);
 	}
+	else if (ArmPose_Command(cmd, rest)) {}   // armpose 0|1|2|status (armpose.cpp)
 	else if (GoreCommand(cmd, rest, g_env, g_vmId)) {}   // listatt / hideatt / cloth (gore.cpp)
 }
 
@@ -1491,7 +1493,7 @@ static void OnCamera(uintptr_t camera) {
 	}
 	if (!newFrame) {
 		g_repeats++;
-		if (g_follow && g_vmId && g_env) SafePlace(g_cam, false);
+		if (g_follow && g_vmId && g_env && SafePlace(g_cam, false)) ArmPose_AfterCamera(g_env, g_vmId, false);
 		QueryPerformanceCounter(&lastEnd);
 		return;
 	}
@@ -1517,7 +1519,11 @@ static void OnCamera(uintptr_t camera) {
 		RvmStep(float((dt < 0.1 ? dt : 0.1) * g_gameSpeed), mo.aiming);
 		Freecam_ViewOffset(rvm.shakeRot, rvm.shakeLoc, rvm.shakeFov);
 	}
-	if (g_follow && g_vmId && g_env && SafePlace(g_cam, true)) g_placed++;
+	{   // Henry's own arms take the placed viewmodel's arm pose (armpose.cpp; off unless "armpose 1|2")
+		const bool placed = g_follow && g_vmId && g_env && SafePlace(g_cam, true);
+		if (placed) g_placed++;
+		ArmPose_AfterCamera(placed ? g_env : 0, g_vmId, true);
+	}
 	if (g_vmId && g_env && (n % 30 == 0 || ClothPending())) ClothTick(g_env, g_vmId);   // Henry's worn clothing on the gun's arms (gore.cpp)
 	if (!ApplyLayerWeights()) { static int said = 0; if (said++ < 5) Log("lweight: setting the viewmodel's layer weights failed"); }
 	{   // our sounds are heard from where the view is: the free camera while it's on, else Henry's eye
@@ -1696,6 +1702,7 @@ static DWORD WINAPI Init(LPVOID) {
 	Log("gEnv %p", (void*)g_env);
 	if (g_env) Freecam_Install(g_env, (void*)g_origFrustum);   // free camera (freecam.cpp, johnpork-18)
 	if (g_env) Probe_Install(g_env, g_game.base);   // architecture step 1 probes (probe.cpp, Claude 5)
+	ArmPose_Install();   // Henry's own arms in the gun's arm pose: the pose job hook, idle until "armpose 1|2" (armpose.cpp)
 	if (g_env) Rounds_Install(g_env, g_game.base);   // the native round sim, idle until "rounds bind" (rounds.cpp, Claude 5)
 	if (g_env) Keys_Install(g_game, g_env);   // key presses through KCD2's input system (keys.cpp)
 	Points_Install(g_game);   // the game's WUID -> soul lookup for deagle_points / deagle_respec (perkpoints.cpp)

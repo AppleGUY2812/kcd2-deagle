@@ -18,7 +18,7 @@ set(LIBDEFLATE_SRC third_party/libdeflate/lib/deflate_decompress.c third_party/l
 set(IMGUI_SRC third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp third_party/imgui/imgui_tables.cpp
     third_party/imgui/imgui_widgets.cpp third_party/imgui/backends/imgui_impl_dx12.cpp)
 add_library(deagle_native SHARED src/main.cpp src/gore.cpp src/motion.cpp src/scan.cpp src/log.cpp src/settings.cpp src/freecam.cpp src/ron.cpp src/probe.cpp src/rounds.cpp src/perkpoints.cpp
-    src/ronvm.cpp src/lean.cpp src/keys.cpp src/overlay.cpp src/itemscap.cpp sim/sim.cpp ${MINHOOK_SRC} ${IMGUI_SRC})
+    src/ronvm.cpp src/lean.cpp src/armpose.cpp src/keys.cpp src/overlay.cpp src/itemscap.cpp sim/sim.cpp ${MINHOOK_SRC} ${IMGUI_SRC})
 target_compile_features(deagle_native PRIVATE cxx_std_17)   # native/sim/sim.cpp (Claude 5)
 target_include_directories(deagle_native PRIVATE ${MINHOOK_INC} src third_party/imgui third_party/imgui/backends third_party/stb)
 target_compile_options(deagle_native PRIVATE /W3 /EHa /O2)

@@ -32,6 +32,9 @@ if command -v g++ >/dev/null; then
   # the view lean (native/src/lean.cpp, Claude 4)
   { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/lean_test.cpp native/src/lean.cpp -o native/build/test/lean_test &&
     native/build/test/lean_test >/dev/null; } || { echo "FAIL lean_test"; fail=1; }
+  # Henry's own arms in the gun's arm pose: the arithmetic (native/src/armpose_core.h)
+  { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/armpose_test.cpp -o native/build/test/armpose_test &&
+    native/build/test/armpose_test >/dev/null; } || { echo "FAIL armpose_test"; fail=1; }
   # "let me in early" for the save-load / fast-travel readiness gates (native/src/readiness_early.h)
   { g++ -O2 -std=c++17 -Wall -Wextra -Werror native/test/readiness_early_test.cpp -o native/build/test/readiness_early_test &&
     native/build/test/readiness_early_test >/dev/null; } || { echo "FAIL readiness_early_test"; fail=1; }

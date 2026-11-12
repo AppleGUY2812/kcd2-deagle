@@ -730,6 +730,33 @@ end
 
 System.AddCCommand("deagle_armik", "Deagle:ArmIk(Deagle.Arg([[%1]]))", "deagle_armik right|left|both|off: test - Henry's body shows and his own arms reach for the gun's hands (arm IK); logs how far each hand is from the gun once a second")
 
+-- Henry's own arms hold the gun (2026-11-12, docs/ARMSWAP.md "Posing Henry's real arms"; native/src/armpose.cpp):
+-- deagle_armpose 0|1|2|status. His body shows, the plugin puts his arm joints on the gun arms' joints every frame and
+-- the gun's own arm copy is not drawn, so sleeves, cape, cloth simulation, dirt and blood are the game's own.
+-- 1: written after the camera (skin exact); 2: also queued in his pose job (cloth and capsules follow). Not kept.
+-- ---------------------------------------------------------------------------
+function Deagle:ArmPose(arg)
+	arg = string.lower(Deagle.Arg(arg) or "")
+	if not self.native then log("armpose: needs the native plugin") return end
+	if arg == "" or arg == "status" then self:Native("armpose status") return end
+	local m = tonumber(arg)
+	if m ~= 0 and m ~= 1 and m ~= 2 then log("usage: deagle_armpose 0|1|2|status") return end
+	if m > 0 then
+		if self.armPoseBody == nil then self.armPoseBody = self.cfg.vm.hideBody end
+		self.cfg.vm.hideBody = false
+		self:SetBodyHidden(false)
+	elseif self.armPoseBody ~= nil then
+		self.cfg.vm.hideBody = self.armPoseBody; self.armPoseBody = nil
+		if self.vmShown and self.vmInFp then self:SetBodyHidden(true) end
+	end
+	self.armPose = m
+	self:Native("armpose " .. m)
+	log("armpose " .. m .. (m > 0 and ": body shown, Henry's own arms on the gun" or ": off"))
+	self:Notify("Henry's arms on the gun: " .. (m == 0 and "off" or "mode " .. m))
+end
+
+System.AddCCommand("deagle_armpose", "Deagle:ArmPose(Deagle.Arg([[%1]]))", "deagle_armpose 0|1|2|status: test - Henry's body shows and his own arms take the gun arms' pose every frame (1 skin only, 2 also cloth and capsules); the gun's arm copy is not drawn")
+
 -- Clothing copy test (2026-10-26, arm swap step 2, docs/ARMSWAP.md): the plugin copies Henry's worn clothing skins
 -- (clothing_arms, clothing_hands by default) onto another character, materials included. deagle_clothcopy npc = the
 -- nearest NPC within 6 m (same skeleton as Henry: should look right), vm = the gun's viewmodel (still Ready or Not /

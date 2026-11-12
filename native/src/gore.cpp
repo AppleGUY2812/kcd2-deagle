@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
+#include "armpose.h"
 #include "gore.h"
 #include "log.h"
 #include "MinHook.h"
@@ -570,8 +571,21 @@ bool ClothCmd(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
 
 }  // namespace
 
-void ClothReset() { g_cloth.dmgr = 0; g_cloth.sig = 0; g_cloth.pending = true; }
-bool ClothPending() { return g_cloth.pending && g_cloth.on; }
+// Henry's own arms hold the gun (armpose.cpp): the viewmodel's arm copy (bare arms, hands, clothing pieces) is not
+// drawn; only the gun is. Once per viewmodel character; back on when armpose goes off.
+uintptr_t g_armsOff = 0;   // the viewmodel's attachment manager whose arm skins are hidden
+int ArmSkins(uintptr_t dmgr, bool hide) {
+	static SkinRef vm[kMaxVm];
+	int nv = CollectSkins(dmgr, vm, kMaxVm), n = 0;
+	for (int j = 0; j < nv; j++) {
+		const bool piece = vm[j].name && !_strnicmp(vm[j].name, "hc_", 3);
+		if (hide ? (piece || BodySkin(vm[j].path)) : (!piece && BodySkin(vm[j].path))) n += Hide(vm[j].att, hide);
+	}
+	return n;
+}
+
+void ClothReset() { g_cloth.dmgr = 0; g_cloth.sig = 0; g_cloth.pending = true; g_armsOff = 0; }
+bool ClothPending() { return g_cloth.pending && (g_cloth.on || ArmPose_On() || g_armsOff); }
 
 // The viewmodel's pieces that draw as Henry's, with KCD2's stream state of each (CAttachmentSKIN +0x50: 6 / 7 = ready;
 // a skin whose joints the skeleton lacks waits at 2 for the skeleton to be extended, 0x180ab9df0).
@@ -586,7 +600,19 @@ void ClothStates(uintptr_t env, uint32_t vmId) {
 }
 
 void ClothTick(uintptr_t env, uint32_t vmId) {
-	if (!g_cloth.on || !env || !vmId || !WhOk()) return;
+	if (!env || !vmId || !WhOk()) return;
+	if (ArmPose_On()) {
+		uintptr_t dmgr = AttachmentManager(env, vmId);
+		if (dmgr && dmgr != g_armsOff) { Log("armpose: %d arm skins of the viewmodel hidden (Henry's own arms hold the gun)", ArmSkins(dmgr, true)); g_armsOff = dmgr; }
+		if (dmgr) g_cloth.pending = false;
+		return;
+	}
+	if (g_armsOff) {   // armpose went off: the bare arms back; with cloth on, the sync below shows the worn pieces
+		uintptr_t dmgr = AttachmentManager(env, vmId);
+		if (dmgr == g_armsOff) Log("armpose off: %d bare arm skins of the viewmodel shown again", ArmSkins(dmgr, false));
+		g_armsOff = 0; g_cloth.dmgr = 0; g_cloth.sig = 0;
+	}
+	if (!g_cloth.on) { g_cloth.pending = false; return; }
 	ClothSync(env, vmId, 0x7777, true);
 	if (g_cloth.report > 0 && --g_cloth.report == 0) ClothStates(env, vmId);
 }
