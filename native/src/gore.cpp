@@ -438,7 +438,7 @@ bool DropLook(const SkinRef& d) {   // an unworn piece gives Henry's instance ba
 }
 
 constexpr int kMaxWorn = 96, kMaxVm = 640;
-struct { int on = 1; uintptr_t dmgr = 0; uint64_t sig = 0; int worn = 0, shown = 0, syncs = 0; double lastMs = 0; } g_cloth;
+struct { int on = 1; uintptr_t dmgr = 0; uint64_t sig = 0; int worn = 0, shown = 0, syncs = 0, report = 0; double lastMs = 0; } g_cloth;
 
 uint64_t Mix(uint64_t h, uint64_t v) { return (h ^ v) * 1099511628211ull; }
 
@@ -481,6 +481,7 @@ int ClothSync(uintptr_t env, uint32_t dst, uint32_t src, bool quiet) {
 		if (!used[i]) Log("cloth: Henry's %s is not on the viewmodel: %s", worn[i].name ? worn[i].name : "?", worn[i].path ? worn[i].path : "?");
 	QueryPerformanceCounter(&t1); QueryPerformanceFrequency(&fq);
 	g_cloth.dmgr = dmgr; g_cloth.sig = sig; g_cloth.worn = nw; g_cloth.shown = shown; g_cloth.syncs++;
+	g_cloth.report = say ? 6 : 0;   // ClothTick: the pieces' stream states about 3 s later
 	g_cloth.lastMs = (t1.QuadPart - t0.QuadPart) * 1000.0 / fq.QuadPart;
 	if (!quiet || g_cloth.syncs <= 200)
 		Log("cloth %08X <- %08X: %d of the viewmodel's %d skins drawn as Henry's (he has %d skins on; %d of %d clothing pieces hidden, %d failed), %.3f ms",
@@ -501,6 +502,7 @@ bool ClothCmd(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
 	}
 	if (!_strnicmp(rest, "status", 6) || !*rest) {
 		Log("cloth %d: %d syncs, last %.3f ms: %d pieces drawn as Henry's, he has %d skins on", g_cloth.on, g_cloth.syncs, g_cloth.lastMs, g_cloth.shown, g_cloth.worn);
+		g_cloth.report = 1;   // the next tick lists the pieces and their stream states
 		return true;
 	}
 	g_cloth.on = atoi(rest) != 0; g_cloth.sig = 0; g_cloth.dmgr = 0;
@@ -518,9 +520,22 @@ bool ClothCmd(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
 
 void ClothReset() { g_cloth.dmgr = 0; g_cloth.sig = 0; }
 
+// The viewmodel's pieces that draw as Henry's, with KCD2's stream state of each (CAttachmentSKIN +0x50: 6 / 7 = ready;
+// a skin whose joints the skeleton lacks waits at 2 for the skeleton to be extended, 0x180ab9df0).
+void ClothStates(uintptr_t env, uint32_t vmId) {
+	static SkinRef vm[kMaxVm];
+	uintptr_t dmgr = AttachmentManager(env, vmId);
+	int nv = dmgr ? CollectSkins(dmgr, vm, kMaxVm) : 0;
+	char line[900]; int len = sprintf_s(line, "cloth states:"), n = 0;
+	for (int j = 0; j < nv && len < 820; j++)
+		if (vm[j].inst && vm[j].name) { len += sprintf_s(line + len, sizeof(line) - len, " %.40s=%u", vm[j].name, (unsigned)State(vm[j].att)); n++; }
+	Log("%s%s", line, n ? "" : " no piece draws as Henry's");
+}
+
 void ClothTick(uintptr_t env, uint32_t vmId) {
 	if (!g_cloth.on || !env || !vmId || !WhOk()) return;
 	ClothSync(env, vmId, 0x7777, true);
+	if (g_cloth.report > 0 && --g_cloth.report == 0) ClothStates(env, vmId);
 }
 
 bool GoreCommand(const char* cmd, const char* rest, uintptr_t env, uint32_t vmId) {
