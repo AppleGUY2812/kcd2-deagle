@@ -88,7 +88,7 @@ uint32_t ParseId(const char* tok) {
 	sscanf_s(tok, "%llx", &v); return (uint32_t)v;
 }
 
-const char* TypeName(uint32_t t) { return t == 1 ? "bone" : t == 2 ? "skin" : t == 3 ? "face" : "?"; }
+const char* TypeName(uint32_t t) { return t == 1 ? "bone" : t == 2 ? "skin" : t == 3 ? "face" : t == 5 ? "cloth" : "?"; }
 
 // ---- clothcopy: Henry's worn clothing skins onto another character (docs/ARMSWAP.md; RE notes on the ProLiant
 // ~/re/work/clothing_attach/report.md). The same steps as KCD2's own clothing skin job (C_SkinLoaderJob 0x18093dd10):
@@ -96,6 +96,9 @@ const char* TypeName(uint32_t t) { return t == 1 ? "bone" : t == 2 ? "skin" : t 
 // pointer -> AddBinding(object, ISkin) -> the item's material on all 6 LODs. Every raw address is checked against
 // WHGame 1.5.6 (prologue bytes / vtables) before use; every call is SEH-guarded.
 constexpr uintptr_t kRvaMalloc = 0x4F75C0, kRvaObjCtor = 0x5ADAC4, kRvaAssignSkin = 0x5ADA88;   // CryModuleMalloc, CSKINAttachment ctor, smart-ptr assign
+// CAttachmentVCLOTH (type 5: Waffenrock, skirts): the same base (C_AttachmentSkinBase), the same slots, a CSKINAttachment
+// object at +0x28, its drawn skin through the same interface, the instance at +0x38 (ProLiant ~/re/work/vcloth/report.md)
+constexpr uintptr_t kRvaVtAttVCloth = 0x3A8F798;
 constexpr uintptr_t kRvaVtAttSkin = 0x3A65A08, kRvaVtSkinObj = 0x3A3F158;                       // CAttachmentSKIN, CSKINAttachment vtables
 const uint8_t kSigMalloc[] = { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0x83, 0x3D, 0xA3, 0x5D, 0xFA, 0x04, 0x00, 0x48, 0x8B, 0xD9 };
 const uint8_t kSigObjCtor[] = { 0x40, 0x53, 0x48, 0x83, 0xEC, 0x20, 0xBA, 0x08, 0x00, 0x00, 0x00, 0x48, 0xC7, 0x41, 0x08, 0x00 };
@@ -377,7 +380,7 @@ bool SkinOf(uintptr_t att, const char* name, SkinRef& r) {
 	__try {
 		uintptr_t vt = 0;
 		r = SkinRef{}; r.att = att; r.name = name;
-		if (!Rd(att, vt) || vt != g_wh + kRvaVtAttSkin) return false;
+		if (!Rd(att, vt) || (vt != g_wh + kRvaVtAttSkin && vt != g_wh + kRvaVtAttVCloth)) return false;
 		r.obj = ((PtrFn)Vf(att, 0xE0))(att);
 		if (!r.obj || !Rd(r.obj, vt) || vt != g_wh + kRvaVtSkinObj) return false;   // a cloth-sim piece binds differently
 		r.iface = ((PtrFn)Vf(att, 0xE8))(att); if (r.iface != att + 8) return false;
@@ -406,7 +409,7 @@ int CollectSkins(uintptr_t mgr, SkinRef* out, int cap) {
 	int n = Count(mgr), k = 0;
 	for (int i = 0; i < n && i < 1024 && k < cap; i++) {
 		AttInfo a{};
-		if (Info(mgr, (uint32_t)i, a) && a.type == 2 && SkinOf(a.att, a.name, out[k])) k++;
+		if (Info(mgr, (uint32_t)i, a) && (a.type == 2 || a.type == 5) && SkinOf(a.att, a.name, out[k])) k++;
 	}
 	return k;
 }
