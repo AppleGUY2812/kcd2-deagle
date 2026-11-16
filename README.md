@@ -1,3 +1,17 @@
+# Desert Eagle / Ready or Not guns for Kingdom Come: Deliverance II (source code only)
+
+> **This repository contains no game assets at all.** No models, meshes, skeletons, animations, textures, sounds,
+> particle effects, materials, game data tables, decompiled game code, or files extracted from any game (Kingdom Come:
+> Deliverance II, Ready or Not, Counter-Strike, Call of Duty, Insurgency or any other). Every such file was removed
+> from the entire git history. What is here is original code and documentation only: the Lua gameplay scripts, the
+> C++ engine plugin, the Python / C# / shell conversion and build tools, tests, and engineering notes.
+>
+> The tools read and convert assets from the user's own legally owned game installs on their own machine; the
+> converted output is never committed. Files that the tools generate from game data (item, perk, armour and hitbox
+> tables, extracted weapon stats) are also excluded, so the mod does not build or run from this repository alone.
+> Third-party libraries under `native/third_party/` (MinHook, libdeflate, mimalloc, Dear ImGui, stb) keep their own
+> licences.
+
 # Desert Eagle for Kingdom Come: Deliverance II
 
 A scripted semi-auto .50 AE pistol for KCD2 (Steam 1.5.x, CryEngine) with a first-person viewmodel:
